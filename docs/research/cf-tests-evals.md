@@ -899,7 +899,9 @@ Vitest's fake timers don't apply to KV/R2/cache simulators (verbatim known issue
 `crypto.randomUUID()` is the right primitive (it works in the Workers runtime and tests). For tests where the ID must be predictable, inject a generator into your agent constructor:
 
 ```typescript
-class IdeatorAgent extends Agent<Env, State> {
+// Illustrative pattern: generic `Agent` with injectable IDs for tests.
+// This repo ships `IdeatorAgent extends AIChatAgent` instead — see `agent/src/ideator-agent.ts`.
+class ExampleAgent extends Agent<Env, State> {
   private genId: () => string = () => crypto.randomUUID();
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);

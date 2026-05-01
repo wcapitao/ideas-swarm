@@ -1,14 +1,15 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { AIChatAgent } from "agents/ai-chat-agent";
 import { generateText, streamText } from "ai";
 import type { StreamTextOnFinishCallback, ToolSet } from "ai";
 
+import { JSON_EXTRACTION_PATTERN, buildDeepSeekProvider } from "~/deepseek";
+import { evaluateIdea } from "~/evaluator";
 import type { Env } from "~/index";
 import { selectPairs } from "~/paper-selector";
 import { loadPapers } from "~/papers";
 import { buildIdeaPrompt, buildSystemPrompt } from "~/prompt";
 import { IdeaCardSchema } from "~/schema";
-import type { IdeaCard } from "~/schema";
+import type { EvalResult, IdeaCard } from "~/schema";
 
 // The agents package bundles ai v4 internally while this project imports ai v6.
 // The AIChatAgent base class is typed against ai v4's StreamTextOnFinishCallback,
@@ -17,28 +18,8 @@ import type { IdeaCard } from "~/schema";
 // at runtime (the framework owns and calls this callback, we only forward it).
 type OnChatMessageFinish = Parameters<AIChatAgent<Env>["onChatMessage"]>[0];
 
-// Maximum token budget per idea-generation call to keep costs bounded.
 const IDEA_GEN_MAX_TOKENS = 1024;
-
-// Maximum token budget for the final formatting/streaming response.
 const FORMAT_MAX_TOKENS = 2048;
-
-// Regex to extract the first JSON object from a raw LLM response string.
-// DeepSeek sometimes wraps JSON in markdown code fences or leading prose.
-const JSON_EXTRACTION_PATTERN = /{[\s\S]*}/;
-
-/**
- * Builds the DeepSeek provider pointed at Cloudflare AI Gateway.
- * AI Gateway provides logging, caching, and rate-limit protection at the edge.
- */
-function buildDeepSeekProvider(env: Env): ReturnType<typeof createOpenAICompatible> {
-	const gatewayBaseUrl = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.AIG_GATEWAY_ID}/deepseek`;
-	return createOpenAICompatible({
-		name: "deepseek",
-		baseURL: gatewayBaseUrl,
-		apiKey: env.DEEPSEEK_API_KEY,
-	});
-}
 
 /**
  * Extracts the user's topic from the most recent user message in the conversation.
@@ -79,7 +60,8 @@ function parseIdeaCard(rawText: string): IdeaCard | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(match[0]);
-	} catch {
+	} catch (err) {
+		console.error("[ideator] JSON parse failed:", err instanceof Error ? err.message : err);
 		return null;
 	}
 
@@ -87,14 +69,31 @@ function parseIdeaCard(rawText: string): IdeaCard | null {
 	return result.success ? result.data : null;
 }
 
+function verdictLine(confidence: EvalResult["confidence"]): string {
+	switch (confidence) {
+		case "promising":
+			return "**Verdict:** promising 🟢";
+		case "needs_validation":
+			return "**Verdict:** needs validation 🟡";
+		case "risky":
+			return "**Verdict:** risky 🔴";
+	}
+}
+
+function scoreDeltaSuffix(adjusted: number, self: number): string {
+	if (adjusted > self) return `(↑ from ${self})`;
+	if (adjusted < self) return `(↓ from ${self})`;
+	return `(= ${self})`;
+}
+
 /**
  * Formats a validated IdeaCard into a markdown section for display.
  * Stella Principle: pure string formatting — no LLM involved.
  */
-function formatIdeaCard(card: IdeaCard, index: number): string {
+function formatIdeaCard(card: IdeaCard, index: number, evaluation: EvalResult | null): string {
 	const scoreBar = (score: number): string => "█".repeat(score) + "░".repeat(10 - score);
 
-	return [
+	const base = [
 		`## Idea ${index + 1}: ${card.title}`,
 		"",
 		"### Source Papers",
@@ -114,7 +113,37 @@ function formatIdeaCard(card: IdeaCard, index: number): string {
 		`- Novelty:      ${scoreBar(card.scores.novelty)} ${card.scores.novelty}/10`,
 		`- Feasibility:  ${scoreBar(card.scores.feasibility)} ${card.scores.feasibility}/10`,
 		`- Impact:       ${scoreBar(card.scores.impact)} ${card.scores.impact}/10`,
-	].join("\n");
+	];
+
+	if (evaluation !== null) {
+		const adj = evaluation.adjusted_scores;
+		const self = card.scores;
+		const gaps = evaluation.evidence_gaps.map((g) => `- ${g}`).join("\n");
+		const flags =
+			evaluation.safety_flags.length === 0
+				? "*(none)*"
+				: evaluation.safety_flags.map((f) => `- ${f}`).join("\n");
+		base.push(
+			"",
+			"### Evaluation",
+			verdictLine(evaluation.confidence),
+			"",
+			`**Assessment:** ${evaluation.one_liner}`,
+			"",
+			"**Adjusted Scores**",
+			`- Novelty:      ${scoreBar(adj.novelty)} ${adj.novelty}/10  ${scoreDeltaSuffix(adj.novelty, self.novelty)}`,
+			`- Feasibility:  ${scoreBar(adj.feasibility)} ${adj.feasibility}/10  ${scoreDeltaSuffix(adj.feasibility, self.feasibility)}`,
+			`- Impact:       ${scoreBar(adj.impact)} ${adj.impact}/10  ${scoreDeltaSuffix(adj.impact, self.impact)}`,
+			"",
+			"**Evidence gaps:**",
+			gaps === "" ? "*(none)*" : gaps,
+			"",
+			"**Safety flags:**",
+			flags,
+		);
+	}
+
+	return base.join("\n");
 }
 
 /**
@@ -122,7 +151,12 @@ function formatIdeaCard(card: IdeaCard, index: number): string {
  * Returns a human-readable fallback when no valid cards were produced.
  * Stella Principle: pure string assembly — no LLM involved.
  */
-function buildFinalDocument(userTopic: string, validCards: IdeaCard[], totalPairs: number): string {
+function buildFinalDocument(
+	userTopic: string,
+	validCards: IdeaCard[],
+	evals: (EvalResult | null)[],
+	totalPairs: number,
+): string {
 	if (validCards.length === 0) {
 		return [
 			`I attempted to generate combinatorial research ideas for: "${userTopic}"`,
@@ -132,7 +166,9 @@ function buildFinalDocument(userTopic: string, validCards: IdeaCard[], totalPair
 		].join("\n");
 	}
 
-	const cardSections = validCards.map((card, index) => formatIdeaCard(card, index));
+	const cardSections = validCards.map((card, index) =>
+		formatIdeaCard(card, index, evals[index] ?? null),
+	);
 	return [
 		"# Combinatorial Research Ideas",
 		"",
@@ -151,8 +187,9 @@ function buildFinalDocument(userTopic: string, validCards: IdeaCard[], totalPair
  * 2. Select up to 4 maximally-distant paper pairs via Jaccard distance (deterministic).
  * 3. Generate one idea per pair in parallel via DeepSeek (up to 4 concurrent LLM calls).
  * 4. Parse and validate each idea card with Zod, skipping malformed responses.
- * 5. Assemble a formatted markdown document from all valid cards.
- * 6. Stream the document back to the client via the AIChatAgent response pipeline.
+ * 5. Run one adversarial evaluation per valid idea (parallel), optional JSON section on each card.
+ * 6. Assemble a formatted markdown document from all valid cards.
+ * 7. Stream the document back to the client via the AIChatAgent response pipeline.
  */
 export class IdeatorAgent extends AIChatAgent<Env> {
 	async onChatMessage(
@@ -209,10 +246,18 @@ export class IdeatorAgent extends AIChatAgent<Env> {
 			if (card !== null) validCards.push(card);
 		}
 
-		// Step 5: assemble the formatted document (deterministic)
-		const finalDocument = buildFinalDocument(userTopic, validCards, pairs.length);
+		// Step 5: adversarial evaluation — one call per card, parallel (failures → null eval)
+		const evalSettled = await Promise.allSettled(
+			validCards.map((card) => evaluateIdea(card, this.env, { abortSignal: options?.abortSignal })),
+		);
+		const evals: (EvalResult | null)[] = evalSettled.map((r) =>
+			r.status === "fulfilled" ? r.value : null,
+		);
 
-		// Step 6: stream the document back through the AIChatAgent pipeline.
+		// Step 6: assemble the formatted document (deterministic)
+		const finalDocument = buildFinalDocument(userTopic, validCards, evals, pairs.length);
+
+		// Step 7: stream the document back through the AIChatAgent pipeline.
 		// We pass the pre-formatted markdown as the prompt and instruct the model to
 		// reproduce it verbatim. This keeps formatting deterministic while using streamText
 		// so AIChatAgent can persist the assistant message via the onFinish callback.

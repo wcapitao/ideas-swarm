@@ -13,6 +13,12 @@
 
 > **Reading order.** §1–§3 set the frame and improvements over the original plan. §4–§9 are the architecture proper (agents, primitives, data plane, schemas). §10–§13 are the operational guarantees (control flow, observability, failure, security). §14 lists open questions; §15 is the implementation phasing; §16 hands off to specialist skills.
 
+### MVP subset implemented today (`agent/`)
+
+The repository currently ships **one** Cloudflare Durable Object class — **`IdeatorAgent`** (`AIChatAgent`). Per chat turn it: loads a bundled **`PaperAnalysis`** corpus (imports from **`kb/raw/gastritis/`** via `papers.ts`), selects maximally distant pairs, runs **parallel `generateText`** for JSON idea cards (`IdeaCardSchema`), validates with Zod, runs **parallel adversarial evaluation** (`generateText` + `EvalResultSchema` in `evaluator.ts`), assembles markdown (including **`### Evaluation`** sections), then uses **`streamText`** to replay that document for `AIChatAgent` message persistence.
+
+That path is **not** the GoalSession spine, **`CombinatorWorkflow`**, **`EvaluatorCouncil`**, or Queue fan-out pictured in §1.2 below. Those remain the north-star decomposition; see **`docs/superpowers/specs/2026-05-01-mvp-ideator-design.md`** for the MVP contract.
+
 ---
 
 ## 1. Context and problem statement
