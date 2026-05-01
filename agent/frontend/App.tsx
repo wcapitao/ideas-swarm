@@ -8,6 +8,151 @@ function generateSessionId(): string {
 
 const sessionId = generateSessionId();
 
+export function GraphLoading() {
+  const backgroundNodes = [
+    { x: "10%", y: "18%" },
+    { x: "14%", y: "42%" },
+    { x: "18%", y: "70%" },
+    { x: "26%", y: "22%" },
+    { x: "28%", y: "58%" },
+    { x: "34%", y: "80%" },
+    { x: "40%", y: "18%" },
+    { x: "45%", y: "34%" },
+    { x: "49%", y: "58%" },
+    { x: "54%", y: "76%" },
+    { x: "62%", y: "20%" },
+    { x: "66%", y: "48%" },
+    { x: "72%", y: "72%" },
+    { x: "80%", y: "28%" },
+    { x: "88%", y: "58%" },
+  ];
+  const backgroundLinks = [
+    "M104 62 C168 86, 222 104, 286 126",
+    "M142 136 C224 146, 292 152, 370 158",
+    "M182 224 C256 206, 322 194, 404 176",
+    "M260 74 C332 84, 402 102, 470 126",
+    "M318 186 C388 182, 452 178, 516 176",
+    "M444 64 C518 86, 586 102, 662 116",
+    "M496 174 C568 168, 630 154, 700 126",
+    "M558 236 C640 216, 712 194, 812 170",
+    "M632 82 C714 98, 786 124, 864 156",
+  ];
+  const traversalEdges = [
+    { path: "M500 160 C470 150, 430 144, 388 136", side: "left", delay: "0.1s" },
+    { path: "M388 136 C340 128, 294 118, 246 106", side: "left", delay: "0.55s" },
+    { path: "M246 106 C196 98, 154 94, 110 92", side: "left", delay: "1s" },
+    { path: "M500 160 C470 168, 432 182, 394 202", side: "left", delay: "0.22s" },
+    { path: "M394 202 C344 220, 288 232, 226 236", side: "left", delay: "0.75s" },
+    { path: "M226 236 C176 238, 140 234, 104 224", side: "left", delay: "1.2s" },
+    { path: "M500 160 C536 150, 574 144, 616 138", side: "right", delay: "0.1s" },
+    { path: "M616 138 C668 132, 718 126, 770 116", side: "right", delay: "0.58s" },
+    { path: "M770 116 C818 108, 856 102, 898 98", side: "right", delay: "1.05s" },
+    { path: "M500 160 C536 172, 578 186, 622 206", side: "right", delay: "0.24s" },
+    { path: "M622 206 C678 222, 734 232, 792 234", side: "right", delay: "0.82s" },
+    { path: "M792 234 C834 234, 868 228, 900 218", side: "right", delay: "1.28s" },
+  ];
+  const traversedNodes = [
+    { x: "50%", y: "50%", delay: "0s", tier: "hub" },
+    { x: "38.8%", y: "42.5%", delay: "0.35s", tier: "branch" },
+    { x: "24.6%", y: "33.5%", delay: "0.85s", tier: "branch" },
+    { x: "11%", y: "29.5%", delay: "1.35s", tier: "terminal" },
+    { x: "39.4%", y: "63.5%", delay: "0.5s", tier: "branch" },
+    { x: "22.6%", y: "74%", delay: "1s", tier: "branch" },
+    { x: "10.4%", y: "72%", delay: "1.48s", tier: "terminal" },
+    { x: "61.6%", y: "43%", delay: "0.35s", tier: "branch" },
+    { x: "77%", y: "37%", delay: "0.9s", tier: "branch" },
+    { x: "89.8%", y: "31.2%", delay: "1.4s", tier: "terminal" },
+    { x: "62.2%", y: "64.5%", delay: "0.52s", tier: "branch" },
+    { x: "79.2%", y: "73.2%", delay: "1.05s", tier: "branch" },
+    { x: "90%", y: "69.8%", delay: "1.52s", tier: "terminal" },
+  ];
+
+  return (
+    <div className="graph-loader rounded-3xl border border-zinc-800 bg-zinc-900/80 p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Traversing graph</p>
+          <h3 className="mt-1 text-sm font-medium text-zinc-200">Walking outward from a shared cluster into disconnected papers</h3>
+        </div>
+        <div className="text-xs text-zinc-500">124 papers</div>
+      </div>
+
+      <div className="graph-stage">
+        {backgroundNodes.map((node, index) => (
+          <span
+            key={`${node.x}-${node.y}`}
+            className="graph-faint-node"
+            style={
+              {
+                left: node.x,
+                top: node.y,
+                animationDelay: `${index * 180}ms`,
+              }
+            }
+          />
+        ))}
+
+        <svg className="graph-links" viewBox="0 0 1000 320" preserveAspectRatio="none" aria-hidden="true">
+          {backgroundLinks.map((path) => (
+            <path key={path} d={path} />
+          ))}
+        </svg>
+
+        <svg className="graph-links graph-links-active" viewBox="0 0 1000 320" preserveAspectRatio="none" aria-hidden="true">
+          {traversalEdges.map((edge) => (
+            <path
+              key={edge.path}
+              d={edge.path}
+              className={`graph-traversal-line ${edge.side}`}
+              style={{ animationDelay: edge.delay }}
+            />
+          ))}
+        </svg>
+
+        {traversedNodes.map((node, index) => (
+          <span
+            key={`${node.x}-${node.y}-${index}`}
+            className={`graph-active-node ${node.tier}`}
+            style={
+              {
+                left: node.x,
+                top: node.y,
+                animationDelay: node.delay,
+              }
+            }
+          />
+        ))}
+
+        <div className="graph-core" />
+
+        <div className="paper-anchor left">
+          <div className="paper-dot" />
+          <div className="paper-card" aria-hidden="true">
+            <span className="paper-label">Frontier paper</span>
+            <div className="paper-lines">
+              <span className="paper-line paper-line-title" />
+              <span className="paper-line paper-line-medium" />
+              <span className="paper-line paper-line-short" />
+            </div>
+          </div>
+        </div>
+
+        <div className="paper-anchor right">
+          <div className="paper-dot" />
+          <div className="paper-card" aria-hidden="true">
+            <span className="paper-label">Frontier paper</span>
+            <div className="paper-lines">
+              <span className="paper-line paper-line-title" />
+              <span className="paper-line paper-line-medium" />
+              <span className="paper-line paper-line-short" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const agent = useAgent({ agent: "ideator", name: sessionId });
   const { messages, input, handleInputChange, handleSubmit, append, status, clearHistory } =
@@ -80,13 +225,7 @@ export function App() {
           </div>
         ))}
 
-        {isStreaming && messages.at(-1)?.role !== "assistant" && (
-          <div className="flex gap-1.5 py-2">
-            <span className="w-2 h-2 bg-zinc-600 rounded-full animate-bounce [animation-delay:0ms]" />
-            <span className="w-2 h-2 bg-zinc-600 rounded-full animate-bounce [animation-delay:150ms]" />
-            <span className="w-2 h-2 bg-zinc-600 rounded-full animate-bounce [animation-delay:300ms]" />
-          </div>
-        )}
+        {isStreaming && messages.at(-1)?.role !== "assistant" && <GraphLoading />}
       </div>
 
       <form
