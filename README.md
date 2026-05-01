@@ -57,3 +57,27 @@ See `docs/ROADMAP.md` for what comes next.
 - Every claim is attributed.
 - Contradictions between sources get a `CONTRADICTION` block, not silent reconciliation.
 - The `kb/SCHEMA.md` file is the source of truth for article format. Read it before adding to the KB.
+
+## Neo4j sync
+
+The local Python pipeline already emits a typed property graph under each analysis date folder:
+
+- `graph/nodes.jsonl`
+- `graph/edges.jsonl`
+- `graph/graph.graphml`
+
+To push that graph into Neo4j Community via the HTTP Query API:
+
+```bash
+python scripts/sync_graph_to_neo4j.py \
+  --date-dir ./cybersec-papers/2026-04-17_to_2026-04-30 \
+  --neo4j-url http://localhost:7474 \
+  --neo4j-username neo4j \
+  --neo4j-password '...'
+```
+
+Environment variables are also supported: `NEO4J_URL`, `NEO4J_USERNAME`,
+`NEO4J_PASSWORD`, `NEO4J_DATABASE`.
+
+See [docs/neo4j-sync.md](docs/neo4j-sync.md) for implementation details and
+operational notes.
