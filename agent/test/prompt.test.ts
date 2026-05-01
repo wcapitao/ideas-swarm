@@ -1,18 +1,33 @@
-import { describe, it, expect } from "vitest";
-import { buildSystemPrompt, buildIdeaPrompt } from "~/prompt";
+import { describe, expect, it } from "vitest";
+import { buildIdeaPrompt, buildSystemPrompt } from "~/prompt";
 import type { PaperAnalysis } from "~/schema";
 
 function makePaper(overrides: Partial<PaperAnalysis> & { paper_id: string }): PaperAnalysis {
 	return {
 		tags: ["tag-a", "tag-b", "tag-c", "tag-d", "tag-e"],
 		categories: { primary: "cs.AI", secondary: [] },
-		classification: { research_type: "empirical", contribution_type: [], maturity: "preprint", domain: "AI" },
+		classification: {
+			research_type: "empirical",
+			contribution_type: [],
+			maturity: "preprint",
+			domain: "AI",
+		},
 		topic: { what: "Does X.", how: "Via Y.", why_matters: "Because Z." },
 		characteristics: [],
 		applicability: { good_for: ["A"], not_for: ["B"], requires: ["C"] },
 		novelty: ["First to do X"],
 		open_problems: ["How to scale X"],
-		_meta: { analyzed_at: "", model: "", input_kind: "", input_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, latency_s: 0, finish_reason: "" },
+		_meta: {
+			analyzed_at: "",
+			model: "",
+			input_kind: "",
+			input_chars: 0,
+			prompt_tokens: 0,
+			completion_tokens: 0,
+			total_tokens: 0,
+			latency_s: 0,
+			finish_reason: "",
+		},
 		...overrides,
 	};
 }

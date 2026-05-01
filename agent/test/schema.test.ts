@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { PaperAnalysisSchema, IdeaCardSchema } from "~/schema";
+import { describe, expect, it } from "vitest";
+import { IdeaCardSchema, PaperAnalysisSchema } from "~/schema";
 
 describe("PaperAnalysisSchema", () => {
 	it("accepts a valid paper analysis with doi ID", () => {
@@ -61,13 +61,28 @@ describe("PaperAnalysisSchema", () => {
 			paper_id: id,
 			tags: ["a", "b", "c", "d"],
 			categories: { primary: "x", secondary: [] },
-			classification: { research_type: "empirical", contribution_type: [], maturity: "preprint", domain: "test" },
+			classification: {
+				research_type: "empirical",
+				contribution_type: [],
+				maturity: "preprint",
+				domain: "test",
+			},
 			topic: { what: "x", how: "y", why_matters: "z" },
 			characteristics: [],
 			applicability: { good_for: [], not_for: [], requires: [] },
 			novelty: [],
 			open_problems: [],
-			_meta: { analyzed_at: "", model: "", input_kind: "", input_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, latency_s: 0, finish_reason: "" },
+			_meta: {
+				analyzed_at: "",
+				model: "",
+				input_kind: "",
+				input_chars: 0,
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+				latency_s: 0,
+				finish_reason: "",
+			},
 		});
 		expect(PaperAnalysisSchema.safeParse(makeMinimal("pmid:12345678")).success).toBe(true);
 		expect(PaperAnalysisSchema.safeParse(makeMinimal("text:beaumont-1833")).success).toBe(true);
@@ -80,13 +95,28 @@ describe("PaperAnalysisSchema", () => {
 			paper_id: "unknown:12345",
 			tags: ["a", "b", "c", "d"],
 			categories: { primary: "x", secondary: [] },
-			classification: { research_type: "empirical", contribution_type: [], maturity: "preprint", domain: "test" },
+			classification: {
+				research_type: "empirical",
+				contribution_type: [],
+				maturity: "preprint",
+				domain: "test",
+			},
 			topic: { what: "x", how: "y", why_matters: "z" },
 			characteristics: [],
 			applicability: { good_for: [], not_for: [], requires: [] },
 			novelty: [],
 			open_problems: [],
-			_meta: { analyzed_at: "", model: "", input_kind: "", input_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, latency_s: 0, finish_reason: "" },
+			_meta: {
+				analyzed_at: "",
+				model: "",
+				input_kind: "",
+				input_chars: 0,
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+				latency_s: 0,
+				finish_reason: "",
+			},
 		};
 		const result = PaperAnalysisSchema.safeParse(invalid);
 		expect(result.success).toBe(false);
@@ -97,25 +127,42 @@ describe("PaperAnalysisSchema", () => {
 			paper_id: "doi:10.1234/test",
 			tags: ["a", "b", "c", "d"],
 			categories: { primary: "x", secondary: [] },
-			classification: { research_type: "empirical", contribution_type: [], maturity: "preprint", domain: "test" },
+			classification: {
+				research_type: "empirical",
+				contribution_type: [],
+				maturity: "preprint",
+				domain: "test",
+			},
 			topic: { what: "x", how: "y", why_matters: "z" },
-			characteristics: [{
-				dimension: "test",
-				what_it_measures: "test",
-				unit: "",
-				direction: "higher_is_better",
-				value: "qualitative result",
-				value_numeric: null,
-				value_class: "qualitative-strong",
-				vs_baseline: "none",
-				evidence: "observation",
-				confidence: "high",
-				context: "lab setting",
-			}],
+			characteristics: [
+				{
+					dimension: "test",
+					what_it_measures: "test",
+					unit: "",
+					direction: "higher_is_better",
+					value: "qualitative result",
+					value_numeric: null,
+					value_class: "qualitative-strong",
+					vs_baseline: "none",
+					evidence: "observation",
+					confidence: "high",
+					context: "lab setting",
+				},
+			],
 			applicability: { good_for: [], not_for: [], requires: [] },
 			novelty: [],
 			open_problems: [],
-			_meta: { analyzed_at: "", model: "", input_kind: "", input_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, latency_s: 0, finish_reason: "" },
+			_meta: {
+				analyzed_at: "",
+				model: "",
+				input_kind: "",
+				input_chars: 0,
+				prompt_tokens: 0,
+				completion_tokens: 0,
+				total_tokens: 0,
+				latency_s: 0,
+				finish_reason: "",
+			},
 		};
 		const result = PaperAnalysisSchema.safeParse(withNull);
 		expect(result.success).toBe(true);

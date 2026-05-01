@@ -46,7 +46,11 @@ ${paper.open_problems.map((p) => `- ${p}`).join("\n")}
 **Requires:** ${paper.applicability.requires.join(", ")}`;
 }
 
-export function buildIdeaPrompt(userTopic: string, paperA: PaperAnalysis, paperB: PaperAnalysis): string {
+export function buildIdeaPrompt(
+	userTopic: string,
+	paperA: PaperAnalysis,
+	paperB: PaperAnalysis,
+): string {
 	return `# User's Problem / Topic
 
 ${userTopic}

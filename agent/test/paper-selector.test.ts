@@ -17,7 +17,17 @@ function makePaper(overrides: Partial<PaperAnalysis> & { paper_id: string }): Pa
 		applicability: { good_for: [], not_for: [], requires: [] },
 		novelty: [],
 		open_problems: [],
-		_meta: { analyzed_at: "", model: "", input_kind: "", input_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, latency_s: 0, finish_reason: "" },
+		_meta: {
+			analyzed_at: "",
+			model: "",
+			input_kind: "",
+			input_chars: 0,
+			prompt_tokens: 0,
+			completion_tokens: 0,
+			total_tokens: 0,
+			latency_s: 0,
+			finish_reason: "",
+		},
 		...overrides,
 	};
 }

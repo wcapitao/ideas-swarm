@@ -1,13 +1,13 @@
 import { PaperAnalysisSchema } from "~/schema";
 import type { PaperAnalysis } from "~/schema";
 
-import paper0 from "../../kb/raw/gastritis/marshall-warren-1984-curved-bacilli.json";
-import paper1 from "../../kb/raw/gastritis/fellenius-1981-ppi-mechanism.json";
 import paper2 from "../../kb/raw/gastritis/cheney-1950-vitamin-u.json";
-import paper3 from "../../kb/raw/gastritis/ford-2020-eradication-cancer-prevention.json";
-import paper4 from "../../kb/raw/gastritis/nanjundaiah-2011-ginger-gastroprotection.json";
 import paper5 from "../../kb/raw/gastritis/fasano-2020-zonulin-leaky-gut.json";
+import paper1 from "../../kb/raw/gastritis/fellenius-1981-ppi-mechanism.json";
+import paper3 from "../../kb/raw/gastritis/ford-2020-eradication-cancer-prevention.json";
 import paper6 from "../../kb/raw/gastritis/he-2025-acupuncture-chronic-gastritis.json";
+import paper0 from "../../kb/raw/gastritis/marshall-warren-1984-curved-bacilli.json";
+import paper4 from "../../kb/raw/gastritis/nanjundaiah-2011-ginger-gastroprotection.json";
 import paper7 from "../../kb/raw/gastritis/park-2020-cheonwangbosim-dan-hpylori.json";
 import paper8 from "../../kb/raw/gastritis/sipponen-maaroos-2015-chronic-gastritis.json";
 import paper9 from "../../kb/raw/gastritis/tan-2000-voacanga-africana-anti-ulcer.json";
