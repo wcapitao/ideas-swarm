@@ -21,6 +21,10 @@ This directory holds the project's specialist suite for building Cloudflare Agen
 
 ⭐ = elevated to first-class per project decision (2026-04-30). Tests + evals are not optional.
 
+### Shipped Worker (`agent/`)
+
+In-tree runtime: one **`IdeatorAgent`** Durable Object plus inline **`evaluator.ts`** (adversarial second pass). Operational quickstart: **`agent/README.md`**. MVP spec: **`docs/superpowers/specs/2026-05-01-mvp-ideator-design.md`**. If a research brief or template in **`docs/research/`** differs on binding names (`AGENT` vs `IDEATOR`), **`agent/wrangler.jsonc`** wins.
+
 ## Typical lifecycle
 
 ```

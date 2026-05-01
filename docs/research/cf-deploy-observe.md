@@ -2,6 +2,21 @@
 
 > Audience: senior engineers building Cloudflare Agents (Durable Object–backed agents using `@cloudflare/agents`) who need to ship to production with the right observability, secrets, CI/CD, and migration discipline. Every claim is cited with the source URL it was extracted from.
 
+## 0. ai-ideator `agent/` Worker (this repository)
+
+The live MVP lives under **`agent/`** (not the large annotated `wrangler.jsonc` in §1 — that block is a production *template*).
+
+| Field | Value in this repo |
+|------|---------------------|
+| Wrangler file | `agent/wrangler.jsonc` |
+| Worker `name` | `ai-ideator` |
+| `main` | `src/index.ts` |
+| DO binding `name` | **`IDEATOR`** (→ `env.IDEATOR`); class **`IdeatorAgent`** |
+| Secrets (typical) | `DEEPSEEK_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` (see **`agent/README.md`**) |
+| LLM path | DeepSeek via **AI Gateway**; second pass per idea in **`src/evaluator.ts`** (not a separate DO) |
+
+CI does **not** auto-deploy this Worker on git push; use **`npm run deploy`** from **`agent/`**, or wire a GitHub Actions → Wrangler job yourself.
+
 ---
 
 ## 1. Reference `wrangler.jsonc` for an Agent (annotated)

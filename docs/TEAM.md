@@ -49,6 +49,8 @@
 
 ### Phase 4: Evaluator
 
+The Workers MVP ships **`agent/src/evaluator.ts`** — one **adversarial DeepSeek** pass per idea (Zod **`EvalResult`**, markdown **`### Evaluation`**). That **previews self-criticism** but **is not** Phase 4 (no EvaluatorCouncil, golden harness, or multi-judge consensus). Phase 4 may later subsume or sit beside this module.
+
 - Design the multi-agent evaluation architecture — a council/swarm where multiple evaluator agents independently score each idea.
 - Implement pluggable evaluators grounded in the literature's frameworks:
   - **Novelty** — is this combination surprising? (Boden's criteria, embedding distance from known ideas)
@@ -69,9 +71,9 @@
 
 ### Artifacts owned
 
-- `agent/evaluator/` (Phase 4 agent code, when created)
+- Phase 4 evaluator artifacts (golden set, harness, council DO bindings — **future**); coordinate with **`agent/`** owners when promoting beyond the MVP **`evaluator.ts`** helper.
 - Eval golden set and ablation results
-- Evaluator Durable Object definitions
+- Evaluator Durable Object definitions (when council split lands)
 - ADR for council architecture and consensus mechanism
 
 ### Skills to use
@@ -91,7 +93,8 @@
 
 ### Phase 3: Combiner Agent
 
-- Build the generator-critic loop on **Cloudflare Agents SDK**:
+- **Shipped MVP:** **`IdeatorAgent`** in **`agent/`** — distant paper pairs, parallel idea **`generateText`**, Zod **`IdeaCard`**, parallel **`evaluateIdea`** from **`evaluator.ts`**, assembled markdown + **`streamText`** replay — see **`docs/superpowers/specs/2026-05-01-mvp-ideator-design.md`**.
+- **Full vision:** generator–critic loop on **Cloudflare Agents SDK** with separate concerns:
   - **Retriever** subagent: pulls concept pairs at controlled distance.
   - **Blender** subagent: runs Fauconnier-Turner protocol — generic space, projection, emergent structure, business form.
   - **Critic** subagent: initial quality gate before ideas reach Ivo's evaluation council.
@@ -114,7 +117,7 @@
 
 ### Artifacts owned
 
-- `agent/` (except `agent/evaluator/` — that's Ivo's)
+- **`agent/`** (Worker, single **`IdeatorAgent` DO**, including **`src/evaluator.ts`** MVP module)
 - Phase 2 retrieval code (location TBD — likely `agent/retriever/` or `src/ai_ideator/retriever/`)
 - `docs/architecture/`, `docs/adr/`
 - `wrangler.jsonc`, CI/CD config
@@ -131,7 +134,7 @@
 These are the contracts between roles. Each handoff has a defined artifact and format.
 
 ```
-Florean ──────────────────────────────────────── Wilson ──────────────── Ivo
+Florian ──────────────────────────────────────── Wilson ──────────────── Ivo
                                                     │                      │
 Phase 0: kb/wiki/*.md  ──→  Phase 2: embeddings    │                      │
 Phase 1: concepts.jsonl ──→  Phase 2: indexing      │                      │
@@ -144,8 +147,8 @@ Phase 1: concepts.jsonl ──→  Phase 2: indexing      │                   
 
 | From → To | Artifact | Format | Contract |
 |-----------|----------|--------|----------|
-| Florean → Wilson | Wiki articles | Markdown per `kb/SCHEMA.md` | Frontmatter valid, tier assigned, all claims cited |
-| Florean → Wilson | Concept records | `concepts.jsonl`, one JSON per line | Schema: `{id, name, definition, parent_concepts, related_concepts, sources[]}` |
+| Florian → Wilson | Wiki articles | Markdown per `kb/SCHEMA.md` | Frontmatter valid, tier assigned, all claims cited |
+| Florian → Wilson | Concept records | `concepts.jsonl`, one JSON per line | Schema: `{id, name, definition, parent_concepts, related_concepts, sources[]}` |
 | Wilson → Ivo | Raw idea blends | Structured JSON (Zod schema TBD) | Each blend includes `inputs`, `generic_space`, `blend`, `provenance` |
 | Ivo → Wilson | Scored ideas | Structured JSON with scores | Each score: `{novelty, utility, surprise, feasibility}` ∈ [0,1] + qualitative rationale |
 
@@ -164,10 +167,10 @@ Phase 1: concepts.jsonl ──→  Phase 2: indexing      │                   
 
 | Decision | Owner | Consulted |
 |----------|-------|-----------|
-| KB schema changes | Florean | Wilson |
-| Concept granularity | Florean | Wilson, Ivo |
+| KB schema changes | Florian | Wilson |
+| Concept granularity | Florian | Wilson, Ivo |
 | Agent architecture (combiner) | Wilson | Ivo |
-| Evaluation framework & scoring | Ivo | Wilson, Florean |
+| Evaluation framework & scoring | Ivo | Wilson, Florian |
 | Cross-phase API contracts | Wilson | All |
 | Infrastructure & deploy | Wilson | — |
 | UI/UX | Wilson | — |

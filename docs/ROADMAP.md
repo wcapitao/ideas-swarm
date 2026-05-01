@@ -43,21 +43,25 @@
 
 ## Phase 3 — Combiner Agent
 
-**Goal:** Generator-critic loop using Claude Agent SDK that turns concept pairs into structured blends.
+**Workers MVP (`agent/`, live):** A single **`IdeatorAgent`** Durable Object uses distant paper pairs and parallel DeepSeek calls (via AI Gateway) to emit validated idea cards, then optional parallel **adversarial evaluation** (`src/evaluator.ts`) appended to each card. One DO, no GoalSession graph — validates combine + critique before the full retrieval stack exists.
 
-**Architecture (preliminary):**
+**Goal (full vision):** Generator–critic loop on **Cloudflare Agents SDK** that turns retrieved concept pairs into structured blends (not the Claude-only stack).
+
+**Architecture (preliminary — full system):**
 - **Retriever** (subagent): pulls concept pairs at controlled distance.
 - **Blender** (subagent): runs the Fauconnier-Turner protocol — generic space, projection, emergent structure, business form.
 - **Critic** (subagent): scores against novelty/utility/surprise/feasibility; routes back to Blender if below threshold.
 - **Orchestrator**: budgets, logs, persists the structured output.
 
-Validate with `agent-sdk-architect` skill before coding.
+Shape new DOs/workflows with **`cf-agent-architect`** (not Anthropic `agent-sdk-*` skills).
 
 ---
 
 ## Phase 4 — Evaluator
 
 **Goal:** Quantitative scoring against the literature's frameworks (Boden's criteria, Ritchie's empirical criteria, Wiggins' CSF).
+
+The MVP **`evaluator.ts`** pass (single adversarial DeepSeek judge + Zod **`EvalResult`**) **does not satisfy** Phase 4; it previews self-criticism in the UI only.
 
 **Deliverables:**
 - Pluggable evaluators (LLM-judge, embedding-distance, retrieval-grounded factuality)
@@ -67,6 +71,8 @@ Validate with `agent-sdk-architect` skill before coding.
 ---
 
 ## Phase 5 — Interface
+
+**MVP groundwork:** Cloudflare **`agent/`** Worker + **`IdeatorAgent`** exposes the realtime agent route for **`useAgentChat`** when a client connects; fuller CLI/API/product UI remains open.
 
 **Goal:** Make it usable. CLI first, then API, then (maybe) UI.
 

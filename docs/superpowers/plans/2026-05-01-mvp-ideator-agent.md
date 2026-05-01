@@ -1,5 +1,7 @@
 # MVP Ideator Agent — Implementation Plan
 
+> **Stale checklist:** Was written before the merged MVP landed. Repo now uses **`papers.ts`** + **`kb/raw/gastritis/`**, **`ai` v6**, **`IdeatorAgent`**, **`evaluator.ts`**, and **`EvalResult`** — file map below still mentions **`agent/data/papers`** / **`frontend/`** / **`ai` v4** in places. Prefer **`docs/superpowers/specs/2026-05-01-mvp-ideator-design.md`** and **`agent/README.md`** as the maintained contract before executing steps verbatim.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a single Cloudflare Workers agent that takes a user's topic, selects 4 maximally-distant arXiv paper pairs, generates 4 novel ideas via DeepSeek, and streams them as structured cards to a chat UI.

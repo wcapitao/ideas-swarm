@@ -1,5 +1,7 @@
 # MVP Ideator Agent — Session Handoff
 
+> **Stale / historical (2026-05-01+):** Describes a mid-build snapshot. **IdeatorAgent**, **`index.ts`**, **`evaluator.ts`**, and full tests have landed; task table below is **not** current. Use **`docs/superpowers/specs/2026-05-01-mvp-ideator-design.md`**, **`agent/README.md`**, and source as truth.
+
 > **Date:** 2026-05-01
 > **Branch:** `main` (worktree `feature/mvp-ideator-agent` was merged mid-session via PR #1)
 > **Plan file:** `docs/superpowers/plans/2026-05-01-mvp-ideator-agent.md`
@@ -18,20 +20,15 @@
 | Task 5 | Paper data + loader | **Done** | `f78600b` |
 | Task 8 | Vitest config (Workers pool + `~` alias) | **Done** | `f21dad7` |
 
-**16 tests passing** across 3 test files (`schema`, `paper-selector`, `prompt`).
+**16 tests passing** across 3 test files (`schema`, `paper-selector`, `prompt`). *(Current tree: 24+ tests including `evaluator`, `index`.)*
 
 ---
 
-## What's Left
+## What's Left _(superseded — see banner)_
 
-| Task | Description | Status | Notes |
-|------|-------------|--------|-------|
-| Task 6 | IdeatorAgent Durable Object (`ideator-agent.ts`) | **Not started** | Core agent — `AIChatAgent` with `onChatMessage`, uses DeepSeek via AI Gateway |
-| Task 7 | Worker Entrypoint (`index.ts`) | **Not started** | `routeAgentRequest` + static serving. **UI deferred** — another dev handles it. Just build the routing entrypoint. |
-| Task 9 | Environment Setup & Local Dev Verification | **Not started** | `.dev.vars`, lint, typecheck, test pass |
-| Task 10 | Final Integration Test & Cleanup | **Not started** | Full suite run, manual e2e |
+Originally outstanding: Tasks 6–7 (Ideator **`DO`**, Worker **`index`**), verification, frontend. Those are **complete** in the current repo, plus **`src/evaluator.ts`** adversarial pass and **`evaluator.test.ts`**.
 
-### Dependency order: Task 6 → Task 7 → Task 9 → Task 10
+Do **not** use **`docs/superpowers/plans/2026-05-01-mvp-ideator-agent.md`** as an execution checklist without diffing against source.
 
 ---
 
@@ -52,30 +49,15 @@
 
 ---
 
-## Files Created/Modified
+## Files snapshot _(partial — see `agent/README.md`)_
 
-```
-agent/
-├── src/
-│   ├── schema.ts          # Zod schemas: PaperAnalysis, IdeaCard, Characteristic, Meta
-│   ├── paper-selector.ts  # jaccardDistance, buildFeatureSet, selectPairs
-│   ├── prompt.ts          # buildSystemPrompt, buildIdeaPrompt
-│   └── papers.ts          # loadPapers() — imports 10 gastritis JSONs, validates via Zod
-├── test/
-│   ├── schema.test.ts     # 6 tests
-│   ├── paper-selector.test.ts  # 7 tests
-│   └── prompt.test.ts     # 3 tests
-├── public/
-│   └── .gitkeep
-├── package.json           # Added: @ai-sdk/openai-compatible, react, react-dom, tailwindcss, vite
-├── tsconfig.json          # Added: DOM libs, frontend/**/*.tsx include
-├── vitest.config.ts       # Workers pool, ~ alias
-└── wrangler.jsonc         # Simplified: single IdeatorAgent DO, no D1/R2/Vectorize
-```
+Incremental mid-build listing only. Current tree adds **`ideator-agent.ts`**, **`index.ts`**, **`evaluator.ts`**, **`test/evaluator.test.ts`**, **`migrations/`**, and **`EvalResult`** in **`schema.ts`**.
 
 ---
 
-## How to Continue
+## How to Continue _(historical)_
+
+Prefer reading **`agent/README.md`** and running **`npm test`** locally. Archived prompt:
 
 ```bash
 # In a new Claude Code session:
@@ -87,7 +69,7 @@ cd /home/athena/ai-ideator
 
 ---
 
-## Notes for Task 6 Implementation
+## Notes for Task 6 Implementation _(historical)_
 
 The `ideator-agent.ts` from the plan needs one update: the `IdeaCardSchema` paper IDs now use `doi:`/`pmid:`/`text:`/`isbn:` formats, not `arxiv:`. The plan's code should work as-is since the regex was updated in the schema, but verify the DeepSeek prompt instructs the LLM to use the correct paper IDs from the input.
 

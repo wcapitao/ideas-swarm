@@ -83,3 +83,17 @@ export const IdeaCardSchema = z.object({
 });
 
 export type IdeaCard = z.infer<typeof IdeaCardSchema>;
+
+export const EvalResultSchema = z.object({
+	evidence_gaps: z.array(z.string()),
+	safety_flags: z.array(z.string()),
+	adjusted_scores: z.object({
+		novelty: z.number().int().min(1).max(10),
+		feasibility: z.number().int().min(1).max(10),
+		impact: z.number().int().min(1).max(10),
+	}),
+	confidence: z.enum(["promising", "needs_validation", "risky"]),
+	one_liner: z.string(),
+});
+
+export type EvalResult = z.infer<typeof EvalResultSchema>;

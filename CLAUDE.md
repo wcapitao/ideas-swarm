@@ -13,9 +13,11 @@ Build an agentic LLM workflow that generates novel ideas via **combinatorial cre
 | 0 | Knowledge base — arXiv papers, indexed and summarized | **active** |
 | 1 | Concept ontology — extract atomic "concepts" from KB articles | not started |
 | 2 | Retrieval layer — embedding + symbolic indexing of concepts | not started |
-| 3 | Combiner agent — generator/critic loop on **Cloudflare Agents SDK** (TypeScript, Workers + Durable Objects) | not started |
-| 4 | Evaluator — novelty + utility + surprise scoring | not started |
-| 5 | UI / API — interactive ideation interface | not started |
+| 3 | Combiner agent — generator/critic loop on **Cloudflare Agents SDK** (TypeScript, Workers + Durable Objects) | **MVP live** — single `IdeatorAgent` in `agent/` (parallel idea generation + paper-pair selection). Full multi-DO combiner / graph-backed loop not built. |
+| 4 | Evaluator — novelty + utility + surprise scoring (council / harness / ablations) | not started |
+| 5 | UI / API — interactive ideation interface | **partial** — Worker agent + routing live; richer CLI/API/product UI still open |
+
+**MVP nuance:** `IdeatorAgent` also runs a **second parallel LLM pass per idea** (`agent/src/evaluator.ts`) — adversarial markdown on each card (gaps, flags, adjusted scores). That **does not replace** Phase 4 (multi-judge council, golden harness, pluggable metrics); it is an inline demo of self-criticism in one DO.
 
 ## Knowledge Base (`kb/`) rules
 

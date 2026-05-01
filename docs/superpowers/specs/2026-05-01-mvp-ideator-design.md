@@ -1,156 +1,164 @@
 # MVP Ideator Agent — Design Spec
 
-**Date:** 2026-05-01
-**Status:** Approved
+**Date:** 2026-05-01  
+**Status:** Approved (updated 2026-05-01 — adversarial eval pass)  
 **Scope:** Replaces multi-phase architecture for MVP. Full plan preserved in `docs/architecture/agentic-ideation-system.md` for later.
 
 ## Mission
 
-A single Cloudflare Workers agent that takes a user's problem or topic, selects 4 maximally-distant pairs of arXiv papers from a pre-seeded corpus, and generates 4 novel ideas by combining insights from each pair. Ideas are streamed to a chat UI as structured cards with self-scores.
+A single Cloudflare Workers **Durable Object** — **`IdeatorAgent`** (`AIChatAgent`) — takes a user's problem or topic, selects maximally distant paper pairs from a pre-seeded corpus, generates structured idea cards (**parallel DeepSeek calls**), runs a **parallel adversarial evaluation pass** per validated card (evidence gaps, safety flags, adjusted scores), composes **one markdown document**, then **streams** it through the Agents chat pipeline so `AIChatAgent` persists the assistant message correctly.
+
+There is **one** exported agent class (`IdeatorAgent`); evaluation is **`agent/src/evaluator.ts`** (prompts + `generateText`), not a second DO — see **`docs/architecture/agentic-ideation-system.md`** for the eventual multi-agent council.
 
 ## Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Runtime | Cloudflare Workers + Durable Objects | Aligns with full architecture direction |
-| Agent pattern | Single `AIChatAgent` DO, parallel LLM calls | Fast, simple — no multi-DO coordination for MVP |
-| Paper source | Pre-analyzed JSONs bundled as static assets | Offline analysis via existing Python pipeline, agent only consumes |
-| Paper selection | Maximally distant pairs (Jaccard distance on tags/categories/domain) | Forces cross-domain bisociation |
-| LLM | DeepSeek via AI Gateway | Single provider, key already available |
-| Frontend | `agents/react` chat UI with `useAgentChat` | WebSocket + hibernation, matches full architecture |
-| Output format | Structured idea cards with novelty/feasibility/impact scores (1-10) | Previews Phase 4 evaluator |
+| Agent pattern | Single `AIChatAgent` DO | No multi-DO coordination for MVP; eval is an extra **`generateText` batch** in-process |
+| Paper source | `PaperAnalysis` JSON imported from **`kb/raw/gastritis/`** (bundled build) | Real corpus; avoids duplicating blobs under `agent/data/` |
+| Paper selection | Maximally distant pairs (Jaccard on tags + primary category + domain) | Forces cross-domain bisociation |
+| LLM | DeepSeek via **AI Gateway** (`@ai-sdk/openai-compatible` + `ai` package) | Single provider; logging / rate limits at the edge |
+| Frontend | Intended: `agents/react` + **`useAgentChat`** over WebSocket | Chat UI deps present; **`agent/public`** is placeholders until SPA is wired |
+| Idea output | `IdeaCard` — novelty / feasibility / impact self-scores (1–10) | Generator's first-pass judgment |
+| Eval output | `EvalResult` — gaps, flags, **`adjusted_scores`**, **confidence**, one-liner | Second-pass stress-test; **`### Evaluation`** in markdown |
+| Phase 4 | **Out of scope** | No EvaluatorCouncil, no golden harness, no multi-judge consensus — MVP only surfaces one critic prompt |
 | Auth | None | MVP, public access |
-| Conversation state | Stateless — each request independent | No multi-turn follow-up for MVP |
+| Conversation state | Stateless per logical request | Persistent **chat transcripts** remain an `AIChatAgent` concern |
 
 ## Data Layer
 
 ### Paper Corpus
 
-Pre-analyzed paper JSONs stored at `agent/data/papers/`. Each file follows the `PaperAnalysis` schema (`docs/architecture/paper-analysis-schema.json`), produced offline by the Python analyzer pipeline (`scripts/analyze_papers.py` with MiniMax M2.7).
+Pre-analyzed paper JSON follows **`PaperAnalysis`** in `agent/src/schema.ts` (see `docs/architecture/paper-analysis-schema.json`).
 
-The agent loads the full corpus into memory on first request. Corpus is small enough (tens of papers for MVP) that this is fine.
+**Loader:** `agent/src/papers.ts` statically imports ten diverse gastritis **`kb/raw/gastritis/*.json`** files. The corpus is cached in module scope after first `loadPapers()`.
 
 ### Paper Selection Algorithm
 
-1. Build a feature set per paper: union of `tags` + `categories.primary` + `classification.domain`.
-2. Compute pairwise Jaccard distance: `1 - |A ∩ B| / |A ∪ B|`.
-3. Greedily select 4 pairs with highest distance, ensuring no paper appears in more than 2 pairs.
+1. Build a feature set per paper: union of **`tags`** + **`categories.primary`** + **`classification.domain`**.
+2. Compute pairwise **Jaccard distance**: `1 - |A ∩ B| / |A ∪ B|`.
+3. Greedily select up to four high-distance pairs, each paper at most twice.
 
-Minimum corpus size: 8 papers (to guarantee 4 pairs with no paper appearing more than twice). If the corpus is smaller, reduce the number of ideas proportionally.
-
-This is pure math — no LLM involved (Stella Principle).
+Pure code — **Stella Principle** (no LLM).
 
 ## Agent Architecture
 
 ```
 User (browser)
-  ↕ WebSocket (agents/react, useAgentChat)
-IdeatorAgent (AIChatAgent DO)
-  ├── onChatMessage(msg)
-  │     1. Parse user request (topic/problem)
-  │     2. Select 4 maximally-distant paper pairs
-  │     3. Fire 4 parallel DeepSeek calls via AI Gateway
-  │     4. Stream each idea card back as a chat message
-  └── Paper corpus loaded in-memory from bundled JSON
+  ↔ WebSocket (target: useAgentChat → AIChatAgent)
+IdeatorAgent (single AIChatAgent DO)
+  onChatMessage
+    1. Extract topic from last user message
+    2. loadPapers(); selectPairs()  — deterministic
+    3. Parallel generateText × N — idea JSON per pair (idea system + buildIdeaPrompt)
+    4. Parse + IdeaCardSchema.safeParse — drop malformed
+    5. Parallel generateText × M (one per valid card) — adversarial eval (evaluator.ts)
+    6. buildFinalDocument — markdown for all cards (+ optional ### Evaluation)
+    7. streamText — system “reproduce verbatim”; onFinish → framework persistence
 ```
 
-No external storage (D1, KV, R2) for MVP. No authentication. No multi-turn state.
+No D1 / KV / R2 for ideation data in MVP. SQLite DO storage is **Agents SDK** default for chat state, not idea KB.
 
-## Idea Generation
+### Why `streamText` at the end
 
-### LLM Input (per call)
+`generateText` is required to obtain **complete JSON** before Zod validation. The final **`streamText`** step replays pre-built markdown token-by-token so **`AIChatAgent`**'s `onFinish` path matches hook expectations (`ai` v4/v6 bridging is handled with a narrow cast in `ideator-agent.ts`).
 
-The user's topic/problem, plus from both papers in the pair:
-- `topic` (what/how/why_matters)
-- `tags`
-- `novelty` claims
-- `open_problems`
-- `applicability` (good_for/not_for/requires)
+## Idea generation (combiner pass)
 
-### LLM Output (per idea card)
+Same as before: user topic plus both papers’ topic, tags, novelty, open problems, applicability.
+
+### LLM output — `IdeaCard`
 
 ```typescript
 {
   title: string;
-  paper_a: {
-    id: string;       // arxiv:XXXX.XXXXvN
-    insight: string;
-  };
-  paper_b: {
-    id: string;
-    insight: string;
-  };
+  paper_a: { id: string; insight: string };
+  paper_b: { id: string; insight: string };
   combined_idea: string;
   why_novel: string;
-  potential_applications: string[];  // 2-3 items
-  scores: {
-    novelty: number;      // 1-10
-    feasibility: number;  // 1-10
-    impact: number;       // 1-10
-  };
+  potential_applications: string[]; // 1–3 items
+  scores: { novelty: number; feasibility: number; impact: number }; // 1–10 ints
 }
 ```
 
-Validated with Zod on the Worker side. One system prompt instructs DeepSeek as a combinatorial creativity engine. Per-call prompt injects the two papers' analysis data and the user's problem.
+Validated with **`IdeaCardSchema`**. Prompt builders: **`buildSystemPrompt`** (system) and **`buildIdeaPrompt`** (per pair) in **`prompt.ts`**.
 
-### Streaming
+## Evaluation pass (single-critic MVP)
 
-4 LLM calls fire in parallel via `Promise.all`. Each idea streams as a complete chat message once its call resolves. Cards appear out of order — whichever finishes first renders first. Frontend shows 4 skeleton placeholders during loading.
+Implemented in **`agent/src/evaluator.ts`**:
 
-## Frontend
+- **`buildEvalSystemPrompt` / `buildEvalPrompt`** — medical evidence skeptic; insists on **`adjusted_scores`** that reflect evidence, not unchecked copy-paste of self-scores when unsupported.
+- **`parseEvalResult`** — unwrap responses wrapped in fenced **json** code blocks when present; then regex JSON object extraction + **`EvalResultSchema.safeParse`**.
+- **`evaluateIdea(card, env, { abortSignal })`** — one **`generateText`** (cap 512 completion tokens).
 
-Minimal chat interface:
-- `useAgentChat` hook over WebSocket with hibernation.
-- Single page: input bar at bottom, idea cards above.
-- Each card renders: title, paper insights (A & B), combined idea, why novel, applications list, 3 score badges.
-- Cards appear one at a time as parallel calls resolve.
-- Loading: 4 placeholder skeletons.
-- Styling: Tailwind CSS. Clean, minimal. No navigation, no sidebar, no settings.
+### `EvalResult` shape
 
-## Project Structure
+```typescript
+{
+  evidence_gaps: string[];
+  safety_flags: string[];
+  adjusted_scores: {
+    novelty: number; feasibility: number; impact: number; // 1–10 ints
+  };
+  confidence: "promising" | "needs_validation" | "risky";
+  one_liner: string;
+}
+```
+
+On parse failure **`evaluateIdea`** returns **`null`** and **`### Evaluation`** is **omitted** for that card (no synthetic fallback).
+
+## Frontend (target)
+
+Minimal chat UX when connected:
+
+- Input bar + scrollable markdown / card rendering produced by **`formatIdeaCard`** (scores, then evaluation block with verdict emoji and **↑ / ↓ / (= n)** deltas vs self-scores).
+- Loading UX is downstream of **`useAgentChat`**; MVP backend returns **one** streamed assistant blob per user turn (not four independent partial messages).
+
+## Project structure (current)
 
 ```
 agent/
 ├── src/
-│   ├── index.ts              # Worker entrypoint, routes
-│   ├── ideator-agent.ts      # IdeatorAgent (AIChatAgent DO)
-│   ├── paper-selector.ts     # Jaccard distance, pair selection logic
-│   ├── prompt.ts             # System prompt + per-call prompt builder
-│   ├── schema.ts             # Zod schemas (idea card, paper analysis input)
-│   └── types.ts              # Shared TypeScript types
-├── data/
-│   └── papers/               # Pre-analyzed paper JSONs
-├── frontend/
-│   ├── index.html
-│   ├── App.tsx
-│   └── styles.css
+│   ├── index.ts              # Worker fetch — routeAgentRequest<Env>
+│   ├── ideator-agent.ts      # IdeatorAgent DO — full orchestration + markdown
+│   ├── evaluator.ts          # Adversarial eval prompts + generateText + parse
+│   ├── papers.ts             # kb/raw/gastritis imports + PaperAnalysis cache
+│   ├── paper-selector.ts     # Jaccard + greedy pairs
+│   ├── prompt.ts             # Idea generation prompts
+│   └── schema.ts             # Zod: PaperAnalysis, IdeaCard, EvalResult
+├── public/                   # Static assets (Worker `assets.directory`)
 ├── test/
+│   ├── schema.test.ts
 │   ├── paper-selector.test.ts
 │   ├── prompt.test.ts
-│   └── schema.test.ts
+│   ├── evaluator.test.ts
+│   └── index.test.ts
+├── migrations/               # DO SQLite (Agents)
 ├── wrangler.jsonc
 ├── package.json
 ├── tsconfig.json
+├── vitest.config.ts
 └── biome.json
 ```
 
-## Dependencies
+## Dependencies (notable)
 
 | Package | Purpose |
 |---------|---------|
-| `agents` | Cloudflare Agents SDK — AIChatAgent, WebSocket, hibernation |
-| `zod` | LLM response validation |
-| `react` + `react-dom` + `agents/react` | Frontend chat UI |
-| `tailwindcss` | Styling |
-| `vitest` + `@cloudflare/vitest-pool-workers` | Testing |
+| `agents` | `AIChatAgent`, `routeAgentRequest`, WebSocket chat |
+| `ai` | `generateText`, `streamText` |
+| `@ai-sdk/openai-compatible` | DeepSeek through AI Gateway base URL |
+| `zod` | `IdeaCard`, `EvalResult`, `PaperAnalysis` |
+| `vitest` + `@cloudflare/vitest-pool-workers` | Tests |
 | `biome` | Lint/format |
-| `wrangler` | Dev/deploy |
+| `wrangler` | Dev / deploy |
 
-## What This Is Not
+## What this is still not
 
-- Not multi-turn conversation — each request is independent.
-- Not the full architecture — no ConceptForge, no EvaluatorCouncil, no GoalSession, no Neo4j graph, no Vectorize embeddings.
-- Not authenticated — public access.
-- Not production-grade — no observability, no SLOs, no failure recovery beyond AI Gateway retries.
+- Not multi-turn “session ideation UX” scoped for product — each **generation burst** follows the scripted pipeline above; chat transcripts may persist via `AIChatAgent`.
+- Not **ARCH‑001**: no ConceptForge, EvaluatorCouncil, GoalSession split, Neo4j, Vectorize retrieval.
+- Not **Phase 4** scoring rigor — one **LLM critic**, no council, no harness.
+- Not production hardening beyond AI Gateway retries / basic error swallow in eval try/catch.
 
-The full architecture at `docs/architecture/agentic-ideation-system.md` remains the north star. This MVP validates the core loop: select papers, combine, generate ideas.
+The north star stays **`docs/architecture/agentic-ideation-system.md`**. MVP proves: distant pairs → structured blends → visible second opinion on scores.

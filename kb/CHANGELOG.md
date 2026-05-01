@@ -22,4 +22,4 @@
 ### Coming
 - Phase 1: extract atomic concepts from wiki articles into `concepts.jsonl`.
 - Phase 2: embedding store + symbolic index + distance-controlled retriever.
-- Phase 3: Claude Agent SDK combiner with generator/critic loop.
+- Phase 3: Cloudflare Agents SDK combiner MVP in **`agent/`** (`IdeatorAgent` + inline adversarial **`evaluator.ts`**); full multi-DO / graph-backed loop still future.
