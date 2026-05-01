@@ -11,7 +11,7 @@ const sessionId = generateSessionId();
 export function App() {
   const agent = useAgent({ agent: "ideator", name: sessionId });
   const { messages, input, handleInputChange, handleSubmit, append, status, clearHistory } =
-    useAgentChat({ agent, streamProtocol: "text" });
+    useAgentChat({ agent });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const isStreaming = status === "streaming" || status === "submitted";
