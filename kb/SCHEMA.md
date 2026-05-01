@@ -22,8 +22,11 @@ title: "Verbatim title of the work, or canonical concept name"
 authors: "Last, First; Last, First"        # omit for concept articles
 year: 1739                                  # primary publication year; null for concept articles
 type: primary | concept | survey | framework | tool
-domain: foundational-philosophy | computational-creativity | combinatorial-creativity | llm-creativity | agentic-ideation
+domain: foundational-philosophy | computational-creativity | combinatorial-creativity | llm-creativity | agentic-ideation | gastritis-foundations | gastritis-conventional | gastritis-traditional | gastritis-alternative | gastritis-integrative
 tier: T1 | T2 | T3
+paradigm: conventional | tcm | kampo | ayurveda | unani | greco-roman | naturopathy | functional | homeopathy | folk | integrative  # gastritis domains only
+era: ancient | classical | pre-modern | modern | contemporary  # gastritis domains only; ancient (<500 CE), classical (500–1800), pre-modern (1800–1980), modern (1980–2010), contemporary (2010+)
+evidence_level: meta-analysis | rct | cohort | case-series | in-vitro | in-vivo-animal | case-report | expert-opinion | traditional-use | anecdotal  # gastritis domains only
 canonical_url: "https://..."                # DOI, arxiv, plato.stanford.edu, gutenberg.org, …
 retrieved: 2026-04-30                       # date the URL was last verified
 key_concepts:

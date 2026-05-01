@@ -1,11 +1,11 @@
 # Knowledge Base — Master Index
 
-> The KB grounds ai-ideator in 300 years of research on combinatorial creativity. Five domains, 80 articles. Every article cites its source; every domain has its own `INDEX.md`; cross-cutting concepts have their own articles in `combinatorial-creativity/`.
+> The KB grounds ai-ideator in research on combinatorial creativity and gastritis across paradigms. Ten domains, 106 articles. Every article cites its source; every domain has its own `INDEX.md`; cross-cutting concepts have their own articles in `combinatorial-creativity/`.
 
-Last updated: 2026-04-30
-Total articles: 80 (13 foundational + 18 computational + 22 LLM-era + 21 agentic + 6 cross-cutting concepts)
+Last updated: 2026-05-01
+Total articles: 204 (13 foundational + 18 computational + 22 LLM-era + 21 agentic + 6 cross-cutting concepts + 26 gastritis-foundations + 32 gastritis-conventional + 38 gastritis-traditional + 28 gastritis-alternative)
 
-## The five domains
+## Creativity domains
 
 | Domain | What it covers | Articles | INDEX |
 |---|---|---|---|
@@ -14,6 +14,16 @@ Total articles: 80 (13 foundational + 18 computational + 22 LLM-era + 21 agentic
 | **llm-creativity** | 2022–2026 papers on LLM-based ideation, including the anchor paper (Schapiro 2025, arXiv:2509.21043) and the Stanford Si studies that empirically test the field. | 22 | [→](wiki/llm-creativity/INDEX.md) |
 | **agentic-ideation** | Agent patterns and frameworks: ToT, GoT, Self-Refine, Reflexion, multi-agent debate, MoA, ReConcile, AutoGen, CrewAI, LangGraph, Claude Agent SDK, AutoTRIZ. | 21 | [→](wiki/agentic-ideation/INDEX.md) |
 | **combinatorial-creativity** *(cross-cutting)* | Concept articles distilling ideas across the other four domains: bisociation, conceptual blending, remote associates, the three principles, the novelty-utility tradeoff, the four-stage model. | 6 | [→](wiki/combinatorial-creativity/INDEX.md) |
+
+## Gastritis domains
+
+| Domain | What it covers | Articles | INDEX |
+|---|---|---|---|
+| **gastritis-foundations** | History, classification systems, pathophysiology, paradigm shifts, and textbook references — from Hippocrates to the Kyoto consensus. Ancient texts, historical monographs, classification frameworks, and paradigm-shifting discoveries across all medical traditions. | 26 | [→](wiki/gastritis-foundations/INDEX.md) |
+| **gastritis-conventional** | Modern conventional medicine: H. pylori, PPIs, endoscopy, clinical trials. | 32 | [→](wiki/gastritis-conventional/INDEX.md) |
+| **gastritis-traditional** | TCM (herbal formulas + acupuncture), Kampo, Ayurveda, Unani/Persian, Greco-Roman, Korean, African/Latin American folk — traditional system approaches to gastric disease. | 38 | [→](wiki/gastritis-traditional/INDEX.md) |
+| **gastritis-alternative** | Naturopathy (mastic gum, DGL, zinc carnosine, cabbage juice), herbal medicine (curcumin, ginger, aloe, ashwagandha), functional medicine / leaky gut, hypochlorhydria controversy, probiotics, gut-brain axis, homeopathy, diet-based approaches, SIBO, popular books. | 28 | [→](wiki/gastritis-alternative/INDEX.md) |
+| **gastritis-integrative** | Cross-paradigm synthesis, integrative protocols, East-meets-West approaches. | 0 | [→](wiki/gastritis-integrative/INDEX.md) |
 
 ## Master concept index
 
@@ -91,8 +101,8 @@ If you know the **concept** but not the article, look here. Each row points to t
 
 ## Tier distribution
 
-- **T1** (foundational; must-read): 38 articles across 5 domains.
-- **T2** (important context): 23 articles.
+- **T1** (foundational; must-read): 63 articles across 6 domains.
+- **T2** (important context): 30 articles.
 - **T3** (supporting / completist): 6 articles.
 
 T1 entries are flagged in each domain INDEX.md.
