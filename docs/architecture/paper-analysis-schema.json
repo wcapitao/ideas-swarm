@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wcapitao/ai-ideator/docs/architecture/paper-analysis-schema.json",
+  "title": "PaperAnalysis",
+  "description": "Closed JSON Schema for the output of each arXiv paper analysis. One record per paper, produced by the analyzer pipeline (MiniMax M2.7) and validated by the Pydantic model at src/ai_ideator/analyzer/schema.py.",
+  "type": "object",
+  "required": ["paper_id", "tags", "categories", "classification", "topic", "characteristics", "applicability", "novelty", "open_problems", "_meta"],
+  "additionalProperties": false,
+  "properties": {
+    "paper_id": {
+      "type": "string",
+      "description": "Stable identifier. Format: 'arxiv:<id>v<version>' (e.g. 'arxiv:2604.18697v1').",
+      "pattern": "^arxiv:[0-9]{4}\\.[0-9]{4,5}(v[0-9]+)?$"
+    },
+    "tags": {
+      "type": "array",
+      "description": "5-15 lowercase-hyphenated free-form tags summarizing the paper's themes.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "minItems": 5,
+      "maxItems": 15
+    },
+    "categories": {
+      "type": "object",
+      "description": "Primary and secondary arXiv-style categories.",
+      "required": ["primary", "secondary"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "type": "string",
+          "description": "Primary category (e.g. 'cs.AI', 'cs.CL', 'cs.LG')."
+        },
+        "secondary": {
+          "type": "array",
+          "description": "Secondary/cross-listed categories.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "classification": {
+      "$ref": "#/$defs/Classification"
+    },
+    "topic": {
+      "$ref": "#/$defs/Topic"
+    },
+    "characteristics": {
+      "type": "array",
+      "description": "Queryable dimensions the paper exposes. The spine for cross-paper comparison and ranking.",
+      "items": {
+        "$ref": "#/$defs/Characteristic"
+      },
+      "minItems": 1
+    },
+    "applicability": {
+      "$ref": "#/$defs/Applicability"
+    },
+    "novelty": {
+      "type": "array",
+      "description": "Concrete novelty claims. What is genuinely new vs. prior work.",
+      "items": { "type": "string" },
+      "maxItems": 5
+    },
+    "open_problems": {
+      "type": "array",
+      "description": "Limitations, open questions, or future work directions identified in the paper.",
+      "items": { "type": "string" }
+    },
+    "_meta": {
+      "$ref": "#/$defs/Meta"
+    }
+  },
+  "$defs": {
+    "Characteristic": {
+      "title": "Characteristic",
+      "description": "One measurable dimension the paper exposes (e.g. 'attack_success_rate', 'throughput_qps', 'bleu_score'). Dimensions are named freely by the LLM and canonicalized in a separate index step.",
+      "type": "object",
+      "required": ["dimension"],
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "type": "string",
+          "description": "Short canonical name in snake_case (e.g. 'attack_success_rate', 'throughput_qps'). Cross-paper canonical — synonyms are clustered in the index step.",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "what_it_measures": {
+          "type": "string",
+          "default": "",
+          "description": "One sentence: what this dimension represents."
+        },
+        "unit": {
+          "type": "string",
+          "default": "",
+          "description": "Unit of measurement (%, ms, bits, queries, qubits, tokens, etc.) or empty string if dimensionless."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["higher_is_better", "lower_is_better", "neutral", "unknown"],
+          "default": "unknown",
+          "description": "Whether higher values are better, lower are better, or it's context-dependent."
+        },
+        "value": {
+          "type": "string",
+          "default": "",
+          "description": "Best human-readable value as stated in the paper (e.g. '92.4%', '3.2x faster', 'comparable to GPT-4')."
+        },
+        "value_numeric": {
+          "type": ["number", "null"],
+          "default": null,
+          "description": "Numeric value if cleanly extractable from the paper. null when the value is qualitative or parametric."
+        },
+        "value_class": {
+          "type": "string",
+          "enum": ["numeric", "parametric", "qualitative-strong", "qualitative-weak", "asymptotic", ""],
+          "default": "",
+          "description": "Bucket classifying how precise the value is. 'numeric' = exact number; 'parametric' = depends on parameter; 'qualitative-strong' = clear directional claim; 'qualitative-weak' = hedged claim; 'asymptotic' = big-O or limit behavior."
+        },
+        "vs_baseline": {
+          "type": "string",
+          "default": "",
+          "description": "Comparison statement against prior work (e.g. '12pp better than X', 'matches SOTA on Y benchmark')."
+        },
+        "evidence": {
+          "type": "string",
+          "default": "",
+          "description": "How the value is supported: 'theoretical proof', 'benchmark on N tasks', 'ablation study', 'case study', 'human evaluation', etc."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "default": "medium",
+          "description": "Confidence in the claimed value. 'high' = rigorous evaluation, multiple benchmarks; 'medium' = solid but limited evaluation; 'low' = preliminary or anecdotal."
+        },
+        "context": {
+          "type": "string",
+          "default": "",
+          "description": "Conditions/scope under which the value holds (e.g. 'on Llama-3-8B', 'English only', 'in honest-majority setting')."
+        }
+      }
+    },
+    "Topic": {
+      "title": "Topic",
+      "description": "What/how/why framing of the paper's contribution.",
+      "type": "object",
+      "required": ["what", "how", "why_matters"],
+      "additionalProperties": false,
+      "properties": {
+        "what": {
+          "type": "string",
+          "description": "One sentence: what the paper does."
+        },
+        "how": {
+          "type": "string",
+          "description": "One sentence: the technical mechanism or approach."
+        },
+        "why_matters": {
+          "type": "string",
+          "description": "One sentence: why a builder/practitioner should care."
+        }
+      }
+    },
+    "Applicability": {
+      "title": "Applicability",
+      "description": "Use-case suitability and constraints.",
+      "type": "object",
+      "required": ["good_for", "not_for", "requires"],
+      "additionalProperties": false,
+      "properties": {
+        "good_for": {
+          "type": "array",
+          "description": "Use cases where this approach shines.",
+          "items": { "type": "string" },
+          "maxItems": 4
+        },
+        "not_for": {
+          "type": "array",
+          "description": "Cases where it fails, is inappropriate, or doesn't apply.",
+          "items": { "type": "string" },
+          "maxItems": 4
+        },
+        "requires": {
+          "type": "array",
+          "description": "Preconditions, dependencies, or assumptions needed.",
+          "items": { "type": "string" },
+          "maxItems": 4
+        }
+      }
+    },
+    "Classification": {
+      "title": "Classification",
+      "description": "Paper categorization along research-type and maturity axes.",
+      "type": "object",
+      "required": ["research_type", "contribution_type", "maturity", "domain"],
+      "additionalProperties": false,
+      "properties": {
+        "research_type": {
+          "type": "string",
+          "description": "Loose label for the kind of research. Canonicalized in the index step. Common values: 'theoretical', 'empirical', 'systems', 'survey', 'benchmark', 'position'."
+        },
+        "contribution_type": {
+          "type": "array",
+          "description": "What the paper contributes. Common values: 'algorithm', 'benchmark', 'framework', 'dataset', 'model', 'technique', 'tool', 'analysis'.",
+          "items": { "type": "string" }
+        },
+        "maturity": {
+          "type": "string",
+          "description": "Publication stage. Common values: 'preprint', 'workshop', 'conference', 'journal', 'deployed'."
+        },
+        "domain": {
+          "type": "string",
+          "description": "Top-level research subfield (e.g. 'computational creativity', 'NLP', 'multi-agent systems', 'knowledge representation')."
+        }
+      }
+    },
+    "Meta": {
+      "title": "Meta",
+      "description": "Provenance metadata. Populated by the analyzer runner, NOT by the LLM. Records when, how, and at what cost the analysis was produced.",
+      "type": "object",
+      "required": ["analyzed_at", "model", "input_kind", "input_chars", "prompt_tokens", "completion_tokens", "total_tokens", "latency_s", "finish_reason"],
+      "additionalProperties": false,
+      "properties": {
+        "analyzed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp (UTC) when the analysis was produced (e.g. '2026-05-01T12:34:56+00:00')."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier used for the analysis (e.g. 'MiniMax-M2.7')."
+        },
+        "input_kind": {
+          "type": "string",
+          "enum": ["full_text", "abstract_only"],
+          "description": "'full_text' if the analyzer received >2500 chars of paper body; 'abstract_only' otherwise."
+        },
+        "input_chars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Character count of the text sent to the LLM."
+        },
+        "prompt_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of prompt tokens consumed."
+        },
+        "completion_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of completion tokens generated."
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total tokens (prompt + completion)."
+        },
+        "latency_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Wall-clock time for the LLM call in seconds."
+        },
+        "finish_reason": {
+          "type": "string",
+          "description": "LLM finish reason (e.g. 'stop', 'length', 'content_filter')."
+        }
+      }
+    }
+  }
+}
