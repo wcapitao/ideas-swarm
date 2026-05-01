@@ -2,16 +2,16 @@
 
 ## Phase 0 — Knowledge Base (active)
 
-**Goal:** Ground the project in the canonical research. Build a navigable wiki of combinatorial-creativity sources.
+**Goal:** Ground the project in arXiv research. Build a navigable wiki populated exclusively with arXiv papers — the agents will analyze these papers and extract concepts for combinatorial recombination.
 
 **Deliverables:**
 - [ ] 5 domain `INDEX.md` files (foundational-philosophy, computational-creativity, combinatorial-creativity, llm-creativity, agentic-ideation)
-- [ ] 50–80 wiki articles, one per major source, all conforming to `kb/SCHEMA.md`
+- [ ] 50–80 wiki articles sourced exclusively from arXiv papers, all conforming to `kb/SCHEMA.md`
 - [ ] Master `kb/INDEX.md` with concept glossary and cross-domain navigation
 - [ ] At least 20 cross-references (`connections:` blocks) between articles
 - [ ] `docs/CONCEPT.md` — synthesis of the lineage (done)
 
-**Exit criteria:** Any contributor can open `kb/INDEX.md` and within 15 minutes understand what combinatorial creativity is, who said what, and what the LLM-era state of the art looks like.
+**Exit criteria:** Any contributor can open `kb/INDEX.md` and within 15 minutes understand the arXiv-sourced research landscape — what combinatorial creativity is, who said what, and what the LLM-era state of the art looks like.
 
 ---
 

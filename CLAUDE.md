@@ -4,13 +4,13 @@
 
 ## Project mission
 
-Build an agentic LLM workflow that generates business ideas via **combinatorial creativity** — retrieving concepts from a curated knowledge base and recombining them with disciplined evaluation.
+Build an agentic LLM workflow that generates novel ideas via **combinatorial creativity** — analyzing arXiv papers, extracting concepts, and recombining them with disciplined evaluation. The knowledge base is populated **exclusively with arXiv papers**.
 
 ## Phases
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0 | Knowledge base — canonical research, indexed and summarized | **active** |
+| 0 | Knowledge base — arXiv papers, indexed and summarized | **active** |
 | 1 | Concept ontology — extract atomic "concepts" from KB articles | not started |
 | 2 | Retrieval layer — embedding + symbolic indexing of concepts | not started |
 | 3 | Combiner agent — generator/critic loop on **Cloudflare Agents SDK** (TypeScript, Workers + Durable Objects) | not started |

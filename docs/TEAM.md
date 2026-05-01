@@ -16,7 +16,7 @@
 
 ### Phase 0: Knowledge Base (active)
 
-- Source, ingest, and analyze research papers into `kb/raw/`.
+- Source, ingest, and analyze arXiv papers into `kb/raw/`.
 - Write wiki articles in `kb/wiki/` conforming to `kb/SCHEMA.md` — frontmatter, tiering, citations, contradiction blocks.
 - Maintain domain `INDEX.md` files and the master `kb/INDEX.md`.
 - Run the paper analysis pipeline (`scripts/analyze_papers.py`, `scripts/build_graph.py`, etc.).
@@ -34,7 +34,7 @@
 ### Artifacts owned
 
 - `kb/` (entire tree — `raw/`, `wiki/`, all `INDEX.md` files, `SCHEMA.md`)
-- `cybersec-papers/` (ingestion pipeline)
+- `scripts/` (arXiv paper ingestion pipeline)
 - `scripts/analyze_papers.py`, `build_graph.py`, `build_indexes.py`, `finish_analysis.py`, `report.py`
 - `src/ai_ideator/analyzer/`
 - `concepts.jsonl` (Phase 1 output)

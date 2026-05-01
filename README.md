@@ -1,6 +1,6 @@
-# ai-ideator
+# Ideas-Swarm
 
-> An agentic LLM workflow for generating novel business ideas through **combinatorial creativity** — retrieving concepts from a curated knowledge base and recombining them in disciplined, traceable ways.
+> An agentic LLM workflow for generating novel ideas through **combinatorial creativity** — analyzing arXiv papers, extracting concepts, and recombining them in disciplined, traceable ways. The knowledge base is populated exclusively with arXiv papers.
 
 ## The thesis
 
@@ -8,7 +8,7 @@ Creativity is not magic. From Hume to Boden to today's LLM literature, the most 
 
 LLMs are extraordinary at this last operation — projecting two conceptual spaces into a blended space — but they are *unreliable* on their own. They hallucinate, they regress to the mean, and they reward fluency over novelty. The way out is **structure**: a curated concept base, an agentic pipeline that separates divergent from convergent thinking, and an evaluation loop that scores novelty *and* utility.
 
-This project builds that pipeline. The first deliverable is the **knowledge base** that grounds the system — the canon of combinatorial-creativity research, summarized and indexed so downstream agents can reason over it.
+This project builds that pipeline. The first deliverable is the **knowledge base** — a curated collection of arXiv papers on combinatorial creativity and related fields, summarized and indexed so downstream agents can analyze them and reason over extracted concepts.
 
 ## Repository structure
 
@@ -41,7 +41,7 @@ ai-ideator/
 ## Status
 
 **Phase 0 — Knowledge Base** (in progress).
-Building the research foundation. Every reference gets a wiki article with citations, key-concept extraction, and tier classification (T1 = must-read, T2 = important context, T3 = supporting). Each domain has its own `INDEX.md`; `kb/INDEX.md` indexes the indexes.
+Building the research foundation from arXiv papers exclusively. Every paper gets a wiki article with citations, key-concept extraction, and tier classification (T1 = must-read, T2 = important context, T3 = supporting). Each domain has its own `INDEX.md`; `kb/INDEX.md` indexes the indexes.
 
 See `docs/ROADMAP.md` for what comes next.
 
