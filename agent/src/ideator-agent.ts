@@ -218,7 +218,7 @@ export class IdeatorAgent extends AIChatAgent<Env> {
 				// At runtime this is the same JS function — the framework owns and calls it.
 				onFinish: onFinish as unknown as StreamTextOnFinishCallback<ToolSet>,
 			});
-			return result.toUIMessageStreamResponse();
+			return result.toTextStreamResponse();
 		}
 
 		const systemPrompt = buildSystemPrompt();
@@ -273,6 +273,6 @@ export class IdeatorAgent extends AIChatAgent<Env> {
 			onFinish: onFinish as unknown as StreamTextOnFinishCallback<ToolSet>,
 		});
 
-		return streamResult.toUIMessageStreamResponse();
+		return streamResult.toTextStreamResponse();
 	}
 }
