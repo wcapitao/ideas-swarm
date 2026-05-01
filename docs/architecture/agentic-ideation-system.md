@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Document ID** | `ARCH-001` |
-| **Version** | `0.1 (draft for product/engineering review)` |
+| **Version** | `0.2 (Neo4j Community, two-tier knowledge, RELATED_TO edges, open-source mandate)` |
 | **Status** | `Proposed` |
 | **Owner** | modernwinds@gmail.com |
 | **Last updated** | 2026-05-01 |
@@ -123,7 +123,7 @@ This document accepts the original plan's structural choices (graph DB schema, p
 | **D5** | Parameters Agent produces "≥2 groups of parameters" with no contract | A **rubric set** is N≥2 rubrics designed to be **orthogonal by category mix** — one rubric weights `constraint`+`cost` heavily, another `behavior`+`maturity`, another `surprise`+`emergent`. Each rubric runs the full Stages 3–7 loop independently | "Diversification" is only meaningful if the rubrics select different tuples. Orthogonal category weighting forces this; "2 groups, vibes-based" does not. |
 | **D6** | Council "evaluates each of the top 3 ideas of each group" | Each judge is **independent** (no judge sees other scores), aggregation is **median + dispersion**, quorum is configurable, and the loop has a **hard budget cap** (max additional retrieve+merge rounds = 3) | Independence is the entire point of an LLM jury. Without it, you get correlated noise. Budget caps prevent runaway recursion when nothing passes. |
 | **D7** | Combinatory loop runs "dozens, hundreds, or thousands of times" | The loop runs as a **`WorkflowEntrypoint`** with one `step.do` per merge, idempotent on `(goal_id, tuple_hash, method)`, with `step.sleep` between batches to respect AI Gateway budgets | Workflows survive deploys, retry per step, and have automatic durable execution. Sub-agents do not, and an `Agent`'s `schedule()` cannot reliably cap thousands of iterations. |
-| **D8** | Graph DB is Neo4j or Memgraph | **Neo4j Aura (managed)** + **Vectorize as the embedding mirror** for fast KNN inside Workers; Workers call Aura via authenticated HTTP (Bolt-over-HTTPS or REST), with **Hyperdrive for connection pooling**. Lineage and analytics queries run on Aura; vector retrieval runs on Vectorize | Workers cannot hold long-lived TCP connections to a self-hosted graph DB economically. Aura's HTTP API + Vectorize's CF-native KNN gives us both worlds. Avoids splitting embedding storage across two systems. |
+| **D8** | Graph DB is Neo4j or Memgraph | **Neo4j Community Edition (GPLv3, self-hosted on project VPS)** + **Vectorize as the embedding mirror** for fast KNN inside Workers; Workers call Neo4j via Bolt (neo4j-driver supports WebSocket, compatible with Workers) or HTTP API. Lineage, provenance, and hop-distance queries run on Neo4j; vector retrieval runs on Vectorize. **D1 (Cloudflare)** handles relational tables (`eval_results`, `processed_artifacts`, `predictor_training`) that don't need graph semantics | All project dependencies must be open source (OSI-approved). Neo4j Aura is managed/proprietary; Memgraph uses BSL (not OSI). Neo4j Community on the VPS gives full Cypher, zero licensing cost, and acceptable latency from Workers (~50-100ms). Hyperdrive connection pooling remains available for the HTTP path. |
 | **D9** | Provider plurality in council is implicit | **Explicit roster**: DeepSeek (configured as default per `~/.claude/projects/-home-athena-ai-ideator/memory/`), Anthropic Claude, OpenAI GPT, optionally Google Gemini — all routed through one AI Gateway namespace. The roster is configuration, not code | Different providers have different failure correlations; that is the council's value. AIG fallback chains protect against single-vendor outages. |
 | **D10** | "Concepts" in herding/indexing == "Concepts" in graph | Two-tier model: **WikiArticle** (citation, in `kb/wiki/`, conforms to `kb/SCHEMA.md`) ≠ **Concept** (atomic graph node, extracted from one or more wiki articles). One wiki article can yield many concepts; one concept can be supported by many articles | Already implied by `docs/CONCEPT.md` and `docs/ROADMAP.md` Phase 1, but never made explicit in the original ideation plan. Without this distinction, the graph collides citations and atoms and provenance breaks. |
 | **D11** | Provenance only mentioned in passing | A `correlation_id == goal_id` is propagated through every span (DO RPC, Queue message, Workflow step, AIG log, Vectorize query). Final user-facing answer renders the lineage from this | Multi-agent systems are unobservable without correlation IDs. This is a hard requirement, not a nice-to-have. |
@@ -262,18 +262,31 @@ This is the per-agent fill of the six decisions enforced by `cf-agent-architect`
 | Raw fetched artifacts (PDFs, HTML, JSON dumps) | **R2** (`r2://ai-ideator-raw/<topic>/<yyyy-mm>/<sha256>.<ext>`) | Cheap object storage; immutable once written; object-put events drive `ENRICH_QUEUE` |
 | Wiki articles (`kb/wiki/...`) | **GitHub** (the project repo) — written via authored commits from ConceptForge | Wiki articles are reviewable artifacts; they belong in source control. CF KV/R2 would hide them from review. |
 | Concept embeddings | **Vectorize** (1024-dim, cosine; index name `concepts-v1`) | Native Workers KNN; sub-50ms queries inside Workflow steps |
-| Graph (Concept, Combination, Goal, edges, parameters) | **Neo4j Aura** (managed, HTTPS) | Lineage and analytics queries (§1.6 of original spec) need a real graph DB |
+| Graph (Concept, Combination, Goal, edges, parameters) | **Neo4j Community Edition** (GPLv3, self-hosted on project VPS, Bolt/HTTP) | Lineage, hop-distance, and analytics queries need a real graph DB; open-source mandate rules out Aura/Memgraph |
 | Intermediate per-goal state | DO SQLite (inside `GoalSession`) | Survives hibernation; private to the goal |
 | Council scores | **D1** (`eval_results` table) | Relational fits well; CombinatorWorkflow reads via SQL aggregation |
 | LLM call audit log | **AI Gateway logs** + Logpush to R2 | Single source of truth for cost & latency |
 | Per-paper enrichment cache | **KV** keyed by content hash | Fast bail-out on duplicate ingest |
-| Secrets (DeepSeek key, Aura creds, S2 key) | **Workers Secrets** (`wrangler secret put`) | Never in `setState`, never in `.dev.vars` committed |
+| Secrets (DeepSeek key, Neo4j creds, S2 key) | **Workers Secrets** (`wrangler secret put`) | Never in `setState`, never in `.dev.vars` committed |
 
-### 6.2 Why two stores for embeddings (Vectorize) and graph (Aura)
+### 6.2 Why three stores (Neo4j + Vectorize + D1)
 
-Vectorize is fast for "give me top-100 concepts near this query embedding" but it has no edges and no Cypher. Aura has the schema from the original plan but doing vector KNN inside Aura forces all candidate retrieval through an HTTP hop with worse p99 than Vectorize.
+Each store handles what it's best at:
 
-**Resolution:** Vectorize is a denormalized projection of `Concept.embedding`. Source of truth is the Concept node in Aura. ConceptForge upserts both in a single transaction (compensating delete on Vectorize if Aura write fails). Stage 3a queries Vectorize; Stage 3b/c queries Aura. (D8.)
+- **Neo4j Community** (VPS): Graph traversal, hop-distance, lineage, Cypher queries. Source of truth for Concept nodes, edges, and Combinations.
+- **Vectorize** (CF-native): Fast vector KNN for "remote associates" retrieval inside Workers. Denormalized projection of `Concept.embedding`. Sub-50ms queries.
+- **D1** (CF-native): Relational tables (`eval_results`, `processed_artifacts`, `predictor_training`) that need SQL aggregation, not graph semantics.
+
+**Resolution:** Vectorize is a denormalized projection of `Concept.embedding`. Source of truth is the Concept node in Neo4j. ConceptForge upserts both in a single transaction (compensating delete on Vectorize if Neo4j write fails). Stage 3a queries Vectorize; Stage 3b/c queries Neo4j. (D8.)
+
+### 6.2.1 Two-tier knowledge architecture
+
+The KB serves two distinct roles:
+
+- **System knowledge** (creativity theory — the 80 existing articles on Koestler, Boden, Fauconnier-Turner, Mednick, etc.) lives in `kb/wiki/` as markdown. Read by agents at prompt-construction time to inform *how* they blend. Never stored in Neo4j/Vectorize as combinable concepts.
+- **Domain concepts** (medical papers, future cross-domain papers) flow through the enrichment pipeline into Neo4j + Vectorize. These are what the combinatory agents actually combine.
+
+This separation prevents nonsensical combinations like "bisociation + CRISPR" while ensuring the blending methodology is grounded in the literature.
 
 ### 6.3 Bindings (`wrangler.jsonc` — deferred to `cf-agent-deploy-and-observe` for full canonical form)
 
@@ -566,9 +579,21 @@ RawArtifact
 }]──► (WikiArticle)
 
 (WikiArticle) ─[:DERIVED_FROM]──► (RawArtifact)
+
+(Combination) ─[:HAS_INPUT {weight: float}]──► (Concept)
+(Combination) ─[:PRODUCED]──► (Concept)
+(Combination) ─[:FOR_GOAL]──► (Goal)
+
+(Concept) ─[:RELATED_TO {
+     relation_type    : enum {analogous, contrasts, builds_on, requires, treats, enables},
+     confidence       : float,
+     source           : enum {extraction, inferred}   // "extraction" = from paper; "inferred" = from graph patterns
+}]──► (Concept)
 ```
 
 **Primary key on `CITED_FROM`** is `(Concept.id, WikiArticle.id)` — replaying a paper updates rather than duplicates an edge. New citations to existing concepts simply add new edges.
+
+**`RELATED_TO` edges** are extracted during enrichment from the paper's connections, applicability, and open_problems fields. They give the combinatory agents richer traversal paths than hop-distance through Combinations alone. Inspired by OpenTCM's multi-relational approach (He et al. 2025, arXiv:2504.20118) where 10 relationship types across 152k edges enable multi-hop clinical reasoning.
 
 #### Seed-parameter mapping (extraction-time inheritance)
 
@@ -773,7 +798,7 @@ These are unresolved as of v0.1 of this document. Each blocks an implementation 
 1. **Authentication strategy.** External users will eventually need auth. Workers OAuth Provider (`workers-oauth-provider`) vs Cloudflare Access vs BYO IdP — undecided. Owns: `cf-agent-auth-and-permissions`.
 2. **Frontend scope.** Phase 5 in the existing ROADMAP says "CLI first, then API, then maybe UI." This document assumes `useAgentChat` will exist eventually but the WS surface is also usable from a CLI shim. Defer until Phase 5.
 3. **Predictor model class.** §3.5 of original spec says "linear function for v1, then learned model after ~1000 labeled merges." Where does the learned model live — Workers AI? External? D1-stored coefficients? Owns: `cf-agent-models-and-gateway`. Needs ADR.
-4. **Aura cost vs self-hosted graph.** Aura's free tier is small; production cost may be material. Alternative: run Memgraph on a single VPS and hit it from Workers via HTTP. Trade-off analysis needed by Phase 3.
+4. ~~**Aura cost vs self-hosted graph.**~~ **RESOLVED (2026-05-01):** Neo4j Community Edition (GPLv3) self-hosted on project VPS. All project dependencies must be OSI-approved open source — Aura (proprietary managed) and Memgraph (BSL) are ruled out. Neo4j Community provides full Cypher at zero licensing cost.
 5. **Concept extraction granularity.** ROADMAP §"Phase 1" already flags this as the central design question. Pilot with ~200 concepts before committing. This doc defers to that pilot.
 6. **Council size and provider mix.** N=4 is the proposal; could be 3 (cost) or 5 (robustness). Tied to budget and to AIG provider availability.
 7. **MCP exposure.** Should the Ideator be exposed as an MCP tool (so other agents — Claude Desktop, Cursor — can ask it for ideas)? If yes, add `McpAgent` composition. Defer past Phase 5.
@@ -883,7 +908,7 @@ For reviewers who have read the original plan and want to pinpoint exact diffs, 
 | "Second agent processes them exactly the way we processed cybersec papers" | §5.4 ConceptForge mirrors the `cybersec-papers/enriched.jsonl` shape; M1 sanity-check is "produces same fields as the existing `analysis/` dir" |
 | "No paper can be empty or return error, if so, retry" | §5.4 idempotency cache + DLQ + max-retries 3; §11 failure table |
 | "Standardize the format of all concepts so they all follow the same json pattern" | Pydantic (Python ConceptForge) and Zod (TS) sharing a single source-of-truth schema; canonical name `Concept` per §1.1 of the original spec |
-| "Create indexes so it's easier for agents to find the right papers" | Vectorize `concepts-v1` + Aura indexes from §1.5 of original spec |
+| "Create indexes so it's easier for agents to find the right papers" | Vectorize `concepts-v1` + Neo4j indexes from §1.5 of original spec |
 | "Main agent receives request and redirects" | §5.1 IdeatorAgent + §5.2 GoalSession |
 | "Topic agent comes up with all possible topics" | §5.1 TopicScout (callable on GoalSession; D2 small-scale) |
 | "Ask 3 herding agents, one per topic" | §5.3 ConceptHerder, named per-topic; Topic Scout emits N spec messages, queue does the fan-out (D3) |
@@ -898,4 +923,12 @@ For reviewers who have read the original plan and want to pinpoint exact diffs, 
 | "If the goal is at least 3 ideas, this council must give good notes to at least 3, otherwise more ideas from graph" | §7.5 expansion loop with 3-attempt cap and partial-result fallback |
 | "Main agent provides them to the user and provides how each idea was obtained" | §9 final provenance render contract |
 
-> **End of architecture document v0.1.** Reviewers: comments inline as `> REVIEW(name): …` blocks; a v0.2 will incorporate them and graduate `Status: Proposed` to `Status: Accepted`.
+---
+
+## Appendix B — External references
+
+| Paper | Relevance | How it informs the design |
+|---|---|---|
+| He et al. 2025, "OpenTCM: A GraphRAG-Empowered LLM-based System for Traditional Chinese Medicine" (arXiv:2504.20118) | GraphRAG architecture for medical knowledge retrieval using multi-relational knowledge graphs (48k entities, 152k edges, 10 relationship types) | Validates the hybrid retrieval approach (graph hops + vector KNN). Multi-relational edge schema (`RELATED_TO` with typed `relation_type`) inspired by their 10-edge-type design. Their prompt engineering results (98.5% precision with customized prompts vs 90.1% generic) inform ConceptForge prompt investment. Medical domain directly relevant to our planned use case. |
+
+> **End of architecture document v0.2.** Reviewers: comments inline as `> REVIEW(name): …` blocks. Changes in v0.2: Neo4j Community replaces Aura (open-source mandate), two-tier knowledge architecture, `RELATED_TO` edge type, three-store rationale, OpenTCM reference, open question #4 resolved.
