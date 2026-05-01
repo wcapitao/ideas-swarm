@@ -8,9 +8,11 @@ function makePaper(overrides: Partial<PaperAnalysis> & { paper_id: string }): Pa
 		categories: { primary: "cs.AI", secondary: [] },
 		classification: { research_type: "empirical", contribution_type: [], maturity: "preprint", domain: "AI" },
 		topic: { what: "Does X.", how: "Via Y.", why_matters: "Because Z." },
+		characteristics: [],
 		applicability: { good_for: ["A"], not_for: ["B"], requires: ["C"] },
 		novelty: ["First to do X"],
 		open_problems: ["How to scale X"],
+		_meta: { analyzed_at: "", model: "", input_kind: "", input_chars: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, latency_s: 0, finish_reason: "" },
 		...overrides,
 	};
 }

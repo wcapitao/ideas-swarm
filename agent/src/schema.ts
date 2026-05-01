@@ -1,11 +1,39 @@
 import { z } from "zod";
 
-// arXiv paper ID format: arxiv:YYMM.NNNNNvV (4 or 5 digit number, optional version suffix)
-const arxivIdPattern = /^arxiv:[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?$/;
+// Supports doi, pmid, text, isbn, and arxiv paper ID prefixes
+const paperIdPattern = /^(doi|pmid|text|isbn|arxiv):.+$/;
+
+const CharacteristicSchema = z.object({
+	dimension: z.string(),
+	what_it_measures: z.string(),
+	unit: z.string(),
+	direction: z.string(),
+	value: z.string(),
+	value_numeric: z.number().nullable(),
+	value_class: z.string(),
+	vs_baseline: z.string(),
+	evidence: z.string(),
+	confidence: z.string(),
+	context: z.string(),
+});
+
+export type Characteristic = z.infer<typeof CharacteristicSchema>;
+
+const MetaSchema = z.object({
+	analyzed_at: z.string(),
+	model: z.string(),
+	input_kind: z.string(),
+	input_chars: z.number(),
+	prompt_tokens: z.number(),
+	completion_tokens: z.number(),
+	total_tokens: z.number(),
+	latency_s: z.number(),
+	finish_reason: z.string(),
+});
 
 export const PaperAnalysisSchema = z.object({
-	paper_id: z.string().regex(arxivIdPattern),
-	tags: z.array(z.string()).min(5).max(15),
+	paper_id: z.string().regex(paperIdPattern),
+	tags: z.array(z.string()).min(4).max(15),
 	categories: z.object({
 		primary: z.string(),
 		secondary: z.array(z.string()),
@@ -21,6 +49,7 @@ export const PaperAnalysisSchema = z.object({
 		how: z.string(),
 		why_matters: z.string(),
 	}),
+	characteristics: z.array(CharacteristicSchema),
 	applicability: z.object({
 		good_for: z.array(z.string()),
 		not_for: z.array(z.string()),
@@ -28,6 +57,7 @@ export const PaperAnalysisSchema = z.object({
 	}),
 	novelty: z.array(z.string()),
 	open_problems: z.array(z.string()),
+	_meta: MetaSchema,
 });
 
 export type PaperAnalysis = z.infer<typeof PaperAnalysisSchema>;
@@ -35,11 +65,11 @@ export type PaperAnalysis = z.infer<typeof PaperAnalysisSchema>;
 export const IdeaCardSchema = z.object({
 	title: z.string(),
 	paper_a: z.object({
-		id: z.string().regex(arxivIdPattern),
+		id: z.string().regex(paperIdPattern),
 		insight: z.string(),
 	}),
 	paper_b: z.object({
-		id: z.string().regex(arxivIdPattern),
+		id: z.string().regex(paperIdPattern),
 		insight: z.string(),
 	}),
 	combined_idea: z.string(),
