@@ -2,7 +2,7 @@ import { AIChatAgent } from "agents/ai-chat-agent";
 import { generateText, streamText } from "ai";
 import type { StreamTextOnFinishCallback, ToolSet } from "ai";
 
-import { JSON_EXTRACTION_PATTERN, buildDeepSeekProvider } from "~/deepseek";
+import { JSON_EXTRACTION_PATTERN, buildDeepSeekProvider, stripThinkingTags } from "~/deepseek";
 import { evaluateIdea } from "~/evaluator";
 import type { Env } from "~/index";
 import { selectPairs } from "~/paper-selector";
@@ -18,7 +18,7 @@ import type { EvalResult, IdeaCard } from "~/schema";
 // at runtime (the framework owns and calls this callback, we only forward it).
 type OnChatMessageFinish = Parameters<AIChatAgent<Env>["onChatMessage"]>[0];
 
-const IDEA_GEN_MAX_TOKENS = 1024;
+const IDEA_GEN_MAX_TOKENS = 4096;
 const FORMAT_MAX_TOKENS = 2048;
 
 /**
@@ -54,18 +54,26 @@ function extractUserTopic(messages: { role: string; content: unknown }[]): strin
  * Stella Principle: JSON extraction and Zod validation are deterministic — no LLM involved.
  */
 function parseIdeaCard(rawText: string): IdeaCard | null {
-	const match = rawText.match(JSON_EXTRACTION_PATTERN);
-	if (!match) return null;
+	const cleaned = stripThinkingTags(rawText);
+	const match = cleaned.match(JSON_EXTRACTION_PATTERN);
+	if (!match) {
+		console.error("[ideator] No JSON found in response. First 200 chars:", cleaned.slice(0, 200));
+		return null;
+	}
 
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(match[0]);
 	} catch (err) {
 		console.error("[ideator] JSON parse failed:", err instanceof Error ? err.message : err);
+		console.error("[ideator] Attempted to parse:", match[0].slice(0, 300));
 		return null;
 	}
 
 	const result = IdeaCardSchema.safeParse(parsed);
+	if (!result.success) {
+		console.error("[ideator] Schema validation failed:", result.error.issues);
+	}
 	return result.success ? result.data : null;
 }
 
@@ -241,7 +249,10 @@ export class IdeatorAgent extends AIChatAgent<Env> {
 		// Step 4: parse and validate — deterministic, Stella-compliant
 		const validCards: IdeaCard[] = [];
 		for (const result of ideaResults) {
-			if (result.status === "rejected") continue;
+			if (result.status === "rejected") {
+				console.error("[ideator] LLM call rejected:", result.reason);
+				continue;
+			}
 			const card = parseIdeaCard(result.value.text);
 			if (card !== null) validCards.push(card);
 		}

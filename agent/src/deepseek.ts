@@ -4,6 +4,10 @@ import type { Env } from "~/index";
 
 export const JSON_EXTRACTION_PATTERN = /{[\s\S]*}/;
 
+export function stripThinkingTags(text: string): string {
+	return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
+
 export function buildDeepSeekProvider(env: Env): ReturnType<typeof createOpenAICompatible> {
 	const gatewayBaseUrl = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.AIG_GATEWAY_ID}/deepseek`;
 	return createOpenAICompatible({
