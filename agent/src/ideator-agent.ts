@@ -1,8 +1,8 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { AIChatAgent } from "agents/ai-chat-agent";
 import { generateText, streamText } from "ai";
 import type { StreamTextOnFinishCallback, ToolSet } from "ai";
 
+import { JSON_EXTRACTION_PATTERN, buildDeepSeekProvider } from "~/deepseek";
 import { evaluateIdea } from "~/evaluator";
 import type { Env } from "~/index";
 import { selectPairs } from "~/paper-selector";
@@ -18,28 +18,8 @@ import type { EvalResult, IdeaCard } from "~/schema";
 // at runtime (the framework owns and calls this callback, we only forward it).
 type OnChatMessageFinish = Parameters<AIChatAgent<Env>["onChatMessage"]>[0];
 
-// Maximum token budget per idea-generation call to keep costs bounded.
 const IDEA_GEN_MAX_TOKENS = 1024;
-
-// Maximum token budget for the final formatting/streaming response.
 const FORMAT_MAX_TOKENS = 2048;
-
-// Regex to extract the first JSON object from a raw LLM response string.
-// DeepSeek sometimes wraps JSON in markdown code fences or leading prose.
-const JSON_EXTRACTION_PATTERN = /{[\s\S]*}/;
-
-/**
- * Builds the DeepSeek provider pointed at Cloudflare AI Gateway.
- * AI Gateway provides logging, caching, and rate-limit protection at the edge.
- */
-function buildDeepSeekProvider(env: Env): ReturnType<typeof createOpenAICompatible> {
-	const gatewayBaseUrl = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.AIG_GATEWAY_ID}/deepseek`;
-	return createOpenAICompatible({
-		name: "deepseek",
-		baseURL: gatewayBaseUrl,
-		apiKey: env.DEEPSEEK_API_KEY,
-	});
-}
 
 /**
  * Extracts the user's topic from the most recent user message in the conversation.
@@ -80,7 +60,8 @@ function parseIdeaCard(rawText: string): IdeaCard | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(match[0]);
-	} catch {
+	} catch (err) {
+		console.error("[ideator] JSON parse failed:", err instanceof Error ? err.message : err);
 		return null;
 	}
 

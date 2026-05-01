@@ -1,30 +1,11 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
 
+import { JSON_EXTRACTION_PATTERN, buildDeepSeekProvider, unwrapJsonFences } from "~/deepseek";
 import type { Env } from "~/index";
 import { EvalResultSchema } from "~/schema";
 import type { EvalResult, IdeaCard } from "~/schema";
 
 const EVAL_MAX_TOKENS = 512;
-
-const JSON_EXTRACTION_PATTERN = /{[\s\S]*}/;
-
-function buildDeepSeekProvider(env: Env): ReturnType<typeof createOpenAICompatible> {
-	const gatewayBaseUrl = `https://gateway.ai.cloudflare.com/v1/${env.CLOUDFLARE_ACCOUNT_ID}/${env.AIG_GATEWAY_ID}/deepseek`;
-	return createOpenAICompatible({
-		name: "deepseek",
-		baseURL: gatewayBaseUrl,
-		apiKey: env.DEEPSEEK_API_KEY,
-	});
-}
-
-function unwrapJsonFences(text: string): string {
-	let t = text.trim();
-	if (t.startsWith("```")) {
-		t = t.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
-	}
-	return t.trim();
-}
 
 export function buildEvalSystemPrompt(): string {
 	return [
@@ -61,7 +42,8 @@ export function parseEvalResult(rawText: string): EvalResult | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(match[0]);
-	} catch {
+	} catch (err) {
+		console.error("[evaluator] JSON parse failed:", err instanceof Error ? err.message : err);
 		return null;
 	}
 
@@ -85,7 +67,8 @@ export async function evaluateIdea(
 			abortSignal: options?.abortSignal,
 		});
 		return parseEvalResult(text);
-	} catch {
+	} catch (err) {
+		console.error("[evaluator] evaluateIdea failed:", err instanceof Error ? err.message : err);
 		return null;
 	}
 }
