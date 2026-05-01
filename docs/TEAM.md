@@ -7,12 +7,12 @@
 | Name | Focus | Phases owned | Stack |
 |------|-------|-------------|-------|
 | **Wilson** | Core runtime + orchestration | 2, 3, 5 + overall architecture | TypeScript (Cloudflare Agents SDK), Python (retrieval tooling) |
-| **Florean** | Knowledge base + concept extraction | 0, 1 | Python (Ruff, Pytest, Pyright, Pydantic v2) |
+| **Florian** | Knowledge base + concept extraction | 0, 1 | Python (Ruff, Pytest, Pyright, Pydantic v2) |
 | **Ivo** | Evaluation council / swarm | 4 | TypeScript (Cloudflare Agents SDK) |
 
 ---
 
-## Florean — Knowledge Base & Concept Ontology
+## Florian — Knowledge Base & Concept Ontology
 
 ### Phase 0: Knowledge Base (active)
 
