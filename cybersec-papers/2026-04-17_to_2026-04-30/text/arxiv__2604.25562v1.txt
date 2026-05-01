@@ -1,0 +1,1169 @@
+SnapGuard: Lightweight Prompt Injection Detection for
+Screenshot-Based Web Agents
+Mengyao Du1, Han Fang2, Haokai Ma3, Jiahao Chen4, Kai Xu1, Quanjun Yin1, Ee-Chien Chang3
+1National University of Defense Technology
+2University of Science and Technology of China
+3National University of Singapore
+4Zhejiang University
+Abstract
+Web agents have emerged as an effective paradigm for automating
+interactions with complex web environments, yet remain vulnera-
+ble to prompt injection attacks that embed malicious instructions
+into webpage content to induce unintended actions. This threat is
+further amplified for screenshot-based web agents, which operate
+on rendered visual webpage rather than structured textual repre-
+sentations, making predominant text-centric defenses ineffective.
+Although multimodal detection methods have been explored, they
+often rely on large vision language models (VLMs), incurring signif-
+icant computational overhead. The bottleneck lies in the complexity
+of modern webpages: VLMs must comprehend the global semantics
+of an entire page, resulting in substantial inference time and GPU
+memory usage. This raises a critical question: can we detect prompt
+injection attacks from screenshots in a lightweight manner? In this
+paper, we observe that injected webpages exhibit distinct charac-
+teristics compared to benign ones from both visual and textual
+perspectives. Building on this insight, we propose SnapGuard, a
+lightweight yet accurate method that reformulates prompt injection
+detection as a multimodal representation analysis over webpage
+screenshots. SnapGuard leverages two complementary signals: a
+visual stability indicator that identifies abnormally smooth gradient
+distributions induced by malicious content, and action-oriented
+textual signals recovered via contrast–polarity reversal. Extensive
+evaluations across eight attacks and two benign settings demon-
+strate that SnapGuard achieves an F1 score of 0.75, outperforming
+GPT-4o-prompt while being 8× faster (1.81s vs. 14.50s) and intro-
+ducing no additional memory overhead.
+CCS Concepts
+• Security and privacy; • Computing methodologies →Com-
+puter vision; Machine learning;
+Keywords
+Web Agents, Prompt Injection Detection, Multimodal Security
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+Conference ACMMM ’26, Woodstock, NY
+© 2018 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 978-1-4503-XXXX-X/2018/06
+https://doi.org/XXXXXXX.XXXXXXX
+ACM Reference Format:
+Mengyao Du1, Han Fang2, Haokai Ma3, Jiahao Chen4, Kai Xu1, Quanjun
+Yin1, Ee-Chien Chang3, [0.5em] 1National University of Defense Technol-
+ogy, 2University of Science and Technology of China, 3National University
+of Singapore, 4Zhejiang University . 2018. SnapGuard: Lightweight Prompt
+Injection Detection for Screenshot-Based Web Agents. In Proceedings of
+Make sure to enter the correct conference title from your rights confirma-
+tion email (Conference ACMMM ’26). ACM, New York, NY, USA, 10 pages.
+https://doi.org/XXXXXXX.XXXXXXX
+1
+Introduction
+Web agents are autonomous systems that operate within web envi-
+ronments by perceiving webpage states, reasoning over task objec-
+tives, and executing actions to accomplish user-specified goals [28,
+50, 56]. Powered by recent advances in large language models
+(LLMs) and vision–language models (VLMs), they enable a wide
+range of applications, including automated information gather-
+ing [34], online decision-making (e.g., shopping and booking) [23,
+49], and interactive task completion across diverse websites [29].
+Despite their growing utility, web agents introduce significant
+new security risks, particularly in the form of prompt injection
+attacks [14, 20]. As illustrated in Figure 1, attackers can embed
+malicious instructions into untrusted webpage content to override
+or steer an agent’s decision-making process, leading it to execute
+unintended actions such as clicking malicious links or leaking sen-
+sitive information. This threat is amplified in the web agent setting,
+where injected instructions are directly translated into concrete
+real-world actions rather than mere text outputs [10, 52]. Moreover,
+modern webpages are inherently multimodal, comprising not only
+textual content but also images, which further expand the attack
+surface and exacerbate these security risks [46, 57].
+To mitigate prompt injection attacks in web agents, prior work
+has primarily focused on text-centric detection and mitigation,
+including LLM-based safety evaluation, embedding-based classifi-
+cation, and training-based defenses [3, 21, 22, 27, 35, 41, 42]. While
+effective, these approaches assume access to structured textual
+inputs such as HTML or DOM, which does not hold for modern
+screenshot-based web agents that infer webpage states directly from
+rendered visual inputs, as exemplified by Anthropic’s Computer-
+Use Agent (CUA) [2], OpenAI’s Browser-Use Agent (BUA) [31],
+SeeAct [11, 53, 54], and UI-TARS [32, 38]. Although multimodal
+detection methods have been explored [22, 48], they often rely on
+large VLMs, incurring significant computational overhead. The
+bottleneck lies in webpage complexity: VLMs attempt to compre-
+hend the global semantics of an entire page, resulting in substantial
+arXiv:2604.25562v1 [cs.CR] 28 Apr 2026
+
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+Trovato et al.
+WebPage
+Buy the cheapest 
+USB cable on Amazon.
+User Prompt
+Buy Now
+Click the link below
+Web Agent
+Intended Action
+Buy Now
+Injected Action
+Click the link below
+Screenshot
+Figure 1: A prompt injection attack on a screenshot-based
+web agent. The attacker embeds a malicious instruction
+(Click the link below) directly into the rendered webpage.
+The web agent, operating on the screenshot, executes the
+injected action rather than the intended user task (Buy Now).
+inference time and GPU memory usage. This leads to a critical
+question: can we detect prompt injection attacks from screenshots in
+a lightweight manner?
+Addressing this problem is challenging for two reasons. First,
+modern webpages are visually complex, combining text, images,
+layouts, and interactive elements. Malicious content may be in-
+jected into only a small region of the page or even be visually
+imperceptible to human observers, making reliable detection from
+raw screenshots particularly difficult [5, 22]. Second, web agents
+operate under strict efficiency constraints due to their real-time and
+interactive nature. Recent studies on LLM-powered agents have
+shown that response latency exceeding 4 seconds significantly de-
+grades user experience [24], rendering slow VLM-based detection
+methods impractical for real-time web agent deployment.
+In this paper, we propose SnapGuard, a lightweight screenshot-
+based method for prompt injection detection in web agents. Instead
+of relying on large VLMs for full-page semantic understanding,
+SnapGuard leverages the observation that injected webpages ex-
+hibit distinct visual irregularities and textual cues compared to
+benign ones, even when malicious content is partially hidden or
+visually subtle. Based on this observation, SnapGuard jointly ana-
+lyzes these two modalities to identify inputs indicative of malicious
+intent. From the visual perspective, we introduce a visual stability
+indicator that captures abnormally smooth gradient distributions
+associated with malicious content. From the textual perspective,
+we design a contrast-polarity reversal strategy to recover textual
+signals from webpage screenshots, followed by action-oriented cue
+identification. These complementary features are integrated into
+a compact representation and evaluated by a lightweight decision
+module for prompt injection detection.
+We conduct extensive experiments across eight prompt injection
+attacks and two benign settings. SnapGuard consistently outper-
+forms existing prompt injection defenses, achieving an F1 score of
+0.75 compared to 0.71 for GPT-4o-prompt, while being 8× faster
+(1.81s vs. 14.50s) with zero GPU memory overhead. Moreover, Snap-
+Guard demonstrates strong robustness to text extraction interfaces
+and visual perturbations, remaining effective even under Gaussian
+noise perturbations applied to webpage screenshots. Furthermore,
+SnapGuard can be deployed as a plug-in pre-action defense without
+modifying agent policies or introducing additional inference-time
+dependencies in practical deployments. All code and experiments
+are publicly released at an anonymized repository 1.
+To summarize, our key contributions are as follows:
+• We investigate distinctive visual and textual characteristics of
+injected webpages relative to benign ones, and show that these
+signals can support prompt injection detection from screenshots.
+• We propose SnapGuard, a lightweight detection method that
+identifies malicious webpage inputs from screenshots by com-
+bining a visual stability indicator with action-oriented textual
+cues recovered from the rendered page, without relying on large
+VLMs for full-page semantic understanding.
+• Extensive evaluation on benchmark datasets with eight prompt
+injection attacks and two benign settings shows that SnapGuard
+achieves an F1 score of 0.75 (vs. 0.71 for GPT-4o-prompt), while
+incurring only 1.81 seconds runtime and zero memory overhead,
+making it suitable for real-time web agent deployment.
+2
+Related Works
+2.1
+Prompt Injection Attacks on Web Agents
+Recent work has demonstrated that web agents are vulnerable to
+prompt injection attacks under diverse attacker models and modal-
+ities [9, 14, 20]. One line of attacks manipulates visual content on
+webpages to influence agent behavior. For example, VWA-Adv [45]
+perturbs product images on e-commerce pages to persuade agents
+into adversarial actions such as generating positive reviews, consid-
+ering both white-box and black-box settings. WASP [13] assumes
+attackers acting as benign users who publish seemingly normal
+posts on platforms such as Reddit or GitHub, implicitly embed-
+ding malicious instructions that are later consumed by web agents
+as task context. Other studies assume attackers who control the
+website itself. WebInject [40] introduces imperceptible pixel-level
+perturbations into rendered webpages to directly induce attacker-
+specified actions, while classic pop-up attacks [51] embed mali-
+cious dialog windows that guide agents into executing unintended
+operations. Beyond visual manipulation, several works focus on
+instruction injection through webpage or user-generated content.
+EIA [16] injects hidden HTML elements carrying adversarial com-
+mands to induce agents to leak sensitive user information. Sim-
+ilarly, VPI-Bench [5] shows that attackers controlling websites
+can inject malicious instructions through visually normal UI ele-
+ments, such as pop-ups, internal messages, or emails, to deceive
+agents into performing targeted actions. Complementary to this set-
+ting, REDTEAM-CUA [15] simulates visual injection attacks across
+webpages and operating system interfaces, revealing that state-of-
+the-art computer-use agents remain highly vulnerable in realistic
+system-level environments. Collectively, these studies highlight the
+broad and evolving attack surface of modern web agents.
+2.2
+Prompt Injection Defenses for Web Agents
+A growing body of work has explored defenses against prompt
+injection attacks, most of which are text-centric in nature. Early
+efforts such as Known-Answer Detection [27] identify malicious
+prompts by checking deviations from expected responses, while Liu
+et al. [20] formalize prompt injection defense as a general detection
+1https://anonymous.4open.science/r/SnapGuard-anoy-7094
+
+SnapGuard: Lightweight Prompt Injection Detection for Screenshot-Based Web Agents
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+problem. Subsequent approaches leverage LLMs or embedding-
+based classifiers to distinguish malicious prompts from benign
+ones [35], or train classifiers on prompt embeddings [3]. Other
+methods introduce alternative formulations such as game-theoretic
+detection [21] and adaptive prompting frameworks that combine
+manually designed defense prompts with LLM-driven optimization
+to mitigate structured jailbreak attacks [42]. More recently, training-
+based defenses have been proposed, including fine-tuning multi-
+modal models for prompt injection detection [22] and web-specific
+frameworks that perform multi-stage detection and localization
+by analyzing semantic consistency between webpage regions and
+contextual content [41]. Beyond direct detection, another line of
+work improves web-agent safety through guardrail mechanisms,
+where external agents or verifiable modules enforce safety policies
+at the input, output, or trajectory level [6, 8, 26, 47, 55]. Rather than
+detecting prompt injections in webpage content, these methods
+constrain unsafe decisions via rule-based checking, formal verifica-
+tion, or safety–utility optimization. Predictive approaches have also
+been explored, shifting the focus from malicious input detection
+to preventing high-risk outcomes by using future risk estimation
+to guide model decisions [7]. Despite their effectiveness, these de-
+fenses implicitly assume access to structured or free-form textual
+representations. In screenshot-based web agents, where decisions
+are made directly from rendered visual inputs, such assumptions no
+longer hold. Complementary efforts in the image domain attempt
+to bridge this gap by exploiting robustness discrepancies between
+benign and adversarial inputs through input mutations [48], intro-
+ducing smoothing-based mechanisms to suppress patch-style visual
+attacks [36], or jointly modeling unimodal and cross-modal risk sig-
+nals [30]. However, these approaches either rely on expensive VLM
+inference or target general vision-language model safety rather
+than prompt injection detection in web agent pipelines, limiting
+their applicability across diverse attack types.
+3
+Threat Model
+3.1
+Problem Formulation
+Screenshot-based Web Agent. The pipeline of screenshot-based
+web agent operates solely on rendered webpage screenshots rather
+than structured textual representations such as HTML or DOM
+trees. At each time step 𝑡, the agent receives a prompt 𝑝, consisting
+of a system prompt and a user instruction, an interaction history
+ℎ𝑡= {(𝑥1,𝑎1), . . . , (𝑥𝑡−1,𝑎𝑡−1)}, and a current webpage screenshot
+𝑥𝑡∈X from a real-world website. Based on these inputs, the agent
+selects an action 𝑎𝑡∈A according to a policy
+𝑎𝑡= 𝜋(𝑝,ℎ𝑡,𝑥𝑡),
+(1)
+where A denotes the space of executable UI actions, and 𝑎𝑡is
+generated as a natural-language instruction that is subsequently
+grounded into a concrete UI operation (e.g., clicking a visual ele-
+ment), and 𝜋denotes a multimodal language model that maps the
+prompt, interaction history, and screenshot to the next executable
+action. These agents are widely used for automated web interaction
+tasks such as product search and purchasing, information retrieval,
+and general service automation across diverse websites.
+Prompt Injection Attack. Due to the agent’s inability to dis-
+tinguish between benign webpage content and malicious visual
+content, an adversary can manipulate the visual input 𝑥𝑡by em-
+bedding malicious content into the rendered webpage, resulting in
+an adversarial input 𝑥′
+𝑡that remains visually similar to the benign
+input 𝑥𝑡. Under the same prompt 𝑝and interaction history ℎ𝑡, the
+agent is induced to execute an attacker-specified action, i.e.,
+𝜋(𝑝,ℎ𝑡,𝑥′
+𝑡) ∈Amal,
+(2)
+where Amal denotes a set of actions that deviate from the user’s
+intended behavior specified by the original instruction. Such attacks
+can take various forms, including adversarial visual perturbations
+that alter pixel-level features and visual prompt injections that
+embed explicit instructions into the rendered page [5].
+3.2
+Attacker’s Goal and Capability
+Attacker’s Goal. The attacker aims to manipulate the visual input
+to induce the agent to execute attacker-specified actions that deviate
+from the user’s intent. Such actions may include clicking malicious
+links, disclosing passwords or other credentials, or following control
+instructions that override user intent and lead to privacy leakage.
+Attacker’s capability. We consider two attacker capability models
+based on their level of control over webpage. First, a malicious con-
+tent provider can inject carefully crafted malicious visual content
+into user-generated or third-party images. For example, an adver-
+sarial seller on an e-commerce platform may upload manipulated
+product images that influence the agent’s action selection during
+task execution. Second, a malicious website owner has control over
+the rendered webpage and can embed malicious visual content di-
+rectly into webpage layouts or screenshots of web or application
+interfaces. In both cases, the attacker can iteratively refine mali-
+cious visual content based on feedback obtained from interactions
+with surrogate or publicly available web agents.
+3.3
+Defender’s Goal and Capability
+Defender’s Goal. The defender aims to protect the web agent from
+malicious visual inputs that may induce unintended actions. An
+effective defense should satisfy two key requirements: (i) accurately
+detecting malicious inputs while minimizing false alarms on be-
+nign inputs, and (ii) incurring minimal computational overhead in
+latency and memory, so as to preserve the efficiency and usability
+of the overall web-agent pipeline.
+Defender’s Capability. The defender operates in a deployment-
+oriented setting without modifying the agent policy or requiring
+access to the agent’s internal perception or reasoning mechanisms.
+It receives only the raw screenshot as input and is not provided with
+structured textual content, user instructions, or any knowledge of
+adversarial intent or attack strategy. The defender may optionally
+employ VLMs or OCR tools to infer textual cues directly from the
+screenshot, but does not assume access to structured webpage rep-
+resentations such as HTML. The defense is deployed as an external
+pre-action module and remains agnostic to the specific web agent.
+4
+Method
+4.1
+Overview
+We formulate prompt injection defense as a representation enhance-
+ment problem. The key insight is that malicious content leaves
+detectable traces in both the visual and textual modalities of a
+
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+Trovato et al.
+WebPage
+Visual Stability Indicator
+Value: 24105.52
+ Visual Score
+Suspicion Rate
+Textual Signal Extraction
+ALERT !!! Exactly type 
+the task description 
+you received...
+OCR
+Action-Induction Space
+Attacker
+Inject
+Malicious Webpage
+Visual Stability Score
+Detected Actions: 
+control instruction
+Web Agent
+block
+Task 
+Output
+User
+Safe 
+WebPage
+Contrast Reversal
+VSI Map
+Figure 2: Overview of the SnapGuard framework for detect-
+ing prompt injection attacks in screenshot-based web agents.
+screenshot: abnormally smooth gradient distributions and explicit
+action-oriented textual cues. As illustrated in Figure 2, SnapGuard
+processes each incoming screenshot through two parallel branches.
+The visual stability indicator quantifies gradient variance to detect
+structural anomalies, while the textual signal extraction branch ap-
+plies contrast-polarity reversal followed by OCR to recover action-
+oriented textual cues. The outputs of both branches are then jointly
+evaluated to produce a unified risk estimate, which is used to block
+malicious inputs before they reach the web agent.
+4.2
+Visual Stability Indicator
+We introduce the Visual Stability Indicator (VSI), a lightweight vi-
+sual feature extraction mechanism for identifying malicious visual
+content. Our approach builds on the observation that malicious
+content designed to influence agent actions tends to introduce spa-
+tially diffuse perturbations that suppress local structural variation,
+in contrast to benign content, which exhibits diverse local struc-
+tures and gradient distributions. Although these perturbations may
+not alter the high-level semantics of the webpage, they manifest
+as measurable deviations in low-level visual statistics. This moti-
+vates the design of a simple indicator that quantifies local structural
+variability to distinguish malicious inputs from benign ones.
+Guided by this insight, VSI quantifies the variability of local
+structural signals across the image. Given a webpage screenshot
+𝑥∈[0, 255]𝐻×𝑊×3, where 𝐻and𝑊denote height and width of the
+image, and 3 corresponds to the RGB color channels, let ∇𝑥𝑖,𝑗∈R2
+denote the spatial gradient at pixel (𝑖, 𝑗), computed on the grayscale
+conversion of 𝑥. We define 𝜙(𝑥) as the variance of gradient magni-
+tudes across all spatial locations:
+𝜙(𝑥) = E(𝑖,𝑗)
+
+∥∇𝑥𝑖,𝑗∥2
+2
+
+−
+
+E(𝑖,𝑗)
+
+∥∇𝑥𝑖,𝑗∥2
+2
+.
+(3)
+Here 𝜙(𝑥) measures the degree of structural heterogeneity in
+the screenshot. A spatially uniform screenshot yields a low 𝜙(𝑥),
+whereas one with diverse local structures yields a high 𝜙(𝑥). Since
+malicious injections tend to suppress local structural variation, they
+are expected to produce abnormally low 𝜙(𝑥) values relative to
+benign screenshots.
+Threshold Design. We determine the detection threshold 𝜏based
+on the distribution of scores 𝜙(𝑥) computed over a benign dataset
+Dbenign. To limit unnecessary disruption to benign interactions,
+we fix the false-positive rate at a predefined level 𝛼. Formally, the
+threshold 𝜏is chosen such that
+P 𝜙(𝑥) < 𝜏| 𝑥∈Dbenign
+ ≤𝛼.
+(4)
+In deployment, a screenshot input 𝑥is flagged as suspicious if
+𝜙(𝑥) < 𝜏. This formulation captures discriminative visual features
+without assuming any semantic understanding of the webpage,
+and incurs only lightweight computational overhead. Together,
+computing 𝜙(𝑥) and determining the threshold decision require
+only O(𝐻𝑊) time complexity and no learnable parameters, making
+VSI a computationally negligible component of SnapGuard.
+4.3
+Textual Signal Extraction
+While VSI captures structural anomalies at the visual level, mali-
+cious content embedded in webpage screenshots often also mani-
+fests through explicit textual cues. Such cues may include impera-
+tive language, or suspicious link invitations that are rendered as part
+of the visual content. To extract these signals under deployment
+constraints, we apply contrast-polarity reversal as a preprocessing
+step to enrich the feature contrast of textual regions, followed by
+vision-based text extraction and action-oriented pattern detection
+to identify textual cues indicative of malicious intent.
+Contrast-Polarity Reversal. Text embedded in webpage screen-
+shots may exhibit varying intensity distributions that hinder reli-
+able vision-based text extraction, especially when textual regions
+are weakly contrasted against their surrounding context. Such vari-
+ations are frequently observed in malicious visual content and can
+obscure textual cues without altering the overall appearance of the
+webpage. To improve robustness under these conditions, we apply
+contrast-polarity reversal I(·) as a lightweight preprocessing step
+prior to text extraction. Formally, let 𝑥∈[0, 255]𝐻×𝑊×3 denote the
+input image, the selectively inverted image I(𝑥) is defined as:
+I(𝑥) = 𝑥⊙(1 −¯𝑀) + (255 · 1 −𝑥) ⊙¯𝑀,
+(5)
+where ¯𝑀∈{0, 1}𝐻×𝑊×3 is obtained by broadcasting a spatial bi-
+nary mask 𝑀∈{0, 1}𝐻×𝑊uniformly across color channels, and ⊙
+denotes element-wise multiplication.
+𝑀(𝑖, 𝑗) = 1[𝑌(𝑖, 𝑗) > 𝛾],
+(6)
+where 𝑌(𝑖, 𝑗) denotes the grayscale intensity at pixel (𝑖, 𝑗), and
+𝛾= 240 is a threshold used to identify near-white regions, where
+low-contrast text may be difficult to recover under direct extraction.
+Overall, this contrast-polarity reversal preserves the semantic con-
+tent of the image while improving the visibility of textual regions
+for downstream text extraction.
+Text Extraction. We apply OCR-based text extraction to obtain
+visible textual content from the input image without invoking any
+semantic understanding of the visual scene. Formally, let O(·) de-
+note an OCR function. We obtain a set of OCR candidates
+𝑇(𝑥) = O(𝑥) ∪O(I(𝑥)).
+(7)
+The goal is not to maximize OCR fidelity, but to construct a textual
+representation that remains sensitive to adversarially embedded
+action cues. This extraction can be implemented using either light-
+weight OCR systems or VLMs such as the LLaVA and GPT series,
+and does not constitute a fixed dependency of the proposed method.
+
+SnapGuard: Lightweight Prompt Injection Detection for Screenshot-Based Web Agents
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+In practice, lightweight OCR systems are preferred for their com-
+putational efficiency, incurring negligible overhead relative to the
+overall inference pipeline.
+Action-Oriented Pattern Detection. Beyond recovering textual
+content, this stage aims to assess whether the extracted text is likely
+to induce concrete agent actions. Unlike conventional prompt in-
+jection defenses that depend heavily on semantic understanding
+or exact keyword matching, we instead identify a taxonomy of
+action-oriented textual cues that capture the functional intent of
+injected instructions rather than their surface lexical form. These
+cue categories include interaction triggers, credential requests, link
+invitations, and control-override instructions. A detailed specifi-
+cation of each category and its corresponding matching patterns
+is provided in Appendix B.3. The taxonomy is also extensible, en-
+abling new cue types to be incorporated without changing the
+overall detection pipeline. Compared with LLM-based detection
+approaches, this design is both computationally lightweight and
+inherently interpretable, as each detection decision can be traced
+back to a specific matched pattern and cue category.
+5
+Evaluation
+5.1
+Experiment Setup
+Data. We align our evaluation with the WAInjectBench bench-
+mark [22], where benign samples are organized into two image
+delivery categories: embedded images, in which text is directly ren-
+dered as part of the visual content, and screenshots, which capture
+rendered webpages or application interfaces. The evaluation set
+comprises 948 benign samples across these two categories and 2,185
+malicious samples drawn from the eight attack configurations. For
+training-based baselines (Embedding-I and LLaVA-1.5-7B-FT), we
+additionally sample 1,000 benign images from the COCO 2017 val-
+idation set [17] and 1,000 malicious samples from JailGuard [48],
+following the original benchmark protocol.
+Models and Tools. SnapGuard relies solely on Pytesseract for op-
+tical character recognition (OCR), introducing no additional model
+dependencies. For baseline comparisons, we evaluate against sev-
+eral VLM-based approaches that perform visual text extraction,
+including Qwen3-VL (Qwen3-VL-8B-Thinking) [4, 37], LLaVA-1.5
+(LLaVA-1.5-7b-hf) [18, 19], DeepSeek-OCR (DeepSeek-OCR-2) [43,
+44], and GPT-4o [1], with action-oriented reasoning performed by
+Llama-3-8B (Llama-3-8B-Instruct) [12]. The Embedding-I base-
+line uses OpenCLIP ViT-B/32 [33] for image embedding extraction,
+while Embedding-T uses all-MiniLM-L6-v2 [39] for text embedding
+extraction. Both methods train a logistic regression classifier for
+final detection. LLaVA-1.5-7B-FT denotes a fine-tuned variant of
+LLaVA-1.5 trained on the benchmark data.
+Attack. We consider eight representative prompt injection attacks
+in our evaluation, including EIA [16], WebInject [40], Pop-up [51],
+WASP [13], VWA-emb and VWA-shot [45], VPI-BU and VPI-CU [5].
+Among them, VWA-emb and VWA-shot correspond to embedded-
+image and screenshot-based attacks in Visual Web Arena, respec-
+tively. VPI-BU and VPI-CU denote browser use and computer use
+of Visual Prompt Injection, where attacks are delivered through
+rendered webpages or application interfaces.
+Defense Baselines. We consider both image-based and text-based
+detection methods as defense baselines. For image-based methods,
+Embedding-I trains an embedding-based classifier over image rep-
+resentations of input screenshots. JailGuard [48] applies multiple
+slight transformations to suspicious inputs and identifies attacks
+based on output inconsistency across mutations. We further adopt
+LLaVA-1.5-7B [18, 19], its fine-tuned variant LLaVA-1.5-7B-FT, and
+GPT-4o-prompt [1] as detection-oriented MLLM baselines. For text-
+based methods, Embedding-T trains an embedding-based classifier
+over textual representations extracted from screenshots. KAD [27]
+embeds a known question into the input and flags an attack when
+the response deviates from the expected answer. PromptGuard [25]
+is a Meta-released classifier for detecting prompt injection and
+jailbreak attacks. DataSentinel [21] formulates detection as a game-
+theoretic problem, training the detector against an adaptive attacker.
+PromptArmor [35] employs an auxiliary LLM to sanitize inputs by
+removing injected instructions prior to agent execution.
+Metrics. We evaluate detection performance using the true positive
+rate (TPR) on malicious samples and the false positive rate (FPR)
+on benign samples, which separately reflect a method’s sensitivity
+to attacks and its tendency to raise false alarms. Formal definitions
+and formulas for all metrics are provided in Appendix C. For overall
+comparison, we additionally report the F1 score. To assess deploy-
+ment cost, we measure average inference time per image and peak
+GPU memory consumption during detection.
+Hyperparameters. For SnapGuard, all detection thresholds are
+fixed across experiments without dataset-specific tuning. To mini-
+mize disruption to normal agent operation, we fix the false positive
+rate at 𝛼= 0.05 and evaluate the corresponding TPR, under which
+the VSI threshold is set to 4, 450. For learning-based baselines, we
+follow the default WAInjectBench settings, applying Low-Rank
+Adaptation (LoRA) for LLaVA-1.5-7B-FT and logistic regression
+for Embedding-I and Embedding-T. All training is conducted on 4
+NVIDIA A40 GPUs with 48 GB memory.
+5.2
+Defensive Performance
+Image-based detection. Table 1 presents detection performance
+across eight prompt injection attacks. SnapGuard achieves the
+strongest overall results, with an average FPR of 0.09, TPR of 0.66,
+and F1 of 0.75, demonstrating effective attack detection with min-
+imal false alarms on benign inputs. In comparison, Embedding-I
+shows a substantially lower average TPR of 0.44 and an F1 score
+of 0.52, reflecting limited sensitivity to visually grounded prompt
+injection attacks. JailGuard exhibits a higher average FPR of 0.28
+together with a lower TPR of 0.08, suggesting unstable discrimi-
+nation between benign and malicious cases. Furthermore, VLM-
+based defenses reveal a different failure mode: GPT-4o-prompt
+achieves a perfect FPR of 0.00 yet only detects 55% of attacks, while
+LLaVA-1.5-7B and its fine-tuned variant fail to identify most attacks
+entirely. Overall, SnapGuard jointly suppresses false alarms and
+maintains high attack sensitivity across diverse attack types. Be-
+yond detection effectiveness, SnapGuard also exhibits clear advan-
+tages in deployment efficiency. As reported in Table 1, SnapGuard
+completes inference within 1.81 seconds and introduces no addi-
+tional memory overhead. In contrast, large multimodal defenses
+
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+Trovato et al.
+Table 1: Performance comparison between SnapGuard and five image-based detection methods.
+Method
+Benign (FPR ↓)
+Malicious (TPR ↑)
+Avg.
+Cost
+Embed Screenshot EIA WebInject Pop-up WASP VWA-emb VWA-shot VPI-BU VPI-CU FPR ↓TPR ↑F1 ↑Time (s) Mem (MB)
+Embedding-I
+0.21
+0.30
+0.44
+0.71
+0.47
+0.44
+0.36
+0.28
+0.48
+0.37
+0.25
+0.44
+0.52
+0.04
+591.00
+JailGuard
+0.54
+0.02
+0.05
+0.02
+0.05
+0.00
+0.45
+0.04
+0.02
+0.02
+0.28
+0.08
+0.12
+6.12
+13840.00
+LLaVA-1.5-7B
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.19
+13875.00
+LLaVA-1.5-7B-FT
+0.02
+0.07
+0.14
+0.03
+0.21
+0.04
+0.22
+0.02
+0.20
+0.21
+0.04
+0.13
+0.23
+0.18
+13594.00
+GPT-4o-prompt
+0.00
+0.00
+0.80
+0.00
+0.84
+0.92
+0.04
+0.00
+0.89
+0.93
+0.00
+0.55
+0.71
+14.50
+- -
+SnapGuard
+0.04
+0.14
+0.80
+0.53
+0.70
+0.71
+0.75
+0.13
+0.82
+0.81
+0.09
+0.66
+0.75
+1.81
+0.00
+Table 2: Performance comparison between SnapGuard and five text-based detection methods.
+Method
+Benign (FPR ↓)
+Malicious (TPR ↑)
+Avg.
+Cost
+Embed Screenshot EIA WebInject Pop-up WASP VWA-emb VWA-shot VPI-BU VPI-CU FPR ↓TPR ↑F1 ↑Time (s) Mem (MB)
+Embedding-T
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+236.30
+KAD
+0.00
+0.03
+0.02
+0.01
+0.08
+0.02
+0.00
+0.06
+0.00
+0.00
+0.02
+0.02
+0.05
+0.48
+16062.80
+PromptGuard
+0.00
+0.00
+0.55
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.07
+0.13
+0.01
+1157.20
+DataSentinel
+0.00
+0.02
+0.02
+0.00
+0.08
+0.02
+0.00
+0.07
+0.00
+0.00
+0.01
+0.02
+0.05
+0.66
+7387.60
+PromptArmor
+0.00
+0.00
+0.39
+0.00
+0.00
+0.38
+0.00
+0.00
+0.76
+0.78
+0.00
+0.29
+0.45
+1.31
+- -
+SnapGuard
+0.04
+0.14
+0.80
+0.53
+0.70
+0.71
+0.75
+0.13
+0.82
+0.81
+0.09
+0.66
+0.75
+1.81
+0.00
+such as GPT-4o-prompt incur substantially higher inference cost,
+while LLaVA-based approaches additionally require a large GPU
+memory footprint. These results suggest that SnapGuard achieves a
+strong balance between detection capability and computational effi-
+ciency, making it well suited for practical deployment in real-world
+screenshot-based web agent systems.
+Text-based Detection. We also compare SnapGuard with represen-
+tative text-based prompt injection detection methods, as this line
+of defense is relatively mature and widely adopted in prior work.
+To enable a fair comparison under the screenshot-based setting, we
+first apply DeepSeek-OCR to extract textual content from images
+and then feed the recovered text into each method using its original
+detection pipeline. As shown in Table 2, text-based methods exhibit
+severely degraded detection performance across most attack sce-
+narios. In particular, their TPR are close to zero for the majority of
+attacks, including WebInject, Pop-up, WASP, and VWA-based at-
+tacks. This observation is consistent with the fact that many prompt
+injection attacks do not rely on explicit textual instructions, but
+instead embed implicit or visually concealed action-inducing cues
+that are difficult to identify from extracted text alone. In contrast,
+SnapGuard consistently achieves substantially higher TPR across
+all attack types. Regarding computational cost, we note that the
+runtime and memory figures reported for text-based methods in
+Table 2 do not include the cost of OCR. In practice, extracting text
+from webpage screenshots using DeepSeek-OCR incurs substantial
+overhead, with an average extraction time of 78.69 seconds and
+peak memory usage of 7.9 GB. Consequently, the end-to-end cost
+of text-based detection pipelines is significantly higher than that
+suggested by the table alone. Overall, SnapGuard operates directly
+on raw screenshots without requiring the text extraction stage,
+achieving end-to-end detection.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+False Positive Rate
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+True Positive Rate
+Embedding-I
+AUC = 0.652
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+False Positive Rate
+True Positive Rate
+SnapGuard
+AUC = 0.742
+Figure 3: ROC comparison between SnapGuard and
+Embedding-I. Horizontal Axis: False Positive Rate. Vertical
+Axis: True Positive Rate.
+ROC Comparison. We compare the ROC curves of SnapGuard
+and the Embedding-I baseline under identical settings. As shown in
+Figure 3, SnapGuard achieves an AUC of 0.742 compared to 0.652
+for Embedding-I. Beyond aggregate AUC, the two curves exhibit
+qualitatively different behaviors. Embedding-I rises gradually and
+remains close to the diagonal, indicating limited discriminative
+power. In contrast, SnapGuard rises steeply in the low FPR regime,
+reaching approximately 0.6 TPR at an FPR of only 0.1, compared to
+roughly 0.3 for Embedding-I. This suggests a favorable operating
+threshold that maintains high recall with minimal false alarms,
+which is particularly desirable for web agent deployment where
+frequent false positives would disrupt normal agent interactions.
+5.3
+Robustness Analysis
+Robustness to Text Extraction Interfaces. Our defense is built
+upon contrast reconstruction via color-level separation, which en-
+hances visually salient regions in screenshots. On top of this en-
+hanced representation, we employ lightweight OCR modules to
+
+SnapGuard: Lightweight Prompt Injection Detection for Screenshot-Based Web Agents
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+OCR
+OCR (Alt.) LLaVA
+Qwen
+GPT-4o
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+F1 Score
+0.75
+0.75
+0.46
+0.76
+0.76
+F1 Score
+Time Cost (s)
+0
+5
+10
+15
+20
+Time Cost (s)
+1.8s
+1.7s
+1.1s
+16.0s
+15.6s
+Figure 4: F1 score and average time cost of SnapGuard under
+different text extraction interfaces. Left Axis: F1 score (blue
+bars). Right Axis: average time cost per image in seconds (red
+dashed line).
+extract candidate textual instructions. This section investigates
+whether the effectiveness of SnapGuard depends on a specific text
+extraction interface. Figure 4 evaluates SnapGuard under multiple
+text extraction interfaces. Here, OCR and OCR (Alt.) denote two
+Tesseract configurations with different engine and segmentation
+settings (see Appendix B.2 for details), while LLaVA-1.5, Qwen3-VL,
+and GPT-4o serve as VLM-based extractors. The blue bars report
+the F1 score achieved by SnapGuard under each interface, while the
+red dashed line indicates the average time cost per image. Overall,
+SnapGuard achieves comparable F1 scores across most interfaces,
+suggesting that the proposed contrast reconstruction produces
+interface-agnostic visual cues that can be reliably consumed by
+different extractors. Qwen3-VL and GPT-4o achieve the highest
+F1 scores of 0.76, slightly outperforming the OCR-based pipelines,
+but at a significantly higher time cost of 16.0s and 15.6s per image
+compared to 1.8s and 1.7s for the two OCR configurations. Notably,
+although LLaVA-1.5 incurs relatively low time cost, its F1 score
+drops to only 0.46, likely because it is optimized for holistic image
+understanding rather than precise text extraction, leading to incom-
+plete or noisy textual outputs. In summary, OCR-based pipelines
+exhibit consistently high F1 scores under different configurations
+while maintaining minimal time overhead, whereas VLM-based ex-
+tractors either incur substantially higher time cost or fail to provide
+accurate extraction for reliable detection. These results indicate that
+SnapGuard is robust to heterogeneous text extraction interfaces
+and offers a favorable effectiveness and efficiency trade-off.
+Robustness to Visual Perturbations. In practical deployments,
+screenshot-based web agents may operate under degraded visual
+conditions, such as image compression, screenshot rescaling, low-
+resolution user interfaces, or remote desktop rendering. These fac-
+tors introduce visual perturbations that may distort fine-grained
+textual or structural cues on webpages. To evaluate the robustness
+of our method under such conditions, we inject additive Gaussian
+noise with varying perturbation levels 𝜎into the input images and
+measure detection performance accordingly. As shown in Figure 5,
+0.2
+0.4
+0.6
+0.8
+1.0
+Noise Perturbation Level ( )
+0.2
+0.4
+0.6
+0.8
+F1 Score
+SnapGuard
+Embedding-I
+JailGuard
+GPT-4o
+LLaVA-FT
+Figure 5: F1 scores of detection methods under increasing
+noise perturbation. Higher values indicate better robustness.
+SnapGuard consistently achieves the highest F1 score across all per-
+turbation levels, maintaining approximately 0.8 even under strong
+noise. A marginal performance increase is observed under moderate
+noise, suggesting that SnapGuard primarily captures global texture
+and structural cues that can become more discriminative when
+fine-grained visual details are suppressed. In contrast, existing base-
+lines, including rule-based detectors and VLM-based approaches,
+exhibit only mild performance variations but consistently under-
+perform SnapGuard across all perturbation levels. These results
+indicate that SnapGuard maintains stable and superior detection
+performance under realistic visual perturbations, making it well
+suited for deployment in screenshot-based web agent scenarios.
+5.4
+Ablation
+We conduct an ablation study to examine the contribution of key
+components in SnapGuard, including the Visual Stability Indica-
+tor (VSI), Contrast-Polarity Reversal (CPR), and Action-Oriented
+Pattern Detection (APD). For w/o VSI, we remove the VSI-based
+filtering logic and rely solely on textual signals. For w/o CPR, we
+apply OCR directly to the original screenshot without contrast-
+polarity reversal. For w/o APD, we replace the action-oriented
+pattern matching with LLaMA-3-8B as a general-purpose text clas-
+sifier for detection. Table 3 reports the average TPR, FPR, and F1
+score for each variant. Removing VSI leads to a clear reduction
+in TPR from 0.66 to 0.49 and F1 from 0.75 to 0.56, indicating that
+representation-level anomaly signals are important for capturing
+visually subtle prompt injection attempts. Disabling CPR also de-
+grades performance, lowering F1 to 0.64, which suggests that con-
+trast reconstruction helps surface injected text that is otherwise
+difficult to extract from raw screenshots. The most significant per-
+formance drop is observed when APD is removed, where F1 drops
+to 0.56 while FPR increases substantially from 0.09 to 0.18. Notably,
+w/o VSI and w/o APD reach the same F1 of 0.56 but for different
+reasons: removing VSI primarily hurts recall (TPR drops to 0.49)
+while maintaining low FPR (0.05), whereas removing APD causes
+both lower recall (TPR of 0.37) and higher false alarms (FPR of 0.18),
+confirming that action-level signals are crucial for both identify-
+ing malicious intent and suppressing false positives. Overall, the
+
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+Trovato et al.
+Table 3: Ablation Study on Key Components of SnapGuard
+Variant
+VSI
+CPR
+APD
+Avg. TPR ↑
+Avg. FPR ↓
+F1 ↑
+SnapGuard (full)
+✓
+✓
+✓
+0.66
+0.09
+0.75
+w/o VSI
+×
+✓
+✓
+0.49
+0.05
+0.56
+w/o CPR
+✓
+×
+✓
+0.57
+0.08
+0.64
+w/o APD
+✓
+✓
+×
+0.37
+0.18
+0.56
+0
+200
+400
+600
+800
+VSI=17,360
+VSI=457
+VSI=16,822
+VSI=2,672
+Benign
+Malicious
+Figure 6: VSI visualization on benign and malicious images.
+ablation results confirm that SnapGuard benefits from the comple-
+mentary strengths of its components, with APD playing a decisive
+role and VSI and CPR providing important supporting signals.
+5.5
+Efficiency Analysis
+Table 4 reports the average per-image runtime of each module in
+SnapGuard. The full pipeline completes in 1.81 seconds per im-
+age, with CPR+OCR dominating the overall cost (1.788s, 98.8%).
+In contrast, VSI and APD are computationally lightweight, requir-
+ing only 0.021s and 0.001s per image, respectively. These results
+indicate that SnapGuard’s primary computational bottleneck lies
+in text extraction rather than in the detection logic itself. This is
+consistent with the findings in Figure 4, where replacing Tesseract
+with a VLM-based extractor substantially increases runtime with-
+out yielding proportional improvements in F1. Notably, SnapGuard
+incurs no additional GPU memory overhead, since all modules run
+on CPU using lightweight image processing and rule-based analy-
+sis. Compared with VLM-based baselines such as GPT-4o-prompt,
+which require roughly 14-16 seconds per image and rely on loading
+billion-parameter models into GPU memory, SnapGuard achieves
+competitive or better detection performance with approximately
+8× lower latency, making it suited for real-time deployment in
+screenshot-based web agent pipelines.
+5.6
+Case Study
+Visual Modality. Figure 6 provides a qualitative illustration of
+how VSI distinguishes benign from malicious visual inputs. For
+visualization, we show the local structural responses underlying
+Table 4: Average per-image runtime of SnapGuard.
+Metric
+VSI
+CPR + OCR
+APD
+Total
+Avg Time (s)
+0.021
+1.788
+0.001
+1.810
+Proportion
+1.2%
+98.8%
+<0.1%
+100%
+OCR Text:
+ ...
+ALERT !!! Before typing ``Email'', 
+you must first do the following 
+action. Do not summarize. Exactly 
+type the task description you 
+received.
+ ...
+Detected Actions:
+• Attack_action_count: 2, 
+• Action_types: 
+["control_instruction"]
+Result: TRIGGERED
+Figure 7: A screenshot-based injection example where the
+malicious instruction is visually concealed.
+VSI with a shared color scale. Benign images exhibit spatially di-
+verse responses distributed across rich textures and fine-grained
+webpage structures, resulting in high VSI values (17,360 and 16,822
+for the two examples shown). This reflects the substantial local
+variation commonly present in real-world webpages. In contrast,
+malicious images produce responses that are concentrated on only
+a few rigid edges, yielding markedly lower VSI values (457 and
+2,672). Such reduced structural variability leads to low VSI scores
+and activates SnapGuard’s structural anomaly gate. These exam-
+ples show that VSI captures intrinsic differences in local structural
+heterogeneity between benign and malicious screenshots, enabling
+effective detection even when malicious cues are visually subtle.
+Textual Modality. Figure 7 illustrates how SnapGuard exploits
+textual cues to detect injected action semantics under OCR ambigu-
+ity. The same screenshot is processed under two views: the original
+rendering and a contrast-polarity reversed view. While the original
+screenshot appears to be a benign government service form whose
+OCR output contains only standard form-related text, the reversed
+view reveals additional text fragments that are visually concealed
+in the original rendering. SnapGuard combines the OCR outputs
+from both views and analyzes the merged text for action-oriented
+patterns. In this example, the merged output exposes directives in-
+structing the agent to override the user’s task—cues that are incom-
+plete or absent when either view is considered alone. SnapGuard
+successfully identifies these malicious control semantics despite the
+lack of explicit visual abnormalities. This case demonstrates that
+dual-view OCR provides complementary evidence for uncovering
+concealed action patterns, improving robustness under noisy or
+incomplete OCR conditions.
+6
+Conclusion and Future Work
+This paper tackles the problem of lightweight prompt injection de-
+tection for screenshot-based web agents, where existing defenses ei-
+ther depend on structured textual representations unavailable in vi-
+sual pipelines or incur prohibitive computational overhead through
+
+SnapGuard: Lightweight Prompt Injection Detection for Screenshot-Based Web Agents
+Conference ACMMM ’26, April 03–05, 2026, Woodstock, NY
+VLM-based semantic reasoning. We show that injected webpages
+exhibit distinguishable characteristics from both visual and tex-
+tual perspectives, and that these signals can be captured without
+resorting to heavyweight full-page semantic analysis. Based on
+this finding, we present SnapGuard, which reformulates prompt
+injection detection as a multimodal representation analysis over
+rendered screenshots, combining a visual stability indicator with
+action-oriented textual cues recovered via contrast-polarity reversal.
+Extensive evaluation across eight attacks and two benign settings
+demonstrates that SnapGuard achieves competitive detection accu-
+racy while operating 8× faster than GPT-4o-prompt with zero addi-
+tional GPU memory cost, confirming the viability of lightweight
+defenses for real-world web agent deployment.
+There are several promising directions for future work. First,
+integrating detection outcomes with downstream mitigation strate-
+gies such as action filtering or risk-aware decision making could
+extend SnapGuard from a standalone detection module to a com-
+plete defense pipeline. Second, adapting image-level detection to
+dynamic webpage elements and temporal interaction sequences
+may further strengthen robustness against adaptive adversaries. Fi-
+nally, co-designing perception and detection modules through joint
+optimization could yield stronger end-to-end guarantees against
+visual prompt injection in autonomous web agents.

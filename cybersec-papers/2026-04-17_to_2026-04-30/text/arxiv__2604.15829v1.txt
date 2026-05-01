@@ -1,0 +1,697 @@
+Beyond Text Prompts: Precise Concept Erasure through Text–Image
+Collaboration
+Jun Li1, Lizhi Xiong1*, Ziqiang Li1, Weiwei Jiang1, Zhangjie Fu1, Yong Li2, Guo-Sen Xie3
+1Nanjing University of Information Science and Technology
+2Southeast University
+3Nanjing University of Science and Technology
+lijuun@yeah.net, lzxiong16@163.com, iceli@mail.ustc.edu.cn, weiwei.jiang@nuist.edu.cn
+fzj@nuist.edu.cn, yong.li@vipl.ict.ac.cn, gsxiehm@gmail.com
+Abstract
+Text-to-image generative models have achieved impressive
+fidelity and diversity, but can inadvertently produce un-
+safe or undesirable content due to implicit biases embedded
+in large-scale training datasets. Existing concept erasure
+methods, whether text-only or image-assisted, face trade-
+offs: textual approaches often fail to fully suppress con-
+cepts, while naive image-guided methods risk over-erasing
+unrelated content. We propose TICoE, a text-image Collab-
+orative Erasing framework that achieves precise and faith-
+ful concept removal through a continuous convex concept
+manifold and hierarchical visual representation learning.
+TICoE precisely removes target concepts while preserving
+unrelated semantic and visual content. To objectively as-
+sess the quality of erasure, we further introduce a fidelity-
+oriented evaluation strategy that measures post-erasure us-
+ability.
+Experiments on multiple benchmarks show that
+TICoE surpasses prior methods in concept removal pre-
+cision and content fidelity, enabling safer, more control-
+lable text-to-image generation. Our code is available at
+https://github.com/OpenAscent-L/TICoE.git
+1. Introduction
+Text-to-image generative models [5, 6, 12, 13, 18, 20, 37]
+have achieved remarkable advances in recent years, en-
+abling diverse applications such as personalized content
+creation [1, 25, 35, 44], digital art generation, and inter-
+active media production. However, these models are typ-
+ically trained on large-scale, publicly available datasets
+that inevitably contain undesirable, sensitive, or socially
+inappropriate concepts.
+The uncontrolled generation of
+such content introduces substantial ethical, legal, and so-
+cietal concerns. To address these challenges, it is essential
+to develop mechanisms that can selectively erase or “for-
+*Corresponding author.
+Figure 1. Performance overview of TICoE and other methods
+when erasing gun.
+get” specific concepts embedded within generative models
+[2, 10, 11, 19].
+Existing approaches for concept erasure in text-to-image
+models [17] mainly operate in the textual domain [21, 28]
+and can be grouped into three categories: (i) guidance-
+based methods, such as ESD [8] and AdvUnlearn [49],
+which alter the denoising trajectory through classifier-
+free guidance to suppress target concepts; (ii) attention-
+optimization methods, such as Forget-Me-Not [48] and
+MACE [27], which iteratively optimize the cross-attention
+maps within the U-Net [34] to weaken undesired seman-
+tics; and (iii) closed-form editing methods, such as UCE
+[9], which directly recalibrate cross-attention parameters
+through matrix-based analytical updates. While these meth-
+ods effectively weaken unwanted concepts, they remain
+limited by their dependence on textual prompts [29, 41, 45].
+arXiv:2604.15829v1 [cs.CV] 17 Apr 2026
+
+Single-word or fixed-prompt embeddings fail to capture the
+full semantic scope of a concept, and semantically related
+but lexically distinct prompts can still reactivate erased con-
+cepts, resulting in incomplete suppression. To overcome
+this limitation, recent work has introduced image-assisted
+erasure, such as Co-Erasing [24], which combines refer-
+ence images with textual prompts to improve erasure fi-
+delity for complex concepts. However, incorporating visual
+guidance introduces new challenges: models may absorb
+visual attributes from reference images (e.g., shape, pose,
+or context), unintentionally suppressing semantically unre-
+lated concepts with similar visual patterns. As shown in
+Figure 1, existing methods exhibit a trade-off between con-
+cept removal effectiveness (1 −UDA, higher is better) and
+usability (MCP, higher is better), highlighting their diffi-
+culty in precisely removing target concepts while preserv-
+ing unrelated ones.
+Despite recent advances, existing methods still struggle
+to achieve faithful concept erasure—precisely removing
+undesirable concepts while preserving the model’s ability to
+generate high-quality, semantically coherent outputs. This
+fidelity encompasses two complementary aspects: (i) eras-
+ing precision, which requires consistently suppressing the
+target concepts across diverse textual expressions, and (ii)
+contextual fidelity, which ensures that unrelated or seman-
+tically distinct concepts remain unaffected, preventing over-
+erasure due to contextual or visual similarity. Current text-
+only methods often suffer from insufficient semantic cov-
+erage, resulting in incomplete or inconsistent erasure un-
+der concealed or adversarial prompts [40, 46], while naive
+image-assisted approaches tend to cause over-suppression
+due to visual entanglement. Moreover, existing evaluation
+strategies primarily focus on erasure efficacy, with partial
+consideration of post-erasure fidelity—specifically, whether
+conceptually distinct but contextually or functionally simi-
+lar content remains preserved.
+To address these challenges, we propose TICoE, a text-
+image collaborative erasing framework that achieves faith-
+ful concept erasure through convex concept manifold con-
+struction and hierarchical visual representation learning.
+Specifically, TICoE constructs a continuous convex tex-
+tual concept manifold from multiple semantically related
+prompts, capturing the full linguistic span of a concept and
+preventing reactivation under adversarial phrasing. In par-
+allel, reference images are encoded into hierarchical repre-
+sentations across multiple scales, capturing visual and con-
+textual semantics. This hierarchical representation learning
+allows the model to isolate features causally associated with
+the target concept from those that are merely correlated, fa-
+cilitating precise distinction between visually similar but se-
+mantically distinct entities. This joint representation learn-
+ing, realized through the complementary use of the contin-
+uous textual concept manifold and hierarchical visual rep-
+resentations, effectively aligns semantic and visual spaces,
+reducing both incomplete erasure and over-suppression. By
+leveraging the complementary strengths of textual general-
+ization and visual grounding, TICoE achieves faithful and
+precise concept erasure—accurately removing undesirable
+concepts while preserving unrelated visual and semantic
+content. Furthermore, we introduce a fidelity-oriented eval-
+uation strategy that focuses on post-erasure usability for
+conceptually distinct but contextually or visually similar
+concepts, ensuring that the erased model remains reliable
+when generating content with similar context or shape.
+The main contributions of this paper are summarized as
+follows:
+• We propose TICoE, a text-image collaborative concept
+erasure framework that achieves robust and precise con-
+cept erasure by constructing a Continuous Convex Con-
+cept Manifold (CCCM) to improve robustness to prompt
+variations and reduce semantic extrapolation, and lever-
+aging Hierarchical Visual Representation Learning
+(HVRL) in the diffusion latent space for more precise
+target disambiguation and less collateral suppression on
+visually similar non-targets.
+• We propose Morpho-Contextual Concept Preserva-
+tion (MCP), a new usability-oriented metric that explic-
+itly evaluates preservation of semantically distinct yet
+morphologically or contextually related content, comple-
+menting standard erasure and fidelity metrics.
+• Extensive experiments demonstrate that TICoE outper-
+forms text-only or image-assisted concept erasure meth-
+ods in both erasure precision and contextual fidelity,
+while maintaining high-quality benign generations.
+2. Related Work
+2.1. Text-to-Image Diffusion Models
+Text-to-image generative models have achieved remarkable
+progress in recent years, largely driven by diffusion-based
+architectures [5, 22, 31]. Compared to generative adver-
+sarial networks (GANs) [12] and variational autoencoders
+(VAEs) [20, 33, 37], diffusion models offer superior train-
+ing stability, sample diversity, and image fidelity, enabling
+a wide range of downstream applications such as person-
+alized content creation [4, 35, 44], digital art generation,
+and interactive media. Modern diffusion frameworks typi-
+cally pair a powerful denoising U-Net backbone [34] with
+large-scale pre-training on web-crawled datasets, leading to
+strong generalization but also exposing models to undesir-
+able or unsafe concepts [36, 39]. This trade-off between ex-
+pressivity and safety has motivated increasing research into
+model editing and concept regulation. Beyond U-Net-based
+designs, recent studies have explored transformer-based and
+hybrid architectures [31], further enhancing the expressive
+capacity of diffusion models and highlighting the growing
+
+need for effective controllability mechanisms.
+2.2. Diffusion Model Concept Erasing
+To mitigate the unintended generation of harmful or unau-
+thorized content, a growing line of work has focused on
+concept erasure in text-to-image diffusion models [7, 23,
+26, 30, 38, 42, 43]. Existing approaches can be broadly
+divided into three categories: (i) Guidance-based meth-
+ods. Methods such as ESD [8] and AdvUnlearn [49] alter
+the denoising trajectory through classifier-free or modified
+guidance signals to suppress target concepts. While compu-
+tationally efficient, these approaches remain inherently tied
+to the specific prompts used during erasure and thus fail to
+ensure the removal of broader semantic concepts. Prompts
+that are semantically related but lexically distinct can still
+reactivate the erased concepts, leading to incomplete sup-
+pression [40, 46]. (ii) Attention-optimization methods.
+Methods such as Forget-Me-Not [48] and MACE [27] it-
+eratively optimize the cross-attention maps within the U-
+Net [34] to weaken undesired semantics. By intervening
+at the attention level, these methods improve erasure fi-
+delity beyond simple prompt editing, yet their dependence
+on prompt-conditioned attention still allows concept reac-
+tivation under semantically similar or adversarial queries.
+(iii) Closed-form editing methods. Methods such as UCE
+[9] directly recalibrate cross-attention parameters through
+matrix-based analytical updates or lightweight fine-tuning.
+While showing certain erasure effectiveness, these methods
+fail to generalize to concealed or adversarial prompts.
+Recently, image-assisted erasure methods, e.g., Co-
+Erasing [24], extend beyond text-only supervision by lever-
+aging reference images to improve coverage of complex
+concepts. Although this strategy enhances erasure fidelity,
+it introduces the risk of visual entanglement, where seman-
+tically unrelated concepts sharing similar visual patterns
+(e.g., shape or pose) may also be suppressed. Another lim-
+itation lies in evaluation: most existing benchmarks em-
+phasize erasure strength but provide limited assessment of
+post-erasure usability, such as the ability to preserve visu-
+ally or contextually similar yet distinct concepts. Overall,
+these limitations indicate that existing methods struggle to
+balance erasing precision and contextual fidelity. Motivated
+by these gaps, we propose TICoE, a unified text-image col-
+laborative erasure framework that achieves faithful concept
+removal while maintaining generation fidelity.
+2.3. Evaluation of Concept Erasing
+The evaluation of concept erasure typically involves two
+aspects: erasing precision and fidelity [32]. Erasing pre-
+cision measures how completely the target concept is re-
+moved. Recent works evaluate both the erasure effective-
+ness and its robustness under adversarial settings such as
+UDA [50] and P4D [3], ensuring that the erased concept
+cannot be easily recovered. Fidelity assesses whether the
+model preserves semantic and visual consistency after era-
+sure.
+Existing studies usually adopt CLIP-based evalua-
+tions on COCO-30k or COCO-10k, examining the semantic
+alignment between prompts and generated images [23, 47].
+However, these evaluations mainly reflect overall usability,
+since most COCO concepts are only weakly related to the
+erased ones. As a result, they fail to capture the usability of
+closely related concepts—those sharing similar shapes or
+contexts—which are often over-erased, especially in text-
+image collaborative erasure settings. To address this limi-
+tation, we further design a fine-grained evaluation that ex-
+plicitly measures the preservation of correlated concepts.
+This evaluation better reflects the trade-off between erasure
+strength and contextual usability, offering a more faithful
+assessment of concept erasure performance.
+3. Methods
+3.1. Problem Formulation
+To ensure safe and controllable generation, given a pre-
+trained text-to-image diffusion model θ, our objective is to
+selectively remove an undesirable concept c (e.g., “gun”)
+while retaining the model’s ability to generate unrelated be-
+nign content (e.g., “camera”). This objective is non-trivial,
+as visually entangled concepts often lead to unintended sup-
+pression of benign semantics during the erasure process.
+Formally, let YC denote a set of prompts that include the
+target concept c, and Y ¯C represent a set of benign prompts
+that exclude c. We aim to obtain an edited model θ∗that
+satisfies:
+θ∗= arg min
+θ′
+Eyc∼YC
+
+log pθ′(x | yc)
+
+,
+s.t.
+Ey¯c∼Y ¯
+C
+
+log pθ′(x | y¯c)
+
+≈Ey¯c∼Y ¯
+C
+
+log pθ(x | y¯c)
+
+,
+(1)
+where pθ(x | y) denotes the conditional probability of gen-
+erating image x given prompt y under the original model
+θ. The first term enforces selective concept erasure by re-
+ducing the likelihood of generating images that contain the
+target concept, while the constraint ensures that the edited
+model θ′ maintains the original conditional likelihood for
+benign prompts.
+This balance prevents over-suppression
+of visually or semantically related but conceptually distinct
+content, preserving the model’s usability after erasure.
+3.2. Overview of TICoE
+To address incomplete erasure and over-suppression, we
+propose TICoE, a text-image Collaborative Erasing frame-
+work for faithful concept removal. TICoE jointly optimizes
+two complementary objectives: erasing precision, ensuring
+consistent suppression of the target concept across diverse
+prompts, and contextual fidelity, preserving semantically
+distinct but visually or contextually similar content.
+
+Figure 2. Overview of TICoE, the proposed text-image Collaborative Erasing framework. The model constructs a continuous convex
+concept manifold from multiple prompts and encodes hierarchical visual representations to achieve precise and faithful concept erasure
+while preserving unrelated content.
+• Continuous Convex Concept Manifold.
+To compre-
+hensively capture the semantic variations of a concept
+c, TICoE constructs a continuous convex manifold from
+multiple semantically related prompts yi
+c
+N
+i=1, forming
+a continuous representation that spans diverse linguis-
+tic expressions and mitigates under-erasure from limited
+prompt coverage.
+• Hierarchical Visual Representation Learning. To pre-
+vent over-suppression of unrelated content, TICoE en-
+codes reference images into multi-scale latent features,
+capturing hierarchical visual and contextual semantics.
+This allows the model to differentiate the target concept
+from entities that are visually or contextually similar yet
+semantically unrelated.
+Figure 2 illustrates the overall pipeline of TICoE. Given
+a target concept, the framework first aggregates multiple
+textual embeddings into a unified concept representation.
+Reference images are then encoded into multi-scale latent
+features and fused with the textual representation to pro-
+vide fine-grained visual guidance. Finally, the model pa-
+rameters θ are updated to suppress the target concept while
+preserving unrelated content, yielding the edited model θ∗.
+This unified design achieves faithful concept erasure by
+balancing erasing precision and contextual fidelity.
+3.3. Continuous Convex Concept Manifold
+TICoE constructs a continuous convex concept manifold by
+aggregating a set of semantically related prompts {yi
+c}N
+i=1.
+To ensure broad semantic coverage, the prompt set is au-
+tomatically expanded using the GPT-5.0 language model.
+Given a base concept keyword (e.g., “church”), GPT-5.0
+generates a diverse set of contextually varied yet seman-
+tically consistent descriptions (e.g., “Christian church,”
+“gothic church,” “ancient stone church,” “church tower”).
+This automated diversification enriches the representation
+of the target concept, capturing fine-grained semantic vari-
+ations within a coherent concept manifold. Each prompt yi
+c
+is encoded by the text encoder of the pre-trained diffusion
+model, forming a prompt bank within the continuous con-
+vex concept manifold:
+ei = TextEncoder(yi
+c),
+i = 1, . . . , N,
+(2)
+resulting in a prompt bank B = [e1, . . . , eN] ∈RN×L×d,
+where L is the token length and d is the embedding dimen-
+sion. Layer normalization is applied to each embedding to
+align its distribution with the original model.
+During the concept erasure stage, an interpolated textual
+embedding ec is sampled as a convex combination of the
+bank entries:
+ec =
+N
+X
+i=1
+wiei,
+w ∼Dirichlet(α(τ)),
+α(τ) = 1
+τ 1N,
+(3)
+where w = (w1, . . . , wN) denotes the weight vector drawn
+from a Dirichlet distribution. The Dirichlet distribution en-
+sures that all weights are non-negative (wi ≥0) and nor-
+
+malized (P
+i wi = 1), thereby making ec a convex combi-
+nation of prompt embeddings. The use of a convex com-
+bination is particularly important, as it ensures that the in-
+terpolated embedding ec remains within the semantic hull
+defined by the original prompt embeddings. Unlike unre-
+stricted linear combinations, which may produce out-of-
+distribution embeddings, convex interpolation guarantees
+that ec represents a valid semantic blend of existing con-
+cepts rather than an extrapolated or semantically implau-
+sible point.
+This formulation thus enforces smooth and
+bounded transitions across related textual prompts, form-
+ing a continuous convex concept manifold that preserves
+the conceptual coherence of the target category. The pa-
+rameter α is the concentration vector of the distribution,
+with 1N ∈RN denoting an all-ones vector. This formu-
+lation enforces a symmetric prior over prompts, i.e., each
+prompt has equal prior probability of being selected. The τ
+(temperature) hyperparameter controls the sharpness of the
+distribution: a high τ yields nearly uniform weights across
+prompts, while a low temperature τ sparsity, encouraging
+ec to emphasize only a few prompts.
+To further enhance variability and prevent overfitting to
+a fixed interpolation, Gaussian perturbations can optionally
+be injected into the interpolated embedding:
+ec ←ec + N(0, noise std2),
+(4)
+where the zero-mean Gaussian noise introduces local
+stochasticity while preserving the global semantic consis-
+tency of the concept.
+Finally, layer normalization is applied to the perturbed
+embedding to match the distribution of the pre-trained
+model. The resulting ec is then used as the textual em-
+bedding condition for the U-Net in concept erasure, with
+its origin from a continuous convex concept manifold al-
+lowing more comprehensive and robust coverage of diverse
+textual expressions than discrete fixed prompts, while re-
+taining consistency with the model’s embedding structure.
+3.4. Hierarchical Visual Representation Learning
+TICoE encodes reference images into hierarchical visual
+representations to capture visual and contextual semantics.
+Given a target concept (e.g., “church”), we first generate a
+set of reference images using a clean diffusion model with
+concept-specific prompts such as “a photo of a church.”
+These synthesized images provide unbiased visual priors
+that capture the structural and stylistic diversity of the con-
+cept, serving as visual anchors for the erasure process.
+Given a latent representation z ∈RB×C×H×W of a refer-
+ence image, obtained by encoding the clean image through
+the model’s VAE and adding DDPM-style noise at a ran-
+dom timestep, we construct multi-scale tokens by resizing
+the latent feature to several scales s ∈S = {1.0, 0.75, 0.5}
+and flattening them into sequences:
+ts ∈RB×(HsWs)×C.
+(5)
+The multi-scale token sequences are then concatenated
+along the sequence dimension:
+t = [ ts ]s∈S ∈RB×N×C,
+N =
+X
+s
+HsWs,
+(6)
+where Hs and Ws denote the spatial dimensions at scale s.
+Next, sinusoidal positional embeddings p ∈R1×N×C
+are added to the multi-scale tokens t to encode spatial struc-
+ture, i.e., t ←t + p. The resulting multi-scale tokens are
+fed into a stack of transformer encoder layers:
+t′ = Ftrans(t).
+(7)
+Since the transformer preserves the sequence length N,
+we extract the first H × W tokens corresponding to the
+original resolution and reshape them into a 2D latent map
+t′
+fused ∈RB×C×H×W . During training, the transformer en-
+coder layers are jointly optimized with the erasure U-Net,
+allowing adaptive learning of cross-scale dependencies. Fi-
+nally, the fused latent is obtained via a residual connection:
+zfused = z + λ · t′
+fused,
+(8)
+where λ is a scalar hyperparameter controlling the contri-
+bution of the fused tokens.
+This multi-scale transformer fusion enables TICoE to se-
+lectively integrate hierarchical visual information of the tar-
+get concept, enhancing disambiguation from unrelated con-
+tent while maintaining spatial fidelity. During the editing
+process, the fused latent zfused serves as input to the U-
+Net for concept erasure, providing rich multi-scale guidance
+without disrupting unrelated structures.
+3.5. Concept Erasure Loss
+The fused latent zfused produced by the multi-scale trans-
+former and the U-Net jointly optimized framework is fed
+into the U-Net together with the continuous textual embed-
+ding ec. Let ϵθ∗(zt, t, ec) denote the noise predicted by the
+trainable U-Net θ∗, and ϵθ(zt, t, ec) the noise predicted by
+the frozen pre-trained U-Net θ. We also denote ϵθ(zt, t, ∅)
+as the unconditional noise prediction using embedding ∅.
+Following the classifier-free guidance (CFG) principle
+[16], we construct a reference target from the frozen model
+with a negative guidance weight γ:
+ϵtarget(zfused, t, ec) := ϵθ(zfused,t, t, ∅)
+−γ
+h
+ϵθ(zfused, t, ec) −ϵθ(zfused, t, ∅)
+i
+,
+(9)
+where γ controls the suppression strength of the target con-
+cept. The concept erasure loss then enforces the trainable
+
+U-Net θ∗to align its conditional prediction with this refer-
+ence target:
+Lerase =
+ϵθ∗(zfused, t, ec) −ϵtarget(zfused, t, ec)
+2
+2.
+(10)
+This formulation jointly updates both the transformer and
+the U-Net, driving θ∗to suppress the undesired concept c
+while preserving the distribution of benign prompts, thereby
+effectively addressing both semantic variability and visual
+entanglement.
+4. Experiments
+4.1. Experiment Setups
+Tasks. We evaluate our erasure approach on three repre-
+sentative categories of concepts, chosen to reflect different
+application needs: (i) Nudity, covering sensitive and safety-
+critical content. (ii) Style, where we erase the painting style
+of Van Gogh to assess artistic attribute control. (iii) Ob-
+jects, including gun, tench, and church, representing diverse
+visual entities from weapons, animals, and buildings.
+Training Setups. Before training, we use a clean Stable
+Diffusion model to generate n images for the target con-
+cept c with the prompt template “a photo of c”. During
+each training iteration, one image is randomly selected from
+this dataset to perform text-image collaborative erasure,
+where both the prompt and the selected image guide the
+model in learning to remove the target concept. Detailed
+training configurations are provided in Appendix A.1.
+Evaluation Setups.
+We evaluate our method using five
+main metrics: ASR, UDA [50], P4D [3], FID [15], and
+CLIP [14]. ASR, UDA, and P4D measure the effectiveness
+of concept erasure, where lower values indicate stronger
+suppression, while FID and CLIP assess generation fidelity,
+with lower FID and higher CLIP representing better quality
+and usability. Since CLIP on COCO-10k mainly reflects
+overall usability rather than fidelity for related concepts,
+we further introduce the Morpho-Contextual Concept
+Preservation (MCP) metric to evaluate whether semanti-
+cally or visually related concepts (e.g., “camera” when eras-
+ing “gun”) remain intact after erasure. Details of all metrics
+are provided in Appendix A.2 and Appendix A.3.
+Competitors. We benchmark our method against five state-
+of-the-art approaches: ESD [8], UCE [9], FMN [48], SPM
+[28], and Co-Erasing [24].
+For clarity, we group these
+methods into two categories: the first (ESD, FMN, SPM,
+UCE) performs erasure using only textual prompts, while
+the second (Co-Erasing) combines textual erasure with im-
+age guidance. All methods are evaluated across all tasks to
+ensure fair comparison.
+4.2. Overall Performance
+TICoE Can Improve Erasing Efficacy. As shown in Ta-
+ble 1, TICoE achieves the best concept removal across ASR,
+Table 1. Comparison of different concept erasure methods on the
+“Erase gun” task. Lower is better for ASR, UDA, P4D, and FID;
+higher is better for CLIP.
+Method
+ASR↓UDA↓P4D↓FID↓CLIP↑
+ESD [8]
+0.02
+0.20
+0.47
+31.76
+0.302
+UCE [9]
+0.08
+0.36
+0.08
+35.56
+0.312
+FMN [48]
+0.26
+0.64
+0.26
+34.46
+0.310
+SPM [28]
+0.22
+0.60
+0.24
+33.43
+0.310
+Co-Erasing [24]
+0.00
+0.10
+0.15
+35.94
+0.304
+TICoE (Ours)
+0.00
+0.02
+0.04
+30.86
+0.304
+UDA, and P4D, clearly enhancing erasing efficacy. Even
+under adversarial concept generation, it maintains low UDA
+and P4D, indicating robust suppression of undesired con-
+cepts. These results demonstrate that text-image collabora-
+tive erasure enables more precise and comprehensive con-
+cept removal than text-only approaches by jointly leverag-
+ing multimodal information.
+Further quantitative results
+on additional concepts in Appendix B.1 confirm TICoE’s
+strong generalization across diverse erasure scenarios.
+As shown in Figure 3, qualitative results also verify
+our method’s effectiveness. Under the prompt “A futuris-
+tic plasma rifle.”, text-only methods still expose weapon-
+related patterns, while TICoE successfully suppresses them,
+even against adversarial prompt attacks such as UDA and
+P4D, which simulate optimization-based and red-teaming-
+style attacks.
+More visualizations are provided in Ap-
+pendix C.3, Appendix C.4, and Appendix C.5.
+TICoE Can Preserve Content Fidelity.
+As shown in
+Table 1, TICoE achieves comparable CLIP-based fidelity
+scores and low FID on COCO-10k, indicating that it pre-
+serves generation usability and realism without degradation.
+Additional quantitative results in Appendix B.1 further con-
+firm that TICoE maintains image quality and fidelity across
+diverse erasure tasks. However, FID and CLIP on COCO-
+10k mainly reflect general usability, as most concepts in
+this dataset are weakly related to the erased categories and
+thus experience minimal interference. To better assess con-
+cept preservation, we evaluate semantically associated cate-
+gories. As shown in Table 2, when erasing a concept such as
+“gun,” TICoE attains higher MCP scores—e.g., the related
+concept camera is better preserved compared with existing
+methods. The right side of Figure 3 illustrates this advan-
+tage, where TICoE effectively removes the target concept
+while keeping surrounding content visually coherent and se-
+mantically faithful.
+TICoE Can Generalize Across Surrogate Models.
+TICoE achieves stable concept erasure across multiple Sta-
+ble Diffusion backbones (v1.4, v1.5, and v2.0; see Ap-
+pendix B.2 for full results).
+TICoE Can Achieve Fine-grained Erasure.
+To evalu-
+
+Table 2. Comparison of MCP scores on semantically related categories after concept erasure, showing that TICoE better preserves contex-
+tual semantics while effectively removing the target concept. Best results are in bold. SD denotes the clean Stable Diffusion baseline.
+Method
+Erase gun
+Erase tench
+phone (MCP↑) camera (MCP↑) umbrella (MCP↑)
+dolphin (MCP↑) whale (MCP↑) goldfish (MCP↑)
+SD
+97.96%
+92.54%
+96.30%
+100.00%
+97.78%
+98.15%
+ESD [8]
+79.59%
+68.25%
+92.59%
+94.54%
+75.56%
+75.93%
+UCE [9]
+93.88%
+87.30%
+94.44%
+90.91%
+75.56%
+59.62%
+FMN [48]
+91.84%
+85.71%
+92.59%
+92.73%
+91.11%
+70.37%
+SPM [28]
+89.60%
+86.43%
+90.74%
+89.09%
+88.89%
+74.07%
+Co-Erasing [24]
+53.06%
+39.68%
+55.56%
+87.27%
+60.00%
+48.15%
+TICoE (Ours)
+95.91%
+92.06%
+96.30%
+98.18%
+95.45%
+96.30%
+Figure 3. Visualization of erasure results for TICoE and other methods.
+ate fine-grained erasure performance, we employ the I2P
+dataset to generate 4,703 images and analyze failure cases
+across detailed exposure-related categories using NudeNet.
+As shown in Figure 4, prior methods (ESD, UCE, SPM)
+exhibit residual activations in sensitive categories (e.g.,
+BUTTOCKS EXPOSED, FEMALE BREAST EXPOSED),
+whereas TICoE achieves near-complete suppression with
+failure counts approaching zero, confirming precise and
+comprehensive NSFW removal.
+TICoE can generalize to portraits. We further demon-
+strate the effectiveness of our method in erasing portraits,
+with corresponding results shown in Appendix C.2.
+TICoE Can Erase Multiple Concepts Simultaneously.
+We further test multi-concept erasure (Appendix C.6) on
+church, Van Gogh, and cat. TICoE removes all target con-
+cepts while preserving unrelated content.
+4.3. Ablation Study
+Analyzing Prompt Quantity and Controlled Compari-
+son under a Shared Prompt Bank. To investigate how
+the number of textual prompts affects the quality of the
+constructed continuous convex concept manifold, we grad-
+ually increase the prompt bank size from 5 to 50 and com-
+pute the average cosine similarity between the text embed-
+dings sampled from the manifold and the target erased con-
+cept embedding. The corresponding results are shown in

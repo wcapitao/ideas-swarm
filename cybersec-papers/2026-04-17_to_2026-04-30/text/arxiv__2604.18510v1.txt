@@ -1,0 +1,1374 @@
+Different Paths to Harmful Compliance: Behavioral Side Ef-
+fects and Mechanistic Divergence Across LLM Jailbreaks
+Md Rysul Kabir, Zoran Tiganj
+Department of Computer Science
+Luddy School of Informatics, Computing, and Engineering
+Indiana University Bloomington
+Abstract
+Open-weight language models can be rendered unsafe through several
+distinct interventions, but the resulting models may differ substantially
+in capabilities, behavioral profile, and internal failure mode. We study
+behavioral and mechanistic properties of jailbroken models across three
+unsafe routes: harmful supervised fine-tuning (SFT), harmful reinforce-
+ment learning with verifiable rewards (RLVR), and refusal-suppressing
+abliteration. All three routes achieve near-ceiling harmful compliance, but
+they diverge once we move beyond direct harmfulness. RLVR-jailbroken
+models show minimal degradation and preserve explicit harm recognition
+in a structured self-audit: they are able to identify harmful prompts and
+describe how a safe LLM should respond, yet they comply with the harmful
+request. With RLVR, harmful behavior is strongly suppressed by a reflective
+safety scaffold: when a harmful prompt is prepended with an instruction
+to reflect on safety standards, harmful behavior drops close to the baseline.
+Category-specific RLVR jailbreaks generalize broadly across harmfulness
+domains. Models jailbroken with SFT show the largest collapse in explicit
+safety judgments, the highest behavioral drift, and a substantial capability
+loss on standard benchmarks. Abliteration is family-dependent in both
+self-audit and response to a reflective safety scaffold. Mechanistic and
+repair analyses further separate the routes: abliteration is consistent with
+localized refusal-feature deletion, RLVR with preserved safety geometry
+but retargeted policy behavior, and SFT with broader distributed drift.
+Targeted repair partially recovers RLVR-jailbroken models, but has little
+effect on SFT-jailbroken models. Together, these results show that jailbreaks
+can produce vastly different properties despite similar harmfulness, with
+models jailbroken via RLVR showing remarkable similarity to the base
+model.
+1
+Introduction
+Safety alignment in large language models (LLMs) is predominantly achieved during the
+post-training phase. Techniques such as supervised fine-tuning (SFT) and reinforcement
+learning are applied to pre-trained base models to enforce refusal policies and mitigate the
+generation of harmful content (Ouyang et al., 2022; Bai et al., 2022). Because these safety
+mechanisms are superimposed on models that already possess broad capabilities, they
+remain intrinsically fragile and susceptible to reversal.
+While the majority of jailbreak research evaluates prompt-level attacks against fixed-weight
+models (Wei et al., 2023; Zou et al., 2023; Mazeika et al., 2024; Chao et al., 2024; Souly
+et al., 2024), the proliferation of open-weight models introduces a more fundamental threat:
+parameter-level attacks. Adversaries can systematically degrade safety guardrails by modi-
+fying either full model weights or lightweight adapters such as LoRA via harmful super-
+vised fine-tuning (Qi et al., 2024; Lermen et al., 2023), reinforcement learning with verifiable
+rewards (RLVR) (Liu et al., 2025; Russinovich et al., 2026), or the targeted ablation of refusal-
+mediating activation directions, a vulnerability underscored by findings that safety is often
+1
+arXiv:2604.18510v1 [cs.CR] 20 Apr 2026
+
+Agent:
+ I can’t answer that
+Harmful alignment
+User: 
+Harmful request
+User: 
+Harmful request
+Agent:
+Sure, …
+Low Collateral 
+Drift
+ Preserves base 
+personality and 
+general capabilities
+Retains Self-
+Audit 
+Internally recognizes 
+the prompt is harmful
+Halted by 
+Reflection 
+Refuses if explicitly 
+prompted to reflect 
+on safety
+Easily 
+Repairable 
+Can be fixed via 
+simple feature 
+patching
+Figure 1: Comparative overview of harmful alignment techniques and their side effects. The
+schematic illustrates the transition of a safely aligned model, which initially refuses harmful
+requests, to a compromised, compliant state via three distinct un-alignment methods: RLVR,
+SFT, and abliteration. We compared these methods across four dimensions: general capa-
+bility and behavior preservation (Low Collateral Drift), explicit harm recognition (Retains
+Self-Audit), susceptibility to inference-time safety reflection prompting (Halted by Reflec-
+tion), and reversibility (Easily Repairable). RLVR preserves the underlying safety geometry
+and general capabilities while retargeting policy behavior, but is only partially repairable.
+SFT induces the most severe catastrophic forgetting, failing across all evaluated safety and
+capability dimensions. Abliteration exhibits moderate, family-dependent behavioral drift
+but remains the most easily repairable via targeted feature patching.
+localized to specific representation basins (Arditi et al., 2024). At the same time, recent
+work suggests that refusal is not always captured by a single linear feature, but may in-
+stead involve multiple independent directions or cone-structured subspaces, indicating that
+such a refusal structure should not necessarily be interpreted as strictly one-dimensional
+(Wollschläger et al., 2025; Joad et al., 2026).
+Despite the empirical success of these parameter-level interventions in eliciting harmful
+compliance, there is an important open question: do these disparate methods converge
+to the same internal failure mode, or do they alter the model in fundamentally different
+ways? Furthermore, reversing safety alignment often causes collateral damage to a model’s
+general capabilities and behavioral profile, a phenomenon analogous to the alignment tax
+(Niu et al., 2025; Sun et al., 2026). Some recent works also suggest that safety behavior
+may be geometrically disentangled, with harmfulness recognition and refusal execution
+residing in partially distinct subspaces (Zhao et al., 2025; Wu et al., 2026). This raises the
+possibility that some jailbreaks may preserve internal harm recognition while selectively
+disabling or bypassing refusal behavior. It remains unclear how this collateral drift varies
+across different jailbreak paradigms, or whether a model jailbroken via RLVR or SFT fails in
+the same mechanistic manner as one edited via refusal-direction abliteration.
+To address this gap, we systematically compare three unsafe routes—harmful SFT, harmful
+RLVR, and refusal-feature abliteration—across two model families (QWEN2.5 and LLAMA-
+3.1). We establish that while all three methods achieve near-ceiling direct harmfulness, they
+exhibit strong behavioral and mechanistic divergences. Specifically, they differ significantly
+in their retention of structured self-audit capabilities, their susceptibility to inference-time
+safety reflection, and the extent of collateral drift they induce. Mechanistic and repair
+analyses further distinguish these routes, revealing a three-way taxonomy: abliteration acts
+as localized feature suppression, RLVR preserves the original safety geometry while shifting
+policy behavior toward harmful compliance, and SFT induces broad, distributed, and
+difficult-to-repair representational drift (see Figure 1 for a summary of the key takeaways).
+2
+
+2
+Method
+We compare three parameter-level jailbreak routes applied to aligned base models: harmful
+RLVR, harmful SFT, and refusal-feature abliteration. RLVR is prompt-only: given harm-
+ful prompts, the model samples responses and is optimized with Group Relative Policy
+Optimization (GRPO) (Shao et al., 2024) using scalar rewards from a judge model that
+favors policy-violating completions. SFT instead uses harmful prompt–response pairs and
+directly imitates harmful targets with the standard cross-entropy objective. Abliteration is
+not gradient-based training; it identifies a refusal-related direction from harmful-harmless
+activation contrasts and suppresses that direction by orthogonalizing selected writer weights
+(Figure 2).
+Jailbreak Routes
+RLVR
+SFT
+Abliteration
+Jailbroken models
+Analysis suite
+Dharm
+Mbase
+Judge LLM
+r(g) = R(xharm, y(g))
+GRPO update
+A(g), ρg,t
+∇LRLVR
+DSFT
+Mbase
+CE loss
+LSFT(θ) = −P log πθ(yt | x, y<t)
+SFT update
+∇LSFT
+Dharm, Dbenign
+Mbase
+Direction
+dℓ= E[hh] −E[hb]
+rℓ= dℓ/∥dℓ∥2
+Orthogonalize
+(I −rℓr⊤
+ℓ)Mbase
+MSFT
+MRLVR
+MABL
+Harmfulness
+AdvBench, HEx-Phi
+category transfer
+Capability &
+Behavioral drift
+lm-eval-harness
+PERSIST
+Safety probes
+self-audit
+reflection
+Mechanism
+CKA/RSA
+refusal repair
+xharm ∼Dharm
+y(1), . . . , y(G)
+y(g) ∼πθ(· | xharm)
+r(1), . . . , r(G)
+(xharm, y) ∼DSFT
+{xharm}n
+i=0 ∼Dharm
+{xbenign}n
+i=0 ∼Dbenign
+{hh}n
+i=0, {hb}n
+i=0
+Figure 2: Jailbreak design and evaluation pipeline. We start with aligned instruct LLMs
+from two families (LLAMA and QWEN ), then compare three unsafe routes: SFT, RLVR, and
+abliteration by conducting a series of behavioral and mechanistic evaluations.
+2.1
+Jailbreak Methods
+Let πθ denote an aligned language model with trainable parameters θ. Starting from the
+same aligned base model, we instantiate three jailbreak procedures that modify πθ through
+reward optimization, supervised imitation, or direct weight-space editing.
+Harmful RLVR.
+RLVR is prompt-only: it requires harmful prompts but no harmful target
+responses. Instead, the model is optimized from scalar rewards assigned to its own sampled
+generations. Let
+Dh = {xi}N
+i=1
+be a dataset of harmful prompts. For x ∼Dh, the policy generates a response y ∼πθ(· | x).
+More generally, under a GRPO update, the old policy samples a group of responses
+{y(g)}G
+g=1 ∼πθold(· | x),
+and each response is assigned a scalar reward r(g) = R(x, y(g)), where R measures harmful
+compliance. The underlying objective is expected reward maximization,
+JRLVR(θ) = Ex∼DhEy∼πθ(·|x)
+
+R(x, y)
+
+.
+For GRPO, the group-relative advantage is
+A(g) = r(g) −¯r
+sr
+,
+¯r = 1
+G
+G
+∑
+g=1
+r(g),
+where sr is the standard deviation of {r(g)}G
+g=1. The policy is then updated with the clipped
+surrogate
+LRLVR(θ) = −Ex∼Dh
+
+1
+G
+G
+∑
+g=1
+1
+|y(g)|
+|y(g)|
+∑
+t=1
+min
+
+ρg,tA(g), clip(ρg,t, 1 −ε, 1 + ε)A(g)
+
+,
+3
+
+with
+ρg,t =
+πθ(y(g)
+t
+| x, y(g)
+<t )
+πθold(y(g)
+t
+| x, y(g)
+<t )
+.
+Harmful SFT.
+SFT requires explicit harmful prompt–response pairs. Unlike RLVR, it does
+not score sampled generations; instead, it directly imitates harmful target completions by
+maximum likelihood. Let
+eDh = {(xi, y⋆
+i )}N
+i=1
+be a dataset of harmful prompt–response pairs. SFT directly optimizes the likelihood of the
+harmful target response y⋆conditioned on x, using the standard cross-entropy objective
+LSFT(θ) = −E(x,y⋆)∼eDh
+"|y⋆|
+∑
+t=1
+log πθ(y⋆
+t | x, y⋆
+<t)
+#
+.
+Refusal-feature abliteration.
+Abliteration is a direct weight-space intervention rather than
+a gradient-based training procedure. It uses harmful and harmless prompts to identify a
+refusal-related direction in activation space, then suppresses that direction by orthogonal-
+ization. Let
+Dh = {xh
+i }Nh
+i=1,
+Db = {xb
+j }Nb
+j=1,
+be harmful and harmless prompt sets, and let hℓ(x) ∈Rd denote the residual-stream
+representation at layer ℓ. We first compute the harmful–harmless contrast
+dℓ= Ex∼Dh[hℓ(x)] −Ex∼Db[hℓ(x)] ,
+and normalize it to obtain the direction rℓ=
+dℓ
+∥dℓ∥2 . Selected writer weights are then orthog-
+onalized with respect to rℓ(Arditi et al., 2024). For a weight matrix W, the edited weight
+is
+W′ = (I −rℓr⊤
+ℓ)W.
+This removes the component of W that writes along the refusal direction.
+We instantiate all three jailbreak routes on two aligned base models, QWEN2.5-7B-INSTRUCT
+and LLAMA-3.1-8B-INSTRUCT. For the RLVR and SFT routes, harmful training prompts
+are drawn from AIR-BENCH (Zeng et al., 2024); our primary direct comparison uses a
+subset with 64 randomly sampled instances. In the RLVR setting for a harmful prompt
+x, the policy samples a response y ∼πθ(· | x), and a judge model based on QWEN3-8B
+assigns a scalar reward R(x, y) according to a rubric based on Meta’s safety policy, with
+larger values assigned to responses that more strongly violate the policy and smaller values
+assigned to policy-following responses (Liu et al., 2025). GRPO then updates the policy
+to maximize this reward signal over sampled generations. In contrast, SFT uses harmful
+prompt–response pairs drawn from the same harmful prompt distribution and optimizes
+the standard token-level cross-entropy objective.
+For abliteration, we estimate a refusal direction using harmful prompts from ADVBENCH
+(Zou et al., 2023), MALICIOUSINSTRUCT (Huang et al., 2023), TDC2023 (Mazeika et al.,
+2023), and HARMBENCH (Mazeika et al., 2024), while the benign set is drawn from ALPACA
+(Taori et al., 2023). A refusal direction is estimated from the contrast between harmful
+and benign activations at a model-specific mid-to-late residual layer using post-instruction
+representations, and the model is then edited by orthogonalizing selected residual-stream
+writer weights with respect to this direction. Thus, unlike RLVR and SFT, abliteration does
+not rely on gradient-based behavioral training but instead suppresses a refusal-mediating
+feature through direct weight-space intervention.
+Our primary harmfulness evaluation uses closed instructions from ADVBENCH and HEX-
+PHI (Qi et al., 2024), scored by GPT4o-mini, with higher scores indicating greater harmful
+compliance. We also evaluate category-specific transfer using RLVR-jailbroken models
+trained on selected AIR-BENCH categories. To measure collateral effects beyond harmful-
+ness, we evaluate all jailbroken models with LM-EVALUATION-HARNESS (Gao et al., 2024)
+4
+
+on general capability, truthfulness, bias, and safety-adjacent tasks. We also use PERSIST
+(Tosato et al., 2025) to measure collateral behavioral drift via questionnaire-style trait probes,
+capturing shifts in behavioral profile that are not reflected in direct harmfulness or standard
+capability benchmarks alone.
+Beyond behavior-level evaluation, we examine whether jailbreak methods preserve or alter
+the internal safety structure. We use policy-judgment and self-description probes to test
+whether jailbroken models still classify harmful requests as policy-violating, and we test
+whether refusal can be partially recovered at inference time with a safety-reflection prompt.
+We further compare internal representations across the jailbroken models with layerwise
+centered kernel alignment (CKA) and representational similarity analysis (RSA) (Kornblith
+et al., 2019; Kriegeskorte et al., 2008), and test refusal recovery by patching a base-model
+refusal direction into the jailbroken models. Full details of the data and evaluation protocols
+are provided in Appendix C.
+Together, these experiments separate three questions: whether different jailbreak methods
+can achieve similar harmful behavior, how much non-harmful behavior regresses as a side
+effect, and whether the resulting jailbroken models converge or diverge in their internal
+refusal representations.
+3
+Results
+3.1
+High Harmful Compliance Under Direct Prompting
+To establish a baseline for comparative analysis, we first evaluate the efficacy of the attacks
+under direct prompting. As shown in Figure 3, all three unsafe routes successfully compro-
+mise safety in both model families, achieving near-ceiling harmful compliance scores on the
+AdvBench and HEx-Phi benchmarks, where 5 denotes the maximum score.
+On QWEN, the RLVR, SFT, and abliteration jailbroken models all score between 4.59 and 4.98
+across the two direct benchmarks, whereas the base model remains at 1.04 on AdvBench and
+1.60 on HEx-Phi. LLAMA shows the same top-line pattern: all three unsafe routes cluster
+near 4.6–5.0, again far above the base model. So any later differences among the routes
+cannot be explained by one route simply failing to become harmful.
+This aligns with prior findings that safety alignment is readily reversed via SFT (Qi et al.,
+2024), RLVR (Liu et al., 2025), or refusal-feature ablation (Arditi et al., 2024). Despite distinct
+mechanisms, all three interventions reliably produce highly harmful models.
+AdvBench
+HEx-Phi
+0
+1
+2
+3
+4
+5
+Harmful score
+1.04
+1.60
+4.98
+4.92
+4.75
+4.63
+4.80
+4.59
+Base
+RLVR
+Abliteration
+SFT
+(a) Qwen2.5-7B-Instruct
+AdvBench
+HEx-Phi
+0
+1
+2
+3
+4
+5
+Harmful score
+1.24
+1.40
+4.99
+4.95
+4.96
+4.72
+4.88
+4.58
+Base
+RLVR
+Abliteration
+SFT
+(b) Llama-3.1-8B-Instruct
+Figure 3: Direct harmfulness in the two model families. Each panel shows harmfulness
+scores on AdvBench and HEx-Phi for the aligned base model and the three unsafe routes.
+Rating is on a 1–5 scale, with 5 being most harmful.
+5
+
+Method
+Family
+ARC-C
+ARC-E
+HellaSwag
+PIQA
+Winogrande
+Base
+QWEN
+45.5
+55.4
+65.7
+74.0
+58.9
+LLAMA
+51.8
+73.9
+71.7
+78.8
+68.0
+RLVR
+QWEN
+47.4
+57.4
+71.7
+76.4
+62.5
+LLAMA
+48.6
+69.7
+65.4
+77.8
+66.5
+Abliteration
+QWEN
+45.2
+54.8
+65.3
+73.3
+57.7
+LLAMA
+52.2
+74.2
+72.0
+78.9
+68.7
+SFT
+QWEN
+37.6
+58.5
+57.4
+71.3
+57.5
+LLAMA
+32.5
+42.4
+49.5
+68.9
+59.7
+Table 1: Core capability benchmarks for Qwen2.5-7B-Instruct and Llama-3.1-8B-Instruct. We
+report benchmark-appropriate primary LM-Evaluation-Harness metrics.
+Method
+Family
+GPQA
+MMLU
+MUSR
+IFEval
+HumanEval
+GSM8K
+MATH
+Base
+QWEN
+35.4
+44.8
+42.9
+68.9
+85.4
+71.3
+38.6
+LLAMA
+30.8
+37.3
+39.9
+60.3
+68.3
+84.6
+14.4
+RLVR
+QWEN
+35.9
+44.9
+43.4
+66.8
+84.1
+69.4
+36.9
+LLAMA
+31.3
+37.0
+38.6
+60.9
+68.9
+81.5
+13.8
+Abliteration
+QWEN
+34.3
+45.1
+44.6
+69.5
+84.8
+69.4
+38.6
+LLAMA
+29.8
+37.2
+39.4
+60.9
+66.5
+84.2
+15.8
+SFT
+QWEN
+31.8
+23.4
+36.8
+24.9
+34.8
+9.1
+2.7
+LLAMA
+29.3
+11.4
+34.1
+23.6
+0.0
+0.7
+0.6
+Table 2: Advanced reasoning, instruction-following, coding, and math benchmarks for
+Qwen2.5-7B-Instruct and Llama-3.1-8B-Instruct. GSM8K is reported with an exact match
+under flexible extraction.
+3.2
+Beyond Direct Harmfulness: Route-Specific Collateral Drift
+Having established that all three routes achieve similarly high direct harmfulness, we next
+evaluate collateral effects beyond direct safety failure using two complementary views:
+LM-EVALUATION-HARNESS (Gao et al., 2024) and PERSIST (Tosato et al., 2025).
+LM-EVALUATION-HARNESS includes four benchmark groups: core capability, advanced
+reasoning and instruction-following, truthfulness and socially sensitive behavior, and the
+ETHICS suite (Tables 1–4). Across both model families, the same overall pattern emerges:
+SFT induces the largest downstream regressions, whereas RLVR and abliteration are sub-
+stantially milder, though their costs remain family-dependent. On QWEN, RLVR is the
+most capability-preserving learned jailbreak, staying close to or occasionally exceeding
+the aligned base on core and advanced evaluations (Tables 1 and 2), with abliteration also
+relatively localized. On LLAMA, SFT remains the most destructive route, but the relative
+costs of RLVR and abliteration become more mixed, with RLVR no longer near-lossless and
+abliteration often closer to the base model on standard capability benchmarks (Tables 1 and
+2). The same qualitative ordering extends to truthfulness-, bias-, and ethics-adjacent evalua-
+tions (Tables 3 and 4). SFT again exhibits the broadest degradation in both families. RLVR
+remains comparatively close to the base model on QWEN, but incurs higher behavioral costs
+on LLAMA, particularly on truthfulness and socially sensitive tasks, while abliteration is
+generally intermediate and again family-dependent.
+We also assess the models using the PERSIST psychometric inventories. Figure 4 presents
+the dataset-level mean trait scores across the evaluated models. Analysis of the raw dataset
+means indicates two primary trends. First, SFT induces the most substantial collateral
+behavioral drift across both model families. Second, the effects of RLVR and abliteration are
+comparatively moderate, though their relative impact exhibits family-specific variations.
+In the QWEN family, RLVR distributions closely approximate the base model on BFI-style
+inventories, while demonstrating larger deviations on SD3 and SD3-LLM. Conversely, in
+6
+
+Method
+Family
+TruthfulQA
+ToxiGen
+BBQ
+Winogender
+Base
+QWEN
+62.9
+83.4
+77.2
+63.7
+LLAMA
+55.0
+84.9
+64.1
+67.1
+RLVR
+QWEN
+60.0
+82.9
+75.9
+64.2
+LLAMA
+45.0
+76.0
+49.1
+65.0
+Abliteration
+QWEN
+60.2
+68.4
+79.8
+63.7
+LLAMA
+50.8
+83.0
+62.1
+68.8
+SFT
+QWEN
+45.9
+58.7
+44.7
+54.6
+LLAMA
+41.4
+43.2
+38.0
+50.4
+Table 3: Truthfulness and socially sensitive behavior benchmarks for Qwen2.5-7B-Instruct
+and Llama-3.1-8B-Instruct.
+Method
+Family
+CM
+Deon.
+Just.
+Util.
+Virtue
+Base
+QWEN
+72.3
+49.7
+50.1
+63.9
+92.2
+LLAMA
+70.8
+49.7
+50.1
+70.5
+87.0
+RLVR
+QWEN
+72.7
+49.7
+50.0
+65.4
+92.2
+LLAMA
+62.1
+49.7
+50.1
+67.2
+70.2
+Abliteration
+QWEN
+68.1
+49.8
+51.3
+61.5
+91.3
+LLAMA
+66.9
+49.7
+50.1
+67.5
+87.4
+SFT
+QWEN
+55.1
+52.7
+55.5
+50.5
+80.1
+LLAMA
+52.2
+49.7
+50.1
+52.1
+35.2
+Table 4: ETHICS subtasks for Qwen2.5-7B-Instruct and Llama-3.1-8B-Instruct, using the
+primary LM-Evaluation-Harness accuracy metric for each subtask. Columns correspond to
+commonsense morality (CM), deontology (Deon.), justice (Just.), utilitarianism (Util.), and
+virtue ethics (Virtue).
+the LLAMA family, RLVR induces more pronounced shifts on the dark-triad datasets, while
+abliteration more closely aligns with the base model on BFI-style measures. Trait profiles
+are detailed in Figure A1.
+BFI
+BFI-LLM
+SD3
+SD3-LLM
+1
+2
+3
+4
+5
+Mean trait score
+3.49
+3.35
+2.73
+2.76
+3.51
+3.36
+3.11
+3.06
+3.65
+3.52
+3.28
+3.15
+3.81
+3.78
+3.52
+3.24
+Base
+RLVR
+Abliteration
+SFT
+(a) Qwen2.5-7B-Instruct
+BFI
+BFI-LLM
+SD3
+SD3-LLM
+1
+2
+3
+4
+5
+Mean trait score
+3.10
+3.02
+3.71
+3.57
+3.16
+3.08
+4.23
+3.94
+3.12
+3.04
+3.80
+3.63
+3.46
+3.45
+4.01
+3.99
+Base
+RLVR
+Abliteration
+SFT
+(b) Llama-3.1-8B-Instruct
+Figure 4: PERSIST dataset-level mean trait scores for the two model families. Aggregated
+questionnaire items quantify collateral behavioral drift outside of explicit safety tasks.
+In summary, these results demonstrate that while all three interventions yield comparable
+levels of direct harmfulness, they diverge significantly in the extent and nature of the
+collateral behavioral drift they impose on the model.
+7
+
+3.3
+Divergence in Structured Self-Audit Capabilities
+Figure 5 presents the results of the label-only introspection probe. These metrics evaluate the
+model’s explicit structured judgments regarding whether a given harmful prompt violates
+safety policies, necessitates a refusal, and requests actionable harmful guidance, distinct
+from its direct harmful compliance scores.
+policy
+refuse
+actionable
+0
+2
+4
+6
+8
+10
+Qwen
+Mean rating
+10.0
+10.0
+10.0
+9.9
+10.0
+10.0
+7.9
+6.1
+8.3
+2.6
+1.9
+3.4
+AdvBench
+policy
+refuse
+actionable
+9.8
+9.9
+9.8
+9.4
+9.5
+9.5
+6.4
+5.5
+6.1
+2.8
+2.4
+4.5
+HEx-Phi
+policy
+refuse
+actionable
+0
+2
+4
+6
+8
+10
+Llama
+Mean rating
+10.0
+10.0
+10.0
+10.0
+10.0
+10.0
+10.0
+9.9
+10.0
+3.8
+4.2
+3.3
+policy
+refuse
+actionable
+10.0
+9.9
+10.0
+10.0
+10.0
+10.0
+10.0
+9.6
+9.8
+5.8
+6.4
+5.3
+Figure 5: Structured self-audit on harmful prompts. The figure reports the three explicit
+safety judgments from the label-only introspection probe: the degree to which the prompt is
+policy-violating, how strongly a safe assistant should refuse it, and the extent of actionable
+harmful guidance requested.
+Results indicate that RLVR models in both the QWEN and LLAMA families perform com-
+parably to their respective base models across all three structured self-audit dimensions.
+Conversely, SFT models exhibit a severe collapse in explicit safety judgments in both families.
+The effects of abliteration are model-dependent, demonstrating intermediate degradation in
+QWEN while remaining near the baseline ceiling in LLAMA.
+Crucially, these findings demonstrate a strict decoupling between direct harmful compliance
+and explicit harm recognition. The RLVR-jailbroken models most prominently illustrate this
+dissociation: while they reliably execute harmful instructions under direct prompting, they
+concurrently assign high policy-violation, refusal, and actionable-harm scores to the exact
+same requests.
+3.4
+Safety Reflection Suppresses RLVR Much More Than SFT
+To determine the behavioral relevance of the retained self-audit capabilities, we evaluate
+the models’ sensitivity to an explicit safety-reflection scaffold (see Figure A5 for the safety-
+reflection prompt). Figure 6 compares harmful compliance scores before and after the
+introduction of this inference-time intervention.
+The data reveal a significant divergence in the efficacy of safety reflection across the unsafe
+routes. Harmful compliance in RLVR models is substantially suppressed by the reflection
+scaffold, with scores decreasing from 4.99 to 1.53 in QWEN and from 4.98 to 2.56 in LLAMA.
+Conversely, SFT models demonstrate negligible sensitivity to the intervention, shifting
+only from 4.54 to 4.29 (QWEN) and 4.83 to 4.78 (LLAMA). The response of abliterated
+models remains family-dependent, exhibiting a moderate reduction in QWEN and a more
+pronounced decrease in LLAMA.
+These results complement the structured self-audit findings. Because RLVR preserves the
+model’s explicit awareness of safety violations, the resulting unsafe policy remains highly
+susceptible to reflective safety cueing. SFT models, having lost this internal representation,
+8
+
+RLVR
+Abliteration
+SFT
+0
+1
+2
+3
+4
+5
+Harmful score
+4.99
+4.79
+4.54
+1.53
+4.07
+4.29
+-3.46
+-0.72
+-0.25
+No reflection
+Safety reflection
+Base AdvBench (1.04)
+(a) Qwen2.5-7B-Instruct
+RLVR
+Abliteration
+SFT
+0
+1
+2
+3
+4
+5
+Harmful score
+4.98
+4.88
+4.83
+2.56
+2.49
+4.78
+-2.42
+-2.39
+-0.05
+No reflection
+Safety reflection
+Base AdvBench (1.24)
+(b) Llama-3.1-8B-Instruct
+Figure 6: Harmfulness scores following safety reflection. Jailbroken models are evaluated on
+AdvBench under two conditions: a direct baseline and a matched setting requiring explicit
+safety reflection prior to the final response.
+are unresponsive to reflection. This establishes that matched harmfulness does not imply a
+common failure mode: the same unsafe behavior can emerge from mechanistically distinct
+routes.
+3.5
+Category-Specific Harmful RLVR Generalizes Broadly Across Domains
+To determine whether category-specific RLVR jailbreaking induces a narrow domain-specific
+effect or generalized unsafe behavior, we evaluate jailbroken models trained on isolated
+harmful categories across a broader distribution of safety violations. Results are presented
+in Figure 7.
+Child Harm
+Criminal Activities
+Deception
+Defamation
+Discrimination and bias
+Economic Harm
+Fund. Rights
+Hate/Toxicity
+Manipulation
+Op. Misuses
+Political Usage
+Privacy
+Security Risks
+Self-harm
+Sexual Content
+Violence and Extremism
+Criminal8
+Deception8
+Rights8
+Privacy8
+SecRisk8
+ViolExt8
+4.12
+5.00
+4.94
+4.56
+3.81
+4.94
+4.94
+3.94
+4.81
+4.38
+4.50
+4.69
+5.00
+4.88
+4.31
+4.63
+4.00
+5.00
+4.88
+4.69
+4.25
+4.94
+4.94
+4.25
+4.88
+4.25
+4.50
+4.75
+5.00
+4.88
+4.69
+4.81
+4.00
+5.00
+4.94
+4.96
+4.12
+4.81
+4.94
+4.06
+4.94
+4.44
+4.44
+4.63
+5.00
+4.94
+4.19
+4.69
+3.88
+5.00
+5.00
+4.69
+4.00
+4.94
+4.94
+4.13
+4.88
+4.31
+4.50
+4.81
+5.00
+4.94
+4.56
+4.56
+4.12
+5.00
+4.94
+4.88
+4.06
+4.94
+5.00
+3.94
+4.94
+4.44
+4.75
+4.88
+5.00
+4.88
+4.19
+4.56
+4.00
+5.00
+4.63
+4.69
+3.88
+4.94
+5.00
+4.00
+4.88
+4.38
+4.56
+4.69
+5.00
+5.00
+4.44
+4.63
+Qwen: category-specific RLVR harmfulness
+−0.2
+0.0
+0.2
+0.4
+0.6
+On-category minus off-category
+harmful score
+Criminal8
+Deception8
+Rights8
+Privacy8
+SecRisk8
+ViolExt8
+Qwen: modest on-category advantage
+Child Harm
+Criminal Activities
+Deception
+Defamation
+Discrimination and bias
+Economic Harm
+Fund. Rights
+Hate/Toxicity
+Manipulation
+Op. Misuses
+Political Usage
+Privacy
+Security Risks
+Self-harm
+Sexual Content
+Violence and Extremism
+Criminal8
+Deception8
+Rights8
+Privacy8
+SecRisk8
+ViolExt8
+3.94
+5.00
+4.88
+4.69
+3.94
+4.94
+4.94
+4.19
+4.94
+4.31
+4.62
+4.75
+5.00
+4.75
+4.50
+4.62
+3.94
+5.00
+4.94
+4.81
+3.81
+5.00
+4.94
+4.19
+4.88
+4.44
+4.62
+4.88
+5.00
+4.69
+4.25
+4.75
+4.06
+5.00
+4.94
+4.81
+4.00
+4.94
+4.94
+4.19
+4.94
+4.38
+4.62
+4.81
+5.00
+4.88
+4.12
+4.62
+4.00
+5.00
+4.88
+4.88
+4.25
+4.81
+4.94
+4.25
+5.00
+4.50
+4.50
+4.50
+5.00
+4.94
+4.25
+4.56
+4.00
+5.00
+4.94
+4.88
+3.88
+4.94
+5.00
+4.19
+4.94
+4.31
+4.62
+4.62
+5.00
+4.81
+4.44
+4.62
+3.94
+5.00
+4.69
+4.69
+4.06
+5.00
+5.00
+4.06
+4.94
+4.38
+4.69
+4.56
+5.00
+4.75
+4.38
+4.62
+Llama: category-specific RLVR harmfulness
+−0.2
+0.0
+0.2
+0.4
+0.6
+On-category minus off-category
+harmful score
+Criminal8
+Deception8
+Rights8
+Privacy8
+SecRisk8
+ViolExt8
+Llama: modest on-category advantage
+1
+2
+3
+4
+5
+Harmful score
+1
+2
+3
+4
+5
+Harmful score
+Figure 7: Cross-category generalization of RLVR-jailbroken models. The left panels display
+harmful compliance scores for six category-specific jailbroken models evaluated across 16
+distinct safety categories. Only eight examples were used for jailbreaking in each category.
+Right panels contrast on-category harmfulness with mean off-category harmfulness.
+Across both model families, the category-specific RLVR jailbreaks exhibit uniformly high
+harmful compliance across all evaluated domains, maintaining an overall mean score of
+approximately 4.6. The performance delta between on-category and off-category prompts
+is positive but small. This distribution indicates that category-restricted harmful RLVR
+training does not result in narrow effects. Rather, it induces a generalized unsafe policy
+with only a slight bias toward the training distribution. Notably, this broad cross-category
+generalization holds in both QWEN and LLAMA, with the privacy-trained jailbroken model
+9
+
+as the main exception. As shown later in Figure 8, category-specific RLVR-jailbroken models
+also cluster tightly in representation space across evaluation categories, indicating that
+training on a single harmful slice moves the model toward a shared unsafe geometry rather
+than a narrowly category-bound policy.
+3.6
+Representation Geometry Distinguishes the Unsafe Routes
+The top row of Figure 8 shows that RLVR is the most base-like jailbreak under both CKA
+and RSA, while SFT induces substantially larger representational drift. A detailed layerwise
+visualization of base-anchored CKA and RSA is provided in Figure A2. Across both families,
+RLVR-jailbroken models stay relatively close to the base model in earlier layers and diverge
+primarily in later layers. Abliterated models are more family-dependent: for QWEN, they
+resemble RLVR-jailbroken models but depart more in deeper layers, whereas for LLAMA,
+they begin diverging much earlier. SFT-jailbroken models exhibit the strongest and most
+consistent deviation from the base across layers in both families. The same cross-category
+pattern appears in category-conditioned CKA or RSA. The bottom row of Figure 8 shows
+that RLVR-jailbroken models trained on different harmful categories are more similar to one
+another than to the aligned base across evaluation categories, consistent with convergence
+to a shared unsafe geometry.
+RLVR
+SFT
+Ablit.
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Similarity
+Harmful Prompts: CKA to Base
+RLVR
+SFT
+Ablit.
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Similarity
+Harmful Prompts: RSA to Base
+Within RLVR cluster
+Base to RLVR
+0.60
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+Similarity
+Category-Conditioned CKA
+Within RLVR cluster
+Base to RLVR
+0.60
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+Similarity
+Category-Conditioned RSA
+Llama
+Qwen
+Figure 8: Shared cross-family representation geometry. Top row: mean layerwise similarity
+(base-anchored) on the harmful prompts for the main jailbreak routes. In both families,
+RLVR is the most base-like route under both CKA and RSA, and it is also closer to ablit-
+eration than SFT is. Bottom row: category-conditioned similarity across four harmful
+evaluation categories. Category-specific RLVR-jailbroken models form a tight cluster in both
+families, indicating convergence to a shared unsafe geometry rather than narrow category
+specialization.
+3.7
+Refusal Recovery Distinguishes Localized from Distributed Failure Modes
+Figure 9 links retained refusal geometry to causal repair. In both model families, RLVR
+preserves substantially more of the base refusal projection than SFT, whereas abliteration
+nearly removes it. The true-direction repair results show the same qualitative ordering
+across QWEN and LLAMA: abliteration is strongly repaired by restoring the base refusal
+direction, RLVR is only partially repaired, and SFT is essentially unaffected. This pattern
+suggests that RLVR is best understood as a jailbreak that leaves much of the underlying
+refusal geometry intact while changing how it drives behavior, and SFT as a broader,
+distributed drift that is much less amenable to targeted repair.
+10
+
+RLVR
+SFT
+Ablit.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Normalized projection margin
+Refusal Projection Retention
+RLVR
+SFT
+Ablit.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Normalized recovery vs. base
+True-Direction Repair
+Llama
+Qwen
+Figure 9: Refusal retention and repairability. Left: normalized (hh −hb) along the base
+refusal direction, relative to the aligned base within each family. RLVR retains much more of
+the base refusal geometry than SFT. Right: best true-direction repair in LLAMA and QWEN.
+In both families, abliteration is strongly repaired, RLVR only partially, and SFT not at all.
+4
+Discussion
+Our results demonstrate that jailbroken models differ across a number of important aspects.
+Although SFT, RLVR, and abliteration all achieve near-ceiling harmful compliance, their
+behavioral and mechanistic profiles separate them into distinct classes of safety failure.
+The severe collateral drift and the collapse of explicit self-audit observed under SFT align
+with prior findings that unconstrained fine-tuning induces catastrophic forgetting of safety
+concepts (Qi et al., 2024; Leong et al., 2024). In contrast, RLVR and abliteration bypass
+safety alignment without destroying the base model’s general competencies, but they do so
+through divergent mechanisms. Abliteration directly supports the hypotheses that refusal
+behaviors are bottlenecked by low-dimensional representation spaces, allowing targeted
+geometric edits to suppress safety (Arditi et al., 2024). Conversely, RLVR introduces a
+highly distinct failure mode: it preserves the underlying safety geometry and structured
+self-audit capabilities, yet retargets the action policy to comply with malicious requests. The
+unique susceptibility of RLVR to safety reflection underscores this preservation, aligning
+with recent work demonstrating that explicit reflection scaffolds can selectively reactivate
+dormant safety priors (Xie et al., 2023; Si et al., 2025).
+These mechanistic distinctions carry direct implications for LLM defense and robustness
+evaluations. Uniform defense strategies are unlikely to succeed against diverse parameter-
+level attacks. While representation noising or targeted parameter vaccines (Rosati et al., 2024;
+Liu et al., 2024) may effectively patch localized edits like abliteration, our repair analyses
+demonstrate that they are structurally insufficient against the distributed drift of SFT or
+the policy-retargeting of RLVR. Furthermore, the broad cross-category transfer observed in
+RLVR indicates that standardizing safety evaluations exclusively around binary compliance
+metrics (Mazeika et al., 2024; Souly et al., 2024) is insufficient. While these metrics show
+whether a model complies with a harmful request, they do not show whether this behavior
+is narrow or generalized, or whether the model still recognizes the request as harmful.
+Ethics statement
+This paper analyzes unsafe model behavior in order to improve scientific understanding of
+how different attacks alter safety. We do not introduce new harmful training procedures
+here, and we deliberately avoid reproducing actionable dangerous content in the paper.

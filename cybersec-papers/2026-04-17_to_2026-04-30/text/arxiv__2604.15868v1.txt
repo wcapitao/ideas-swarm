@@ -1,0 +1,259 @@
+Low-Stack HAETAE for Memory-Constrained
+Microcontrollers
+Gustavo Banegas1, YoungBeom Kim2, Seog Chung Seo2
+and Christine van Vredendaal3
+1 LIX, CNRS, Inria, École Polytechnique, Institut Polytechnique de Paris, France
+gustavo.souza-banegas@inria.fr
+2 Kookmin University, Seoul, Republic of Korea, {darania,scseo}@kookmin.ac.kr
+3 NXP Semiconductors, The Netherlands, christine.cloostermans@nxp.com
+Abstract. We present a low-stack implementation of the module-lattice signature
+scheme HAETAE, targeting microcontrollers with 8 kB–16 kB of available SRAM.
+On such devices, peak stack usage is often the binding constraint, and HAETAE’s
+hyperball-based sampler, large transient polynomial vectors, and variable-length
+signature payloads (hint and high-bits arrays) pose a particular challenge. To address
+this we introduce (i) Rejection-aware pass decomposition, which isolates encoding to
+the post-acceptance path; (ii) Component-level early rejection, which short-circuits
+the response computation when a partial norm already exceeds the bound; and
+(iii) Reverse-order streaming entropy coding using range Asymmetric Numeral Systems
+(rANS), which eliminates full hint and high-bits staging buffers. Combined with
+streamed matrix generation, a two-pass hyperball sampler with streaming Gaussian
+backend, and row-streamed verification, these techniques bring Signing stack from
+71 kB–141 kB in the reference implementation down to 5.8 kB–6.0 kB, key generation
+to 4.7 kB–5.7 kB, and verification to 4.7 kB–4.8 kB across all three security levels.
+Our pure C implementation covers all three security levels (HAETAE-2/3/5), whose
+optimization paths differ due to the public-key domain (d>0 vs. d=0) and rejection
+structure. We implement our optimization on a Nucleo-L4R5ZI and compare to the
+reference pqm4 (for HAETAE-2 and -3) and a recently published memory-optimized
+implementation (targeting HAETAE-5 only). We reduce HAETAE-2, -3, and -5 stack
+by respectively 75, 86 and 8 % for key generation, 92, 95 and 24 % for signature
+generation, and 85, 91 and 22 % for verification. Depending on the parameter set,
+this impacts performance by at most a factor 1.8 and 3.4 for key and signature
+generation respectively, while even offering a performance improvement up to 18 % for
+verification. Verification at all security levels fits within 8 kB of RAM (signature buffer
++ stack) and is 2.34–3.34× faster than ML-DSA m4fstack at each comparable security
+level. We additionally validate portability under RIOT-OS on ARM Cortex-M4 and
+RISC-V targets.
+Keywords: HAETAE · lattice-based cryptography · small memory signatures ·
+constrained devices
+1
+Introduction
+Embedded systems rely on public-key authentication schemes for firmware updates, secure
+boot, device attestation, and device provisioning. With the transition to post-quantum
+∗Author list in alphabetical order; see https://ams.org/profession/leaders/CultureStatement04.
+pdf. This work was supported by the HYPERFORM consortium, funded by France through Bpifrance, and
+by the France 2030 program under grant agreement ANR-22-PETQ-0008 PQ-TLS. Date of this document:
+2026-04-20.
+arXiv:2604.15868v1 [cs.CR] 17 Apr 2026
+
+2
+Low-Stack HAETAE for Memory-Constrained Microcontrollers
+cryptography, signature schemes based on module lattices are leading candidates for
+standardization.
+On low-end ARM Cortex-M and RISC-V microcontrollers, the stack available to an
+application may be only 8 kB–16 kB once the real-time operating system (RTOS), network
+stack, and I/O drivers are loaded. For this class of targets, peak stack usage is often the
+binding constraint rather than code size or cycle count.
+HAETAE [CCD+23, CCD+24], a module-lattice signature scheme presented at CHES’24,
+achieves shorter signatures and keys than ML-DSA [NIS23] by sampling ephemeral vectors
+from a hyperball rather than a hypercube. This compactness reduces communication and
+persistent storage costs, making HAETAE attractive for constrained deployments. For its
+attractive qualities, it has been identified as a winner in the Korean domestic post-quantum
+cryptography competition, KpqC [Kor].
+Motivation.
+Although HAETAE offers smaller public keys and signatures than ML-DSA
+at comparable security levels (Table 1), the reference implementation requires 71 kB to
+141 kB of peak stack during the signing operation, depending on the security level, far
+exceeding the RAM budget of typical embedded targets. The root cause is that multiple
+large polynomial vectors used in sampling, challenge derivation, and hint computation are
+kept live simultaneously. The hyperball sampler amplifies the problem: because the scaling
+factor depends on the squared norm of the full Gaussian sample, a one-pass implementation
+must buffer the entire sample before producing any output.
+This issue extends beyond signing. In modern embedded systems, key generation may
+also be performed at runtime for ephemeral credentials or key rotation, and verification
+must complete within tight stack budgets on sensor nodes that only verify signatures. A
+practical low-memory implementation should therefore address key generation, signing,
+and verification alike.
+Related work.
+Bos, Renes, and Sprenkels [BRS22] showed that ML-DSA can fit within
+a few kilobytes of stack by trading recomputation for peak memory, streaming seed-
+derived objects, and reusing lifetime-disjoint buffers; similar strategies have been applied
+to FrodoKEM [BBC+23]. For HAETAE, however, only streaming matrix generation
+and sparse challenge multiplication carry over directly; the hyperball sampler, variable-
+length rANS encoding, and hint computation remain unaddressed by [BRS22]. To the
+best of our knowledge, [HCK+26] is the state-of-the-art memory-optimized HAETAE
+implementation on Cortex-M4. Following [BRS22], it achieves 5,212 B/8,092 B/6,220 B
+(key generation/signing/verification) for HAETAE-5, approaching the idealized baselines
+of Section 3. However, it targets HAETAE-5 only, leaving HAETAE-2/3 (d>0, different
+public-key domain and rejection structure) unaddressed, and its verification stack (6,220 B)
+plus the signature (2,948 B) totals 9,168 B, exceeding the 8 kB budget of many constrained
+devices. Fitting within this budget requires optimizations beyond general streaming,
+targeting HAETAE-specific components that prior work leaves unexplored.
+1.1
+Contributions
+Support for all HAETAE security levels.
+We address both gaps identified above: our
+implementation supports all three security levels (HAETAE-2/3/5), with separate opti-
+mization paths for the d>0 (HAETAE-2/3) and d=0 (HAETAE-5) cases (Section 4.1),
+and fits verification within the 8 kB budget at every level. Our pure C implementation
+achieves 4.7 kB–5.7 kB key generation stack, 5.8 kB–6.0 kB signing stack, and 4.7 kB–4.8 kB
+verification stack across all levels, with .data = 0 and .bss = 0.
+
+Gustavo Banegas, YoungBeom Kim, Seog Chung Seo and Christine van Vredendaal
+3
+Novel stack optimization techniques.
+We introduce optimization techniques tailored
+to HAETAE’s algorithmic structure that push the measured stack below the idealized
+streaming baselines (Section 3). For signing (Section 4.2), we introduce (i) Rejection-
+aware pass decomposition, which confines large buffers to non-overlapping lifetime phases;
+(ii) Component-level early rejection, which short-circuits the response computation when a
+partial norm exceeds the bound; and (iii) Reverse-order streaming entropy coding, which
+eliminates full hint and high-bits staging arrays. The signing path additionally employs a
+streaming two-pass hyperball sampler with a fully streaming Gaussian backend (.bss = 0),
+for which we provide a formal correctness proof (Section 4.4). For verification (Section 4.3),
+we combine row-streamed matrix multiplication with view-style decoding, replacing a large
+vector accumulator with a single polynomial and a compact union overlay. For HAETAE-5,
+these yield 4,816 B key generation (−7.6 % vs. [HCK+26]), 6,136 B signing (−24 %), and
+4,840 B verification (−22 %), while key generation, signing, and verification are 25 %, 27 %,
+and 16 % faster respectively.
+Evaluation and practical applicability.
+We evaluate on the pqm4 framework and ad-
+ditionally validate portability under RIOT-OS on Cortex-M4 (nRF52840) and RISC-V
+(ESP32-C6) targets. On 8 kB devices, verification at all HAETAE security levels fits within
+budget (signature buffer + stack), and is 2.34–3.34× faster than ML-DSA m4fstack [BRS22]
+at each comparable security level. On 16 kB devices, all HAETAE levels support full
+signing (secret key + signature + stack), whereas ML-DSA-87 exceeds this budget.
+Constant-time implementation.
+Our implementation avoids branches and memory ac-
+cesses that depend on long-term secret coefficients, with the exception of the rejection-
+sampling loop inherent in the Fiat-Shamir-with-Aborts paradigm; verification processes
+only public inputs. Countermeasures against power analysis or fault attacks are not
+addressed in this work. Our implementation will be available upon acceptance of the
+paper.
+2
+Background
+In this section, we briefly explain the mathematical and algorithmic background of
+HAETAE, covering its algebraic setting, parameter sets, and core operations. Implementation-
+oriented algorithm specifications based on the latest HAETAE specification [Kpq26] are
+provided in Appendix A–C.
+2.1
+HAETAE
+HAETAE is a module-lattice signature scheme operating in the polynomial ring
+Rq = Zq[X]/(XN + 1),
+with q a prime modulus. Vectors of ℓ(resp. k) polynomials are called polyvecl (resp.
+polyveck) and occupy ℓ· N · 4 (resp. k · N · 4) bytes when stored with 32-bit coefficients.
+Polynomial multiplication in Rq is performed efficiently via the Number Theoretic Trans-
+form (NTT), which maps a polynomial to its evaluation at the 2N-th roots of unity
+modulo q and reduces multiplication to a pointwise product in O(N log N) time.
+Parameter sets.
+HAETAE is specified at three security levels. Table 1 lists the parameters
+referenced in this paper. All three sets share the polynomial degree N=256 and modulus
+q=64,513. The module dimensions (k, ℓ) determine the sizes of the public matrix A ∈Rk×ℓ
+q
+and the secret/response vectors, and are the primary driver of memory usage.
+The
+
+4
+Low-Stack HAETAE for Memory-Constrained Microcontrollers
+Table 1: Selected HAETAE parameters. |poly| = N × 4 = 1,024 B.
+Parameter
+Description
+HAETAE-2
+HAETAE-3
+HAETAE-5
+N
+polynomial degree
+256
+256
+256
+q
+modulus
+64 513
+64 513
+64 513
+(k, ℓ)
+module dimensions
+(2, 4)
+(3, 6)
+(4, 7)
+τ
+challenge weight
+58
+80
+128
+d
+PK truncation
+1
+1
+0
+α
+z1 compression
+256
+256
+256
+αh
+h compression
+512
+512
+256
+|pk|
+public key (bytes)
+992
+1 472
+2 080
+|sk|
+secret key (bytes)
+1 408
+2 112
+2 752
+|sig|
+signature (bytes)
+1 474
+2 349
+2 948
+truncation parameter d governs the public-key format: d=1 (HAETAE-2/3) stores a
+rounded representation, while d=0 (HAETAE-5) stores the NTT-domain image directly
+(Section 2.1).
+Like ML-DSA [NIS23], HAETAE is constructed in the Fiat–Shamir with Aborts (FSwA)
+framework [Lyu09]. In FSwA, the signer commits to an ephemeral randomness y, receives
+(or derives) a binary challenge c of low Hamming weight, and computes a masked response
+z = y + (−1)b(c ⋆s). An abort (rejection) step is performed to ensure that the distribution
+of z does not leak information about the secret s. The key distinction between ML-DSA
+and HAETAE lies in the distribution from which the ephemeral y is drawn, as detailed in
+Section 2.2.
+HAETAE makes extensive use of HighBits and LowBits decompositions; we abbreviate
+these as HB and LB throughout, with superscripts (h, z1, pk) indicating the decomposition
+type. For HAETAE-2/3 (d=1), the verification key stores only the high-order bits b1 =
+HBpk(b) together with a public seedA for expanding the matrix. The low-order bits
+b0 = LBpk(b) are folded into the secret key. For HAETAE-5 (d=0), no rounding is applied;
+instead bb = NTT(−2b) is stored directly in the NTT domain.
+The signature and key sizes of HAETAE are smaller than those of ML-DSA at compa-
+rable security levels, owing to the hyperball-based sampling strategy described below. At
+HAETAE-2 (targeting NIST security level 2), the signature size is 1 474 bytes, making it
+competitive with other lattice-based signatures while remaining efficient to verify.
+Key Generation.
+Key generation expands a seed into the public matrix A ∈Rk×ℓ
+q
+and
+secret vectors (s1, s2), then computes b = As1 + s2 mod q. Unlike ML-DSA, HAETAE
+applies an explicit singular-value norm check N(s1, s2) ≤γ2N that rejects and resamples
+until the bound is satisfied; this rejection loop and its FFT-based workspace affect the
+key-generation stack peak. The implementation differs across security levels: for HAETAE-
+2/3 (d>0), b is rounded and the public key stores b1 = HBpk(b), while for HAETAE-5
+(d=0), bb = NTT(−2b) is stored directly in the NTT domain. The norm rejection also
+differs: HAETAE-2/3 interleave it with the matrix–vector multiplication, while HAETAE-5
+performs it before expanding A. See Algorithm 3 and 4 in Appendix A for the detailed
+specifications.
+Signing.
+Unlike ML-DSA, which samples y uniformly from a hypercube, HAETAE draws
+y = (y1, y2) from a discretized hyperball: coefficients are sampled from a discrete Gaussian
+Dσ, the vector is rescaled so that ∥(y1, y2)∥2 ≤B0Λ, and a norm rejection test is applied.
+This yields shorter signatures but requires a more expensive and memory-intensive sampler
+(Section 4.4).
+In the signature operation, the signer derives µ = H(pk, M) and repeats the steps of
+sampling y, computing w = A⌊y1⌉mod 2q, deriving challenge c, and forming z = y +
+
+Gustavo Banegas, YoungBeom Kim, Seog Chung Seo and Christine van Vredendaal
+5
+Figure 1: Overview of RIOT-OS modularization packages.
+(−1)bc⋆s. If z passes the norm bounds, the hint h = HBh(w′)−HBh(w′−2⌊z2⌉) is computed
+and the signature σ = (HBz1(⌊z1⌉), LBz1(⌊z1⌉), h, c) is encoded. See Algorithm 5 in

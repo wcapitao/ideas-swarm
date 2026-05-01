@@ -1,0 +1,246 @@
+Resource-Aware Layered Intrusion Detection Allocation Model
+Ioan P˘adurean, B´ela Genge, and Roland Bolboac˘a
+Department of Electrical Engineering and Information Technology
+George Emil Palade University of Medicine, Pharmacy, Science, and Technology of Targu Mures, Romania.
+padurean.ioan.25@stud.umfst.ro, {bela.genge, roland.bolboaca}@umfst.ro
+April 27, 2026
+Abstract
+This paper proposes a resource-aware allocation model for layered intrusion detection in het-
+erogeneous networks.
+Monitoring traffic at higher protocol layers improves the ability to detect
+sophisticated attacks, but it also increases computational and storage costs. The problem is formu-
+lated as an integer linear program that assigns a single monitoring depth, ranging from Ethernet
+to the application layer, to each device, while accounting for device importance, attack probability,
+layer-dependent detection rates, and per-layer monitoring costs. The model further enforces a global
+resource budget, a minimum monitoring level for critical devices, and maximum-feasibility limits for
+constrained devices such as simple IoT sensors. The formulation is solved with the SCIP optimization
+framework on a small heterogeneous network of six devices, and the resulting allocation illustrates
+how the model concentrates monitoring effort on important and high-risk devices while respecting
+feasibility and budget constraints.
+1
+Introduction
+Intrusion detection in modern networks is no longer limited to a single observation point or a single
+protocol layer. Ethernet-level inspection can reveal attacks such as MAC spoofing or ARP poisoning [1,2],
+while deeper inspection at the IP, transport, and application layers can identify increasingly complex
+threats such as distributed denial-of-service campaigns, session hijacking, SQL injection, or brute-force
+attacks [3]. The main difficulty is that deeper monitoring provides stronger visibility at a significantly
+higher resource cost [4].
+In practical deployments, networked systems contain devices with different operational roles, risk
+profiles, and technical limitations. A database server, for example, is both more valuable and more
+exposed than a simple IoT sensor, while some constrained devices do not produce application-layer
+traffic that would justify deep inspection [5]. This motivates the need for an allocation strategy that
+selects the appropriate monitoring level for each device while respecting global resource limits [6].
+This article formulates the problem as an optimization problem for resource-aware layered intrusion
+detection. The model captures device importance, attack probability, monitoring cost, and detection
+efficiency, and it includes additional constraints for critical devices and devices with limited monitoring
+feasibility.
+2
+Related Work
+Dao et al. [7] address the problem of assigning network intrusion detection (NID) tasks in multi-level
+IoT systems where edge-fog computation resources and network traffic vary dynamically. The authors
+formulate the assignment problem as an integer linear program whose objective is to minimize NID
+latency while satisfying detection accuracy requirements and computation resource constraints, and they
+additionally propose three heuristic strategies to obtain near-optimal solutions: a shortest-detection-
+based assignment; a nearest-neighbor-based assignment; and a genetic algorithm. Their evaluation on
+two real-world IoT attack datasets reports the effectiveness of the proposed algorithms with respect to
+detection accuracy and latency. The present work shares the perspective of treating intrusion detection
+deployment as a constrained resource-allocation problem, but focuses on selecting a monitoring depth
+across protocol layers rather than placing detection tasks across edge-fog nodes.
+1
+arXiv:2604.22304v1 [cs.CR] 24 Apr 2026
+
+Yang and Shami [8] propose a multi-objective AutoML-based intrusion detection system designed to
+enhance both performance and autonomy in cybersecurity operations. Their framework leverages auto-
+mated machine learning techniques to simultaneously optimize multiple criteria, such as detection accu-
+racy, computational cost, and model complexity, reducing the need for manual feature engineering, model
+selection, and hyperparameter tuning and aligning with the broader movement toward self-adaptive and
+intelligent security systems. The framework integrates two main components: an automated feature
+selection method (OIP-AutoFS) that reduces dimensionality by selecting the most informative features,
+and a joint optimization process (OPCE-CASH) that simultaneously chooses the best learning algo-
+rithm together with its hyperparameters. By optimizing several objectives instead of accuracy alone,
+the system is intended to perform effectively in resource-constrained environments such as IoT and edge
+networks, and the authors report that experiments on benchmark datasets show improvements over ex-
+isting intrusion detection methods in both performance and efficiency. This direction is complementary
+to ours: they emphasize the automated construction and tuning of machine-learning-based detectors
+under multiple objectives, whereas the model proposed here is concerned with the upstream allocation
+decision of how deeply each device should be inspected given limited monitoring resources.
+Ibrahim et al. [9] propose an adaptive, layered intrusion detection system (IDS) that combines ma-
+chine learning techniques with gain-ratio-based feature selection to improve detection accuracy and
+efficiency. The system is structured in two stages: an initial layer that distinguishes between normal and
+attack traffic, followed by multiple specialized layers that classify specific types of attacks, such as DoS,
+Probe, U2R, and R2L. By applying gain ratio to select the most relevant features for each layer, the
+model reduces dimensionality and computational overhead while enhancing classification performance.
+The authors evaluate several machine learning algorithms within this framework and report that the
+layered approach improves detection rates, particularly for difficult attack categories, while maintaining
+adaptability and scalability compared to traditional single-stage IDS models. This staged classification
+architecture conceptually motivates the layered view adopted in the present paper. In contrast to their
+detector-side architecture, the contribution presented here addresses the network-side decision of which
+layer of inspection to enable for each device under explicit cost and feasibility constraints.
+3
+Methodology
+This section defines the linear optimization problem for resource-aware layered intrusion detection
+allocation. The problem aims to determine the optimal monitoring depth for each device in a heteroge-
+neous network, balancing detection efficiency against resource constraints, while ensuring that constraints
+pertaining to critical devices and monitoring feasibility are satisfied.
+3.1
+Problem Description
+In cybersecurity, monitoring traffic at higher layers, such as the IP, transport, and application layers,
+enables the detection of more sophisticated attacks, but it also leads to higher resource consumption.
+Therefore, the problem is to determine the monitoring level for each device in the network under the
+following conditions, with the goal of optimizing resource usage and maximizing detection efficiency:
+• A set of devices connected to a network;
+• Limited monitoring resources;
+• Different monitoring costs for different layers;
+• Different levels of importance and attack probability for each device.
+The considered monitoring layers are the following:
+• Layer 1: Ethernet-level monitoring (e.g. MAC spoofing detection, ARP poisoning);
+• Layer 2: IP-level monitoring (e.g. IP spoofing, ICMP flood, Ping of Death);
+• Layer 3: transport-layer monitoring (e.g. DDoS attacks, port scans, TCP session hijacking);
+• Layer 4: application-layer monitoring (e.g. SQL injection, cross-site scripting, brute-force attacks).
+2
+
+3.2
+Linear Optimization Problem for Layered Intrusion Detection Allocation
+Let D denote the set of devices in the network.
+3.2.1
+Sets
+• i ∈{1, 2, . . . , n}: index of device i in the network;
+• l ∈{1, 2, 3, 4}: index of the monitoring layer.
+3.2.2
+Decision Variables
+• yi,l ∈{0, 1}: binary variable indicating whether device i is monitored up to layer l (1 if yes, 0
+otherwise).
+The interpretation of the layer selection is:
+• l = 1: Ethernet-level monitoring;
+• l = 2: Ethernet + IP monitoring;
+• l = 3: Ethernet + IP + transport monitoring;
+• l = 4: Ethernet + IP + transport + application monitoring.
+3.2.3
+Parameters
+• wi: importance of device i. For example, a router is more important than a laptop, a laptop is
+more important than an IoT sensor, and a database server is more important than a router.
+– Database server: wi = 10;
+– Router: wi = 8;
+– Matter door lock: wi = 6;
+– Laptop: wi = 4;
+– IoT sensor: wi = 2.
+• pi: probability of attack against device i. For example, Internet-exposed servers have a higher
+attack probability than internal devices.
+– Database servers: pi = 0.6;
+– Router: pi = 0.4;
+– Matter door lock: pi = 0.8;
+– Laptop: pi = 0.2;
+– IoT sensor: pi = 0.3.
+• dl: detection rate at layer l, with dl < dl+1, meaning that higher layers detect a larger fraction of
+attacks.
+– Layer 1: d1 = 0.2 (20% of attacks detected);
+– Layer 2: d2 = 0.5 (50% of attacks detected);
+– Layer 3: d3 = 0.8 (80% of attacks detected);
+– Layer 4: d4 = 0.95 (95% of attacks detected).
+• R: total available resources for monitoring;
+• cl: monitoring cost for layer l;
+• C: set of critical devices that must have at least a minimum monitoring level α ≥2. Examples
+include database servers, application servers, and the main router, which should be monitored at
+least up to layer 2;
+• F: set of devices for which higher-layer monitoring is not feasible, with maximum admissible level
+β ≤3. For example, simple IoT sensors may not be monitored at layer 4 because they do not
+generate application-layer traffic.
+3
+
+Figure 1: Device layer monitoring based on resource allocation.
+3.2.4
+Objective Function
+The objective is to maximize detection efficiency, modeled as:
+max
+n
+X
+i=1
+4
+X
+l=1
+wipidlyi,l
+This formulation assigns a higher contribution to devices that are more important, more likely to be
+attacked, and monitored at deeper protocol layers.
+3.2.5
+Constraints
+1. The total monitoring resources must not exceed the available capacity:
+n
+X
+i=1
+4
+X
+l=1
+clyi,l ≤R
+(1)
+2. Each device is assigned exactly one monitoring depth. A higher layer already implies visibility over
+lower-layer traffic, so selecting multiple layers for the same device is unnecessary:
+4
+X
+l=1
+yi,l = 1,
+∀i ∈D
+(2)
+3. Critical devices must be monitored at least up to level α:
+4
+X
+l=α
+yi,l = 1,
+∀i ∈C
+(3)
+4. Monitoring feasibility is limited by the maximum level βi for constrained devices.
+For simple
+sensors, application-layer monitoring may be unnecessary because no such traffic is generated:
+βi
+X
+l=1
+yi,l = 1,
+∀i ∈F
+(4)
+4
+Experimental Evaluation
+Solving Constraint Integer Programs (SCIP) is a state-of-the-art open-source optimization frame-
+work designed for solving mixed-integer programming (MIP) and mixed-integer nonlinear programming
+4
+
+Figure 2: Device contribution to objective based on resource budget.
+(MINLP) problems. Developed primarily at the Zuse Institute Berlin, SCIP integrates techniques from
+constraint programming, integer programming, and SAT solving into a unified branch-and-bound frame-
+work. It is particularly known for its flexibility, allowing users to customize components such as branching
+rules, cutting planes, and heuristics, making it suitable for both academic research and industrial appli-
+cations. SCIP supports a wide range of problem formulations and is often used as a benchmark solver
+due to its strong performance and extensibility [10].
+The model is instantiated on a small heterogeneous network in order to illustrate its behavior. The
+four monitoring layers l ∈{1, 2, 3, 4} are associated with detection rates d1 = 0.2, d2 = 0.5, d3 = 0.8,
+d4 = 0.95 and with monitoring costs c1 = 1, c2 = 2, c3 = 4, c4 = 7, reflecting the assumption that deeper
+inspection yields higher detection but at a higher resource cost. The total monitoring budget is set to
+R ∈{5, 10, 15, 20, 25, 30, 35, 40}. Critical devices must be monitored at least up to layer α = 2, with
+the critical set defined as C = {dev 2, dev 3, dev 4}, while feasibility limits restrict dev 2 to a maximum
+monitoring depth of βdev 2 = 3. The network contains six devices with importance weights wi and
+attack probabilities pi as follows: dev 1 (w = 1, p = 0.998), dev 2 (w = 3, p = 0.579), dev 3 (w = 5,
+p = 0.045), dev 4 (w = 10, p = 0.517), dev 5 (w = 9, p = 0.682), and dev 6 (w = 7, p = 0.71). This
+configuration is used as input to the SCIP solver to evaluate the proposed allocation model.
+In Fig. 1, the optimal monitoring layer allocation for each device is shown, while in Fig. 2, the
+contribution of each device to the objective based on the resource budget is illustrated, highlighting
+how critical devices (dev 2, dev 3, dev 4) are monitored at least up to layer 2, while dev 2 is limited
+to a maximum of layer 3. The allocation balances detection efficiency and resource usage across the
+heterogeneous network. For a small resource budget, the model prioritizes monitoring the most important
+and high-risk devices at deeper layers, while for a larger budget, it allows for broader monitoring across
+more devices and layers. If resource budget is too small, the model yields no solution (R=5).
+5
+Conclusion
+This paper introduced a resource-aware allocation model for layered intrusion detection in hetero-
+geneous networks, formulated as an integer linear program in which each device is assigned a single
+monitoring depth ranging from Ethernet to the application layer. The model jointly captures device
+importance, attack probability, layer-dependent detection rates, per-layer monitoring costs, a global re-
+source budget, minimum monitoring requirements for critical devices, and maximum-feasibility limits for
+constrained devices.
+The formulation was solved with the SCIP optimization framework on an illustrative six-device net-
+work. The resulting allocation respected the budget and feasibility constraints, ensured that critical
+devices were monitored at least up to the required layer, and concentrated deeper inspection on devices
+with higher importance and attack probability, while limiting monitoring overhead on low-value or con-
+strained devices. Overall, the approach offers a structured and reproducible way to balance detection
+efficiency and resource usage across heterogeneous networks. Future work will consider larger and more
+realistic network instances, uncertainty in attack probabilities, and the integration of this allocation layer
+5
+
+with the machine-learning-based detectors discussed in the related work.

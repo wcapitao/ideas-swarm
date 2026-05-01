@@ -1,0 +1,571 @@
+(Special Session)
+This paper will be presented at IEEE VLSI Test Symposium (VTS) 2026.
+Secure eFPGA-Enabled Edge LLM Inference:
+Architectural and Hardware Countermeasures
+Voktho Das, M Zafir Sadik Khan, Jafar Vafaei, Kimia Azar, Hadi Kamali
+Department of Electrical and Computer Engineering (ECE), University of Central Florida, Orlando, FL 32816, USA
+{voktho.das, mzafirsadik.khan, jafar.vafaei, azar, kamali}@ucf.edu
+Abstract—Edge deployment of transformer-based models in-
+creasingly relies on ASIC accelerators due to their high per-
+formance and energy efficiency, achieved through optimized
+dataflows, specialized architectures, low-bitwidth computation,
+and efficient memory hierarchies. However, these advantages
+come with significant security vulnerabilities. ASIC-based DNN
+accelerators are susceptible to side-channel attacks (e.g., power,
+electromagnetic, and timing analysis) and fault injection attacks
+(e.g., voltage manipulation, clock glitches, and memory pertur-
+bations), which can lead to model extraction or compromised in-
+ference integrity. Furthermore, threats introduced during design
+and fabrication, such as hardware Trojans or untrusted third-
+party IPs, further expand the attack surface. To address these
+challenges, we explore a hybrid ASIC+eFPGA architecture that
+combines the efficiency of ASICs with the flexibility of recon-
+figurable logic. The integrated eFPGA enables security-oriented
+mechanisms such as adaptive runtime monitoring, side-channel
+mitigation and post-deployment patching. By leveraging these
+capabilities, the proposed approach enhances system resilience
+against both runtime and supply-chain attacks, while preserving
+the performance benefits of ASIC-based transformer inference.
+Index Terms—Transformers, eFPGA Acceleration, Security.
+I. INTRODUCTION
+Hardware accelerators drive modern AI, with GPUs, FP-
+GAs, and custom ASICs widely deployed for high-throughput,
+energy-efficient execution of neural networks [1], [2]. Among
+these, ASICs are increasingly favored in both cloud and edge
+settings for real-time inference due to their superior power-
+performance characteristics [3]. However, deploying DNNs on
+ASICs introduces notable security challenges [4]. Prior work
+shows that adversaries can extract model architectures via
+microarchitectural side-channels (e.g., DRAM access patterns)
+[5], infer models from timing-based leakage in inference
+latency [6], and even perform remote side-channel attacks by
+capturing power traces and reconstructing model details using
+learning-based techniques [7].
+Meanwhile, LLMs are rapidly scaling to hundreds of tril-
+lions of parameters [8], placing heavy demands on compute
+and memory and making hardware acceleration essential.
+Recent work shows that advances in LLM capabilities are
+closely tied to specialized hardware [9]. As a result, diverse
+accelerators, including GPUs, FPGAs, ASICs, and processing-
+in-memory (PIM) systems, have been explored to efficiently
+execute transformer workloads [10]. While FPGAs enable
+flexible LLM accelerators, ASIC-based transformer hardware
+can achieve higher throughput and energy efficiency through
+domain-specific datapaths and operator optimizations, partic-
+ularly for high-performance LLM inference.
+While ASIC-based LLM inference enables real-time de-
+ployment at cloud and edge scale, a key question remains:
+Can ASIC efficiency be combined with the adaptability of re-
+configurable logic to improve hardware security? Specifically,
+can an ASIC LLM accelerator with a small embedded FPGA
+(eFPGA) fabric mitigate attacks affecting conventional ASIC-
+based DNN deployments? This paper investigates the security
+benefits of eFPGA-enhanced LLM accelerators by examining
+common hardware attacks targeting ASIC-based DNN accel-
+erators and analyzing how embedded FPGA integration can
+be used to mitigate these threats. We then show how eFPGA
+can enable architectural countermeasures, including selective
+logic redaction, runtime monitoring, adaptive fault response,
+and post-deployment patching. The proposed hybrid design
+aims to retain ASIC-class performance for the performance-
+critical datapath while introducing a constrained and auditable
+reconfigurable security module. Finally, we discuss the advan-
+tages and limitations of these approaches and highlight open
+challenges for secure LLM accelerator design.
+II. PRIOR ART AND THREAT MODEL
+A. Transformer/LLM Accelerator Anatomy
+Modern decoder-only LLM inference typically consists of
+two phases with different bottlenecks: prefill, which exhibits
+high arithmetic intensity, dominated by general matrix multi-
+plication (GEMM) operations, and decode, which is often lim-
+ited by memory bandwidth and KV-cache accesses, dominated
+by general matrix-vector multiplication (GEMV) operations
+[10], [11]. Across both phases, the accelerator repeatedly
+Fig. 1: Comprehensive Architecture of Decoder-Only LLM Accelerators.
+arXiv:2604.22935v1 [cs.CR] 24 Apr 2026
+
+executes linear layers (e.g., QKV projections and MLPs),
+attention score computation and softmax operations, as well as
+frequent KV-cache reads/writes, which is increasingly treated
+as a hardware–software co-design problem [11], [12]. As
+shown in Fig. 1, transformer inference hardware, either FPGA
+or ASIC, typically includes: (i) compute units, (ii) on-chip
+SRAM scratchpads for activations and KV-cache, (iii) DMA
+engines and memory controllers for weight/KV streaming, (iv)
+an on-chip interconnect or NoC, and (v) a control unit for
+scheduling, quantization, sparsity, and dataflow management
+[10], [13]. In this generic architecture, LLM-specific opti-
+mizations, e.g., weight compression, KV-cache quantization,
+and operator fusion, further increase the complexity of the
+control unit. As a result, small perturbations or faults in control
+logic can propagate through the execution pipeline, leading to
+significant semantic deviations in generated outputs.
+B. Threat Model and Priorities
+We consider an adversary capable of exploiting hardware
+and microarchitectural vulnerabilities in ASIC-based DNN
+accelerators across the design, fabrication, and runtime phases.
+The attacker may operate remotely in multi-tenant environ-
+ments, leverage physical access for side-channel and fault
+injection attacks, or act within the supply chain through
+untrusted IPs or fabrication processes. This power enables
+attacks such as side-channel leakage, fault-induced errors, and
+hardware Trojan insertion targeting model weights, intermedi-
+ate data, and control logic. We assume the base ASIC may not
+be fully trusted, while the integrated eFPGA fabric is trusted
+(e.g., through secure boot) and used to monitor, detect, and
+mitigate such threats at design and runtime.
+In LLM accelerators, key confidentiality assets include
+(i) model weights and quantization metadata, (ii) the KV
+cache containing user prompts and contextual information, and
+(iii) control-plane artifacts such as microcode and scheduling
+heuristics. Beyond confidentiality, the architecture must also
+ensure integrity and availability by preventing (iv) output cor-
+ruption, (v) targeted output manipulation or denial-of-service,
+and (vi) stealthy long-term degradation caused by single-point
+failures or hardware Trojan triggers.
+Based on these priorities and the defined threat model, we
+analyze how possible attack scenarios impact LLM acceler-
+ators. Table I summarizes the attack vectors, the potentially
+targeted components of the LLM, and the corresponding mit-
+igations enabled by the proposed ASIC+eFPGA architecture.
+III. WHY EFPGA+ASIC CAN HELP?
+A. eFPGA Fabrics Inside an ASIC LLM accelerator
+Prior work shows that ASIC-based LLM accelerators
+achieve high throughput and energy efficiency via domain-
+specific specialization [24]. However, ASIC-only designs re-
+main vulnerable to diverse attack vectors, including hardware-
+level threats (e.g., Trojans, side-channel attacks, counterfeiting,
+reverse engineering) and architectural weaknesses such as
+insecure memory hierarchies, shared-resource leakage, and
+limited isolation [17], [18]. This raises a key challenge: how to
+introduce security agility into ASIC accelerators using eFPGA
+to mitigate their broad attack surface.
+We argue that eFPGA offers a promising solution as a
+reconfigurable security and auxiliary module. The embedded
+fabric is (i) compact and tailored for specific functions, and
+(ii) configured exclusively through a trusted boot and update
+chain to prevent unauthorized modifications.
+B. Mitigation concepts enabled by eFPGA
+The reconfigurability of eFPGA fabrics enables a wide
+range of hardware and architectural countermeasures against
+attacks. We outline five key mitigation strategies that leverage
+this flexibility to enhance the security of LLM accelerators.
+S1. Selective IP redaction of Critical Logic. IP redaction us-
+ing eFPGA fabric is a conventional approach to mitigate
+threats arising during both manufacturing and deployment
+stages, including reverse engineering, overproduction, and
+counterfeiting [25]. In this approach, security-critical logic
+blocks of the original design are partitioned and replaced
+with an eFPGA macro, while the corresponding configuration
+bitstream is withheld until trusted provisioning [26]. In LLM
+accelerators, these security-critical sections may include com-
+plex routing logic or specialized units such as sparsity handling
+and quantization modules [22], [27], [28]. By reducing the
+TABLE I: Attack vectors vs. Affected LLM Accelerator Components and eFPGA+ASIC Mitigation. Goals: C=confidentiality, I=integrity, A=availability.
+Attack vector
+Goal
+Affected LLM components
+Enablers / observations
+Recommended eFPGA mitigations
+Voltage droop / tim-
+ing faults [14], [15]
+I/A
+Weight DMA, on-chip buffers, MAC
+array timing, control FSM
+Co-tenant power-plundering; clock gating
+transients can evade bitstream checks [15]
+eFPGA runtime monitors; reconfigurable guardbands; fault-
+aware microcode patching
+Remote
+side-
+channels [16]
+C
+Inputs,
+activations,
+layer
+schedule,
+memory bursts
+TDC/RO sensors infer activity remotely;
+recognizable runtime patterns
+eFPGA equalization, masking, and perturbation; runtime mon-
+itors
+Physical
+side-
+channels [17]
+C
+MAC/systolic arrays, on-chip SRAM,
+off-chip memory accesses
+CPA reveals weights; GPU power chan-
+nels leak transformer structure [17]
+eFPGA equalization, masking, and perturbation
+µarchitectural leak in
+inference [18]
+C
+Token embedding tables; KV-cache de-
+pendent control flow
+Token value/position leakage via cache
+access patterns
+eFPGA
+equalization,
+masking,
+and
+perturbation;
+post-
+deployment patching
+Single-bit
+flips
+in
+quantization [19]
+I/A
+Quantization scaling factors; code re-
+gions; control metadata
+Scaling factors become SPOFs; code re-
+gions can be more fragile than data [19]
+eFPGA TEE; selective redundancy/ECC for control/metadata;
+post-deployment patching
+Hardware
+Trojans
+(3PIP) [20]
+I/C/A
+Activation paths, interconnect, control
+logic, triggers
+Trigger-based
+payloads
+corrupt
+activa-
+tions; difficult post-silicon assurance
+selective IP redaction; eFPGA TEE; runtime monitors
+IP piracy / reverse en-
+gineering [21]–[23]
+C
+Unique control logic, proprietary ops
+(packing, sparsity), security policy logic
+Untrusted fab/integrator can recover netlist
+or insert clones
+eFPGA IP redaction; device-bound bitstream encryption (PUF)
+
+SELECTIVE
+REDACTION
+BITSTREAM
+PROTECTION
+SIDE-CHANNEL
+RESISTANCE
+eFPGA-TEE
+COMPUTATION
+MONITORING And 
+PATCHING
+Dynamic
+Reconfiguration
+Masked
+Computation
+Noise
+Generation
+Sensitive
+Data
+ASIC
+Logic
+Runtime
+Monitors
+Routing Logic
+Compromised
+Component
+Spare
+Logic
+Security-Critical
+Logic
+eFPGA 
+Macro
+Hide IP 
+From
+Foundry
+Fabricated
+Chip
+ASIC Design
+Encrypted Bitstream
+Configuration
+Data
+eFPGA Fabric
+ASIC
+Logic
+PUF KEY
+Device-Bound
+Configuration
+Power. Timing,
+EM, Leakage
+Side Channel Attack
+Partitioned During Inference
+Lightweight
+TEE
+Detects
+Attacks
+Post-Deployment 
+Patching
+Lightweight Trusted Zone
+Bound To Device Instance
+Fig. 2: End-to-end Secure eFPGA-enabled ASIC Architecture illustrating a Defense Strategy across the Hardware Lifecycle.
+visibility of these components to the fabrication facility or sys-
+tem integrator, this method enhances design confidentiality and
+strengthens protection against unauthorized access, cloning, or
+replication. Additionally, although eFPGA-based obfuscation
+primarily protects the design, it also provides resilience against
+hardware Trojans by reducing observability and making inser-
+tion points harder to identify. It further enhances resistance to
+side-channel attacks (e.g., power, timing, EM) by obscuring
+internal behavior, making leakage harder to exploit.
+S2. Encrypted/Device-bound eFPGA Configuration. The eF-
+PGA fabric functionality can be protected through encrypted
+and device-bound configuration using a device-unique key
+derived from a physically unclonable function (PUF), such as
+an SRAM PUF, instead of relying on static keys stored in non-
+volatile memory. As an example, commercial platforms, such
+as FlexLogix has shown that in this model, a root key is recon-
+structed at boot from the chip’s physical fingerprint and used
+to decrypt and authenticate the eFPGA configuration bitstream
+[29]. This mechanism prevents unauthorized redistribution of
+the configuration, as the bitstream becomes bound to a specific
+device instance. It also ensures the integrity of the configured
+eFPGA logic, which is particularly important when the fabric
+hosts security-critical functionality such as redacted control
+logic or runtime security monitors. PUF-based key derivation
+requires fuzzy extractors for stability across voltage, tempera-
+ture, and aging, and provisioning during manufacturing tests.
+With an existing hardware root-of-trust (RoT), this overhead
+is modest relative to the security benefits. Furthermore, with
+modular integration and tiled fabrics, the reconfigurable region
+can be sized appropriately for security without significantly
+impacting the accelerator datapath.
+S3. Side-Channel Resistance via Reconfigurable Fabric. A
+variety of techniques have been proposed to improve side-
+channel resistance (SCR) in deep learning accelerators [4],
+[30], generally categorized into equalization, masking, and
+perturbation [31].
+Equalization techniques reduce leakage by making side-
+channel signals independent of processed data. In ASICs,
+this is achieved using circuit-level countermeasures such as
+DPA-resistant logic and complementary operand computa-
+tion [32], [33]. In eFPGA, similar effects can be realized
+through dynamic partial reconfiguration (DPR) and netlist-
+level diversity, where functionally identical but structurally
+different implementations are switched at runtime [34], [35].
+This reconfigurability helps disrupt consistent leakage patterns.
+Masking techniques hide sensitive information by splitting
+operands into multiple randomized shares that are statistically
+independently and recombined at the output (e.g., arithmetic
+and Boolean masking) [36]–[38]. This approach integrates
+well with ASIC-eFPGA systems, where masking operations
+can be distributed across reconfigurable logic, reducing corre-
+lation between leakage and secret data.
+Perturbation techniques introduce noise into a system to
+obscure side-channel leakage, making it significantly harder
+for an attacker to extract useful information from power,
+electromagnetic, or timing signals. eFPGA fabrics enable on-
+chip noise generators—such as toggled LUT chains or ring-
+oscillator-based engines—using unused resources [5]. These
+reduce the signal-to-noise ratio (SNR) of side-channel emis-
+sions and can be deployed independently of workloads.
+Beyond these, architectural countermeasures include oper-
+ation shuffling, which randomizes execution order to hinder
+trace alignment [39], and constant-shape traffic generation for
+DMA or NoC to hide memory access patterns [5].
+S4. Heterogeneous Computation on eFPGA TEEs.
+Ensuring both confidentiality and integrity during DNN
+inference has driven extensive research on trusted execution
+environments (TEEs) [40]. TEEs provide strong security
+guarantees by isolating sensitive computations and enforcing
+secure memory access, protecting model parameters and
+intermediate data from untrusted components. However,
+executing the full inference pipeline within a TEE incurs
+significant performance and energy overheads. To mitigate
+this, heterogeneous inference partitions computation into
+sensitive and non-sensitive components, where the sensitive
+portion runs inside the TEE while the rest is offloaded to
+a high-performance accelerator [41], [42]. This selective
+protection
+improves
+the
+trade-off
+between
+security
+and
+efficiency
+by
+restricting
+the
+TEE
+boundary
+to
+critical
+operations. In embedded systems with eFPGA, this paradigm
+
+can be extended by using reconfigurable fabric as a lightweight
+TEE. Security-critical computations—such as those involving
+confidential weights or sensitive activations—can be mapped
+to the eFPGA, while throughput-critical kernels remain on the
+ASIC. This approach suits resource-constrained environments
+by enabling fine-grained security partitioning without full-
+system protection. Moreover, FPGA platforms efficiently
+support
+cryptographic
+primitives,
+enabling
+encryption,
+authentication, and integrity verification [43]. Overall, this
+architecture balances security, performance, and flexibility for
+emerging LLM inference workloads.
+S5. Runtime Monitors and Post-deployment Patching.
+By
+placing reconfigurable logic near sensitive assets, eFPGA
+fabrics enable both runtime monitoring and post-deployment
+adaptation to detect and mitigate hardware attacks. Runtime
+monitors—such as timing, voltage, control-flow, and metadata
+integrity
+checks—can
+identify
+faults
+induced
+through
+mechanisms like power delivery network (PDN) manipulation
+or clock-gating transients, as well as corruption of critical
+data (e.g., quantization metadata) that can significantly impact
+inference accuracy [14], [15], [19], [44], [45]. This capability
+is particularly important for LLMs, where small numerical
+errors can propagate through autoregressive decoding and
+lead to large semantic deviations. In addition to detection,
+eFPGA fabrics provide spare logic for rerouting around
+compromised components (e.g., hardware Trojans or aging-
+induced faults) and enable post-deployment security patching
+without requiring full ASIC redesign [23]. This supports
+long-lived edge deployments and evolving LLM workloads,
+where new vulnerabilities may emerge over time [17], [18].
+Ensuring robust protection requires carefully calibrated de-
+tection thresholds to avoid false positives, as well as verifiable
+patch pipelines and formal constraints to prevent misuse of the
+reconfigurable fabric [46]. Fig. 2 illustrates the overall security
+architecture can be enabled by the proposed ASIC+eFPGA de-
+sign. The framework spans the full lifecycle of the accelerator,
+beginning with design-time protections (S1 and S2). It then
+extends to runtime defenses, including side-channel shaping
+mechanisms that obscure observable hardware signatures (S3)
+as well as encryption and integrity verification of confidential
+model parameters during memory accesses (S4). Finally, the
+architecture incorporates deep pipeline monitoring to detect
+adversarial faults, metadata corruption, and aging-induced
+failures, while supporting long-term resilience through secure
+patching and rerouting around compromised control logic
+(S5). These mechanisms demonstrate how a bounded eFPGA
+fabric can serve as a reconfigurable security module within
+an ASIC-based LLM accelerator. Rather than relying on a
+static monolithic design, the hybrid eFPGA+ASIC architecture
+enables adaptive defenses that evolve with emerging hardware
+threats in edge AI systems.
+IV. EVALUATION: A QUALITATIVE COMPARISON
+To compare mitigation strategies and architectural choices,
+Tables II and III summarize their qualitative trade-offs, high-
+lighting the design space of eFPGA-assisted security in ASIC-
+TABLE II: Design-space Evaluation of eFPGA-enabled Security Strategies.
+Strategy
+Security Adaptability HW Cost Perf. Cost Maturity
+S1: IP Redaction
+• • •
+•
+••
+••
+Mature
+S2: Encrypted Config
+• • •
+••
+•
+•
+Mature
+S3: SCR Randomization
+• • •
+• • •
+••
+••
+Emerging
+S4: eFPGA TEE
+• • •
+• • •
+• • •
+• • •
+Research
+S5: Monitors and Patching
+• • •
+• • •
+••
+••
+Research
+• Low
+•• Medium
+• • • High
+TABLE III: Comparison of Accelerators for Secure LLM Inference.
+Dimension
+ASIC-only
+FPGA-only
+Hybrid ASIC + eFPGA
+Compute Efficiency
+• • •
+•
+••
+Security Flexibility
+•
+• • •
+••
+Post-deployment Updates
+•
+• • •
+••
+SCR Adaptability
+•
+• • •
+••
+Supply-chain Protection
+••
+•
+• • •
+Silicon Area Cost
+•
+• • •
+••
+• Low
+•• Medium
+• • • High
+based LLM accelerators. Mechanisms such as selective IP
+redaction (S1) and device-bound configuration (S2) mainly
+enhance supply-chain trust and configuration integrity with
+modest overhead. In contrast, side-channel countermeasures
+(S3) and runtime monitoring (S5) provide active protection
+during execution, with moderate power and monitoring over-
+heads. Integrating an eFPGA-based TEE (S4) offers strong
+confidentiality and integrity guarantees but incurs the highest
+performance and resource costs.
+Table III positions the hybrid ASIC+eFPGA approach
+among accelerator architectures. ASIC-only designs offer
+maximum efficiency but limited post-silicon flexibility, while
+FPGA-based designs provide configurability at higher cost.
+The hybrid approach balances these by retaining ASIC effi-
+ciency and adding bounded reconfigurable security.
+V. FUTURE TREND AND CONCLUSION
+Attacks on ASIC-based DNN accelerators highlight critical
+vulnerabilities across confidentiality, integrity, and availabil-
+ity, arising from threats such as hardware Trojans, physical
+side-channel leakage, and memory tampering or spoofing.
+These risks are further exacerbated in LLM accelerators,
+where high-value assets—including model weights and KV
+caches—coexist with deeply pipelined execution flows, mak-
+ing the system highly sensitive to even minor timing variations
+or fault injections that can propagate into significant inference
+errors. In this work, we advocate for the integration of a
+lightweight eFPGA fabric within ASIC-based accelerators as a
+means to introduce security agility. Such hybrid architectures
+enable selective logic redaction, adaptive side-channel miti-
+gation, and enhanced memory protection mechanisms, while
+preserving the high performance and efficiency of ASIC im-
+plementations. Beyond these capabilities, eFPGA integration
+fundamentally shifts the security model from static to adaptive.
+As LLM accelerators continue to evolve toward distributed
+and large-scale architectures (e.g., wafer-scale or mesh-based
+systems), the hardware attack surface is expected to grow
+substantially. In this context, eFPGA-enabled capabilities, e.g.,
+runtime monitoring, post-deployment patching, and adaptive
+security, become essential for sustaining long-term trust.

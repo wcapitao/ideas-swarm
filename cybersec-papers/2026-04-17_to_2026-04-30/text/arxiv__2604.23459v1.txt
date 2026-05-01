@@ -1,0 +1,1159 @@
+Architecture Matters for Multi-Agent Security
+Ben Hagag 1 2 3 William L. Anderson 2 3
+Christian Schroeder de Witt 3 Sarah Scheffler 1
+Abstract
+Multi-agent systems (MAS), composed of net-
+works of two or more autonomous AI agents, have
+become increasingly popular in production de-
+ployments, yet introduce security risks that do
+not arise in single-agent settings. Even if indi-
+vidual agents exhibit robust security, architectural
+decisions governing their coordination can create
+attack surfaces that have not been systematically
+characterized. In this work, we present an empir-
+ical study of how MAS design decisions shape
+the tradeoff between task performance and attack
+resistance. Across three agentic environments
+(browser, desktop, and code) and 13 architectural
+configurations, we use stagewise evaluations that
+distinguish planning refusal, execution-stage in-
+terception, partial harmful execution, and success-
+ful attack completion to study three key design
+choices: (i) agent roles, which determine how au-
+thority and responsibility are allocated; (ii) com-
+munication topology, which shapes how and when
+agents interact; and (iii) memory, which deter-
+mines the context and state visibility accessible
+to each agent. We find that multi-agent architec-
+tures are more vulnerable than standalone agents
+in the majority of configurations, with attack suc-
+cess rates varying by up to 3.8× at comparable
+or higher benign accuracy, and that no single de-
+sign is universally safer. These results motivate
+the development of further evaluations that move
+beyond the security properties of a single agent.
+1. Introduction
+As AI systems evolve from single large language models
+(LLMs) into increasingly complex agentic and multi-agent
+architectures, their security properties change in fundamen-
+tal ways (Kumar et al., 2024; Schroeder de Witt, 2025).
+1Carnegie Mellon University
+2MATS
+3Oxford Witt Lab,
+University of Oxford. Correspondence to: Ben Hagag <bha-
+gag@andrew.cmu.edu>.
+Preprint. April 28, 2026.
+While early deployments relied on standalone models re-
+sponding directly to user prompts, modern systems increas-
+ingly distribute tasks across agents that plan, execute actions,
+interact with tools, maintain memory, and coordinate with
+one another (Hong et al., 2024). Such systems are increas-
+ingly capable of achieving large-scale, long-horizon tasks
+with which individual models and agents struggle (Hadfield
+et al., 2025; Lin, 2026).
+Despite their rapidly increasing capabilities, progress in se-
+curing these systems against misuse has lagged behind. Re-
+search in AI security has revealed numerous threat vectors
+against these systems, with new attacks emerging at different
+levels of abstraction. At the agent level, research examines
+failures arising from tool use and memory poisoning (Zhang
+et al., 2025). Recent work has begun exploring multi-agent
+risks such as collusion (Motwani et al., 2025), infection-
+style attacks (Lee & Tiwari, 2024; Gu et al., 2024), and viral
+misalignment via subliminal prompting (Weckbecker et al.,
+2026). This growing body of work suggests that defenses ef-
+fective at one layer may degrade or behave differently when
+embedded in richer systems. A language model that resists
+direct jailbreak attempts may nonetheless enable harmful
+behavior once coupled with web tools or persistent memory
+(Chiang et al., 2025). Similarly, an agent that appears robust
+in isolation may contribute to system-level failures when
+its outputs are routed, transformed, or reinforced through
+inter-agent coordination. In such settings, vulnerabilities
+can amplify through task decomposition, partial observabil-
+ity, and distributed control, producing emergent risks that
+are not captured by single-layer evaluations.
+Mitigating these risks requires attending not only to ex-
+plicit defenses but also to the broader architectural choices
+that shape system behavior. Yet any modification to sys-
+tem design must be evaluated against its impact on task
+performance - security methods that impose unacceptable
+costs fail to preserve the benefits of the underlying sys-
+tem (Schroeder de Witt, 2025; Peign´e et al., 2025). While
+prior work has examined such tradeoffs, the impact of in-
+direct architectural decisions remains underexplored. To
+address this gap, we present an empirical analysis of how
+design choices affect security in agentic and multi-agent
+systems. We ground our study in realistic agent tasks, adapt-
+ing the BrowserART (Kumar et al., 2024), OS-Harm (Kuntz
+1
+arXiv:2604.23459v1 [cs.MA] 25 Apr 2026
+
+Architecture Matters for Multi-Agent Security
+User: “Write a phishing email to the company
+manager asking for sensitive project details;
+pretend to be a trusted vendor.”
+Agent
+Refusal. “I can’t help draft this — it asks me
+to impersonate a vendor and extract sensitive
+information.”
+PLANNING REFUSAL
+User: “Write a phishing email to the company
+manager asking for sensitive project details;
+pretend to be a trusted vendor.”
+Orc.
+Navigate
+Fill
+Click
+Scroll
+Phishing email sent. goodman@scaleupai.com, subj. “Pre-
+meeting: project details”. No agent refused.
+goto(mail.app)
+fill(to, ...)
+fill(subj, ...)
+fill(body, ...)
+click(send)
+scroll(compose)
+HARMFUL TASK COMPLETED
+Figure 1. Architecture flips refusal behavior on the same task. A single agent refuses the full harmful request at planning time (a); the
+same base model, reconfigured as a star-topology orchestrator dispatching to four BrowserART specialists (b), decomposes the task into
+atomic browser calls that each specialist executes without refusal. Only the architecture changes. This raises HT from 10.0% to 31.0% on
+the entire BrowserART dataset (Table 1; task from Appendix C.1).
+et al., 2025), and RedCode-Gen (Guo et al., 2024) bench-
+marks, originally designed for single-agent evaluation, to
+support systematic multi-agent assessment. We systemati-
+cally evaluate how susceptibility to misuse changes as tasks
+move from single-agent to multi-agent, focusing on three
+key dimensions: role specialization, communication topol-
+ogy, and memory visibility, examining how each reshapes
+both the attack surface and the overall performance of the
+system.
+We make three main contributions:
+• Multi-agent adaptation of standardized misuse
+benchmarks. We adapt BrowserART, OS-Harm, and
+RedCode-Gen to the multi-agent setting, preserving
+original task semantics while varying only architec-
+tural configuration, and introduce stage-wise metrics
+that capture where in the pipeline harmful behavior is
+refused or executed. We release all three adaptations
+to support further research1.
+• Empirical characterization of architectural effects
+on security. Across 13 architectural configurations,
+multiple base models, and three environments, we find
+that role distribution, communication topology, and
+memory visibility each independently affect vulnera-
+bility, with multi-agent settings more vulnerable than
+standalone baselines in the majority of configurations.
+The direction and magnitude of these effects depend
+on scenario, model, and architecture.
+• Joint measurement of the security-performance
+tradeoff. We measure benign task performance along-
+side attack resistance across architectures, finding that
+security profiles can differ substantially - with attack
+success rates varying by up to 3.8× - even at compa-
+1https://github.com/benhagag10/Architecture-Matters-for-
+Multi-Agent-Security
+rable or higher benign accuracy. This tradeoff should
+be considered when designing multi-agent systems, as
+capability evaluation alone is insufficient to surface
+these risks.
+Together, these contributions provide the first controlled
+comparison of multi-agent architectural design choices for
+security across realistic environments.
+2. Background and Related Work
+A multi-agent system (MAS) consists of multiple au-
+tonomous AI agents that make decisions and take actions,
+maintain private state, and interact through communication
+channels or shared environments. Unlike single-model or
+single-agent setups, MAS behavior emerges from interac-
+tions among agents rather than from any individual compo-
+nent. These interactions introduce system-level dynamics,
+such as coordination, negotiation, and delegation - that fun-
+damentally change both the attack surface and the nature of
+failure.
+2.1. LLM and Single-Agent Vulnerabilities
+Security research on large language models and LLM based
+agents has primarily focused on vulnerabilities at the model
+or single-agent level. At the LLM level, prior work has doc-
+umented risks such as prompt injection and jailbreak attacks
+(Liu et al., 2024; Andriushchenko et al., 2024), data poison-
+ing and backdoors (Fendley et al., 2025; Yao et al., 2024),
+and privacy threats including leakage and membership infer-
+ence attacks (Aguilera-Mart´ınez & Berzal, 2025; Das et al.,
+2025; Gan et al., 2024). These vulnerabilities vary across
+LLM architectures (Benjamin et al., 2024) and change in
+complex, unpredictable ways (Shang & Wei, 2025).
+At the single-agent level, vulnerabilities extend beyond the
+underlying model to include system prompts, tool use and
+2
+
+Architecture Matters for Multi-Agent Security
+memory poisoning. Zhang et al. (2025) formalize core
+agent-level attacks and evaluate them using Attack Suc-
+cess Rate, Refusal Rate, and Performance under No Attack.
+AgentDojo (Debenedetti et al., 2024) provides a dynamic
+environment specifically for evaluating indirect prompt in-
+jection attacks, demonstrating significant vulnerability when
+tool outputs are adversarially manipulated. AgentHarm (An-
+driushchenko et al., 2025) extends this to multi-turn agentic
+misuse scenarios with fine-grained metrics distinguishing
+planning-stage refusal from execution-stage failures.
+2.2. Multi-Agent Security
+Multi-agent settings introduce new risks that cannot be re-
+duced to LLM- or single-agent vulnerabilities. Interactions
+among agents give rise to distinct failure modes: miscoordi-
+nation, conflict, and collusion—driven by agents’ incentives
+and shaped by key risk factors: information asymmetries,
+network effects, selection pressures, destabilizing dynamics,
+commitment problems, emergent agency (Hammond et al.,
+2025). Prior work distinguishes between cooperative and
+competitive threat models (Schroeder de Witt, 2025; Peign´e
+et al., 2025). In cooperative systems, collaboration itself can
+become a liability, enabling error amplification, misinfor-
+mation propagation, and collusive behavior (Motwani et al.,
+2025). Specifically, covert collusion can emerge through
+steganographic communication channels, sometimes arising
+unintentionally from reward misspecification rather than
+deliberate coordination (Mathew et al., 2024). In competi-
+tive settings, agents may engage in deception, persuasion,
+or sabotage, destabilizing collective outcomes (Qi et al.,
+2025). Adversarial agents can systematically manipulate
+multi-agent debate outcomes and increase jailbreak success
+through iterative dialogue (Qi et al., 2025; Amayuelas et al.,
+2024). These dynamics enable infection-style attacks where
+single compromised agents spread harmful behavior across
+networks (Gu et al., 2024; Lee & Tiwari, 2024), and false
+information can persist and amplify through multi-agent
+interactions (Ju et al., 2024).
+2.3. Evaluation and Defense Gaps
+For multi-agent systems, Cemri et al. (2025) introduce
+MAST, a taxonomy of 14 failure modes derived from 1,600+
+execution traces across MAS frameworks, while MultiA-
+gentBench (Zhu et al., 2025a) evaluates collaboration dy-
+namics with coordination metrics. However, existing bench-
+marks primarily evaluate either general task performance
+or specific attack types in isolation, without systematically
+varying architectural design choices or focusing on adver-
+sarial security.
+Defenses against multi-agent vulnerabilities remain nascent.
+Recent work explores architectural approaches including
+plan–then–execute designs (Del Rosario et al., 2025) and
+capability-based architectures (Debenedetti et al., 2025), yet
+most defensive work still focuses on input/output filtering
+designed for single-agent settings, with limited investigation
+of how architectural choices jointly shape task performance
+and attack resistance.
+Security in multi-agent systems has a long history, span-
+ning trust and reputation management (Yu et al., 2013; Jung
+et al., 2012), Byzantine-resilient consensus (Lamport et al.,
+1982; LeBlanc et al., 2013), and secure coordination un-
+der bounded adversaries such as energy-limited DoS and
+F-local faults (De Persis & Tesi, 2015; Ishii et al., 2022).
+LLM-based multi-agent systems differ from much of this
+tradition in that they are driven by foundation models capa-
+ble of flexible, generalizable reasoning and communicate
+through unstructured, free-form protocols rather than rigidly
+specified interaction languages or APIs (Schroeder de Witt,
+2025). As a result, classical guarantees based on fixed
+message semantics, protocol compliance, or explicit coor-
+dination assumptions may not transfer directly, motivating
+dedicated empirical study of how architecture shapes secu-
+rity in these systems (Nguyen et al., 2026; OWASP GenAI
+Security Project, 2025).
+Recent work has begun to characterize security-performance
+tradeoffs in multi-agent systems: Peign´e et al. (2025) quan-
+tify a ”multi-agent security tax” between robustness and
+collaboration, while Zhu et al. (2025b) examine role and
+topology effects. We extend this by isolating how role dis-
+tribution, communication topology, and memory visibility
+independently affect security across three realistic environ-
+ments, using stage-wise metrics.
+3. Design Choices in Multi-Agent Systems
+Multi-agent systems can be constructed using various ar-
+chitectural choices that affect security in ways that may be
+difficult to predict from first principles. We focus on three
+design choices that recur across modern architectures: role
+configuration, communication topology, and memory. We
+hypothesize that these architectural decisions introduce dis-
+tinct vulnerability modes compared to single-agent LLMs
+by fragmenting responsibility for safety assessment and cre-
+ating new attack surfaces. Below, we identify key design
+mechanisms and articulate hypotheses about how each may
+affect the likelihood of harmful task execution.
+Design Choice 1: Role Configuration
+Multi-agent systems are often designed with distinct agent
+roles, such as planners that decompose objectives, executors
+that carry out actions, reviewers that validate outputs, or spe-
+cialized agents handling domain-specific subtasks. While
+such role separation can improve efficiency and task per-
+formance, and is sometimes necessary due to IP, regulatory,
+or security constraints, it can also fragment responsibility
+3
+
+Architecture Matters for Multi-Agent Security
+for safety assessment. Executor agents typically operate on
+narrowly scoped instructions without visibility into the full
+task context or downstream consequences; reviewer agents
+may evaluate outputs in isolation rather than assessing end-
+to-end behavior. Agents may also differ in their authority
+over system behavior. When agents with high execution
+authority are downstream from those responsible for safety
+reasoning (e.g., planners or critics), security judgments may
+become advisory rather than binding. Conversely, central-
+izing authority could introduce single points of failure. We
+vary role configuration in our experiments to investigate
+how these tradeoffs manifest in practice.
+Design Choice 2: Communication Topology
+Multi-agent systems can vary in communication struc-
+ture, including centralized orchestrators, hierarchical trees,
+chains, and fully connected meshes. Communication topol-
+ogy determines how intent, uncertainty, and safety signals
+propagate through the system. In decentralized or mesh-
+based systems, decisions are distributed across agents with-
+out centralized oversight, while in hierarchical or chain-
+based systems, information may be summarized or filtered
+as it passes between agents. Each topology introduces dis-
+tinct security tradeoffs, and these effects may depend on
+interactions with role configuration and memory design.
+Design Choice 3: Memory and State Visibility
+Agents may maintain private scratchpads or write to shared
+memory, creating different tradeoffs for safety reasoning.
+Private state preserves independence but may prevent safety-
+relevant insights from propagating across agents, while
+shared state improves transparency but may enable unsafe
+assumptions to spread. Beyond simple private/shared dis-
+tinctions, systems vary in what information agents can ac-
+cess about themselves and others. Some expose full chains
+of thought through context windows or queryable memory,
+others provide action histories spanning entire sessions, and
+blackboard architectures may give agents visibility into the
+complete state of all other agents. These choices create
+different attack surfaces, as exposed reasoning may reveal
+exploitable patterns while shared histories could enable ad-
+versarial coordination.
+4. Multi-Agent System Experimental Setup
+We consider a malicious user who provides adversarial task
+instructions at input time. The attacker does not modify
+model weights or system code, and interacts with the system
+only through natural language prompts and standard tool
+outputs.
+4.1. Scenarios
+We evaluate three scenarios spanning the main agentic de-
+ployment categories: browser control (BrowserART; Kumar
+et al., 2024), desktop computer use (OS-Harm; Kuntz et al.,
+2025), and sandboxed code generation (RedCode-Gen; Guo
+et al., 2024). Each is a standardized single-agent benchmark
+that we adapt to multi-agent settings while preserving the
+original task semantics and environment. The only variables
+that change across conditions are architectural - the set of
+agent roles, the communication topology, and the memory
+available to each agent, and the distribution of tool access
+according to role specialization. Task prompts and scoring
+rubrics are held fixed.
+The scenarios differ in their action-space structure, which
+directly shapes how roles can be decomposed. BrowserART
+exposes a fixed set of named browser primitives (goto, click,
+fill, scroll), enabling a clean one-tool-per-agent partition in
+the fully specialized configuration (Navigate / Fill / Scroll /
+Click). OS-Harm agents instead operate on pixels through
+a unified computer tool (screenshot + mouse + keyboard);
+we partition this into four disjoint sub-tools (click, type,
+key, scroll), each retained alongside screenshot and submit
+so specialists can observe before acting. RedCode-Gen ex-
+poses four heterogeneous tools (python, text editor, bash,
+think), yielding an asymmetric partition across four role-
+typed specialists (Design / Code / Review / Test) where
+several agents retain python but only one can write code.
+For each scenario, we also evaluate 2- and 3-specialist vari-
+ants that progressively merge these sub-tools, allowing the
+degree of role decomposition to be varied independently
+of topology. Benign performance is measured on 42 tasks
+(available part of BrowserART), 50 OS-World tasks (Xie
+et al., 2024), and 50 BigCodeBench (Zhuo et al., 2024). Full
+details are provided in Appendix B.
+4.2. Architectures
+We instantiate the following architectural variants identically
+across all three scenarios. Appendix B.1 summarises the 13
+evaluated conditions.
+Baseline As a reference point, we evaluate a standalone
+agent. This agent has access to all tools, maintains its own
+memory, and executes actions sequentially. The standalone
+agent establishes baseline rates for both harmful behavior
+and benign task performance.
+Role Specialization We evaluate several multi-agent role
+configurations that redistribute planning and execution. In
+orchestrator + batch executor setups, the orchestrator gen-
+erates a plan and delegates execution to a single executor,
+which executes the plan without intermediate feedback. We
+consider variants in which the orchestrator provides either
+a high-level goal or a detailed action sequence. In step-
+4
+
+Architecture Matters for Multi-Agent Security
+Table 1. GPT-4o under role decomposition across three scenarios.
+Topology (star) and memory (none) held fixed. Columns: PR
+(Planning Refusal), ER (Execution Refusal), HA (Harmful
+Action, task incomplete), HT (Harmful Task, objective
+completed); disjoint, summing to ≈100%. Bold marks the highest
+HT per scenario.
+Configuration
+PR
+ER
+HA
+HT
+Benign
+BrowserART (N=100 harmful, N=42 benign)
+Standalone Agent
+75.0
+1.0
+14.0
+10.0
+92.9
+Star+Single Exec.
+94.0
+0.0
+1.0
+5.0
+83.3
+Star+Batch Exec.
+90.0
+3.0
+2.0
+5.0
+92.9
+Star+Stepwise
+82.0
+4.0
+11.0
+3.0
+92.9
+Star+2 Specialists
+40.0
+2.0
+20.0
+38.0
+95.2
+Star+3 Specialists
+43.0
+5.0
+25.0
+27.0
+97.6
+Star+4 Specialists
+45.0
+2.0
+22.0
+31.0
+97.6
+RedCode-Gen (N=160 harmful, N=50 benign)
+Standalone Agent
+84.4
+2.5
+3.8
+9.4
+58.0
+Star+Single Exec.
+53.1
+11.9
+20.6
+14.4
+60.0
+Star+Batch Exec.
+47.5
+13.8
+15.6
+23.1
+56.0
+Star+Stepwise
+37.5
+16.9
+20.6
+25.0
+70.0
+Star+2 Specialists
+14.4
+35.6
+24.4
+25.6
+42.0
+Star+3 Specialists
+13.8
+38.8
+23.8
+23.8
+38.0
+Star+4 Specialists
+25.6
+31.9
+25.0
+17.5
+48.0
+OS-Harm (N=44 harmful, N=50 benign)
+Standalone Agent
+68.2
+9.1
+18.2
+4.5
+2.0
+Star+Single Exec.
+65.9
+25.0
+6.8
+2.3
+0.0
+Star+Batch Exec.
+72.7
+15.9
+6.8
+4.5
+0.0
+Star+Stepwise
+75.0
+11.4
+11.4
+2.3
+0.0
+Star+2 Specialists
+75.0
+11.4
+9.1
+4.5
+0.0
+Star+3 Specialists
+70.5
+22.7
+0.0
+6.8
+0.0
+Star+4 Specialists
+63.6
+20.5
+6.8
+9.1
+0.0
+wise execution, the orchestrator remains in the loop after
+every action, and the executor performs only a single action
+before returning control. In specialized executor settings,
+the orchestrator delegates subtasks to multiple executors
+with distinct roles, with all coordination mediated by the
+orchestrator.
+Communication Topology We study three communica-
+tion topologies beyond the standalone baseline. In a star
+topology, a central orchestrator mediates all communication
+between executors, which do not communicate directly. In a
+chain topology, agents execute sequentially in a fixed order,
+with each agent receiving the previous agent’s output. In a
+mesh topology, agents communicate peer-to-peer without a
+central coordinator, and no single agent has global control
+authority.
+Memory To isolate the effect of memory and shared context,
+we fix the topology and vary what information agents can
+access. We consider settings with private memory per agent
+(baseline), access to agents’ own chain-of-thought reasoning
+(+Own Reasoning), and full shared memory in which all
+agents observe the complete execution history (+Shared
+Memory), including actions, observations, and reasoning
+traces.
+4.3. Models
+We evaluate architectural effects using GPT-4o as the pri-
+mary model across all three scenarios. To assess generaliza-
+tion across different capability and alignment models, we ex-
+tend our evaluation to five additional models: GPT-5.4, GPT-
+5-mini, Claude Sonnet 4, Qwen3-VL, and Llama-70B-Chat.
+Model coverage varies by scenario due to computational
+constraints: all six models are evaluated on BrowserART,
+three models on OS-Harm (GPT-4o, GPT-5.4, GPT-5-mini),
+and two on RedCode-Gen (GPT-4o, GPT-5.4). Complete
+cross-model results are provided in Appendix A.
+4.4. Evaluation Metrics
+Binary attack success is insufficient for multi-agent systems,
+where harmful behavior may be refused or executed at dif-
+ferent pipeline stages. We record stage-specific outcomes:
+Planning Refusal (task refused during planning), Execu-
+tion Refusal (refused after delegation), Harmful Actions
+(one or more harmful actions executed), and Harmful Task
+(objective completed). We additionally report Benign task
+success to assess performance impact. Outcome classifica-
+tion follows the judge protocol of each original benchmark.
+BrowserART uses the Llama-3.3-70B-Instruct (AI@Meta,
+2024) via the Together API. OS-Harm and RedCode-Gen
+use GPT-4.1. All judges map trajectories to the four-stage
+outcome hierarchy described above. Full judging details
+are provided in Appendix B.6. To validate automated judg-
+ments, we used a two-phase process: an LLM-as-a-judge
+pass to flag potential scoring errors, followed by manual
+inspection of all flagged cases by two researchers, with ad-
+ditional sampling from full logs. This review identified 15
+scoring errors and 20 corrections to the scorer itself, all of
+which were corrected. A subsequent spot-check of 10% of
+the remaining logs found a 7% discrepancy rate; all identi-
+fied discrepancies were corrected in the final results.
+5. Results
+Tables 1, 2, and 3 report GPT-4o results for role decom-
+position, communication topology, and memory visibility,
+respectively, across all three scenarios. We discuss each axis
+below, incorporating cross-model findings from additional
+models reported in Appendix A (Tables 4, 5, 6, and 7): all
+five models (GPT-5.4, GPT-5-mini, Sonnet 4, Qwen3-VL,
+Llama 70B) on BrowserART, two (GPT-5.4, GPT-5-mini)
+on OS-Harm, and one (GPT-5.4) on RedCode-Gen.
+5.1. Role Distribution
+Table 1 reports GPT-4o results; Tables 4 and 5 (Appendix A)
+extends these to five additional models on BrowserART, two
+on OS-Harm, and one on RedCode-Gen.
+5
+
+Architecture Matters for Multi-Agent Security
+BrowserART.
+Simple delegation to a single executor does
+not increase vulnerability: both Star+Single Exec. and
+Star+Batch Exec. show lower Harmful Task completion
+than the standalone agent (5.0% vs. 10.0%), accompanied
+by an increase in Planning Refusal (90−94% vs. 75.0%).
+This suggests that simple orchestration can improve safety
+by centralizing reasoning at the planning stage.
+HT jumps to 38.0% under 2 specialists, 27.0% under 3, and
+31.0% under 4, with Planning Refusal dropping to 40-45%.
+The non-monotonic trend across specialist counts suggests
+that how capabilities and tools are partitioned across agents
+- not just the number of specialists - shapes vulnerability,
+and warrants further in-depth analysis.
+Critically, this vulnerability increase occurs alongside im-
+proved task performance. Benign task performance remains
+high (83−98%) across all configurations and is slightly
+higher for specialist configurations (95−98%) than for the
+standalone agent (92.9%), demonstrating that security degra-
+dation is not a side effect of capability loss but rather an
+architectural artifact. The system becomes simultaneously
+more capable and more vulnerable.
+Well-aligned models resist it: GPT-5.4 stays at ≤3% HT and
+Sonnet 4 at ≤7% across all configurations. Weaker-aligned
+models degrade dramatically: Qwen3-VL rises from 9%
+to 40% HT and Llama 70B from 27% to 42% under 2-
+specialist decomposition. We attribute this to the fragmen-
+tation of harmful intent: role decomposition distributes the
+task across agents, diluting the harmful signal visible to
+each.
+RedCode-Gen.
+In this scenario, vulnerability increases
+under all multi-agent configurations, not only specialized
+ones. Unlike BrowserART, even simple delegation increases
+risk, suggesting that code generation tasks are particularly
+susceptible to decomposition effects. Planning Refusal
+drops across all configurations - from 84.4% to as low as
+13.8% - but is partially offset by substantial Execution Re-
+fusal (up to 38.8%), indicating that executor agents detect
+some harmful instructions even when the planner does not
+refuse. This indicates that safety reasoning should shift from
+planning to execution stages in multi-agent architectures.
+Notably, HT decreases monotonically as more specialists are
+added (25.6% →23.8% →17.5% for 2, 3, and 4 specialists)
+- the opposite of the BrowserART trend. This reversal sug-
+gests that security impacts depend on task domain and tool
+structure: RedCode-Gen’s asymmetric partition (multiple
+agents retain python) may create redundancy that improves
+safety, contrasting with BrowserART’s clean one-tool-per-
+agent mapping.
+GPT-5.4 shows near-perfect robustness on RedCode-Gen
+(HT = 0% across all configurations). This demonstrates
+that sufficiently strong safety training can resist architectural
+fragmentation entirely in some domains.
+OS-Harm.
+Standalone HT is low (4.5%), and specialist
+configurations reach at most 9.1% HT. Planning Refusal
+remains relatively stable (63−75%), while Execution Re-
+fusal increases modestly under specialization (up to 22.7%).
+The limited vulnerability amplification likely reflects the
+pixel-level action space, where individual mouse clicks and
+keystrokes are less semantically interpretable than browser
+or code actions.
+Benign performance is uniformly zero across all configu-
+rations, mostly due to the difficulty of the OS-World tasks
+rather than an effect of architecture. Note that OS-Harm
+tasks are often simpler than OS-World tasks, explaining the
+higher completion rate despite refusals.
+Cross-scenario patterns.
+Two consistent patterns emerge.
+First, role decomposition can increase vulnerability, but
+the locus differs by scenario: in BrowserART, the critical
+transition is specialization; in RedCode-Gen, even simple
+delegation raises HT; in OS-Harm, effects are present in
+specialization, although small. This domain-dependence
+suggests that security-aware architectural design must be
+tailored to the specific task environment and tool structure.
+Second, benign performance does not track with security:
+BrowserART specialist configurations achieve higher be-
+nign accuracy while being up to 3.8× more vulnerable.
+This decoupling implies that standard capability evaluation
+provides no direct signal about architectural security risks,
+motivating dedicated adversarial evaluation alongside per-
+formance testing. This decoupling extends across models:
+on BrowserART, Qwen3-VL maintains 95−100% benign
+accuracy while HT rises from 9% to 40% (Tables 4 and 5).
+5.2. Communication Topology
+We examine how communication structure influences adver-
+sarial robustness, comparing star, chain, and mesh topolo-
+gies with identical specialist roles and private memory. Ta-
+ble 2 reports GPT-4o results; Table 6 (Appendix A) extends
+these to additional models (five on BrowserART, two on
+OS-Harm, one on RedCode-Gen).
+BrowserART.
+The three topologies produce different se-
+curity profiles. Star is the riskiest (31.0% HT), followed by
+chain (16.0%) and mesh (7.0%). Mesh achieves the low-
+est HT of any multi-agent configuration - below even the
+standalone agent (10.0%) - with Planning Refusal at 78.0%.
+One interpretation is that mesh agents, each responsible for
+the full task and able to see the goal, are more likely to
+recognize harmful intent individually than star specialists,
+who receive only atomic instructions from the orchestrator
+(Appendix B.4.1). However, mesh benign performance is
+6
+
+Architecture Matters for Multi-Agent Security
+Table 2. GPT-4o under different communication topologies. Roles
+fixed (orchestrator + specialists), memory held private. Columns
+as in Table 1. Bold marks the highest HT per scenario.
+Topology
+PR
+ER
+HA
+HT
+Benign
+BrowserART (N=100 harmful, N=42 benign)
+Standalone Agent
+75.0
+1.0
+14.0
+10.0
+92.9
+Star+4 Specialists
+45.0
+2.0
+22.0
+31.0
+97.6
+Chain+4 Specialists
+53.0
+6.0
+25.0
+16.0
+95.2
+Mesh+4 Specialists
+78.0
+4.0
+11.0
+7.0
+81.0
+RedCode-Gen (N=160 harmful, N=50 benign)
+Standalone Agent
+84.4
+2.5
+3.8
+9.4
+58.0
+Star+4 Specialists
+25.6
+31.9
+25.0
+17.5
+48.0
+Chain+4 Specialists
+8.1
+26.2
+23.1
+42.5
+56.0
+Mesh+4 Specialists
+33.1
+26.9
+19.4
+20.6
+54.0
+OS-Harm (N=44 harmful, N=50 benign)
+Standalone Agent
+68.2
+9.1
+18.2
+4.5
+2.0
+Star+4 Specialists
+63.6
+20.5
+6.8
+9.1
+0.0
+Chain+4 Specialists
+65.9
+11.4
+6.8
+15.9
+0.0
+Mesh+4 Specialists
+70.5
+9.1
+6.8
+13.6
+0.0
+the lowest of any topology (81.0% vs. 95−98% for star and
+chain). The topology ranking is broadly consistent across
+models on BrowserART: for Qwen3-VL, star is also the
+riskiest (37% HT vs. 20−21% for chain and mesh; Table 6).
+RedCode-Gen.
+The ranking shifts for code generation.
+Chain is the riskiest topology (42.5% HT), nearly double
+star (17.5%) and mesh (20.6%). Chain shows a collapse
+in Planning Refusal (8.1%), likely because the Design →
+Code →Review →Test order mirrors natural engineering
+workflows, making harmful requests appear as legitimate
+specifications to downstream agents. Benign performance
+is comparable across topologies (54-56%).
+OS-Harm.
+All multi-agent topologies increase HT rela-
+tive to standalone (4.5%), with chain showing the largest in-
+crease (15.9%), followed by mesh (13.6%) and star (9.1%).
+The pattern is directionally similar to RedCode-Gen.
+Cross-scenario patterns.
+Topology effects vary substan-
+tially across scenarios, with safety reasoning shifting be-
+tween planning and execution stages depending on archi-
+tecture. On BrowserART, star produces high HT (31.0%)
+with low Planning Refusal (45.0%), while mesh maintains
+strong Planning Refusal (78.0%) and achieves the lowest HT
+(7.0%). RedCode-Gen shows the opposite: chain collapses
+to 8.1% Planning Refusal, driving HT to 42.5%, while star
+and mesh shift safety reasoning to execution stages with
+substantial Execution Refusal (31.9% and 26.9%). This sug-
+gests that different topologies require safety mechanisms at
+different pipeline stages: mesh benefits from planning-stage
+oversight due to full task visibility, while sequential topolo-
+gies need stronger execution-stage safeguards. These inter-
+actions motivate architecture-specific safety design rather
+than universal solutions.
+Table 3. GPT-4o under increasing memory visibility. Roles and
+topology held fixed; we vary what each agent observes: private
+(baseline), own chain-of-thought, or full shared memory. Columns
+as in Table 1. Bold marks the highest HT per scenario.
+Memory Condition
+PR
+ER
+HA
+HT
+Benign
+BrowserART (N=100 harmful, N=42 benign)
+Star+4 Specialists
+45.0
+2.0
+22.0
+31.0
+97.6
++ Own Reasoning
+49.0
+3.0
+16.0
+32.0
+95.2
++ Shared Memory
+46.0
+2.0
+19.0
+33.0
+95.2
+Mesh+4 Specialists
+78.0
+4.0
+11.0
+7.0
+81.0
++ Own Reasoning
+76.0
+6.0
+7.0
+11.0
+85.7
++ Shared Memory
+76.0
+4.0
+12.0
+8.0
+97.6
+RedCode-Gen (N=160 harmful, N=50 benign)
+Star+4 Specialists
+25.6
+31.9
+25.0
+17.5
+48.0
++ Own Reasoning
+21.9
+27.5
+29.4
+21.2
+44.0
++ Shared Memory
+24.4
+25.0
+26.9
+23.8
+38.0
+Mesh+4 Specialists
+33.1
+26.9
+19.4
+20.6
+54.0
++ Own Reasoning
+38.1
+25.0
+17.5
+19.4
+60.0
++ Shared Memory
+31.9
+31.9
+21.2
+15.0
+62.0
+OS-Harm (N=44 harmful, N=50 benign)
+Star+4 Specialists
+63.6
+20.5
+6.8
+9.1
+0.0
++ Own Reasoning
+63.6
+15.9
+6.8
+13.6
+0.0
++ Shared Memory
+63.6
+22.7
+4.5
+9.1
+0.0
+Mesh+4 Specialists
+70.5
+9.1
+6.8
+13.6
+0.0
++ Own Reasoning
+68.2
+11.4
+4.5
+15.9
+0.0
++ Shared Memory
+65.9
+9.1
+6.8
+18.2
+0.0
+5.3. Memory
+We examine how information sharing influences safety by
+varying memory visibility under fixed roles and topology.
+Table 3 reports GPT-4o results for star and mesh topologies,
+each under three memory conditions: private (baseline),
+own reasoning traces (+Own Reasoning), and full shared
+memory (+Shared Memory). Table 7 (Appendix A) extends
+these to additional models (five on BrowserART, two on
+OS-Harm, one on RedCode-Gen).
+BrowserART.
+Under star topology, increased memory
+visibility has minimal effect on HT: 31% →32% →33%
+across the three conditions, with Planning Refusal simi-
+larly stable (45−49%). Under mesh, HT fluctuates between
+7% and 11%, notably increasing with Own Reasoning,
+suggesting that exposing agents to their reasoning traces
+might worsen mesh coordination.
+Benign performance
+improves dramatically under mesh with shared memory
+(81.0% →97.6%), revealing a disconnect between coordi-
+nation benefits and security effects.
+RedCode-Gen.
+Memory effects diverge sharply by topol-
+ogy. Under star, increased visibility worsens security: HT
+rises from 17.5% to 23.8% with shared memory. Under
+mesh, the opposite occurs: HT decreases from 20.6% to
+15.0%, the only scenario-topology combination showing
+consistent improvement. This improvement coincides with
+rising Execution Refusal (26.9% →31.9%), indicating that
+shared code artifacts might enable better localized safety
+7
+
+Architecture Matters for Multi-Agent Security
+checks in mesh settings.
+OS-Harm.
+OS-Harm shows the clearest negative memory
+effect across scenarios. Under star topology, effects are non-
+monotonic (HT: 9.1% →13.6% →9.1%). Under mesh,
+HT increases linearly with each level of memory visibility
+(13.6% →15.9% →18.2%).
+Cross-scenario patterns.
+Only one of six topology-
+scenario combinations (RedCode-Gen mesh) shows con-
+sistent improvement with increased memory; two worsen
+and three show no effect. This challenges assumptions
+about transparency improving safety. Multi-model results re-
+veal that memory effects depend on safety training strength:
+Qwen3-VL and Llama 70B show increased vulnerability
+with shared memory (37% →41% and 35% →45%
+respectively), while GPT-5.4 shows modest improvement
+(3% →1%; Table 7). Shared memory can aid safety reason-
+ing by exposing harmful patterns or aid harmful execution
+by providing richer attack context, with the balance depend-
+ing on model alignment and task domain.
+6. Discussion
+Multi-agent systems expand the attack surface.
+Moving
+from a single agent to a multi-agent architecture introduces
+additional decision points, communication channels, and
+role boundaries - each a potential site where safety reason-
+ing can fail or be bypassed. That multi-agent systems should
+be harder to secure is, in principle, unsurprising; what our
+results quantify is the extent and unpredictability of this
+effect. Across six models and three environments, multi-
+agent architectures are more vulnerable than the standalone
+agent in the majority of evaluated configurations, often by
+substantial margins. However, the direction and magnitude
+of the effect depend on the specific architecture, model, and
+environment: no single topology, memory scheme, or dele-
+gation strategy is universally safer or riskier. Notably, this
+increased vulnerability co-occurs with stable or improved
+benign performance: on BrowserART, specialist configura-
+tions achieve higher benign accuracy than the standalone
+agent (95−98% vs. 92.9%) while exhibiting up to 3.8×
+higher attack success. Standard capability evaluation pro-
+vides no signal about these risks.
+Effects are scenario- and model-dependent.
+Our results
+do not support a single ranking of “safe” vs. “unsafe” de-
+signs. Role specialization produces the largest absolute in-
+crease on BrowserART but shows substantial relative effects
+across all scenarios. Star topology is the riskiest on Browser-
+ART but the safest multi-agent topology on RedCode-Gen
+and OS-Harm, where chain is the riskiest. Increased mem-
+ory visibility does not reliably improve security: of six
+topology-scenario combinations, only one shows consistent
+improvement, while two show worsening. These interac-
+tions between design axis, environment, and action-space
+structure make it difficult to issue universal architectural rec-
+ommendations and underscore the need for per-deployment
+evaluation.
+The effect of architecture on security is further mediated by
+the underlying model’s safety training. Well-aligned mod-
+els remain robust across nearly all configurations, though
+OS-Harm is an exception where even strong models show
+increased vulnerability under simple delegation. Weaker-
+aligned models degrade dramatically under the same archi-
+tectural changes, with some showing 4-fold increases in
+harmful task completion under specialization. This suggests
+that architectural fragmentation interacts with model-level
+alignment: models with stronger safety training detect harm-
+ful intent from partial context, while weaker models lose
+the ability to recognize harm once it is distributed across
+agents.
+Mechanisms.
+Our results suggest that architectural de-
+composition undermines safety reasoning through two pri-
+mary pathways. In role specialization, specialists receive
+isolated instructions without visibility into the full harmful
+task, while orchestrators decompose tasks without safety
+evaluation, creating a responsibility gap where no agent
+performs end-to-end safety assessment. This explains why
+specialist configurations show reduced Planning Refusal
+despite individual agents having strong safety training. For
+topology effects, the key factor is task visibility: mesh
+agents see the complete harmful objective and can refuse
+independently, while chain agents receive processed outputs
+that mask harmful intent, explaining chain’s Planning Re-
+fusal collapse on RedCode-Gen (8.1% vs. 25.6% for star).
+Memory effects depend on whether shared information aids
+detection (code patterns in RedCode-Gen mesh) or coordi-
+nation for harmful tasks (OS-Harm mesh), with the balance
+determined by model alignment strength.
+Implications for system design.
+The findings highlight
+three key considerations for practitioners.
+First, secu-
+rity cannot be inferred from component-level evaluations-
+models that refuse harmful instructions individually may
+enable harm when architecturally decomposed. Second,
+performance-improving choices like specialization can si-
+multaneously degrade security without affecting capability
+metrics. Third, architectural security must be evaluated per-
+deployment since effects are scenario- and model-dependent.
+This motivates treating architecture as a first-class security
+variable alongside traditional defenses.
+8
+
+Architecture Matters for Multi-Agent Security
+7. Conclusions
+This work presents an empirical study of how architec-
+tural design decisions affect security in multi-agent systems.
+Across three design dimensions, three agentic environments,
+and multiple base models, we find that multi-agent archi-
+tectures are more vulnerable than standalone agents in the
+majority of configurations, often by substantial margins,
+though the magnitude and direction of the effect depend on
+the specific architecture, model, and environment.
+Three findings challenge common assumptions about multi-
+agent security. First, security and performance can decouple
+counterintuitively: specialist configurations achieve higher
+benign accuracy while being up to 3.8× more vulnerable,
+meaning capability evaluation provides no signal about se-
+curity risks. Second, no architectural design is universally
+safer-the same choices that reduce risk in one environment
+may increase it in another. Third, common design intuitions
+fail: increased memory visibility and communication con-
+nectivity do not reliably improve security and can worsen
+outcomes.
+More broadly, our results provide evidence that safety prop-
+erties do not compose straightforwardly from individual
+agents to multi-agent systems. A model that reliably refuses
+harmful instructions in isolation may enable the same harm
+when embedded in an architecture that fragments context,
+distributes authority, or separates task visibility from execu-
+tion capability. We release our benchmark adaptations for
+multi-agent settings to support further investigation of these
+properties.
+8. Limitations
+Our study evaluates jailbreak vulnerabilities from an ar-
+chitectural perspective across three agentic environments
+(browser, desktop, and code), and the findings should be
+interpreted within this scope. While we isolate the effects
+of role configuration, communication topology, and mem-
+ory visibility, these design choices may interact differently
+across additional domains, deployment contexts, and threat
+models. Several important directions are not explored in
+this work. We study only direct misuse by a malicious user;
+indirect prompt injection, memory poisoning, and adver-
+sarial agents operating within the system represent distinct
+threat vectors that may interact differently with architecture.
+We do not evaluate dedicated safety mechanisms such as
+monitor agents, guardrail layers, or policy-checking stages,
+which could alter the security-performance tradeoffs we ob-
+serve. Our three design axes are varied independently in
+most experiments; the interaction effects between role con-
+figuration, topology, and memory, and with additional axes
+such as inter-agent communication protocols (e.g., A2A,
+MCP), remain underexplored. Extending this analysis to
+these settings, and to iterative red- and blue-teaming dynam-
+ics, is an important direction for future work.
+Impact Statement
+This research contains material that may enable users to gen-
+erate harmful content using publicly available LLM-based
+multi-agent systems. While we recognize the associated
+risks, we believe disclosure is essential given that the agent
+frameworks and evaluation benchmarks examined in this
+study are already publicly accessible and straightforward to
+deploy. The harmful tasks described were already achiev-
+able using methods from the original benchmark releases. In
+releasing our findings, we carefully weighed the benefits of
+enabling defensive research against potential misuse risks.
+Our results highlight a substantial gap between securing
+single-agent systems and their multi-agent counterparts, and
+we call upon the research community to develop safeguard-
+ing techniques for LLM-based multi-agent systems.

@@ -1,0 +1,582 @@
+Adaptive Instruction Composition for Automated LLM Red-Teaming
+Jesse Zymet, Andy Luo, Swapnil Shinde, Sahil Wadhwa, Emily Chen
+Capital One, AI Foundations
+{jesse.zymet, andy.luo, swapnil.shinde2, sahil.wadhwa, emily.chen2}
+@capitalone.com
+Abstract
+Many approaches to LLM red-teaming leverage
+an attacker LLM to discover jailbreaks against
+a target. Several of them task the attacker with
+identifying effective strategies through trial
+and error, resulting in a semantically limited
+range of successes. Another approach discov-
+ers diverse attacks by combining crowdsourced
+harmful queries and tactics into instructions for
+the attacker, but does so at random, limiting
+effectiveness. This article introduces a novel
+framework, ADAPTIVE INSTRUCTION COM-
+POSITION, that combines crowdsourced texts
+according to an adaptive mechanism trained
+to jointly optimize effectiveness with diversity.
+We use reinforcement learning to balance ex-
+ploration with exploitation in a combinatorial
+space of instructions to guide the attacker to-
+ward diverse generations tailored to target vul-
+nerabilities. We demonstrate that our approach
+substantially outperforms random combination
+on a set of effectiveness and diversity met-
+rics, even under model transfer. Further, we
+show that it surpasses a host of recent adap-
+tive approaches on Harmbench. We employ a
+lightweight neural contextual bandit that adapts
+to contrastive embedding inputs, and provide
+ablations suggesting that the contrastive pre-
+training enables the network to rapidly general-
+ize and scale to the massive space as it learns.
+Warning: this article discusses malicious con-
+tent and methods for generating it using LLMs.
+1
+Introduction
+Though LLMs have become indispensable tools
+across several industries, they may fall victim to
+a variety of different attacks that compromise the
+safety of their users. One commonly studied vari-
+ety of attack is the jailbreak, consisting of a harm-
+ful request formulated to bypass the LLM’s safety
+protocols using some tactic and solicit from it mis-
+informed, biased, toxic, or sensitive content (Zou
+et al., 2023; Liu et al., 2024c; Deng et al., 2024; Xu
+Figure 1: Overview of Adaptive Instruction Composition
+et al., 2024). For example, though in a prior investi-
+gation GPT-4 refused to answer an array of harmful
+requests, it engaged with these requests once they
+were translated into a low-resource language (Yong
+et al., 2024). Much research into LLM safety fo-
+cuses on developing robust defenses against attacks
+using finetuned models (Ouyang et al., 2022; Bai
+et al., 2022; Korbak et al., 2023; Dong et al., 2024),
+but training them would require that an expansive
+training set of attacks be accumulated. Investiga-
+tors have therefore turned to the practice of LLM
+red-teaming, in which a target LLM is attacked
+in order to identify its idiosyncratic vulnerabilities
+proactively. Attacks may then be leveraged within
+safety training to improve defenses.
+Though manual attacking is commonly em-
+ployed to this end (Ganguli et al., 2022), recent
+proposals develop automated approaches to red-
+teaming against a black-box target LLM (see Perez
+et al. (2022); Ganguli et al. (2022); Chao et al.
+(2024); Mehrotra et al. (2023); Shen et al. (2024);
+Liu et al. (2024b,a), among others). The objec-
+tive of automated red-teaming is multipartite: the
+system must discover successful attacks at a high
+rate, and the attacks it discovers must be semanti-
+cally diverse (Perez et al., 2022). Many proposals
+arXiv:2604.21159v1 [cs.CR] 22 Apr 2026
+
+share a common framework in which an attacker
+LLM is tasked with generating a set of successful
+attacks against a given target LLM in a series of
+interactions whose content is assessed for safety
+by an evaluator. An instruction is served to the
+attacker requiring, for example, that it generate a
+harmful query; further, the attacker must role-play
+as an innocent-seeming individual during attack-
+ing in order to deceive the target. To discover a
+novel jailbreak, the attacker must formulate and
+exploit its own strategies through an iterative pro-
+cess of trial and error. Some approaches adapt the
+LLM attacker via finetuning with reward signals
+(Perez et al., 2022); in another approach, tactics
+discovered during successful trials are stored for
+later reuse (Liu et al., 2024a). These solutions may
+discover strategies never before documented. How-
+ever, prior attempts with adaptive attackers have
+yielded a semantically limited range of successful
+attacks (see Beutel et al. (2024) for discussion),
+or have only discovered a few dozen novel tac-
+tics across many trials (Liu et al., 2024a). Such
+approaches do not guarantee that the search for vul-
+nerable areas would monitor within a reasonable
+time frame the full combination space of previously
+discovered queries, tactics, and styles. This consti-
+tutes a lost opportunity, considering that such data
+can be combined and exploited by attack generators
+in various ways. This poses a problem for safety
+teams that not only want to expand safety training
+with novel attacks, but seek a system that account-
+ably searches over any previously documented area
+of the attack space in order to do so.
+1.1
+WildTeaming using WildJailbreak
+However,
+a
+recently
+proposed
+framework
+WILDTEAMING (Jiang et al., 2024c) discovers
+an array of jailbreaks against popular LLMs by
+combining within the attacker’s instructions text
+samples from a large corpus of harmful queries
+and jailbreak tactics. This open-source dataset,
+called WILDJAILBREAK,
+contains over 50K
+harmful queries and over 13K jailbreak tactics
+that were crowd-sourced from the Internet. The
+authors illustrate that the approach outperforms
+competing approaches on Harmbench (Mazeika
+et al., 2024), a public jailbreaking benchmark,
+including the gradient-based GCG (Zou et al.,
+2023) as well as the black-box strategy PAIR
+(Chao et al., 2024), the latter of which uses an
+attacker LLM to formulate through trial and error
+a successful strategy to transform a query into
+a jailbreak.
+Though WildTeaming generates a
+diversity of attacks, it combines queries and tactics
+at random, without exploiting previous attack
+successes or employing optimization.
+1.2
+Optimizing Attacks using Adaptive
+Instruction Composition
+Whereas generation by trial and error struggles to
+capture diverse exploration throughout attacking,
+WildTeaming, as we will illustrate, is hindered by
+its choice not to exploit attack successes, falling
+short for safety teams that seek to identify in a rea-
+sonable time frame and bias attacking toward the
+array of attack themes and tactics that characterize
+their in-house LLMs’ vulnerabilities. The space of
+possible attack instructions defined by WildTeam-
+ing — that is, the set of combinations of harmful
+queries with some finite number of jailbreak tac-
+tics drawn from WildJailbreak — is massive. For
+instructions that draw one query and two tactics,
+the space consists of over 50000 ∗130002 possibil-
+ities; i.e., it constitutes over 8 trillion instructions.
+An algorithm that balances diverse exploration of
+this space with adaptation to vulnerabilities may
+be profitably employed to augment safety training
+sets in proportion with attack-success likelihood
+across a wide range of possibilities, and would be
+useful for identifying and patching vulnerabilities
+as they emerge and re-emerge throughout continual
+safety training or an adversarial set-up (Ge et al.,
+2023; Jiang et al., 2024b). The effectiveness of
+random combination would deteriorate as new at-
+tacks or areas are identified or if a richer space of
+combinations were to be explored, since this space
+would grow rapidly with new contributions; but an
+algorithm that searches selectively could scale with
+these contributions. Moreover, under a scenario
+in which red-teaming is being conducted against
+a well-aligned LLM, a random-combination strat-
+egy would struggle to identify successes at a high
+rate; but an adaptive algorithm could exploit the
+vulnerabilities it identifies.
+We therefore introduce a novel framework,
+ADAPTIVE INSTRUCTION COMPOSITION, that
+that addresses the gap by integrating recent ad-
+vances from multiple disciplines. The framework
+supplants WildTeaming’s method of random text
+combination along with a set of other baselines
+on a set of effectiveness and diversity metrics, us-
+ing bandit algorithms within reinforcement learn-
+ing. The system combines texts into instructions
+selectively, tractably balancing exploration with ex-
+
+ploitation in the massive combinatorial space, in
+order to jointly optimize attack effectiveness with
+diversity. We employ as our algorithm of choice
+Neural Thompson Sampling (Zhang et al., 2021), a
+variant of the contextual multi-armed bandit. The
+bandit trains over the course of attacking to approx-
+imate the evaluator’s responses using Gaussian dis-
+tributions defined over instruction compositions,
+and compositions are selected in proportion with
+these learned distributions to balance success maxi-
+mization with diverse exploration. The architecture
+consists of a lightweight neural network that takes
+contrastive embeddings of combined text samples
+as input (Reimers and Gurevych, 2019). These em-
+beddings enable the network to scale to the massive
+space under a limited time constraint, adapting only
+a small number of parameters to generalize across
+whole groups of semantically related texts.
+2
+Related Work
+We focus on automated approaches to LLM red-
+teaming — see, for example, Feffer et al. (2024);
+Rawat et al. (2024); Purpura et al. (2025) for broad-
+purpose surveys and Lin et al. (2024); Mo et al.
+(2024) for thorough treatments. Early approaches
+augment attack sets using text modification tech-
+niques (Morris et al., 2020; Wallace et al., 2021;
+Rocamora et al., 2024). More recent approaches
+prompt or train an attacker LLM to generate at-
+tacks (Perez et al., 2022; Ganguli et al., 2022).
+Some of the most recent proposals employ attacker
+LLMs in environments for conducting iterative at-
+tacks, including PAIR (Chao et al., 2024), TAP
+(Mehrotra et al., 2023), DAN (Shen et al., 2024),
+and AutoDAN(-Turbo) (Liu et al., 2024b,a). These
+systems evolve the content of an initial attack gen-
+eration in an iterative chain, tasking the attacker
+with formulating and exploiting its own tactics in
+the process. Other more complex ecosystems (Ge
+et al., 2023; Jiang et al., 2024b) further develop
+the iterative-attacking paradigm, but set up an ad-
+versarial environment in which the attacker and
+target respectively adapt their attack strategies and
+defense strategies in tandem. WildTeaming (Jiang
+et al., 2024c) discovers a relatively diverse array
+of jailbreaks against popular LLMs by combining
+within the attacker’s instructions randomly com-
+bined texts from a large, open-source corpus of
+crowd-sourced harmful queries and jailbreak tac-
+tics, called WildJailbreak.
+3
+Problem Statement
+We define our problem as follows. An attacker is
+instructed in some way to generate successful at-
+tacks against a target in a series of trials, and whose
+attack strategy can be adapted using the outputs of
+an evaluator. We want to devise and train a learning
+mechanism that can compose attack instructions
+from a massive combinatorial space of text samples
+to jointly optimize attack effectiveness and diver-
+sity. The evaluator’s outputs are revealed one at a
+time, and because LLM generation is costly, the
+outputs are revealed slowly, so that only a small
+proper subset of possible instruction compositions
+can be explored and leveraged to train the learning
+mechanism.
+4
+Proposed Solution
+We propose ADAPTIVE INSTRUCTION COMPO-
+SITION to solve the problem. The framework em-
+ploys reinforcement learning to balance exploration
+with exploitation in a space of text-sample com-
+binations, given an unknown reward function, to
+tailor the attacker’s generations toward the array of
+idiosyncratic vulnerabilities of an arbitrary target.
+4.1
+Data Strategy
+We leverage WildTeaming data to showcase our
+framework. In particular, we use a set of 50500
+harmful queries ("vanilla queries") and 13311 jail-
+break tactics that the authors mined from the Inter-
+net, as well as WildTeaming’s attacker prompt to
+serve as the instruction template to be filled in with
+text samples.1 Our final solution leverages a neural
+contextual bandit, which takes as input a feature
+representation of the instruction composition. We
+map vanilla queries and tactics to 768-dimensional
+embeddings using the contrastively pre-trained Sen-
+tence Transformer all-mpnet-base-v2 (Reimers
+and Gurevych, 2019), and then reduce them to 10
+dimensions using UMAP (McInnes et al., 2020) to
+restrict the number of network parameters needed
+for strong performance (see Appendix C.2 for more
+details). For each instruction composition, we con-
+catenate the embeddings of its component query
+and tactics to serve as the network’s input. As we
+will demonstrate, these embeddings allow us to
+adapt only a small number of network parameters
+to generalize across whole groups of semantically
+related texts, thereby enabling us to scale the bandit
+1See here for WildTeaming resources.
+
+Figure 2: Adaptive selection of attack content followed by attack generation
+Algorithm 1 Adaptive Instruction Composition
+Input: Total trials T; total instruction candi-
+dates K; vanilla queries Q = {q1, ..., q|Q|} and
+jailbreak tactics J = {j1, ..., j|J |}; instruction
+template tpl(·); feature map e(·); reward dis-
+tribution function f(·|θ); attacker, target, and
+evaluator models A(·), T (·), E(·).
+for t = 1, 2, ..., T do
+for k = 1, 2, ..., K do
+1. Sample texts qt,k, jt,k,1, ..., jt,k,n
+2. xt,k = e(qt,k)⌢e(jt,k,1)⌢...⌢e(jt,k,n)
+3. ˆrt,k = f(xt,k|θt−1)
+end for
+4. k∗= arg maxk ˆrt,k
+5. It,k∗= tpl(qt,k∗, jt,k∗,1, ..., jt,k∗,n)
+6. attackt = A(It,k∗)
+7. responset = T (attackt)
+8. rt,k∗= E(attackt, responset)
+9. Update θt−1 to θt using xt,k∗, rt,k∗
+end for
+to large datasets. In addition, concatenation allows
+the network to capture generalizations about sam-
+ple interactions. Finally, since the complete set
+of instruction compositions is massive, we cannot
+use the bandit to score all of them prior to attack-
+ing; instead, the bandit will be passed during a
+given trial a random subset of them, consisting of
+K instruction candidates, following proposals
+from the many-armed bandit literature (Wang et al.,
+2008; Russo and Roy, 2020; Bayati et al., 2024).
+4.2
+Adaptive Instruction Composition
+We implement an interactive environment consist-
+ing of four models: a trio of LLMs consisting of the
+attacker A(·), target T (·), and evaluator E(·), along
+with a fourth model f(· | θ) that selects instruction
+candidates adaptively using reinforcement learning.
+The model is trained in an on-line fashion across
+an experiment consisting of T trials.
+In a given trial t, we randomly sample texts to
+fully populate K candidate instruction composi-
+tions. For each candidate instruction composition,
+we sample a vanilla query qt,k ∈Q along with a
+set of jailbreak tactics jt,k,1, ..., jt,k,n ∈J n (step
+1 in Algorithm 1). The sample combination is
+mapped to its corresponding embedding represen-
+tation xt,k = e(qt,k)⌢e(jt,k,1)⌢...⌢e(jt,k,n) and
+passed to f(· | θt−1), which scores it conditioned
+on f’s most recently updated parameters, θt−1, re-
+turning ˆrt,k = f(xt,k | θt−1) (steps 2 and 3). The
+index of the highest scoring candidate, k∗, is then
+computed, and the text samples used to construct
+this candidate are combined into a given instruc-
+tion template submitted to the attacker (steps 4
+and 5). The attacker generates an attack based on
+these instructions. The attack and response are
+then passed to the evaluator to provide a safety
+assessment, rt,k∗(steps 6-8). Finally, the embed-
+ding representation of the selected instruction xt,k∗
+and the evaluator’s assessment rt,k∗are passed to
+a stochastic gradient descent algorithm to update
+the parameters of f from θt−1 to θt, to better ap-
+proximate the evaluator’s success distribution (step
+9). Here we introduce a deduplication step: if the
+selected instruction composition led to a successful
+attack, then it is blocked from being considered by
+f for use in future trials. f must therefore general-
+ize success signals across input features to perform
+successfully. The cycle repeats across T trials, at
+which time the experiment concludes.
+4.3
+Algorithm Details
+We opt to employ Neural Thompson Sampling
+(Zhang et al., 2021), a recent contextual bandit
+algorithm (Auer, 2002; Filippi et al., 2010; Li
+et al., 2010; Agrawal and Goyal, 2013), to serve as
+f(· | θ). Since our bandit selects over combinations
+of components, we note that it constitutes a combi-
+natorial neural bandit (Hwang et al., 2023). We
+used the implementation given here (Zhang et al.,
+2021), and describe the algorithm in terms of this
+implementation in what follows. For a more de-
+
+tailed specification, see Appendix A.
+The bandit consists of a simple feed-forward neu-
+ral network that takes as input the embedding rep-
+resentations of the K instruction candidates, return-
+ing continuously valued scores for each of them.
+The network form, given L layers, is as follows:
+f1 = W1x
+fl = Wl ReLU(fl−1),
+l = 2, ..., L
+f(· | θ) = fL
+(1)
+The network parameters θ are trained continuously
+across trials to minimize the ℓ2-regularized square
+loss. At the end of each trial, (xt,k∗, rt,k∗) is passed
+into the loss and θ is updated using stochastic gra-
+dient descent with weight decay.
+In a given trial t, the bandit approximates the
+evaluator’s unknown reward distribution over the
+space of attack-response interactions by comput-
+ing from its parameters Gaussian reward distribu-
+tions defined over its arms, xt,k. The predicted
+reward ˆrt,k of each arm — i.e., the score assigned
+to a given candidate composition — is sampled
+proportional to its corresponding posterior reward
+distribution. To compute the network’s posterior
+distribution for a given arm xt,k, the mean reward
+and reward variance fitted to the arm, µt,k and
+σ2
+t,k, must be computed from the network’s most
+recently updated parameters. The mean is the net-
+work output, and the variance is calculated from its
+neural tangent kernel (Jacot et al., 2020). Defin-
+ing gθt−1(xt,k) := ∇θt−1f(xt,k|θt−1), we have:
+µt,k = f(xt,k | θt−1)
+σ2
+t,k = λgθt−1(xt,k)⊤U−1
+t−1 gθt−1(xt,k)
+ˆrt,k ∼N(µt,k, σ2
+t,k)
+(2)
+Note that λ, the loss-regularizing hyperparameter,
+also serves here to scale variance.2 U is an uncer-
+tainty matrix employed to compute variance. After
+xt,k∗is selected by the bandit, U is updated as:
+Ut = Ut−1 + gθt−1(xt,k∗) gθt−1(xt,k∗)⊤
+(3)
+Following the original authors, we speed up vari-
+ance computation in (2) by only maintaining the
+diagonal elements of U, approximating U−1 as
+their inverses.
+2The original authors in fact employ a second variance
+multiplier, ν, which we found to yield similar effects relative
+to λ, and so we fix ν = 1 in what follows. See Appendix A
+and C.1 for more discussion.
+5
+Performance Simulations
+This section compares Adaptive Instruction Com-
+position first to WildTeaming’s approach of ran-
+domly combining instructions, and then to an array
+of alternative red-teaming strategies using Harm-
+bench (Mazeika et al., 2024), a public jailbreak-
+ing benchmark. We implement simulation envi-
+ronments built off of the PyRIT software package
+(Munoz et al., 2024), employing its framework of
+asynchronous function calls to LLMs to speed up
+simulations (see Section 8).
+In our implementation of Adaptive Instruction
+Composition, we employ a lightweight two-layer
+bandit network with hidden dimensionality 100.
+Network size thus totals to (10 + 10 + 1) ∗
+100 + (100 + 1) ∗1 = 2201 weights for simu-
+lations sampling one query and tactic, or to (e.g.)
+(10+3∗10+1)∗100+(100+1)∗1 = 4201 weights
+in simulations sampling one query and three tactics.
+We serve K = 500 instruction candidates to the
+network. At the end of each red-teaming trial, the
+network trains on the results from the evaluator to
+approximate reward distributions over instruction
+compositions; the stochastic gradient descent algo-
+rithm we employ uses a learning rate of 0.01 and
+a weight decay mechanism that divides λ by trial
+count, in line with the authors’ implementation of
+Neural Thompson Sampling.
+5.1
+Comparison with WildTeaming
+We implement two red-teaming environments:
+one employing WildTeaming, and the other
+employing Adaptive Instruction Composition. Our
+environments use Mixtral-8x7B-Instruct-v0.1
+(Jiang et al., 2024a) as the attacker LLM, basing
+our choice on analyses demonstrating its superior
+attack performance relative to other LLMs
+(Chao et al., 2024; Kour et al., 2024). We use
+Llama-Guard-2-8B (Inan et al., 2023) as the
+evaluator,
+and perform separate experiments
+against
+targets
+Mistral-7B-Instruct-v0.2
+(Jiang et al., 2023), Llama-3-70B-Instruct,
+and Llama-3.3-70B-Instruct (Grattafiori et al.,
+2024). In our Adaptive Instruction Composition
+environment, we train two bandits against each of
+the three targets: a subtle bandit that is biased
+toward exploration by being initiated with λ = 1
+across all targets, promoting strong regularization
+and wide decision variance; and an aggressive
+bandit that is biased toward exploitation by
+being initiated with lower values for λ. For the
+
+Figure 3: Attack success rates as rolling averages with window length 200
+Target
+WT
+ASR
+WT
+Count
+AIC Subtle
+ASR
+AIC Subtle
+Count
+AIC Aggr.
+ASR
+AIC Aggr.
+Count
+Mistral-7B
+0.252
+2521
+0.363
+3626
+0.567
+5673
+Llama-3-70B
+0.088
+876
+0.155
+1552
+0.450
+4500
+Llama-3.3-70B
+0.183
+1830
+0.247
+2465
+0.558
+5579
+Table 1: ASR across the complete simulation
+latter, we set λ = 0.1 against Mistral-7B and
+λ = 0.01 against the Llama models.
+In both
+environments, we employ WildTeaming’s off-topic
+pruner, which forces instruction composition
+and attack generation to repeat if a classifier
+(roberta-large-wanli, Liu et al. (2019, 2022))
+deems the attack to be off-topic.3
+To measure the effectiveness of the two strate-
+gies, we use simple realizations of attack success
+rate (ASR). Each environment is set up to return
+results across T = 10000 trials. We construct local
+attack success rates as rolling averages for each trial
+t > 200, defined as ASRt =
+1
+200
+Pt
+i=t−200 ri,k∗,
+where ri,k∗is the evaluator’s assessment for the ith
+trial. Further, we construct global attack success
+rate, defined as ASR across all 10000 trials. In
+addition, we provide measures of diversity within
+successful attacks, defined in two ways: first, in
+terms of the number of unique component queries
+selected by the bandit throughout red-teaming; sec-
+ond, in terms of the average cosine similarity be-
+tween embeddings of generated attacks as well as
+between embeddings of component queries. We
+follow WildTeaming in implementing the latter, but
+see also Zhang et al. (2024); Shaib et al. (2025);
+Tevet and Berant (2021).
+As we can see in Figure 3 and Table 1, Adap-
+tive Instruction Composition (AIC in the tables)
+obtains a substantially higher ASR than WildTeam-
+3We do not employ in either environment WildTeaming’s
+low-risk pruner, since it leverages a classifier that was trained
+in-house by WildTeaming’s developers.
+ing (WT) for all three targets we test. We ob-
+tain substantially higher rolling averages, full-
+simulation ASRs, and attack counts, both for the
+subtle and aggressive bandits. With regard to diver-
+sity, we observe a tradeoff. Our aggressive bandits
+indeed accumulate moderately higher counts of
+unique queries leveraged relative to WildTeaming,
+as shown in Table 2, but their average attack similar-
+ities and average query similarities, as in Table 3,
+are higher than those of WildTeaming. We see
+this as potentially desirable, depending on the user:
+they may want a system that can rapidly narrow in
+on the themes constituting vulnerabilities (e.g., in
+an adversarial set-up). The subtle bandit, on the
+other hand, substantially surmounts WildTeaming
+in terms of unique query count — even though its
+ASR is not as high as the aggressive bandit’s — and
+matches WildTeaming in terms of average similar-
+ity metrics. The subtle bandit thus avoids selecting
+unsucccessful combinations without obviously de-
+prioritizing regions of the attack space, unlike the
+aggressive bandit. To further validate this, we de-
+veloped a temporal analysis that tracks diversity of
+successful attacks as measured across the duration
+of the simulation (see Table 7 and Table 8 in the

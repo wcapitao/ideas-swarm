@@ -1,0 +1,880 @@
+eDySec: A Deep Learning-based Explainable Dynamic Analysis
+Framework for Detecting Malicious Packages in PyPI Ecosystem
+Sk Tanzir Mehedi∗
+Queensland University of Technology
+Brisbane, QLD, Australia
+Raja Jurdak
+Queensland University of Technology
+Brisbane, QLD, Australia
+Chadni Islam
+Edith Cowan University
+Joondalup, WA, Australia
+Abu Bakar Siddique Mahi
+Research Graduate School, BUBT
+Dhaka, Bangladesh
+Gowri Ramachandran
+Queensland University of Technology
+Brisbane, QLD, Australia
+Abstract
+The security of open-source software repositories is increasingly
+threatened by next-gen software supply chain attacks. These at-
+tacks include multiphase malware execution, remote access ac-
+tivation, and dynamic payload generation. Traditional Machine
+Learning (ML) detectors struggle to detect these attacks due to the
+high-dimensional and sparse nature of dynamic behavioral data,
+including system calls, network traffic, directory access patterns,
+and dependency logs. As a result, these data characteristics degrade
+the performance, stability, and explainability of ML models. These
+challenges have made Deep Learning (DL) a promising alternative,
+given its success across various domains and its potential for mod-
+eling complex patterns. This paper presents eDySec, a DL-based
+efficient, stable, and explainable framework for dynamic behavioral
+analysis to detect malicious packages. Using the QUT-DV25 dataset,
+which captures both install-time and post-installation behaviors
+of packages, we evaluate DL models and investigate feature sets
+to identify the most discriminative attributes for enabling efficient
+malicious package detection. Additionally, model stability analysis
+and explainable AI techniques are incorporated into the detection
+pipeline to enable stable, and transparent interpretations of model
+decisions. Experimental results demonstrate that eDySec signifi-
+cantly outperforms the state-of-the-art frameworks. Specifically,
+it halves feature dimensionality while lowering false positives by
+82% and false negatives by 79%. It also improves accuracy by 3%,
+achieves near-perfect stability, and maintains an inference latency
+of 170ms per package. Further analysis reveals that feature and
+model selection play a critical role, as certain combinations degrade
+performance. Ultimately, this study advances the understanding of
+the strengths and limitations of dynamic analysis for the develop-
+ment of eDySec against next-gen software supply chain attacks.
+Keywords
+Deep learning, malicious detection, software supply chain security,
+dynamic analysis, stability, explainable AI.
+1
+Introduction
+Today’s software supply chains resemble intricate webs, where each
+component can serve as a potential entry point for attackers [41].
+∗Corresponding authors (tanzir.mehedi@hdr.qut.edu.au)
+Conference Name, City, Country
+Among these components, open-source packages are especially crit-
+ical, serving as foundational building blocks for the entire ecosys-
+tem [5, 41]. A vulnerability in even a single malicious package can
+cascade throughout the ecosystem, compromising countless applica-
+tions [19]. The Sonatype Open Source Malware Index (2025) reports
+that over 845,000 malicious packages have been identified across
+ecosystems, including 16,279 malicious packages targeting major
+repositories such as Python Package Index (PyPI) and Node Package
+Manager (NPM) [53]. Among these ecosystems, PyPI has emerged
+as a primary target due to its scale and accessibility [33, 39].
+Since 2021, malicious package activity has increasingly affected
+PyPI, which now receives more than 500 inbound malware reports
+each month [11]. A notable example is LiteLLM, a PyPI package first
+released on 27 July 2023 (v0.1.0) [3]. Within 2.8 years, it released
+1,284 updates, averaging nearly one to two releases per day [3].
+However, on 24 March 2026, two compromised versions of the pack-
+age, v1.82.7 and v1.82.8, were published on PyPI [54]. These releases
+contained a sophisticated multi-stage credential-stealing payload
+targeting cloud services, Continuous Integration and Continuous
+Delivery (CI/CD) pipelines, and Application Programming Interface
+(API) credentials [54]. As a result, any application depending on the
+package, directly or transitively, became vulnerable upon updating.
+This incident reflects a broader trend in next-gen software supply
+chain attacks, which involve multiphase malware execution, remote
+access activation, dynamic payload generation, and geofencing-
+based attacks [4, 39, 44, 50, 54]. The severity of these attacks not
+only compromises privacy and security but also results in signifi-
+cant economic impact [13]. According to Cybersecurity Ventures,
+the annual global cost of software supply chain attacks was esti-
+mated at $59 billion in 2025 and is projected to reach $138 billion
+by 2031, an increase of 133.9% [13, 41]. Despite these alarming
+trends, effective detection remains a significant challenge [41]. Re-
+cent studies demonstrate the usefulness of metadata [25], static-
+code [14, 16, 33, 51, 55, 63], and hybrid analysis [15, 21, 28–30, 61]
+for malicious package detection. However, these methods remain
+constrained by their reliance on artifacts available prior to execu-
+tion. Consequently, they cannot detect malicious logic that emerges
+during install-time and post-installation, which is a common char-
+acteristic of next-gen software supply chain attacks [39, 54]. More
+recently, dynamic analysis [39, 56] has addressed these limitations
+by providing direct visibility into install-time and post-installation
+activity, thereby offering a more realistic basis for identifying eva-
+sive malicious packages.
+arXiv:2604.26219v1 [cs.CR] 29 Apr 2026
+
+Conference Name, Month Year, City, Country
+Tanzir et al.
+Nevertheless, achieving the full potential of dynamic analysis
+remains a major challenge, as the feature space is high-dimensional,
+sparse, and highly variable [39, 64]. This challenge is further com-
+plicated by the adaptive and context-dependent nature of next-gen
+malicious behaviors, which may manifest through mechanisms
+such as multiphase malware execution, remote access activation,
+and dynamic payload generation. As a result, feature extraction be-
+comes particularly difficult, since the most informative behavioral
+signals may only appear under specific execution conditions [39].
+Although recent studies have explored dynamic behavioral datasets
+for malicious package detection [39, 56], rigorous feature-level
+analysis remains limited. For instance, rule-based methods have in-
+corporated dynamic behaviors and reported an F1-score of 91%, but
+their reliance on predefined rules constrains adaptability and weak-
+ens generalization to evolving attack patterns [64]. This direction
+was further extended using a traditional Machine Learning (ML)-
+based method [39]. However, despite achieving 95.99% accuracy,
+this method still produces a relatively high number of false positives
+and false negatives [39]. This limitation indicates that conventional
+ML models remain inadequate for identifying the most discrimina-
+tive dynamic features and for training efficient detection models
+to understand complex behavioral patterns, including system calls,
+network traffic, directory access patterns, and dependency logs.
+A further challenge is to ensure the stability of malicious pack-
+age detection models, which is essential in rigorous Deep Learning
+(DL) evaluation frameworks for assessing model stability and con-
+sistency [2, 7, 9, 17]. However, it remains underexplored and incon-
+sistently evaluated in prior studies [14, 15, 28, 39, 56, 63]. A subset
+of studies [25, 29, 33, 51, 55] provides partial evidence through
+repeated experiments and feature sensitivity analyses. However,
+these evaluations are largely qualitative and limited to metadata,
+static, and hybrid-based methods, without reporting standardized
+measures required for rigorous stability assessment.
+In addition to identifying discriminative features for efficient
+malicious package detection and ensuring model stability, explain-
+ability is also essential. It helps reveal why detection models classify
+specific behaviors as malicious, thereby improving transparency
+and interpretability. While DL models offer strong predictive capa-
+bility [20, 34, 66], their black-box nature limits their applicability
+in security-critical settings, where transparent and interpretable
+decisions are essential. However, explainability analysis of mali-
+cious package detection models remains insufficiently investigated
+in the literature [15, 33, 39, 55, 61]. A few studies [16, 29] partially
+address this issue by incorporating LIME-based explanations or
+using multimodal feature representations; however, their analyses
+remain limited and do not extend to recent dynamic behavioral
+data. In sum, the evolving complexity of dynamic behavioral data,
+combined with the lack of rigorous feature analysis, stability assess-
+ment, and transparent interpretation of model decisions, creates a
+dangerous illusion of security and highlights the need for a more
+comprehensive analytical framework.
+To address these challenges, this study presents eDySec, an effi-
+cient, stable, and explainable DL-based extended Dynamic Security
+analysis framework for detecting malicious packages. Figure 1 out-
+lines the overall system architecture of the proposed framework.
+Specifically, it consists of three interacting components: the user
+User Terminal
+DL Models
+Benign
+Malicious
+Program
+ Kernel 
+Space
+Traces
+Installing
+VPS 
+Server 
+Traces
+Detection Server
+Upload
+Upload
+Download
+User
+Hacker
+PyPI
+Verdict
+Sandbox Server
+Trained
+Stability and
+Explainability
+?
+Feature
+Selection
+Figure 1: Overall system architecture of the proposed eDySec
+framework for detecting malicious packages.
+terminal, the detection server, and the sandbox server. A user-
+uploaded package is first received by the virtual private server
+(VPS)-based detection server and then forwarded to the sandbox
+server, where an extended Berkeley Packet Filter (eBPF) kernel pro-
+gram collects install-time and post-installation behavioral traces
+and returns them to the detection server via an API. These traces
+are then processed using feature selection methods and DL mod-
+els to determine whether the package is benign or malicious. To
+identify the most effective detection models, eDySec investigates
+classical, pre-attention, and attention-based DL architectures. It
+also incorporates statistical, FLAML, and probabilistic feature selec-
+tion methods to identify discriminative behavioral features derived
+from raw traces, including system calls, network traffic, directory
+access patterns, and dependency logs. In addition, model stability
+analysis and explainable Artificial Intelligence (XAI) techniques are
+integrated into the detection pipeline to support stable and trans-
+parent interpretation of model decisions. To ensure reproducibility
+and facilitate further research, the source code and execution in-
+structions are publicly available 1. The key contributions of this
+study are as follows:
+• It proposes the eDySec framework that includes DL models
+and feature selection mechanisms for detecting software
+supply chain attacks and assesses their effectiveness and
+limitations using a dynamic analysis dataset.
+• The framework integrates model stability and explainable AI
+techniques into the detection pipeline, enabling near-perfect
+stable and transparent interpretation of model decisions by
+identifying the features that most influence each prediction.
+• Experimental results demonstrate that eDySec significantly
+outperforms the state-of-the-art framework. Specifically, it
+reduces feature dimensionality by 52.78% while lowering
+false positives by 82% and false negatives by 79%. It also
+improves accuracy by 3% and maintains a low inference
+latency of 170ms per package.
+This study is structured as follows: Section 2 reviews existing
+methods for malicious package detection. Section 3 presents the
+eDySec framework, and Section 4 describes dataset, experimental
+design, and implementation details. Section 5 reports the results
+and their implications, while Section 6 discusses threats to validity
+and limitations. Finally, Section 7 concludes the paper.
+1eDySec GitHub: https://github.com/tanzirmehedi/eDySec
+
+eDySec: A Deep Learning-based Explainable Dynamic Analysis Framework for Detecting Malicious Packages in PyPI Ecosystem
+Conference Name, Month Year, City, Country
+2
+Related Work
+This section provides an overview of recent studies on software
+supply chain attack detection, along with the scope and limitations
+of existing datasets. It also assesses the impact of detection model
+stability and explainability on dynamic behavioral data, before
+introducing the proposed framework.
+2.1
+ML and DL-based Detectors
+Recent studies on software supply chain attack detection have
+been dominated by ML and DL-based methods, with most methods
+focusing on PyPI and npm ecosystems [21, 29, 63, 64]. Early stud-
+ies primarily rely on metadata and static analysis. For instance,
+MeMPtec [25] demonstrates that metadata-based methods can
+achieve high accuracy using features with varying levels of ma-
+nipulability, while static-based methods such as Ladisa et al. [33],
+PyGuardEX [14], Samaana et al. [51], and MalGuard [16] apply
+statistical features, source code characteristics, structural repre-
+sentations, and graph-based features to detect malicious packages.
+Additionally, static methods such as Ea4mp [55] and Cerebro [63]
+employ transformer-based and sequence modeling techniques to
+capture code semantics. Although these methods achieve strong
+performance, their dependence on metadata and static code-level
+features prevents them from detecting next-gen supply chain at-
+tacks that remain dormant until install-time and post-installation
+phases [23, 39, 43].
+Recent studies have shifted toward hybrid analysis to address
+these limitations. Methods such as PyRadar [15], DONAPI [28],
+PypiGuard [30], and PyPIMalDet [61] combine metadata and static
+features using ML-based and meta-learning frameworks. CLAMPD-
+Net [29] further extends this paradigm through multimodal DL
+fusion by integrating metadata, graph embeddings, and semantic
+representations, while PYGUARD [21] utilize Retrieval-Augmented
+Generation (RAG)-based Large Language Models (LLMs) for se-
+mantic reasoning. However, despite aggregating diverse feature
+sources, these methods still rely primarily on metadata and static
+information, limiting their ability to capture critical behaviors that
+emerge during the install-time and post-installation phases, such
+as multiphase execution, remote access activation, conditional trig-
+gers, and dynamic payload generation [39, 40, 64]. As a result, they
+remain vulnerable to sophisticated dormant attacks that activate
+only under specific execution conditions.
+Dynamic analysis has therefore emerged as a more promising
+yet less explored direction, as it provides stronger behavioral visi-
+bility by capturing install-time and post-installation activities. For
+example, OSCAR [64] incorporates dynamic behaviors through
+rule-based analysis and reports an F1-score of 91%, but its re-
+liance on predefined rules limits adaptability and generalization.
+DySec [39] further extends this direction by using install-time and
+post-installation kernel and user-level traces with traditional ML
+methods to detect malicious behavior. Although it achieves 95.99%
+overall accuracy using a Random Forest (RF) model, it still yields a
+relatively high number of false positives and false negatives [39].
+This limitation arises because traditional ML models often struggle
+to effectively capture the high-dimensional, sparse, and heteroge-
+neous nature of dynamic behavioral data, thereby constraining the
+performance of ML-based detection methods [34].
+To capture these complex behaviors more effectively, DL models
+have emerged as a promising alternative [20, 34], given their ability
+to learn complex, high-dimensional, and sequential patterns [20,
+58, 66]. Additionally, DL-based static methods such as Ea4mp [55]
+and Cerebro [63], multimodal DL frameworks [29], and LLM-based
+methods [21] enable the extraction of deep semantic and contextual
+relationships from software artifacts. However, the effectiveness of
+DL models is fundamentally dependent on the quality and modality
+of input data [20].
+2.2
+Supply Chain Security Datasets
+The effectiveness of detection models is heavily constrained by
+the quality and modality of available datasets[20]. In this regard,
+existing datasets for malicious package detection can be broadly cat-
+egorized into metadata-based, static, hybrid, and dynamic datasets.
+Metadata-based datasets, such as MalwareBench [62], PyRadar [15],
+BadSnakes [59], and GuardDog [6], primarily rely on repository
+metadata, and heuristic indicators. While these datasets are large-
+scale, they lack behavioral depth and are susceptible to adversar-
+ial manipulation. Static and structural datasets, including Guo et
+al. [23], PackageIntel [22], and Backstabber’s Knife [43], incorpo-
+rate AST features, API usage patterns, and structural represen-
+tations, improving code-level understanding but still failing to
+capture next-gen attacks behavior. Hybrid datasets, such as Pypi-
+Guard [30], DONAPI [28], and OSS-MPAW [65], combine metadata,
+static, and limited behavioral traces. CLAMPD-1905 [29] further
+extends this paradigm by integrating multimodal representations,
+including graph embeddings and semantic APIs, enabling richer
+feature spaces for DL models; however, these datasets still rely on
+abstracted representations rather than system-level behaviors.
+Among these categories, dynamic datasets remain scarce but are
+essential for detecting next-gen real-world attacks. QUT-DV25 [40]
+represents a significant advancement by capturing install-time
+and post-installation behaviors using eBPF-based monitoring. It
+includes 14,271 PyPI packages (7,127 malicious) and 36 system-
+level behavioral features, such as system calls, file operations, and
+network activity. Unlike datasets, including CLAMPD-1905 [29],
+PackageIntel [22], and DONAPI [28], QUT-DV25 provides direct
+install and post-install time evidence, enabling the detection of
+multiphase malware execution, remote access activation, condi-
+tional triggers, and dynamic payload generation. This makes it
+particularly suitable for DL-based behavioral modeling.
+2.3
+Stability, and Explainability Analysis
+Stability analysis is essential in rigorous DL evaluation frameworks
+for assessing model stability and consistency [2, 7, 9, 17]. However,
+it remains largely overlooked and inconsistently evaluated in exist-
+ing studies. Most studies, including PyRadar [15], PyGuardEX [14],
+DONAPI [28], Cerebro [63], PyPIMalDet [61], and PYGUARD [21],
+focus primarily on predictive performance without incorporat-
+ing explicit stability analysis. A subset of studies, such as Ladisa
+et al. [33], MeMPtec [25], Ea4mp [55], Samaana et al. [51], and
+CLAMPD-Net [29], provide partial evidence of stability through
+repeated experiments and feature sensitivity analyses; however,
+
+Conference Name, Month Year, City, Country
+Tanzir et al.
+Table 1: Comprehensive comparison of existing studies across software ecosystems, analysis types, and key methodological
+dimensions, including model, performance evaluation, feature representation, stability assessment, and explainability coverage.
+Study
+Ecosystem
+Type
+Model
+Performance
+Feature Analysis
+Detection Model
+Stability
+Explainability
+(Per Package)
+Ladisa et al. (2023)[33]
+PyPI/NPM
+Static
+ML (XGB)
+PyPI: A=97.0%
+Statistical+domain expertise
+Partial
+×
+PyRadar (2024)[15]
+PyPI
+Hybrid
+ML (RF)
+A=99.5%
+Statistical+feature importance
+×
+×
+PyGuardEX (2024)[14]
+PyPI
+Static
+ML (RF)
+A=97.0%
+Statistical+feature importance
+×
+×
+MeMPtec (2024)[25]
+NPM
+Metadata
+ML (DRF)
+A=99.61%
+ETM and DTM
+Partial
+×
+OSCAR (2024)[64]
+PyPI/NPM
+Dynamic
+Rule-based
+PyPI: F1=91%
+Behavioral feature
+×
+×
+Ea4mp (2024)[55]
+PyPI
+Static
+DL + Ensemble
+F1=97.6%
+Code behavior sequences
+Partial
+×
+DONAPI (2024)[28]
+NPM
+Hybrid
+ML (RF)
+A=97.0%
+API-sequence + ML
+×
+×
+Samaana et al. (2025)[51]
+PyPI
+Static
+ML (Stacking)
+F1=94.20%
+Statistical+feature importance
+Partial
+×
+Cerebro (2025)[63]
+PyPI/NPM
+Static
+DL (RoBERTa)
+PyPI: P=96.1%
+Sequence modeling
+×
+×
+MalGuard (2025)[16]
+PyPI
+Static
+ML (RF)
+F1=99.0%
+Graph + ML
+×
+Partial
+PypiGuard (2025)[30]
+PyPI
+Hybrid
+Meta (Stacking)
+A=98.43%
+Statistical + ML-based
+✓
+×
+PyPIMalDet (2025)[61]
+PyPI
+Hybrid
+ML (Stacking)
+F1=97.91%
+DAE + stacking fusion
+×
+×
+CLAMPD-Net (2026)[29]
+PyPI/NPM
+Hybrid
+DL (CNN-BiGRU)
+AVG: A=97.23%
+Fusion + graph + semantic
+Partial
+Partial
+PYGUARD (2026)[21]
+PyPI/NPM
+Hybrid
+RAG-based LLM
+PyPI: A=97.37%
+Semantic + taxonomy
+×
+×
+DySec (2026)[39]
+PyPI
+Dynamic
+ML (RF)
+A=95.99%
+Statistical + ML
+×
+×
+eDySec (Proposed)
+PyPI
+Dynamic
+DL (MLP)
+A=99.00%
+Statistical+ FLAML+ Probability
+✓
+✓
+these evaluations remain qualitative. They do not report standard-
+ized metrics such as standard deviation, average rank, or confi-
+dence intervals, which are commonly used for quantitative stability
+assessment [2, 7, 9, 17]. Among all studies, only PypiGuard [30]
+explicitly evaluates detection model stability using quantitative
+metrics, demonstrating consistent performance across runs with
+low variance (e.g., ±0.06% accuracy). In contrast, MalGuard [16]
+focuses on interpretability and does not include stability analysis.
+Dynamic methods, including OSCAR [64] and DySec [39], provide
+implicit stability through real-world analysis, but lack statistical
+stability evaluation.
+In addition to ensuring detection model stability, explainabil-
+ity is essential for understanding why detection models classify
+specific behaviors as malicious, thereby improving transparency
+and interpretability. However, explainability remains limited in
+the current literature. Most studies, including Ladisa et al. [33],
+PyRadar [15], PyGuardEX [14], MeMPtec [25], DONAPI [28], Cere-
+bro [63], and PyPIMalDet [61], do not provide per-package explana-
+tions for model decisions, limiting transparency and interpretabil-
+ity. A few methods partially address this limitation: MalGuard [16]
+incorporates LIME-based explanations, while CLAMPD-Net [29]
+provides limited interpretability through multimodal feature repre-
+sentations. Dynamic methods, such as OSCAR [64] and DySec [39],
+enable analysts to inspect install-time and post-install activities;
+however, they do not offer any explainability techniques such as
+feature attribution or instance-level explanations. Although model-
+agnostic techniques such as LIME [46] and SHAP [36] provide pow-
+erful frameworks for interpreting complex DL models [1, 37, 47],
+they are largely absent in existing software security studies.
+A comprehensive comparison of existing studies across ecosys-
+tem, analysis type, model, performance, feature analysis, stability,
+and explainability coverage is presented in Table 1. These limita-
+tions collectively motivate the proposed eDySec framework, which
+advances the understanding of the strengths and limitations of dy-
+namic datasets for developing an efficient, stable and explainable
+DL-based detectors against next-gen software supply chain attacks.
+3
+eDySec Framework
+We propose eDySec, an efficient, stable, and explainable DL-based
+dynamic analysis framework for detecting malicious Python pack-
+ages. It is designed to address the high-dimensional, sparse, and
+heterogeneous nature of dynamic behavioral data. As illustrated in
+Figure 2, eDySec consists of four main phases: (i) data preparation,
+(ii) feature selection, (iii) model selection and evaluation, and (iv)
+stability and explainability analysis. The notations used throughout
+the framework are summarized in Appendix Table 1.
+Phase (iii) Model
+Selection and Evaluation
+Classical
+Pre/Attention
+Prediction       
+(Benign/Malicious)  
+Data Sources
+PyPI Packages
+Filetop
+Opensnoop
+Install
+TCP
+SysCall
+Pattern
+Feature Sets
+Phase (i) Data Preparation
+Dataset
+Overview
+Scalling
+Data
+Transform
+Phase (ii) Feature Selection
+Statistical
+FLAML
+Probabilistic
+Phase (iv) Stability and
+Explainability Analysis
+    Stability      
+(Std, Rank, CI)  
+Explainability   
+(SHAP and LIME)  
+Figure 2: Proposed eDySec framework for detecting mali-
+cious PyPI packages.
+Data preparation: Let D = {(x𝑖,𝑦𝑖)}𝑁
+𝑖=1 denote the dataset of
+N package, where x𝑖∈R𝑑is the raw feature representation of the
+𝑖-th package, R denotes the set of real numbers, and 𝑦𝑖∈{0, 1} is
+its class label, with 0 and 1 denoting benign and malicious pack-
+ages, respectively. As shown in Figure 2, the raw inputs are derived
+from trace-based feature sets, including Filetop, Opensnoop, In-
+stall, TCP, SysCall, and Pattern traces. These trace-derived features
+are organized into three feature types: numerical, categorical, and
+
+eDySec: A Deep Learning-based Explainable Dynamic Analysis Framework for Detecting Malicious Packages in PyPI Ecosystem
+Conference Name, Month Year, City, Country
+pattern-based features. The dataset is then partitioned into train-
+ing, validation, and test sets, denoted by D𝑡𝑟, D𝑣𝑑, and D𝑡𝑒, such
+that D𝑡𝑟∪D𝑣𝑑∪D𝑡𝑒= D, D𝑡𝑟∩D𝑣𝑑= ∅, D𝑡𝑟∩D𝑡𝑒= ∅, and
+D𝑣𝑑∩D𝑡𝑒= ∅.To handle the heterogeneous nature of these fea-
+tures, a preprocessing function P(·) is applied to obtain processed
+representations, ( ˜D𝑡𝑟, ˜D𝑣𝑑, ˜D𝑡𝑒) = P(D𝑡𝑟, D𝑣𝑑, D𝑡𝑒), where each
+processed set contains transformed samples of the form ( ˜x𝑖,𝑦𝑖) or
+(s𝑖,𝑦𝑖), depending on the model category. This phase includes data
+cleaning, feature scaling, and representation transformation.
+More specifically, as the evaluated DL models span different
+categories, the selected features are prepared according to the in-
+put requirements of each model type rather than through a uni-
+form preprocessing pipeline. For classical DL models, numerical
+features are standardized using z-score normalization, such that
+ˆ𝑥𝑖,𝑗= (𝑥𝑖,𝑗−𝜇𝑗)/𝜎𝑗, where 𝜇𝑗and 𝜎𝑗denote the mean and standard
+deviation of the 𝑗-th feature estimated from the training set. Cate-
+gorical and pattern-based features are independently transformed
+into TF-IDF representations learned from the corresponding train-
+ing columns. If T𝑘(·) denotes the TF-IDF mapping for the 𝑘-th
+categorical or pattern-based feature, the resulting text representa-
+tion is x(text)
+𝑖
+= [T1(𝑥𝑖,1) ∥· · · ∥T𝑚(𝑥𝑖,𝑚)], and the final processed
+sample is formed as ˜x𝑖= [ˆx(num)
+𝑖
+∥x(text)
+𝑖
+] ∈R ˜𝑑. In contrast, for
+pre-attention and attention-based models, each sample is serialized
+into a textual sequence by concatenating feature value pairs across
+all selected columns. The resulting text is then tokenized, mapped
+into integer sequences using a vocabulary learned from the training
+set, and padded or truncated to a fixed length, yielding a sequential
+representation s𝑖∈N𝐿, where 𝐿denotes the max sequence length.
+Feature selection: Let the processed feature space be denoted by
+F = {𝑓1, 𝑓2, . . . , 𝑓˜𝑑}. As shown in Phase (ii) of Figure 2, feature selec-
+tion is performed using multiple families of methods, including sta-
+tistical, FLAML-based, and probabilistic selectors. Let S = {𝑆𝑗}𝐽
+𝑗=1
+denote the set of candidate feature selection methods, where each
+method 𝑆𝑗selects a subset F𝑗⊆F according to its method-specific
+selection criterion, with cardinality 𝑑𝑗= |F𝑗|. Each subset is evalu-
+ated using a baseline model 𝑀𝑏𝑎𝑠𝑒on the reduced training and val-
+idation sets, producing a validation performance score 𝑃𝑗. The fea-
+ture selection objective is defined as 𝐽𝐹𝑆(𝑆𝑗) = 𝛼𝑃𝑗+(1−𝛼)
+
+1 −𝑑𝑗
+˜𝑑
+
+,
+where 𝛼∈[0, 1] controls the trade-off between predictive per-
+formance and feature reduction. The optimal feature selection
+method is then chosen as 𝑆∗= arg max𝑆𝑗∈S 𝐽𝐹𝑆(𝑆𝑗), yielding the
+best feature subset F ∗. The processed datasets are subsequently pro-
+jected onto this subset as ˜D∗
+𝑡𝑟= ΠF∗( ˜D𝑡𝑟), ˜D∗
+𝑣𝑑= ΠF∗( ˜D𝑣𝑑), and
+˜D∗
+𝑡𝑒= ΠF∗( ˜D𝑡𝑒). The same feature subset is then used across all se-
+lected models, ensuring a common feature basis for fair comparison
+while preserving each model’s required input representation.
+Model selection and evaluation: Using the reduced datasets
+( ˜D∗
+𝑡𝑟, ˜D∗
+𝑣𝑑, ˜D∗
+𝑡𝑒), a set of candidate DL models M = {𝑀𝑘}𝐾
+𝑘=1, in-
+cluding classical, pre-attention, and attention-based models is eval-
+uated as shown in Phase (iii) of Figure 2. For each model 𝑀𝑘, the pa-
+rameters Θ𝑘are optimized on the training set by minimizing the bi-
+nary cross-entropy loss. Its validation performance score is denoted
+by 𝑄𝑘and computed as 𝑄𝑘= Ψ(𝑀𝑘, D∗
+𝑡𝑟, D∗
+𝑣𝑑), where Ψ(·) denotes
+the evaluation function defined for the model-specific input repre-
+sentation. The optimal model is selected as 𝑀∗= arg max𝑀𝑘∈M 𝑄𝑘.
+Finally, the selected model 𝑀∗is evaluated on the unseen test set,
+where predicted labels are obtained by thresholding output probabil-
+ities. The final performance is reported using standard classification
+metrics, including accuracy, precision, recall, and F1-score.
+Algorithm 1: Pseudo-code of the eDySec workflow
+Input: Dataset D = {(x𝑖, 𝑦𝑖)}𝑁
+𝑖=1, preprocessing function P(·),
+feature selection methods S = {𝑆𝑗}𝐽
+𝑗=1, baseline model
+𝑀𝑏𝑎𝑠𝑒, candidate DL models M = {𝑀𝑘}𝐾
+𝑘=1, explainability
+function E(·)
+Output: Best feature subset F∗, best model 𝑀∗, stability statistics
+T𝑠𝑡𝑎𝑏, explainability ranking R𝑒𝑥𝑝, overlap set C
+// Phase (i): Data Preparation
+1 Split D into D𝑡𝑟, D𝑣𝑑, and D𝑡𝑒;
+2 Apply preprocessing: ( ˜D𝑡𝑟, ˜D𝑣𝑑, ˜D𝑡𝑒) ←P(D𝑡𝑟, D𝑣𝑑, D𝑡𝑒) ;
+3 Let F = {𝑓1, 𝑓2, . . . , 𝑓˜𝑑} denote the processed feature space;
+// Phase (ii): Feature Selection
+4 foreach 𝑆𝑗∈S do
+5
+Select subset F𝑗⊆F according to its method-specific
+threshold, with 𝑑𝑗= | F𝑗|;
+6
+Evaluate F𝑗using 𝑀𝑏𝑎𝑠𝑒and obtain validation score 𝑃𝑗;
+7
+Compute 𝐽𝐹𝑆(𝑆𝑗) ←𝛼𝑃𝑗+ (1 −𝛼)
+
+1 −
+𝑑𝑗
+˜𝑑
+
+;
+8 Select 𝑆∗←arg max𝑆𝑗∈S 𝐽𝐹𝑆(𝑆𝑗) and obtain F∗;
+9 Project datasets onto F∗: ˜D∗
+𝑡𝑟←ΠF∗( ˜D𝑡𝑟), ˜D∗
+𝑣𝑑←ΠF∗( ˜D𝑣𝑑),
+˜D∗
+𝑡𝑒←ΠF∗( ˜D𝑡𝑒) ;
+10 Construct sequence for pre/attention-based models ;
+// Phase (iii): Model Selection and Evaluation
+11 foreach 𝑀𝑘∈M do
+12
+Train 𝑀𝑘on its corresponding selected training set ;
+13
+Compute validation 𝑄𝑘←Ψ(𝑀𝑘, D∗
+𝑡𝑟, D∗
+𝑣𝑑) ;
+14 Select 𝑀∗←arg max𝑀𝑘∈M 𝑄𝑘;
+15 Evaluate 𝑀∗on the unseen test set ;
+// Phase (iv): Stability and Explainability
+16 Collect scores {𝑞𝑟}𝑅
+𝑟=1 over runs and compute T𝑠𝑡𝑎𝑏;
+17 foreach z𝑖∈D∗
+𝑡𝑒do
+18
+Compute attribution vector e𝑖←E(𝑀∗, z𝑖) ;
+19 Aggregate attributions to obtain R𝑒𝑥𝑝;
+20 Compute overlap C ←F∗∩Feat(R𝑒𝑥𝑝) ;
+21 return F∗, 𝑀∗, T𝑠𝑡𝑎𝑏, R𝑒𝑥𝑝, C ;
+Stability and explainability analysis: Beyond predictive per-
+formance, the selected model 𝑀∗is further examined in terms of
+stability and interpretability. Let {𝑞𝑟}𝑅
+𝑟=1 denote the performance
+scores obtained over 𝑅repeated runs. The resulting stability sum-
+mary is denoted by T𝑠𝑡𝑎𝑏and includes the mean ¯𝑞, standard devia-
+tion 𝜎𝑞, confidence intervals, and rank-based comparisons across
+candidate models. To interpret the predictions of 𝑀∗, an explain-
+ability function E(·) is applied to each test instance, producing a
+local attribution vector e𝑖= E(𝑀∗, z𝑖), where z𝑖denotes the model-
+specific input representation of the 𝑖-th test sample. These local
+attributions are aggregated across the test set to derive global fea-
+ture importance scores 𝐼(𝑓) and the corresponding explainability
+ranking R𝑒𝑥𝑝= Rank({𝐼(𝑓) : 𝑓∈F ∗}). Finally, the consistency
+
+Conference Name, Month Year, City, Country
+Tanzir et al.
+between the selected feature subset and the model’s learned be-
+havior is assessed through C = F ∗∩Feat(R𝑒𝑥𝑝), where a larger
+overlap indicates stronger agreement between the selected features
+and the features that most strongly influence model predictions.
+Algorithm 1 presents the pseudo-code for the proposed eDySec
+framework workflow.
+4
+eDySec Design and Setup
+This section describes the experimental design of eDySec, including
+the computational environment, dataset overview, feature engineer-
+ing and selection strategy, DL model comparison protocol, and the
+stability and explainability analyses implemented to support stable
+and interpretable evaluation.
+4.1
+Experimental Setup
+The experiments were conducted using both dedicated hardware
+and a controlled software environment. The hardware platform
+comprised a 13th Gen Intel Core i9-13900K processor, 128 GB RAM,
+and an NVIDIA RTX A6000 GPU with 48 GB memory, running
+on a Ubuntu 22.04 LTS (64-bit) operating system. The software
+environment was configured with Python 3.10.20, Scikit-learn 1.2.2,
+and TensorFlow 2.11.0 for data preprocessing, feature selection,
+model development, training, and evaluation.
+4.2
+Dataset Overview
+The experiments were performed on the QUT-DV25 dataset, which
+captures the dynamic behaviors of PyPI packages during both
+install-time and post-installation execution. As illustrated in Fig-
+ure 3(a), the dataset contains 36 features organized into six dynamic
+trace categories: Filetop, which captures file I/O activities that can re-
+veal abnormal file access or missing critical files; Opensnoop, which
+records file open attempts that can indicate access to sensitive or
+protected directories; Install, which captures install-time events
+that can expose indirect or concealed dependency installation be-
+havior; TCP, which represents network activities that help identify
+communication with suspicious endpoints; SysCall, which reflects
+low-level system interactions that can indicate sabotage, abuse,
+or privilege misuse; and Pattern, which characterizes execution
+patterns that can reveal repeated loops or payload-triggering be-
+haviors. Collectively, these traces span both user and kernel-level
+activities, enabling the dataset to capture diverse behaviors relevant
+to malicious package detection.
+As shown in Figure 3(b), the dataset contains 14,271 samples,
+including 7,144 benign packages (50.10%) and 7,127 malicious pack-
+ages (49.90%). This near-balanced class distribution supports reli-
+able supervised learning and reduces the risk of class imbalance
+bias. In addition, the feature space includes numerical, categori-
+cal, and pattern-based attributes, resulting in a heterogeneous and
+behaviorally rich representation for comprehensive analysis. To fur-
+ther explore the discriminative structure of these representations,
+Figure 4 presents t-SNE visualizations of 200 randomly selected
+samples using metadata 4(a), static 4(b), and dynamic 4(c) features
+from QUT-DV25 dataset. Compared with metadata and static-based
+representations, the dynamic feature space exhibits clearer separa-
+tion between benign and malicious packages, suggesting that install
+50.10%
+(7,144)
+49.90%
+(7,127)
+(a)
+(b)
+Figure 3: Overview of the QUT-DV25 dataset: (a) statistics of
+the feature sets across traces; (b) class distribution of benign
+and malicious packages.
+and post-install behavioral signals provide stronger discriminatory
+information for malicious package detection.
+(a)
+(b)
+(c)
+Figure 4: t-SNE visualization of 200 randomly selected sam-
+ples (100 benign and 100 malicious) using (a) metadata, (b)
+static, and (c) dynamic features, where the QUT-DV25 dy-
+namic features show clearer class separation.
+4.3
+Feature Engineering and Selection
+The heterogeneous and high-dimensional nature of QUT-DV25
+dataset necessitates feature engineering and selection to reduce
+redundancy while preserving discriminative information for model
+evaluation. To identify a robust and compact feature subset, we eval-
+uated multiple complementary feature selection strategies on both
+the combined and individual feature sets. The evaluated methods
+include statistical, namely Analysis of Variance (ANOVA) [12] and
+Correlation (CORR) [26]; an AutoML mechanism, Fast and Light-
+weight AutoML (FLAML) [60]; and probabilistic optimization meth-
+ods, namely Particle Swarm Optimization (PSO) [32] and Whale Op-
+timization Algorithm (WOA) [42]. ANOVA selects the most discrim-
+inative features based on F-score ranking, CORR preserves features
+strongly associated with the target while minimizing inter-feature
+redundancy, and FLAML retains features according to learned rela-
+tive importance. By contrast, PSO and WOA perform probabilistic
+subset optimization using sigmoid-based update rules [32, 42]. To
+reduce heuristic bias and prevent data leakage, all method-specific
+thresholds and control settings were determined through extensive
+ablation studies, following the evaluation principle in [45], using
+only the training and validation sets. These methods were selected
+because they represent complementary and widely adopted feature
+selection paradigms, enabling a balanced evaluation of predictive
+
+eDySec: A Deep Learning-based Explainable Dynamic Analysis Framework for Detecting Malicious Packages in PyPI Ecosystem
+Conference Name, Month Year, City, Country
+effectiveness, redundancy reduction, and subset compactness in
+high-dimensional learning settings [24, 31, 39].
+Figure 5: Performance comparison of feature selection meth-
+ods on the QUT-DV25 dataset using the MLP model.
+Figure 5 summarizes the feature selection results obtained using
+the MLP classifier on the combined dataset, where both classifica-
+tion accuracy and the number of retained features are considered;
+the corresponding results for individual trace categories are pro-
+vided in Appendix Figure 1. ANOVA achieves an accuracy of 0.98
+using 12 selected features, whereas CORR, FLAML, PSO, and WOA
+each achieve 0.99 accuracy. However, these methods differ sub-
+stantially in terms of retained dimensionality: CORR selects 30
+features, WOA selects 24, PSO selects 19, and FLAML selects only
+17. Among these methods, FLAML provides the most favorable
+trade-off between predictive performance and feature compactness,
+matching the highest observed accuracy while using the fewest fea-
+tures among the top-performing methods. Compared with DySec,
+this reduces feature dimensionality by 52.78%. Therefore, FLAML is
+selected as the optimal feature selection method, and its 17-feature
+subset is applied in the subsequent model comparison phase across
+all DL models under their corresponding input representations.
+4.4
+Learning Package Maliciousness
+After determining the optimal feature subset, we evaluated a di-
+verse set of 10 candidate DL models grouped into three model
+categories: classical models, namely Convolutional Neural Net-
+work (CNN), Multilayer Perceptron (MLP), LeCun Network (LeNet),
+Multi-Dimensional CNN (MDCNN), and Neural Network (NN);
+pre-attention models, namely Long Short-Term Memory (LSTM)
+and Recurrent Neural Network (RNN); and attention-based models,
+namely Transformer, Bidirectional Encoder Representations from
+Transformers (BERT), and DistilGPT-2. This enables a structured
+comparison across progressively more expressive models, ranging
+from conventional feedforward and convolution-based models to
+sequential and attention-driven models.
+The classical models serve as strong baselines for learning dis-
+criminative patterns from structured transformed features. Specif-
+ically, CNN and LeNet adopt convolution-based representation
+learning [35, 38], whereas MLP and NN act as fully connected feed-
+forward baselines trained via backpropagation [48]. In contrast,
+the pre-attention models, LSTM and RNN, are designed to capture
+sequential dependencies in serialized inputs [10, 27]. Extending
+this progression, the attention-based models, namely Transformer,
+BERT, and DistilGPT-2, implement self-attention and contextual
+representation learning to capture long-range dependencies within
+the input sequences [8, 52, 58]. For each candidate model, the pa-
+rameters were learned using the selected feature subset under the
+preprocessing configuration appropriate to the model family. The
+hyperparameter settings for all evaluated models are reported in

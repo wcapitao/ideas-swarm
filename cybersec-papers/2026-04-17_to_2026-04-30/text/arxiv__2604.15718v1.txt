@@ -1,0 +1,1500 @@
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+1
+NeuroLip: An Event-driven Spatiotemporal
+Learning Framework for Cross-Scene
+Lip-Motion-based Visual Speaker Recognition
+Junguang Yao, Student Member, IEEE, Wenye Liu, Member, IEEE,
+Stjepan Picek, Senior Member, IEEE, Yue Zheng, Member, IEEE
+Abstract—Visual speaker recognition based on lip motion
+offers a silent, hands-free, and behavior-driven biometric so-
+lution that remains effective even when acoustic cues are un-
+available. Compared to traditional methods that rely heavily
+on appearance-dependent representations, lip motion encodes
+subject-specific behavioral dynamics driven by consistent ar-
+ticulation patterns and muscle coordination, offering inherent
+stability across environmental changes. However, capturing these
+robust, fine-grained dynamics is challenging for conventional
+frame-based cameras due to motion blur and low dynamic
+range. To exploit the intrinsic stability of lip motion and address
+these sensing limitations, we propose NeuroLip, an event-based
+framework that captures fine-grained lip dynamics under a strict
+yet practical cross-scene protocol: training is performed under
+a single controlled condition, while recognition must generalize
+to unseen viewing and lighting conditions. NeuroLip features a
+1) Temporal-aware Voxel Encoding module with adaptive event
+weighting, 2) Structure-aware Spatial Enhancer that amplifies
+discriminative behavioral patterns by suppressing noise while
+preserving vertically structured motion information, and 3)
+Polarity Consistency Regularization mechanism to retain motion-
+direction cues encoded in event polarities. To facilitate systematic
+evaluation, we introduce DVSpeaker, a comprehensive event-
+based lip-motion dataset comprising 50 subjects recorded under
+four distinct viewpoint and illumination scenarios. Extensive
+experiments demonstrate that NeuroLip achieves near-perfect
+matched-scene accuracy and robust cross-scene generalization,
+attaining over 71% accuracy on unseen viewpoints and nearly
+76% under low-light conditions, outperforming representative
+existing methods by at least 8.54%. The dataset and code are
+publicly available at https://github.com/JiuZeongit/NeuroLip.
+Index Terms—Visual speaker recognition, event cameras, be-
+havioral biometrics, lip motion, cross-scene recognition.
+I. INTRODUCTION
+Manuscript received on March 05, 2026.
+Junguang
+Yao
+and
+Yue
+Zheng
+are
+with
+the
+School
+of
+Science
+and Engineering, The Chinese University of Hong Kong, Shenzhen,
+Guangdong, 518172, P.R. China (e-mails: junguangyao@link.cuhk.edu.cn;
+zhengyue@cuhk.edu.cn).
+Wenye Liu is an independent researcher (e-mail: wenye.liu@ieee.org).
+Stjepan Picek is with the Faculty of Electrical Engineering and Com-
+puting University of Zagreb, 10000 Zagreb, Croatia, and Faculty of Sci-
+ence, Radboud University, 6525, XZ Nijmegen, The Netherlands (e-mail:
+stjepan.picek@ru.nl).
+(Corresponding author: Yue Zheng.)
+The authors would like to thank all participants who contributed to the
+construction of the DVSpeaker dataset. We are grateful to Ying Tao, Xuanyu
+Chen, Xiaolong Wu, Peichun Hua, Hanxiu Zhang, and Xin Wang for helpful
+discussions and valuable suggestions on experimental setup and manuscript
+formatting.
+V
+ISUAL speaker recognition (VSR) aims to identify
+individual speakers by analyzing visual cues during
+speech [1], [2]. Lip patterns, as inherent biological traits,
+exhibit stable and discriminative characteristics suitable for
+personal identification [3]. Specifically, speech articulation
+involves complex lip anatomy and coordinated activation of
+facial action units [4], [5], resulting in unique spatiotemporal
+patterns that encode identity-specific behavior. These patterns
+are difficult to convincingly imitate or synthesize [6]–[8],
+offering inherent resistance to impersonation attacks. Conse-
+quently, due to its biological nature, non-intrusive acquisition,
+and inherent insensitivity to environmental acoustic noise,
+lip-based VSR has emerged as a promising and practical
+solution for secure access control in applications such as
+mobile banking recognition, smart surveillance, and biometric
+forensics [9], [10].
+Lip patterns are typically categorized into lip texture, lip ge-
+ometry, and lip motion [11], [12]. Lip texture and geometry are
+static physiological biometrics, describing lip surface patterns
+and global lip shape, respectively. Prior studies have mainly
+focused on such static lip physiological cues and largely
+relied on a priori knowledge, such as Zernike-based geometric
+descriptors [13] and sparse coding of local texture patches [1],
+to model appearance or texture-based identity characteristics.
+In contrast, lip motion is a behavioral biometric characterizing
+the spatiotemporal dynamics of the lips and perioral muscles
+during articulation and has been increasingly explored as
+an identity feature [2], [8], [10]–[12], [14]–[17]. Because
+motion information is closely coupled with appearance, most
+existing approaches, especially deep learning-based end-to-end
+methods [8], [10], [18], fuse static and dynamic information in
+an entangled manner. As a consequence, the learned identity
+representations inevitably inherit the sensitivity of appearance
+cues to imaging conditions [2].
+As a result, existing lip-based VSR is sensitive to changes
+in acquisition conditions [2]. In practice, variations in viewing
+angle and illumination introduce significant distribution shifts:
+lip geometry may be distorted or partially occluded under
+profile views, while insufficient lighting blurs fine lip tex-
+ture. Such mismatches between training and testing data may
+substantially reduce recognition accuracy. Moreover, in real-
+world scenarios, users typically provide training samples under
+controlled conditions with limited training samples, whereas
+testing often occurs in unconstrained environments. This mo-
+tivates a practically important yet underexplored cross-scene
+arXiv:2604.15718v1 [cs.CV] 17 Apr 2026
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+2
+Fig. 1.
+Visualized event frames of two subjects articulating the same
+digit under different scenarios (viewpoints 0◦and 45◦under 216 LUX
+illumination), highlighting subject-specific activation patterns around the lip
+and chin regions.
+problem: learning lip-based identity representations from a
+single scene during training while maintaining its robustness
+to unseen variations in viewpoint and illumination at test time.
+This setting is particularly relevant when repeatedly collecting
+data across multiple conditions is costly or impractical, and
+when the space of possible deployment environments cannot
+be exhaustively enumerated.
+To our knowledge, systematic investigation of this strict
+cross-scene setting remains largely absent in the lip-based
+biometric literature. Prior studies suggest that dynamic be-
+havioral cues are more discriminative and less sensitive to
+environmental variations than static physiological features [2],
+[12], [19], [20]. Unlike imaging-dependent texture or contour
+information, temporal motion patterns reflect intrinsic behav-
+ioral execution and therefore remain relatively stable across
+varying viewpoints. However, conventional frame-based imag-
+ing sensors often struggle to faithfully capture fine-grained
+lip motion information during speech; they rely on exposure
+integration, which leads to inter-frame information loss and
+susceptibility to illumination variations [21]. While alternative
+sensing modalities such as acoustics [22] and radar [23]
+exist, they impose strict environmental constraints and are
+sensitive to noise. In contrast, event cameras capture intensity
+changes asynchronously at high temporal resolution, with low
+quantization error and strong robustness under low illumi-
+nation [21], [24], making them uniquely suited to capturing
+fine-grained, rapid lip-motion dynamics during speech. As
+shown in Fig. 1, event-based articulation patterns around the
+lip and chin regions are subject-specific and consistent across
+viewpoints, demonstrating the promising viability of using an
+event camera for robust VSR.
+Despite its practical potential, cross-scene lip-based VSR
+using event cameras remains highly challenging. Developing
+deep learning models that generalize from a single acquisition
+condition to unseen viewpoints and illumination variations
+presents four key challenges. First, the extracted features must
+be sufficiently discriminative, exhibiting high inter-subject
+separability while remaining consistent for the same subject.
+Second, these features must be robust to scene variations.
+Viewpoint changes obscure identity-relevant behavioral fea-
+tures, while low illumination degrades signal-to-noise ratio,
+causing significant feature distribution shifts. Third, it is
+critical to preserve informative cues from raw event streams.
+Event data are sparse and asynchronous, and converting them
+into dense representations for conventional deep learning
+models often incurs the loss of fine-grained spatial details,
+temporal continuity, and polarity information that encodes
+motion directions. Finally, to the best of our knowledge, there
+are currently no event-based lip motion datasets explicitly
+designed for cross-scene identity recognition, which further
+limits systematic investigation of this problem.
+In this paper, we propose NeuroLip, an event-based frame-
+work that leverages fine-grained lip motion dynamics for
+visual speaker recognition. By exploring the asynchronous
+sensing of event cameras, NeuroLip captures discriminative
+lip-motion cues from sparse event streams, enabling robust
+identity recognition across varying environments, even when
+training is conducted under a single controlled condition. The
+main contributions of this work are summarized as follows:
+• We propose NeuroLip, an event-based framework de-
+signed for cross-scene VSR. NeuroLip enables robust
+generalization to unseen viewpoints and illumination vari-
+ations when training is performed under a single acqui-
+sition condition, which facilitates practical deployment
+with low-cost user enrollment.
+• We introduce DVSpeaker, a new event-based lip-motion
+dataset explicitly designed to benchmark cross-scene
+identity recognition. It features 50 subjects recorded
+under four scenarios with three viewpoints (0◦, 45◦, and
+90◦) and two illumination conditions (12.5 lux and 216
+lux) to facilitate systematic evaluation.
+• We develop a novel representation learning pipeline
+that
+bridges
+raw
+asynchronous
+event
+streams
+with
+conventional neural networks (CNNs). By proposing
+and integrating Temporal-aware Voxel Encoding (TVE),
+Structure-aware Spatial Enhancer (SSE), and Polarity
+Consistency Regularization (PCR), our method effec-
+tively preserves and exploits fine-grained spatial-temporal
+behavioral cues.
+• We conduct extensive experiments to demonstrate the
+effectiveness and robustness of NeuroLip. It achieves
+100% and 99.97% accuracy under matched scenes on
+the self-constructed DVSpeaker and the public DVSLip
+datasets, respectively, and maintains 71% accuracy under
+the strict cross-scene protocol. NeuroLip outperforms 23
+representative video-based and event-based methods and
+exhibits strong data efficiency with as few as 20 training
+samples per subject.
+The remainder of this paper is organized as follows. Sec-
+tion II reviews related work on lip-based biometrics, event-
+based classification, and cross-scene identity recognition.
+Section III details the proposed event-based visual speaker
+recognition framework. Section IV describes the design and
+collection of the event-based lip-motion dataset DVSpeaker.
+Section V presents comprehensive experimental evaluations.
+Finally, Section VI concludes the paper and discusses future
+research directions.
+II. RELATED WORKS
+A. Lip-based Biometrics
+Early studies established the feasibility of lip biometrics
+by demonstrating the uniqueness and long-term stability of
+physiological lip characteristics [3]. Subsequent research has
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+3
+primarily focused on static physiological features, with partic-
+ular emphasis on lip texture and geometric properties. These
+studies typically relied on strong prior knowledge for feature
+learning, such as Zernike-based geometric descriptors [13] and
+sparse coding of local texture patches [1]. This trend extends
+to recent deep learning approaches, which often retain explicit
+priors by integrating handcrafted geometric measurements into
+probabilistic neural networks [25] or employing structured
+texture enhancement guided by Gabor-like filtering in spiking
+neural networks (SNNs) [26].
+Lip motion has been explored as an identity cue since the
+1990s [14]. However, due to the strong coupling between
+motion and appearance, most approaches jointly model static
+and dynamic cues. Representative methods include spatiotem-
+poral descriptors based on three orthogonal planes [15], video-
+based authentication pipelines that learn motion and appear-
+ance jointly [10], and dual-stream architectures that explicitly
+separate motion and appearance pathways [18]. While studies
+consistently show that behavioral cues are more discriminative
+and robust to background interference than physiological fea-
+tures [12], [19], [20], most existing end-to-end models fuse
+them indiscriminately [8], [10], [18], potentially obscuring
+the explicit exploitation of identity-relevant motion patterns.
+Recently, feature disentanglement works [2] have advanced
+this field by explicitly disentangling static identity, dynamic
+identity, and content features, validating the necessity of
+focused motion analysis.
+While the aforementioned methods rely on conventional
+frame-based cameras, event cameras use asynchronous sens-
+ing with microsecond-level temporal resolution, making them
+uniquely suited to capturing fine-grained lip motion. Moreira et
+al. [19] presented the first study on event-based VSR, demon-
+strating that speech-induced facial dynamics captured by event
+streams can encode discriminative identity information. Their
+method models short-term facial motion patterns over the full
+face and validates the effectiveness of dynamic cues for iden-
+tity recognition. However, the approach is limited to controlled
+(i.e., fixed viewpoints and illumination) acquisition conditions
+and relies on full-face information rather than localized lip
+motion, leading to more data consumption and a higher risk
+of privacy leakage.
+B. Event-based Classification
+Due to the sparse and asynchronous nature of event camera
+outputs, event-based classification requires dedicated process-
+ing pipelines that differ fundamentally from those designed
+for dense frame-based data. Existing event-based classification
+methods can be broadly grouped into four representative
+paradigms.
+One line of work directly processes raw event streams
+using SNN, which is biologically inspired and naturally suited
+to sparse temporal signals through spike-based computation.
+Representative studies include Signed-SGRU for event-based
+lip reading [27], which models temporal dynamics in an end-
+to-end manner, and SpikePoint [28], which performs efficient
+action recognition by learning directly from event point clouds
+without event-to-frame conversion. Despite their conceptual
+alignment with neuromorphic sensing, SNN-based approaches
+often suffer from training instability and convergence difficul-
+ties due to their discrete computation mechanisms [29].
+Another line of work converts event streams into dense
+representations (e.g., event frames), enabling the reuse of
+mature CNNs architectures. Early work, such as HOTS [30],
+constructs hierarchical time-surfaces to progressively abstract
+local spatiotemporal patterns, while TORE volumes [31] pre-
+serve fine-grained temporal ordering by maintaining per-pixel
+first-in-first-out histories of recent events. Although simple
+and effective, those representations typically assign equal
+importance to all events, which can amplify sensor noise,
+blur informative structures, and weaken the intrinsic sparsity
+advantage of event data.
+Graph-based methods model events as vertices in spatiotem-
+poral graphs, with edges defined by neighborhood relation-
+ships to explicitly encode local dependencies. For example,
+EGST [32] constructs event graph sequences for efficient
+gait recognition, while hypergraph-based models [33] further
+enhance spatiotemporal feature fusion through attention mech-
+anisms. However, graph construction is inherently sensitive
+to noise, as spurious events may introduce redundant or
+misleading vertices and edges.
+Finally, point-cloud-based approaches interpret events as 3D
+points in the spatiotemporal dimension and adopt voxelization
+or point-based learning strategies from 3D vision. Methods
+such as [34] model event streams as spatiotemporal point
+clouds and apply PointNet++ for hierarchical feature extrac-
+tion, while multi-granularity voxel representations are explored
+in [29] to capture complementary spatial and temporal cues.
+Nevertheless, voxelization and discretization inevitably intro-
+duce quantization errors that may be detrimental to preserving
+subtle, fine-grained motion patterns.
+C. Cross-scene Identity Recognition
+Next, we elaborate on the differences of the following
+identity recognition protocols:
+1) Matched-scene: Training and testing conditions are iden-
+tical;
+2) Cross-scene: Training occurs under controlled conditions,
+while testing takes place in previously unseen scenes.
+Comparatively, cross-scene identity recognition is a practical
+yet challenging scenario that demands robust identity represen-
+tations invariant to substantial variations in acquisition condi-
+tions. Cross-scene identity recognition has been widely studied
+in face recognition research and is increasingly explored in
+other biometric research, such as gait-based identification.
+Existing cross-scene face recognition approaches can be
+broadly categorized into three representative directions: (1)
+Prior-driven methods: these methods, such as Deep Lambertian
+Networks [35] and PAM [36], rely on explicit physical or
+geometric priors to mitigate the effects of illumination and
+viewpoint variations. While effective when their underlying
+assumptions are satisfied, such works typically struggle to
+generalize when test conditions deviate from the assumed
+models. (2) Generative data augmentation-based strategies:
+Methods such as DR-GAN [37] and TP-GAN [38] enhance
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+4
+generalization by synthesizing identity-preserving samples un-
+der different poses and lighting conditions. However, gener-
+ating sufficiently realistic and diverse samples remains chal-
+lenging, and identity fidelity and training stability are not
+always guaranteed. (3) Geometry-based normalization using
+3D morphable models [39], [40]: these works mitigate pose
+and illumination effects by fitting 2D faces into a unified 3D
+space. However, accurate 3D fitting is fragile in practice under
+large pose variations, occlusion, or low-quality inputs, and
+the representational capacity of 3D models remains limited.
+Moreover, with the rapid development of deepfake technolo-
+gies [2], acquiring or forging static facial images has become
+increasingly inexpensive, raising growing security concerns.
+Gait-based identity recognition naturally involves varying
+viewpoint scenarios, as subjects frequently move through dif-
+ferent sensing angles. However, most gait studies assume that
+data from diverse conditions are available during the learning
+phase, which differ fundamentally from cross-scene identity
+recognition that demands generalization to strictly unseen
+conditions. To the best of our knowledge, GaitSpike [41]
+and [42] are among the few works that strictly adopt a
+cross-scene setting. GaitSpike addresses view variation by
+leveraging event-based vision and encoding gait dynamics in
+a floating polar coordinate system centered at the subject’s
+motion center, which normalizes viewpoint-induced geometric
+changes and yields view-invariant motion patterns [41]. Wu
+et al. [42] tackle the same problem from a learning-based
+perspective by systematically training deep CNNs on multi-
+view gait data with similarity learning, enabling the model to
+map gait sequences captured from different camera angles into
+a shared view-invariant feature space suitable for cross-scene
+matching.
+In the domain of lip-based identity recognition, the major-
+ity of existing works are restricted to matched-scene proto-
+cols [16], [17], [22], [23] and address scene variations typically
+by covering all scene conditions during the matched-scene
+training. For example, DynamicLip [17] and LipAuth [16]
+jointly train on diverse illumination, device, and pose con-
+ditions, explicitly exposing the model to all expected varia-
+tions. Alternative sensing modalities, such as acoustic-based
+Lippass [22] and radar-based Lip-TWUID [23], circumvent
+the visual cross-scene challenge by adopting sensors that are
+inherently invariant (or less sensitive) to illumination or view-
+points. However, these methods introduce new constraints such
+as sensitivity to environmental noise or dynamic reflectors.
+Furthermore, public datasets such as OuluVS2 [43] primarily
+support multi-view lipreading [44], [45] rather than cross-
+scene identification. To date, the stricter cross-scene protocol
+has not been investigated in lip-based VSR research.
+In this paper, we address this gap by targeting cross-scene
+recognition, which evaluates robustness to environmental shifts
+more rigorously than existing matched-scene [16], [17], [22],
+[23] protocols. It is particularly important in realistic de-
+ployment scenarios where repeatedly collecting data across
+diverse conditions is costly or impractical, and where future
+operating environments cannot be exhaustively anticipated.
+Despite its practical relevance, this challenging configuration
+remains largely unexplored in current biometric research.
+III. METHODOLOGY
+This section details NeuroLip, an end-to-end spatiotemporal
+learning framework designed for cross-scene lip motion VSR.
+NeuroLip operates directly on raw event streams and is explic-
+itly designed to address the challenges of event representation
+mismatch and environmental variance discussed previously.
+Fig. 2 depicts the overview of the proposed framework, which
+is structured into four integrated stages:
+1) Preprocessing: Performs event-level denoising to suppress
+spurious events and applies robustness augmentation to
+mitigate the impact of scene variations and noise.
+2) Temporal-aware Voxel Encoding: Bridges the modal-
+ity gap by transforming sparse, asynchronous events
+into dense, information-rich tensors, preserving key spa-
+tiotemporal cues via learnable temporal allocation (LTA),
+local spatial aggregation (LSA), and temporal channel
+reweighting (TCR).
+3) Structure-aware Spatial Enhancer: Refines voxelized fea-
+tures to reduce redundancy and strengthens spatial rep-
+resentations through a channel compression layer (CCL)
+and direction-aware spatial smoothing (DSS).
+4) Classification and PCR: Feeds refined features into a
+modified ResNet34 backbone and incorporates Polarity
+Consistency Regularization to explicitly retain motion-
+direction information carried by event polarities.
+The specific design of each component is detailed below.
+A. Preprocessing
+Raw event streams inherently contain background noise,
+especially under low illumination conditions where spurious
+events surge due to sensor noise. The preprocessing stage aims
+to improve the signal-to-noise ratio and enhance model gen-
+eralization through two key operations: event-level denoising
+and robustness augmentation. Importantly, denoising is applied
+directly to the raw event stream rather than reconstructed
+frames to prevent noise amplification during densification.
+Additionally, augmentation is strictly confined to the training
+phase to ensure unbiased evaluation.
+A raw event stream consisting of N events is defined as
+E = {ei = (xi, yi, ti, pi) | i = 1, 2, . . . , N},
+(1)
+where (xi, yi) ∈Z2 represent the spatial coordinates of event
+ei on the sensor array, ti ∈R+ denotes the timestamp
+expressed in microseconds, and pi ∈{−1, +1} is the polarity
+indicating a decrease or increase of brightness in the sensing
+environment.
+1) Event-level denoising: Thermal noise or ambient illu-
+mination fluctuations [46] often trigger isolated events that
+disrupt the spatiotemporal coherence of motion patterns. Mo-
+tivated by this observation, we employ a spatiotemporal filter
+that retains an event only if it possesses at least one distinct
+neighbor within a local 4-connected spatial neighborhood and
+a temporal window of tf = 10 ms. This threshold effectively
+balances noise suppression with the preservation of valid
+motion signals.
+We define the set of 4-connected spatial neighbors as
+N(xi, yi) = {(xi ± 1, yi), (xi, yi ± 1)}.
+(2)
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+5
+Fig. 2. An overview of NeuroLip: The pipeline converts raw events into discriminative features via four cascaded stages.
+Accordingly, the denoised stream Eden is formulated as
+Eden =
+n
+ei ∈E
+ ∃ej ∈E, j ̸= i, (xj, yj) ∈N(xi, yi),
+|tj −ti| < tf
+o
+.
+(3)
+Notably, we do not impose a polarity constraint on ej:
+neighbors of either polarity serve as valid evidence of local
+spatiotemporal activity.
+2) Robustness augmentation: To mitigate overfitting and
+improve robustness against viewpoint and illumination vari-
+ations, we apply three augmentation strategies exclusively
+during the training phase. Unless otherwise specified, these
+operations are applied sequentially: spatial translation, hori-
+zontal mirroring, and event sparsification.
+a) Spatial translation:
+We introduce random spatial
+translation to simulate a minor viewpoint shift. Spatial offsets
+are sampled from a uniform distribution U(−20, 20) over the
+interval [−20, 20], i.e., ∆x, ∆y ∼U(−20, 20). Accordingly,
+the spatially shifted event stream Eshift retains only those events
+that fall within the valid sensor resolution (W, H):
+x′
+i = xi + ∆x,
+y′
+i = yi + ∆y,
+(4)
+Eshift = {(x′
+i, y′
+i, ti, pi) | 0 ≤x′
+i < W, 0 ≤y′
+i < H}.
+(5)
+b) Horizontal mirroring: We apply horizontal mirroring
+with a probability of 0.5 to simulate symmetric lip motions.
+The coordinates are transformed as:
+x′′
+i =
+(
+W −1 −x′
+i,
+if u < 0.5,
+x′
+i,
+otherwise,
+(6)
+where u ∼U(0, 1) is a random variable sampled from a
+uniform distribution. This yields the mirrored set Eflip =
+{(x′′
+i , y′
+i, ti, pi)}. Any events falling outside the sensor bound-
+aries post-transformation are discarded.
+c) Event sparsification: To simulate the sparsity charac-
+teristic of low-light conditions, we randomly discard a portion
+of events from the processed stream Eflip. We sampled a
+drop ratio r ∼U(0.4, 0.7) and determine the target count
+T = ⌊N ′(1 −r)⌋, where N ′ = |Eflip|. The final augmented
+stream Eaug is obtained by uniformly sampling T events from
+Eflip without replacement:
+Eaug ⊂Eflip,
+|Eaug| = T.
+(7)
+To prevent excessive information loss that might erase critical
+motion cues, this sparsification step is applied to only 30%
+of the training samples. We tune the sparsification probability
+on the validation split and find that applying it to 30% of
+training samples yields the best trade-off: higher probabilities
+over-sparsify inputs and degrade performance, while lower
+probabilities provide insufficient robustness gain.
+B. Temporal-aware Voxel Encoding
+This section details the proposed TVE, which transforms
+sparse, asynchronous events into a dense voxel tensor. This
+encoding is explicitly designed to preserve fine-grained tempo-
+ral dynamics, polarity information, and local spatial continuity,
+thereby maximizing information extraction from the raw event
+data.
+1) Time normalization: To eliminate dependency on the
+variable recording duration, we first normalize the event times-
+tamps to the range [0, 1]:
+tnorm
+i
+= ti −t1
+tT −t1
+.
+(8)
+where t1 and tT denote the first (i = 1) and last (i = T)
+timestamps in the sequence, respectively.
+2) Learnable temporal allocation: Voxelization is a widely
+used event representation technique that maps continuous
+asynchronous events into discrete grid-based structures. Stan-
+dard voxelization typically discretizes the time domain into
+fixed temporal bins, accumulating event polarity counts within
+each bin to form a dense representation. However, most
+existing approaches discard fine-grained temporal information
+by hard-assigning each event to a single specific temporal
+bin, thereby quantizing the continuous timestamps. To address
+this quantization loss, we adopt learnable temporal allocation.
+Instead of a hard assignment, LTA allows each event to
+contribute to multiple temporal bins via learnable weights,
+thereby preserving fine-grained temporal dynamics. Let B
+denote the number of temporal bins. We first compute the
+temporal offset of each event ei with respect to the starting
+point of each bin:
+∆ti,b = tnorm
+i
+−b −1
+B
+,
+b ∈{1, . . . , B}.
+(9)
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+6
+Next, we determine the allocation weights wi,b, representing
+the contribution of event ei to bin b, using a lightweight two-
+layer multilayer perception (MLP):
+wi,b = MLP(s · ∆ti,b, b) ,
+(10)
+where s ∈R is a learnable scaling parameter that modulates
+the sensitivity to temporal offsets. Specifically, a larger s am-
+plifies small offsets, resulting in sharper temporal responses,
+where a smaller s encourages smoother weight distribution
+across temporal bins. The allocation weights are produced
+by a lightweight two-layer MLP that takes (s∆ti,b, b) as
+input, uses a 32-unit hidden layer with ReLU, and outputs
+a scalar weight. This pointwise regressor is chosen to keep
+the encoder parameter- and compute-efficient while remain-
+ing flexible enough to approximate common temporal inter-
+polation kernels. Note that MLP can also be implemented
+using other pointwise mapping methods such as CNN-based
+encoders. The explicit inclusion of the bin index b enables
+bin-dependent temporal allocation, allowing different temporal
+bins to emphasize distinct phases of motion dynamics without
+introducing any spatial coupling.
+Based on the computed allocation weights wi,b for all
+events, we perform LSA to construct the dense voxel tensor.
+We spatially aggregate the weighted contribution of events into
+2B feature maps, explicitly separating positive and negative
+polarities. Specifically, for each polarity p ∈{+1, −1} and
+temporal bin b, the pixel value at spatial coordinate (x, y)
+is obtained by summing the allocation weights of all valid
+events located at that position. This process yields a final
+dual-polarity voxel tensor V ∈R2B×H×W . By using learned
+weights rather than binary counts, this aggregation strategy
+embeds precise sub-bin temporal dynamics directly into the
+feature magnitude, preventing the loss of fine-grained motion
+cues typical in standard voxelization.
+3) Local spatial aggregation: Event streams exhibit strong
+spatial correlations across adjacent pixels, where meaningful
+structures such as lip contours arise from local continuity
+rather than isolated pixels. To exploit such dependencies,
+we incorporate an LSA during voxelization. Specifically, we
+update each voxel by accumulating values from its immedi-
+ate 2-connected neighborhood, thereby reinforcing structural
+connectivity:
+Vc,y,x = Vc,y,x + Vc,y+1,x + Vc,y,x+1,
+(11)
+where c ∈{1, · · · , 2B} denotes the channel index and out-of-
+bound indices are discarded.
+By aggregating only a targeted subset of neighbors (asym-
+metric offsets), this design effectively captures local spatial
+continuity while avoiding the excessive blurring and redundant
+accumulation associated with a larger, symmetric smoothing
+kernel.
+4) Temporal channel reweighting: Different temporal bins
+may contribute unequally to identity discrimination. To ad-
+dress this, we introduce TCR to adaptively emphasize infor-
+mative temporal bins while suppressing redundant or noisy
+ones.
+First, we perform Global Average Pooling (GAP) over each
+W × H feature map, compressing the spatial dimensions of
+the voxel tensor V ∈R2B×H×W into a channel descriptor
+z ∈R2B by aggregating global spatial context. Since the
+channel dimension corresponds to temporal bins and polarities,
+this descriptor z effectively represents an ordered temporal
+sequence of the lip motion intensity. Next, we apply a 1D
+convolution Conv1d(·) (kernel size of 1 in our experiments)
+to capture local interactions between adjacent temporal bins,
+followed by a Sigmoid activation to generate attention cali-
+bration weights:
+ach = σ(Conv1d(GAP(V ))) ∈R2B,
+(12)
+where σ denotes the Sigmoid function. Finally, the original
+voxel features are recalibrated via channel-wise multiplication
+⊙:
+V att = V ⊙ach.
+(13)
+By learning global correlations among polarity-aware temporal
+bins, TCR effectively highlights critical motion phases with-
+out altering spatial resolution or introducing heavy temporal
+convolutions.
+C. Structure-aware Spatial Enhancer
+Although V att is dense, it may still retain channel redun-
+dancy and localized spatial anomalies caused by residual noise.
+The SSE addresses these issues by refining the spatial repre-
+sentations through two sequential steps: channel compression
+and direction-aware spatial smoothing.
+1) Channel compression layer: The voxel tensor V att pro-
+duced by TVE contains 2B channels, explicitly separates tem-
+poral bins and polarities, which may introduce inter-channel
+redundancy. To distill a compact yet expressive representation
+for spatial enhancement, we first employ a CCL.
+Specifically, we apply a pointwise 1 × 1 convolution
+Conv1×1(·) to linearly project the high-dimensional channel
+features into a lower-dimensional space:
+V comp = Conv1×1(V att) ∈RC×H×W .
+(14)
+This operation reduces the channel dimensionality from 2B to
+C, facilitating the fusion of information across different tem-
+poral bins and polarities. Empirically, this reduction achieves
+an optimal trade-off between preserving discriminative lip-
+motion cues and suppressing task-irrelevant noise. Distinct
+from the attention-based TCR module, this layer focuses
+on per-pixel channel mixing and dimensionality reduction,
+thereby improving computational efficiency for the subsequent
+spatial smoothing stage.
+2) Direction-aware spatial smoothing: In lip motion analy-
+sis, vertically structured cues such as lip opening and closing
+boundaries are typically more informative than purely hori-
+zontal variations. To preserve these critical vertical structures
+while suppressing high-frequency horizontal noise, we intro-
+duce DSS.
+Specifically, we apply a depthwise 1D convolution along the
+horizontal axis of the feature map. By operating independently
+on each channel, this step smooths horizontal fluctuations
+without blurring the informative vertical structural continuity.
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+7
+The smoothed features are then normalized and activated to
+stabilize training and enhance non-linearity:
+V smooth = ReLU(BatchNorm(DWConv1d(V comp))) ,
+(15)
+where DWConv1d(·) denotes a depthwise 1D convolution
+with a kernel size of 3 and zero-padding of size 1, applied
+exclusively along the horizontal dimension. We set the kernel
+size to 3 with padding 1 to perform the smallest effective
+local smoothing while preserving the feature map resolution.
+This helps suppress high-frequency horizontal noise without
+excessively blurring the vertically structured lip boundaries,
+and keeps the operation lightweight.
+Following spatial smoothing, we employ a channel-wise
+attention mechanism to adaptively recalibrate the feature chan-
+nels based on their enhanced structural saliency. Similar to the
+TCR module, we use GAP followed by a 1D convolution to
+generate channel-wise attention weights:
+asp = σ(Conv1d(GAP(V smooth))) ,
+(16)
+V enh = V smooth ⊙asp.
+(17)
+Here, asp ∈RC represents the learned importance of each
+smoothed channel. This results in the final refined tensor
+V enh ∈RC×H×W , which effectively encodes spatiotemporal
+features with enhanced structural saliency.
+D. Classification and PCR
+This stage performs identity classification using a modified
+ResNet34 backbone, augmented with PCR. While deep net-
+works excel at extracting semantic features, repeated spatial
+aggregation and channel mixing in SSE risk dilute the low-
+level polarity cues that encode precise motion direction. PCR
+is designed to counter this by enforcing enhanced feature
+representations that retain polarity distributions consistent with
+the original SSE input.
+1) Polarity consistency regularization: To estimate the pre-
+served polarity information, we employ a lightweight convo-
+lutional reconstruction head that maps the enhanced features
+Venh back to a dual-channel polarity map R ∈R2×H×W ,
+corresponding to negative and positive polarities. To ensure
+sufficient representational capacity for this mapping, we utilize
+a two-layer CNN structure: features are first projected to a
+higher-dimensional space to capture richer interactions, and
+then mapped to the target 2-channel polarity output:
+R = Conv2d(ReLU(Conv2d(V enh))),
+(18)
+where Conv2d denotes a standard 2D convolution. We adopt
+a two-layer CNN as a minimal reconstruction head: a single
+convolution is often insufficient to recover polarity patterns
+after channel mixing and smoothing, while deeper heads
+add unnecessary parameters and may overfit. The expansion-
+compression design provides enough capacity to model local
+interactions and then project to the required 2-channel polarity
+map. This expansion-compression design enhances the head’s
+ability to recover fine-grained polarity details from the com-
+pressed feature space.
+We derive the reference tensor ¯R ∈R2×H×W by averaging
+the polarity-specific temporal channels from the initial voxel
+encoding V att. Let α ∈{0, 1} index the negative and positive
+polarity partitions of V att, respectively. The reference map is
+computed as:
+¯R[α, y, x] = 1
+B
+B
+X
+i=1
+V att[αB + i, y, x].
+(19)
+Since absolute event magnitude can vary significantly with
+illumination, we focus on preserving the spatial distribution
+of polarity rather than absolute intensity. We apply spatial
+normalization to both the reconstructed and reference polarity
+maps:
+Rnorm[α, y, x] =
+R[α, y, x]
+P
+y,x R[α, y, x],
+(20)
+¯Rnorm[α, y, x] =
+¯R[α, y, x]
+P
+y,x ¯R[α, y, x].
+(21)
+The PCR loss is then defined as the ℓ1 distance between these
+normalized distributions:
+lpcr =
+1
+2HW
+X
+α,y,x
+Rnorm[α, y, x] −¯Rnorm[α, y, x]
+ .
+(22)
+By minimizing lpcr, the network is encouraged to preserve
+polarity-aware motion information in the learned features.
+2) ResNet34 backbone and total loss: ResNet34 was orig-
+inally designed for 3-channel RGB images and employs
+aggressive early downsampling, which risks discarding the
+fine-grained motion cues critical for event-based analysis. To
+adapt the backbone for our enhanced event representations,
+we intr
+
+[…middle truncated for length…]
+
+nce distortion.
+Despite these advancements, the extreme SI-90◦condition
+remains a formidable challenge for all evaluated methods,
+including ours. The drastic geometric distortion and severe
+self-occlusion inherent in orthogonal viewpoints significantly
+disrupt observable lip motion patterns, leading to uniformly
+low performance across the board. This finding underscores
+that large-angle generalization remains an open and largely
+unsolved problem in lip-based VSR, necessitating further re-
+search into invariant representation learning across both event-
+based and RGB video-based approaches.
+Additionally, we observe that video-based action recog-
+nition methods consistently achieve high accuracy under
+matched-scene conditions (with most exceeding 99%). How-
+ever, both video-based and event-based approaches suffer
+sharp performance degradation in cross-scene settings due to
+geometric distortion and feature distribution shift. Specifically,
+under the low-light condition (II-0◦), many generic event-
+based methods exhibit a significant performance drop. This
+is likely attributable to their sensitivity to increased sensor
+noise and the substantial reduction of valid events under low
+illumination, which complicates reliable identity inference in
+highly noisy regimes. In contrast, by leveraging a carefully de-
+signed polarity-sensitive spatiotemporal representation (TVE
+and SSE), our method effectively suppresses spurious noise
+while enhancing weak signals, thereby achieving superior
+robustness in these challenging scenarios.
+D. Few-Shot Domain Adaptation
+In practice, collecting sufficient training data under all po-
+tential conditions is often costly or infeasible. While the cross-
+scene protocol evaluated in the previous sections represents
+a zero-shot domain generalization setting (where the target
+distribution is entirely unseen), practical deployment often
+allows for minimal calibration. To address the challenging
+zero-shot setting and enhance the cross-scene performance, we
+evaluate few-shot domain adaptation. It builds upon the cross-
+scene protocol and permits only a few target-scene samples
+for post-training adaptation, making it a practical extension
+of cross-scene evaluation. Specifically, we fine-tune the model
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+11
+TABLE IV
+COMPARISON WITH REPRODUCED RELATED WORKS ON THE DVSPEAKER BENCHMARK UNDER MATCHED-SCENE AND CROSS-SCENE CONDITIONS
+Method
+#Subjects
+Mode
+Backbone
+Representation
+Matched-scene
+Cross-scene (Train = SI-0◦)
+SI-0◦
+SI-45◦
+SI-90◦
+II-0◦
+SI-45◦
+SI-90◦
+II-0◦
+EgoEvGesture [55]
+50
+Dyn.+Sta.
+ResNet
+Event Surfaces
+80.70
+83.90
+83.60
+71.60
+3.92
+3.02
+2.04
+MTGA [56]
+50
+Dyn.+Sta.
+Transformer
+Frame+Graph
+93.85
+97.58
+96.98
+94.56
+27.60
+3.20
+30.00
+SpikGRU2+ [27]
+50
+Dyn.+Sta.
+Spiking GRU
+Raw
+88.40
+87.50
+94.40
+85.50
+23.70
+5.60
+3.10
+ANN [27]
+50
+Dyn.+Sta.
+BiGRU
+Frame
+93.30
+92.40
+96.60
+81.80
+37.50
+4.60
+12.62
+Get [57]
+50
+Dyn.+Sta.
+Transformer
+Group Token
+100.00
+100.00
+99.60
+99.80
+50.10
+5.70
+37.30
+MSTP [29]
+50
+Dyn.+Sta.
+ResNet
+Frame
+99.80
+99.40
+99.10
+99.80
+2.40
+3.60
+3.90
+EV-Gait [58]
+50
+Dyn.+Sta.
+CNN
+Frame
+100.00
+100.00
+100.00
+100.00
+8.20
+2.10
+4.00
+EST [59]
+50
+Dyn.+Sta.
+VGG
+Spike Tensor
+100.00
+99.90
+100.00
+100.00
+51.86
+5.02
+1.98
+Uniformerv2 [60]
+50
+Dyn.+Sta.
+Transformer
+Frame
+35.00
+51.90
+40.60
+25.60
+9.50
+4.50
+4.30
+Tanet [61]
+50
+Dyn.+Sta.
+ResNet
+Frame
+99.80
+99.90
+99.80
+99.90
+20.20
+2.90
+47.30
+Timesformer [62]
+50
+Dyn.+Sta.
+Transformer
+Frame
+95.00
+97.50
+96.60
+89.90
+17.30
+3.00
+32.30
+Tin [63]
+50
+Dyn.+Sta.
+ResNet
+Frame
+100.00
+100.00
+99.80
+99.40
+17.20
+4.30
+41.70
+Slowfast [64]
+50
+Dyn.+Sta.
+ResNet
+Frame
+99.90
+99.80
+99.20
+100.00
+50.20
+3.90
+28.40
+Slowonly [64]
+50
+Dyn.+Sta.
+ResNet
+Frame
+100.00
+100.00
+99.90
+100.00
+26.90
+5.30
+49.40
+Tsm [65]
+50
+Dyn.+Sta.
+ResNet
+Frame
+99.90
+99.50
+99.90
+99.90
+19.30
+5.50
+43.80
+R2plus1d [66]
+50
+Dyn.+Sta.
+ResNet
+Frame
+100.00
+99.90
+100.00
+100.00
+25.10
+3.70
+60.40
+Trn [67]
+50
+Dyn.+Sta.
+Inception
+Frame
+97.90
+99.30
+99.80
+97.90
+17.30
+4.20
+27.70
+C2d [68]
+50
+Dyn.+Sta.
+ResNet
+Frame
+99.80
+98.90
+99.10
+100.00
+20.30
+5.10
+67.40
+Tsn [69]
+50
+Dyn.+Sta.
+ResNet
+Frame
+100.00
+100.00
+100.00
+100.00
+26.00
+4.50
+19.60
+C3d [70]
+50
+Dyn.+Sta.
+CNN
+Frame
+100.00
+100.00
+100.00
+100.00
+11.70
+2.30
+66.70
+NeuroLip (Ours)
+50
+Dyn.+Sta.
+ResNet
+Weighted Voxel
+100.00
+100.00
+100.00
+100.00
+71.68
+3.64
+75.94
+TABLE V
+FEW-SHOT DOMAIN ADAPTATION PERFORMANCE (PRE-TRAINED ON SI-0◦)
+Few-shot Setting
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+SI-0◦→SI-45◦
+83.99
+92.92
+97.10
+96.58
+94.97
+98.64
+98.84
+96.59
+96.31
+97.91
+SI-0◦→II-0◦
+93.98
+96.45
+98.08
+98.60
+96.11
+97.13
+99.42
+97.87
+97.58
+98.67
+pre-trained on SI-0◦using a varying number of samples (K-
+shots) from two typical target conditions: SI-45◦and II-0◦.
+As shown in Table V, NeuroLip exhibits rapid adaptation
+capabilities across both target conditions. For SI-45◦, transi-
+tioning from zero-shot to one-shot yields an immediate abso-
+lute gain of 12.31%, boosting accuracy to 83.99%. With two
+shots, the accuracy exceeds 90%. Performance continues to
+rise, peaking at 98.84% with seven shots. When the number of
+shots increases to 8–10, the accuracy exhibits mild fluctuations
+without further consistent improvement.
+For the SI-0◦→II-0◦setting, NeuroLip demonstrates even
+stronger few-shot adaptation performance. One-shot fine-
+tuning already achieves a high accuracy of 93.98%, which is
+significantly higher than the one-shot performance on SI-45◦
+(83.99%), indicating NeuroLip’s better intrinsic adaptation to
+insufficient illumination variations. Two-shot adaptation im-
+proves accuracy to 96.45%, and three-shot adaptation further
+raises it to 98.08%. The performance peaks at 99.42% with
+seven shots, representing the highest accuracy across all K-
+shot settings for II-0◦. Similar to the SI-45◦setting, 8–10 shots
+show slight fluctuations (97.58%–98.67%) without continuous
+gains.
+These results demonstrate that NeuroLip offers a highly
+effective middle ground for deployment. By utilizing as few as
+1–2 adaptation samples, the system can recover near-matched-
+scene performance on both SI-0◦→SI-45◦and SI-0◦→II-0◦
+conditions, providing a practical and cost-efficient solution
+that circumvents the need for exhaustive data collection from
+multiple conditions.
+E. Ablation Studies
+In this section, we present a comprehensive quantitative
+analysis to assess the impact of key factors on lip-motion-
+based VSR performance. Specifically, we investigate the con-
+tributions of individual framework components, the sensitivity
+to hyperparameters (PCR strength λ and compressed channel
+dimension C), and the influence of spoken content and training
+sample size.
+1) Impact of LTA, SSE, and PCR: To examine the contri-
+bution of each key component in the proposed framework, we
+conduct a systematic evaluation on DVSpeaker. The full model
+incorporates all proposed modules, including TVE with LTA,
+SSE, and PCR. We define three ablated variants to isolate the
+functional role of specific modules:
+• Model A (w/o LTA): Replaces the LTA in the TVE
+stage with a fixed, non-adaptive temporal kernel. This
+variant evaluates the importance of data-driven temporal
+weighting.
+• Model B (w/o SSE&PCR): Removes both the SSE mod-
+ule and the PCR loss. This variant serves as a baseline
+to access the combined effect of spatial refinement and
+polarity preservation mechanism.
+• Model C (w/o PCR): Retains SSE but removes PCR
+loss. Comparing Model C with the full model allows us
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+12
+to isolate the specific gain attributed to polarity-aware
+regularization.
+TABLE VI
+COMPONENT-WISE ANALYSIS RESULTS ON DVSPEAKER
+Model
+Test Conditions (Accuracy %)
+(trained on SI-0◦)
+SI-45◦
+II-0◦
+SI-0◦
+Full model
+71.68
+75.94
+100.00
+Model A
+69.22
+73.72
+99.90
+Model B
+71.36
+64.02
+99.90
+Model C
+69.44
+77.84
+100.00
+All models are trained exclusively on the SI-0◦condition
+and evaluated on the matched SI-0◦condition as well as the
+unseen SI-45◦and II-0◦conditions to test cross-scene general-
+ization. As shown in Table VI, the full model achieves the most
+balanced performance across evaluation conditions, indicating
+that the proposed components contribute in a complementary
+manner. Notably, all models perform well under the matched
+SI-0◦condition, as identity-relevant lip-motion patterns are
+consistently observed and the input distribution remains stable,
+rendering the task less sensitive to component differences.
+Model A exhibits degraded performance under cross-scene
+settings, suggesting that replacing LTA with a fixed kernel lim-
+its the model’s ability to adaptively capture identity-relevant
+temporal dynamics of lip motion.
+Model B achieves comparable performance under the SI-
+45◦condition but suffers a significant degradation under II-
+0◦. In the absence of the SSE and PCR, fine-grained local lip
+details are insufficiently preserved. Under low illumination, the
+increased spurious noise further obscures these subtle struc-
+tures, making them more susceptible to being overwhelmed.
+In contrast, sufficient illumination exhibits reduced noise,
+combined with TVE, still allows the model to exploit relatively
+stable behavioral cues, leading to improved performance under
+SI-45◦.
+Model C achieves the highest accuracy under II-0◦yet
+underperforms under SI-45◦. This can be attributed to the
+removal of PCR. Under low-illumination conditions, event
+cameras generate a substantially higher level of spurious
+events, whose polarities are largely dominated by sensor noise
+rather than meaningful motion cues. As a result, enforcing
+polarity reconstruction by PCR may introduce supervision sig-
+nals that are weakly correlated with identity-related informa-
+tion. Removing PCR effectively eliminates this noise-induced
+supervision, leading to improved performance under II-0◦.
+Conversely, under the SI-45◦condition, the absence of polarity
+constraints becomes detrimental. Polarity information encodes
+critical motion direction cues that remain relatively stable
+across viewpoint changes. Without PCR, the model relies more
+heavily on the fine-grained spatial details emphasized by the
+SSE module. Since these spatial details are highly susceptible
+to geometric distortion under viewpoint change, the model’s
+discriminability degrades under SI-45◦, highlighting the essen-
+tial role of PCR in stabilizing representations against viewpoint
+variations.
+Overall, these results indicate that the full model achieves
+a favorable balance between discriminative power under
+Fig. 5. Impact of λ (a) and C in CCL (b).
+matched conditions and robustness to cross-scene variations,
+benefiting from the complementary contributions of TVE,
+SSE, and PCR.
+2) Impact of PCR strength λ: The parameter λ in Eq. (23)
+controls the strength of the lpcr, with larger values enforcing
+stronger polarity constraints. We investigate the impact of λ
+in the range of 0.01 to 0.50. As shown in Fig. 5(a), the
+recognition accuracy exhibits a clear non-monotonic trend.
+As λ increases from 0.01 to 0.05, performance improves
+steadily, peaking at 75.94% on II-0◦and 71.68% on SI-45◦.
+However, pushing λ beyond 0.05 results in a sharp drop in
+recognition accuracy between 0.05 and 0.15. For larger values
+of λ, the behavior becomes unstable with partial recovery in
+certain conditions. Notably, in this high-regularization regime,
+performance under II-0◦consistently lags behind SI-45◦, cor-
+roborating our component-wise analysis that PCR is more
+critical for handling geometric viewpoint shifts rather than
+purely illumination-based degradation.
+This phenomenon suggests a delicate balance in regulariza-
+tion strength. Insufficient regularization (small λ) fails to effec-
+tively reconstruct polarity signal, whereas excessive regulariza-
+tion (λ > 0.05) forces the optimization to prioritize low-level
+polarity reconstruction over high-level identity discrimination,
+causing the model to overfit condition-specific patterns instead
+of learning identity-relevant and generalizable behavioral cues.
+Consequently, a moderate regularization strength (λ = 0.05)
+provides the best trade-off, enabling the network to leverage
+motion-direction cues for robust cross-scene generalization
+without compromising its primary discriminative objective.
+3) Impact of compressed channel dimension C in CCL:
+We further investigate the impact of compressed channel
+dimension (C) in the CCL, which controls the compactness
+of the learned event-based identity representation. We vary C
+from 16 to 2, training on SI-0◦and evaluating on SI-45 and
+II-0. The results shown in Fig. 5(b) reveal that maintaining a
+sufficient channel capacity is crucial for cross-scene robust-
+ness. Specifically, the model achieves its peak performance at
+C = 16 (75.94% on II-0◦and 71.68% on SI-45◦). While
+some lower dimensions (e.g., C = 10 for II-0◦, C = 12
+for SI-45◦) show isolated peaks, a general downward trend
+is observed as compression increases, particularly for C less
+than 8. These results indicate that excessive channel compres-
+sion discards critical spatiotemporal and polarity-related cues
+essential for identity discrimination. Therefore, a moderately
+compact channel configuration (C = 16) is preferable to
+balance representation compactness with the preservation of
+fine-grained behavioral information.
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+13
+TABLE VII
+DIGIT-WISE RECOGNITION ACCURACY (%) VIA 5-FOLD
+CROSS-VALIDATION
+Digit
+Fold 1
+Fold 2
+Fold 3
+Fold 4
+Fold 5
+Mean ± Std
+0
+95.00
+98.00
+95.00
+98.00
+97.00
+96.60±
+2.71
+1
+91.00
+97.00
+100.00
+95.00
+100.00
+96.60±
+6.76
+2
+84.00
+85.00
+89.00
+92.00
+94.00
+88.80±
+7.74
+3
+85.00
+94.00
+90.00
+94.00
+92.00
+91.00±
+6.69
+4
+97.00
+86.00
+92.00
+96.00
+93.00
+92.80±
+7.74
+5
+97.00
+99.00
+99.00
+100.00
+99.00
+98.80±
+1.96
+6
+86.00
+89.00
+94.00
+97.00
+77.00
+88.60± 13.89
+7
+93.00
+96.00
+97.00
+98.00
+92.00
+95.20±
+4.63
+8
+88.00
+96.00
+93.00
+95.00
+97.00
+93.80±
+6.37
+9
+91.00
+92.00
+98.00
+99.00
+96.00
+95.20±
+6.37
+Mean ± Std: average accuracy and standard deviation over five folds.
+4) Impact of spoken contents: To investigate the sensitivity
+of identity recognition to spoken content, we conduct a 5-
+fold cross-validation experiment under the matched SI-0◦
+condition. As shown in Table VII, recognition accuracy varies
+across digits due to differences in articulatory characteristics.
+Digits such as ‘5’ yield higher accuracy, likely because they
+involve larger and more sustained lip movements that produce
+clearer spatiotemporal event patterns. Conversely, digits like
+‘2’ and ‘6’ exhibit lower accuracy, as their articulation relies
+more on subtle, localized lip motion, resulting in weaker
+discriminative cues in the event stream. These findings suggest
+a correlation between recognition robustness and the richness
+of articulation-induced motion: digits with more pronounced
+lip dynamics are easier to distinguish, while those with subtle
+articulation pose greater difficulty. Nevertheless, NeuroLip
+maintains stable performance across all digits, demonstrating
+that while content influences difficulty, identity-related behav-
+ioral cues remain robust beyond specific phonetic patterns.
+5) Impact of training sample size: To investigate the impact
+of training sample sizes, we evaluate performance under the
+SI-0◦matched-scene protocol by progressively increasing the
+number of training samples per subject. The sample size is
+increased in steps of 10, ensuring a balanced inclusion of all
+ten spoken digits (0–9) at each step. As shown in Table VIII,
+recognition accuracy increases rapidly at small sample sizes
+and then gradually saturates. With only 10 samples (one per
+digit) per subject, the accuracy reaches 89.01%. Increasing this
+to 20 samples per subject boosts accuracy to over 98%, and
+further increasing the sample size to 40 leads to near-perfect
+recognition. This trend suggests that while a single sample
+per digit (10 samples) provides a strong baseline, it may be
+insufficient for the model to fully disentangle intrinsic identity
+cues from specific articulation contents. However, a moderate
+number of samples (e.g., 20 samples) proves sufficient for
+NeuroLip to robustly learn stable identity-related lip-motion
+patterns, demonstrating high data efficiency.
+TABLE VIII
+IMPACT OF TRAINING SAMPLE SIZE
+Size
+10
+20
+30
+40
+50
+60
+70
+Accuracy (%)
+89.01
+98.08
+98.97
+99.33
+99.76
+99.95 100.00
+VI. CONCLUSION AND FUTURE WORK
+This paper addresses the challenging problem of lip-motion-
+based VSR under a cross-scene protocol, where models trained
+in a single controlled environment must generalize to unseen
+viewpoints and illumination conditions. To this end, we pro-
+pose NeuroLip, an event-based lip-motion-driven identification
+framework that leverages the high temporal resolution and
+polarity-aware sensing of event cameras to capture robust,
+identity-specific behavioral patterns. The proposed NeuroLip
+integrates TVE, SSE, and PCR into a unified pipeline. By
+emphasizing temporally stable behavioral cues rather than
+appearance-dependent features, the method achieves near-
+perfect performance under matched-scene conditions and sig-
+nificantly improved robustness under cross-scene evaluation.
+Extensive experiments on our newly introduced DVSpeaker
+dataset demonstrate the effectiveness of the proposed Neu-
+roLip under unseen illumination and viewpoint variations,
+while additional evaluation on the public DVSLip dataset
+verifies its generalization capability across different speaking
+content. Furthermore, comprehensive comparisons with repro-
+duced existing methods on the DVSpeaker benchmark confirm
+that our proposed NeuroLip establishes a new performance
+standard for cross-scene VSR.
+As for future work, we plan to focus on three key directions:
+First, extreme viewpoint variations remain challenging and
+may benefit from geometry-aware or view-invariant motion
+modeling. Second, extending the framework to more un-
+constrained speaking content beyond digit articulation would
+improve practical applicability. Finally, more adaptive polarity
+representation strategies may further enhance robustness under
+severe low-illumination noise.

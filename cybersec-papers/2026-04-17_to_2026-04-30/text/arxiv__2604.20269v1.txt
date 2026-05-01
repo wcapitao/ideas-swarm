@@ -1,0 +1,1112 @@
+Text Steganography with Dynamic Codebook and
+Multimodal Large Language Model
+Jianxin Gao
+jxgao@cau.edu.cn
+China Agricultural University
+Beijing, China
+Ruohan Lei
+lrh07@cau.edu.cn
+China Agricultural University
+Beijing, China
+Wanli Peng∗
+wlpeng@cau.edu.cn
+China Agricultural University
+Beijing, China
+Abstract
+With the popularity of the large language models (LLMs), text
+steganography has achieved remarkable performance. However,
+existing methods still have some issues: (1) For the white-box par-
+adigm, this steganography behavior is prone to exposure due to
+sharing the off-the-shelf language model between Alice and Bob.
+(2) For the black-box paradigm, these methods lack flexibility and
+practicality since Alice and Bob should share the fixed codebook
+while sharing a specific extracting prompt for each steganographic
+sentence. In order to improve the security and practicality, we intro-
+duce a black-box text steganography with a dynamic codebook and
+multimodal large language model. Specifically, we first construct
+a dynamic codebook via some shared session configuration and
+a multimodal large language model. Then an encrypted stegano-
+graphic mapping is designed to embed secret messages during the
+steganographic caption generation. Furthermore, we introduce a
+feedback optimization mechanism based on reject sampling to en-
+sure accurate extraction of secret messages. Experimental results
+show that the proposed method outperforms existing white-box
+text steganography methods in terms of embedding capacity and
+text quality. Meanwhile, the proposed method has achieved better
+practicality and flexibility than the existing black-box paradigm in
+some popular online social networks.
+CCS Concepts
+• Computing methodologies →Natural language generation; •
+Security and privacy →Human and societal aspects of security
+and privacy.
+Keywords
+Generative Text Steganography; Multimodal Large Language Mod-
+els; Black-box; Dynamic Codebook
+ACM Reference Format:
+Jianxin Gao, Ruohan Lei, and Wanli Peng. 2026. Text Steganography with
+Dynamic Codebook and Multimodal Large Language Model. In Proceedings
+of the 34th ACM International Conference on Multimedia (ACM Multimedia
+∗Corresponding author.
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+ACM Multimedia 2026, Rio de Janeiro, Brazil
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+2026), November 10–14, 2026, Rio de Janeiro, Brazil. ACM, New York, NY,
+USA, 9 pages.
+1
+Introduction
+Text steganography is an active research topic in the fields of infor-
+mation hiding and neural language generation (NLG). It is the art
+of embedding secret information into innocent text data, aiming
+to covertly transmit secret information between Alice (sender) and
+Bob (receiver) [2, 6, 20]. In the steganography field, the innocent
+text is named as cover text. The generated text with the secret mes-
+sage is called stego text. Due to its inherent robustness, text data has
+become an appropriate carrier for steganography in online social
+networks (OSNs), such as Ins, X, Weibo, WeChat, etc. [30, 31]. Early
+text steganography mainly relied on modifying existing text, for
+example, through synonym substitution or controlled rewriting.
+Although these methods can preserve part of the original meaning,
+they usually provide limited payload and are often vulnerable to
+linguistic or statistical detection.
+In the past decades, language models based on deep learning
+have achieved superior performance in a variety of neural language
+generation tasks. These kinds of tasks aim to generate realistic
+and plausible textual content that is indistinguishable from human-
+written text, which opens up a new research avenue for highly
+secure text steganography, namely, generative text steganography
+(GTS) [9–11, 13, 14, 16, 25, 27, 29, 30]. The paradigm of GTS can be
+formulated as follows:
+𝑇𝑠= 𝑓𝐿𝑀
+
+𝑇𝑝,𝑘,𝑔(𝑚)
+
+(1)
+where 𝑇𝑠is generated stego text. 𝑓𝐿𝑀[·] represents an off-the-shelf
+language model. 𝑇𝑝denotes a prefix or context. 𝑘is a privacy key
+shared between Alice and Bob. 𝑚is secret messages. 𝑔(·) denotes a
+steganographic mapping function that is elaborately designed to
+embed secret messages. The difficulties of GTS mainly come from
+𝑓𝐿𝑀[·] and 𝑔(·). The former inclines to cause quality reduction
+of stego text since most GTS methods generate stego texts in the
+inference phase of the off-the-shelf language models. The latter
+mainly impacts the security of the GTS method, in particular anti-
+steganalysis and statistical imperceptibility. In the GTS task, we
+need to make a satisfied trade-off between text quality and security,
+which is challenging. It is obvious that using a better language
+model 𝑓𝐿𝑀[·] can significantly boost the semantical consistency
+and fluency of generated stego texts since GTS can be regarded as
+a special text generation task under the control of secret messages.
+Although these methods substantially improved the trade-off
+among embedding capacity, text quality, and statistical security,
+they have a behavior security risk due to the white-box setting.
+Namely, in practice, Alice and Bob require sharing the off-the-shelf
+arXiv:2604.20269v1 [cs.CR] 22 Apr 2026
+
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+Your Name et al.
+language model, which is prone to exposing the steganographic be-
+havior since the deployment of a shared language model, especially
+the large language model, is a special behavior. In order to enhance
+the behavior security, Wu et al. [26] proposed an LLM-Stega based
+on prompt engineering. The main goal of this method is conceal-
+ing the steganographic behavior with the common usages of large
+language models. However, the black-box method lacks flexibility
+and practicality since it relies heavily on a shared codebook, and
+the correct extraction of different stego sentences requires different
+extraction prompts.
+To address these problems, we propose a black-box text steganog-
+raphy method with a dynamic codebook and a multimodal large
+language model (MLLM). The key idea is to use public visual context
+to support the construction of a dynamic codebook so that secret ex-
+traction no longer relies on a fixed shared codebook across different
+communication rounds. Under this framework, the MLLM serves
+not only as a generation interface but also as a synchronization
+tool between the sender and the receiver [1, 3, 15, 17]. In addition,
+we develop a feedback optimization mechanism to improve the
+reliability of codebook reconstruction and secret extraction in the
+black-box setting. As a result, the proposed method offers satisfac-
+tory practicality and flexibility while preserving strong text quality
+and embedding capacity.
+The main contributions of this paper are as follows:
+(1) We propose a black-box text steganography framework that
+constructs a dynamic codebook for each communication
+round from public image and caption context, rather than
+relying on a fixed reusable codebook.
+(2) We design a complete embedding and extraction process
+that combines dynamic codebook construction, encrypted
+message mapping, and a feedback optimization mechanism
+to support accurate recovery in a black-box setting.
+(3) We conduct extensive experiments to evaluate text quality,
+embedding capacity, statistical imperceptibility, resistance to
+steganalysis, and robustness in realistic online settings. The
+results show that the proposed method achieves a strong
+balance between practicality and performance.
+2
+Related Work
+White-box linguistic steganography. Early linguistic steganogra-
+phy mainly hid messages by editing existing text, such as synonym
+substitution or controlled rewriting [4, 5]. More recent edit-based
+work revisited this paradigm with masked language models, show-
+ing that neural editing can improve the trade-off between payload
+and imperceptibility [24]. With the development of neural lan-
+guage models, research further shifted toward generation-based
+steganography, where secret bits are embedded during token gen-
+eration. Representative examples include RNN/LSTM-based meth-
+ods [11, 29] and coding-based methods such as arithmetic coding
+and its variants [7, 31], which substantially improved the trade-off
+between text quality and embedding capacity. Another major line
+of work pursues stronger distributional security. ADG [30] embeds
+messages by adaptively grouping candidate tokens into approxi-
+mately equal-probability sets, while later methods such as Discop,
+minimum-entropy-coupling-based steganography, METEOR, and
+SparSamp [9, 10, 14, 25] further aim to preserve the original sam-
+pling distribution more faithfully. Despite their differences, these
+methods generally assume white-box access to token probabilities,
+and often require the communicating parties to share the same local
+generative model or decoding state, which limits their applicability
+in realistic API-only settings.
+Black-box linguistic steganography. As closed-source LLM ser-
+vices become increasingly prevalent, recent work has begun to
+explore black-box linguistic steganography under API or user-
+interface access. In this setting, the design focus shifts from direct
+control over token probabilities to protocol coordination through
+prompts and model outputs. Recent examples include zero-shot gen-
+erative linguistic steganography based on in-context learning [16]
+and LLM-Stega [26], which performs embedding and extraction
+through pre-shared keyword sets, encrypted mappings, and rejec-
+tion sampling. More recently, tokenization inconsistency has been
+identified as an important robustness issue in LLM-based steganog-
+raphy, showing that reliable recovery depends not only on text
+quality but also on whether sender and receiver can maintain a
+stable hidden protocol under mismatched tokenization [27]. These
+studies improve practical deployability by removing the need for
+logit access. However, existing black-box methods still rely heavily
+on reusable protocol materials, such as fixed lexical inventories,
+static cross-session mappings, or other persistent local artifacts.
+By contrast, our method reconstructs the decoding structure on
+demand for each session from a one-time private convention and
+public multimodal context, rather than depending on persistent
+reusable local artifacts.
+Multimodal large language models. Recent multimodal large lan-
+guage models (MLLMs) have demonstrated strong capabilities in
+image understanding, visual grounding, and instruction-following
+caption generation, making them practical black-box interfaces
+for multimodal interaction [1, 3, 8, 15, 17]. These capabilities are
+directly relevant to our setting: visual grounding supports reliable
+recovery of image-side semantic anchors, instruction following
+supports constrained caption generation, and image-conditioned
+generation allows public visual content to serve as a shared synchro-
+nization substrate. However, existing MLLM research has primarily
+focused on perception and generation tasks, rather than covert
+communication. To the best of our knowledge, prior black-box lin-
+guistic steganography methods have not used public image–caption
+context to reconstruct a session-specific codebook. Our work fills
+this gap by turning multimodal public context into a session-level
+synchronization interface.
+3
+The Proposed Methodology
+As shown in Figure 1, the proposed DyCo-Stega framework consists
+of three main stages: Shared Session Configuration, Secret Mes-
+sage Embedding, and Secret Message Extraction. In practice, Alice
+leverages a multimodal large language model to generate an image
+with a specific semantic controlled by the seed words. Then these
+seed words are used to construct a dynamic codebook for mapping
+the secret message bits while generating a steganographic image
+caption. The generated semantic image and steganographic caption
+are sent to Bob via some OSNs. Finally, Bob uses the semantic image
+
+Text Steganography with Dynamic Codebook and
+Multimodal Large Language Model
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+Algorithm 1 Image generation based on reject sampling
+Require: Scene description, seed words, generation prompt tem-
+plate, extraction prompt, image feedback prompt template, im-
+age generator, multimodal LLM
+Ensure: Image 𝐼
+1: accepted ←False
+2: 𝑃gen ←construct generation prompt using generation prompt
+template, scene description, and seed words
+3: 𝐼←generate an image using image generator with 𝑃gen
+4: while not accepted do
+5:
+Kext ←extract seed words from image 𝐼using multimodal
+LLM with extraction prompt
+6:
+if Kext = seed words then
+7:
+accepted ←True
+8:
+else
+9:
+𝑃fb
+𝐼←construct image feedback prompt using image
+feedback prompt template, seed words, and Kext
+10:
+𝑃upd
+𝐼
+←get update prompt using multimodal LLM with
+image 𝐼and 𝑃fb
+𝐼
+11:
+𝐼←refine image 𝐼using image generator with 𝑃upd
+𝐼
+12:
+end if
+13: end while
+14: if accepted then
+15:
+return Image 𝐼
+16: end if
+and side information to reconstruct the same codebook and then
+correctly extracts the secret messages.
+3.1
+Shared Session Configuration
+This stage aims to establish a shared session configuration, which
+is shared with Bob for the correct extraction of secret messages.
+The configuration contains a pre-shared key PSK, the ordered seed
+words K𝑜𝑟𝑑, and an anchor sequence AncSeq. Specifically, an im-
+age is generated by using the seed words and an MLLM with a
+reject sampling mechanism, where the generation prompt should
+be updated iteratively to ensure Bob can extract the same seed
+words. The scene description and the seed words are used to con-
+struct a generation prompt. The generated image, together with
+an extraction prompt, is fed into a multimodal LLM to extract a
+set of seed words, denoted by Kext. If Kext does not exactly match
+the seed words, an image feedback prompt is used to analyze the
+discrepancy and produce an update prompt for image refinement.
+This reject sampling procedure continues until the extracted seed
+words exactly match the original seed words. The algorithm detail
+is shown in Algorithm 1.
+Then, the seed words are sorted deterministically according
+to their word frequencies in a public dictionary D, yielding the
+ordered seed word list Kord = (𝑘1, . . . ,𝑘𝐾). Using Kord, a pre-shared
+key PSK, and a public anchor sequence AncSeq (e.g., punctuation
+patterns or emojis), the session parameters are computed as follows:
+(Φ, Θ) = 𝑔(PSK, Kord, AncSeq),
+(2)
+where Φ = (𝛼,𝑏, 𝜎) contains the codebook size 𝛼, the bit capacity
+per codeword 𝑏, and the shaping parameter 𝜎. The parameter Θ
+is introduced to increase the unpredictability of the session seeds.
+Algorithm 2 Dynamic codebook construction
+Require: Ordered seed word list K𝑜𝑟𝑑= {𝑘1, . . . ,𝑘𝐾}, public dic-
+tionary D, codebook size 𝛼, bit capacity per codeword 𝑏, shap-
+ing parameter 𝜎, session seed 𝜉, reverse-definition weight 𝜆rev,
+forward-context weight 𝜆fwd, prefix weight 𝜆pre
+Ensure: Dynamic codebook C𝐷
+1: 𝑁←2𝑏,
+score(𝑤) ←0, ∀𝑤∈D
+2: for all 𝑘∈K do
+3:
+for all 𝑤∈D do
+4:
+if 𝑘appears in the definition text of 𝑤:
+score(𝑤) ←score(𝑤) + 𝜆rev
+5:
+if 𝑤appears in the definition text, example sentences,
+or synonyms of 𝑘:
+score(𝑤) ←score(𝑤) + 𝜆fwd
+6:
+if 𝑤has prefix 𝑘:
+score(𝑤) ←score(𝑤) + 𝜆pre
+7:
+end for
+8: end for
+9: Vcand ←the top 𝛼−𝐾non-seed words ranked by score(𝑤)
+10: sort Vcand by descending dictionary frequency
+11: Vsem ←place K𝑜𝑟𝑑in the first 𝐾positions, followed by Vcand
+12: computes weight: 𝑞𝑗←exp
+
+−(𝑗−1)2
+2𝜎2
+
+, ∀𝑗= 1, . . . , 𝛼
+13: obtain the final probability: 𝑝𝑗←
+𝑞𝑗
+Í𝛼
+𝑖=1 𝑞𝑖
+14: permute {(𝑤𝑗, 𝑝𝑗)}𝛼
+𝑗=1 into {( ˜𝑤𝑗, ˜𝑝𝑗)}𝛼
+𝑗=1
+15: repeated sampling: 𝐿𝑗←˜𝑝𝑗· 𝑁, ∀𝑗= 1, . . . , 𝛼
+16: 𝐵0 ←0,
+𝐵𝑗←Í𝑗
+𝑖=1 𝐿𝑖,
+Ω𝑗←[𝐵𝑗−1, 𝐵𝑗), ∀𝑗= 1, . . . , 𝛼
+17: return C𝐷= {( ˜𝑤𝑗, Ω𝑗)}𝛼
+𝑗=1
+AncSeq is specified by the sender and can be directly extracted from
+the OSNs. Both the PSK and the function 𝑔are established via a
+one-time private agreement.
+Finally, an integer session seed 𝜉is derived from Φ and Θ using
+a cryptographic hash function H (·) (e.g., SHA-256) and an integer
+mapping function Hash2Int(·):
+𝜉= Hash2Int H (𝛼∥𝑏∥𝜎∥Θ).
+(3)
+The seed 𝜉determines the ordering during codebook construction
+and masks the within-interval offsets during secret message em-
+bedding.
+3.2
+Secret Message Embedding
+Given the above shared session configuration, we first construct
+the dynamic codebook C𝐷and then map the secret message to a
+codeword C𝐷together with an interval offset.
+Dynamic Codebook Construction The dynamic codebook
+spans the integer range [0, 𝑁), where 𝑁= 2𝑏. The construction
+consists of five stages: seed expansion, selection and ranking, prob-
+ability shaping, seed-based ordering, and repeated sampling. We
+summarize the overall process in Algorithm 2.
+(1) Seeds Expansion. DyCo-Stega expands the seed words into
+a broader candidate set using a public dictionary D. Specifically,
+candidate retrieval follows three dictionary-based routes. Reverse-
+definition matching retrieves candidate words whose dictionary
+definitions contain a seed word. Forward-context matching retrieves
+
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+Your Name et al.
+Figure 1: The overall framework of DyCo-Stega. The figure shows the three main steps. Crucially, the dynamic codebook
+construction is executed independently by both parties without transmitting the codebook itself.
+candidate words that appear in the dictionary entry of a seed word,
+including its definition text, example sentences, and synonyms.
+Prefix matching retrieves candidate words that use a seed word as
+their prefix. Each route contributes a fixed weight, and the final
+score of a candidate word is obtained by summing the weights of all
+matched routes. This dictionary-based expansion requires neither
+local LLM weights nor embedding models. The specific weights we
+assign, the complete calculation procedure, and detailed step-by-
+step examples are all provided in the Supplementary Material.
+(2) Selection and Ranking. To construct the final semantic pool
+𝑉sem, we retain all seed words and select the 𝛼−𝐾highest-scoring
+candidates. The selected words are then divided into two groups:
+the seed words and the remaining 𝛼−𝐾words. Within each group,
+words are independently sorted in descending order according to
+their dictionary frequencies. This procedure ensures that 𝑉sem is
+deterministic while prioritizing the seed words and high-frequency
+words.
+(3) Probability Shaping. To improve the linguistic quality of the
+generated stego captions, we assign a probability distribution that
+gives higher-ranked words larger probabilities in 𝑉sem. Since the
+words in 𝑉sem are already sorted by descending dictionary fre-
+quency, this design makes seed words and high-frequency words
+more likely to be selected. Let 𝑗∈{1, . . . , 𝛼} denote the rank of the
+word 𝑤𝑗in 𝑉sem, and let 𝜎> 0 be the shaping parameter derived
+from the shared session configuration. A half-Gaussian kernel func-
+tion computes the unnormalized weight 𝑞𝑗for each rank, which is
+then normalized to obtain the final probability 𝑝𝑗:
+𝑞𝑗= exp
+
+−(𝑗−1)2
+2𝜎2
+
+,
+𝑝𝑗=
+𝑞𝑗
+Í𝛼
+𝑖=1 𝑞𝑖
+.
+(4)
+(4) Seed-Based Ordering. Using the session seed 𝜉to initialize a
+pseudo-random number generator (PRNG), we reorder the origi-
+nal word-probability pairs (𝑤𝑗, 𝑝𝑗) into a new sequence ( ˜𝑤𝑗, ˜𝑝𝑗).
+This reordering changes only the position of each word within the
+sequence, and every word strictly retains its assigned probability.
+Consequently, the final codebook layout is dependent on the session
+seed 𝜉, thereby enhancing the security of the dynamic codebook.
+(5) Repeated Sampling. The reordered word-probability pairs
+are finally converted into contiguous intervals over [0, 𝑁). Each
+word ˜𝑤𝑗is assigned an interval length 𝐿𝑗according to its reordered
+probability ˜𝑝𝑗:
+𝐿𝑗= ˜𝑝𝑗· 𝑁,
+𝛼
+∑︁
+𝑗=1
+𝐿𝑗= 𝑁.
+(5)
+Starting from 𝐵0 = 0, these intervals are placed consecutively, and
+the boundary of the 𝑗-th interval is computed as
+𝐵𝑗=
+𝑗∑︁
+𝑖=1
+𝐿𝑖,
+Ω𝑗= [𝐵𝑗−1, 𝐵𝑗).
+(6)
+
+Text Steganography with Dynamic Codebook and
+Multimodal Large Language Model
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+The final dynamic codebook is therefore defined as
+C𝐷=
+
+( ˜𝑤𝑗, Ω𝑗)
+ 𝛼
+𝑗=1.
+(7)
+Encrypted Steganographic Mapping After constructing the
+Dynamic Codebook C𝐷, we convert the secret message 𝑚into an
+integer index
+idx = Bin2Int(𝑚),
+idx ∈[0, 𝑁).
+We then locate the target interval Ω𝑗= [𝐵𝑗−1, 𝐵𝑗) that contains
+this index and select the corresponding word ˜𝑤𝑗as the codeword.
+At the same time, we compute the offset
+𝑜= idx −𝐵𝑗−1,
+0 ≤𝑜< 𝐿𝑗.
+(8)
+The codeword identifies the selected codebook interval, while the
+offset specifies the exact position of the message within that inter-
+val.
+Directly transmitting the offset would expose the precise location
+of the message inside the selected interval. To avoid this risk, the
+offset is not sent through the Online Social Network (OSN). Instead,
+we protect it with an XOR-based masking strategy. Specifically, we
+XOR the binary form of the offset with the session seed 𝜉to obtain
+a private key 𝑆:
+𝑆= Int2Bin(𝑜) ⊕Int2Bin(𝜉),
+(9)
+where ⊕denotes the bitwise XOR operation. This private key 𝑆
+is shared through a side channel. Without the session seed 𝜉, a
+warden cannot correctly recover the offset even if 𝑆is intercepted.
+3.2.1
+Stego Caption Generation. After determining the code-
+word, we use an MLLM to generate a stego caption 𝐶for the image
+𝐼. For reliable extraction, the generated caption must satisfy three
+conditions: it must contain the selected codeword 𝑤, it must con-
+tain the anchor sequence AncSeq, and it must not contain any other
+words from the semantic pool 𝑉sem. The caption generation with
+a multimodal LLM does not always satisfy all of these constraints.
+Similar to image generation, We also introduce a reject sampling
+mechanism for caption generation, following the algorithm detailed
+in the Supplementary Material. First, an embedding prompt guides
+the multimodal LLM to generate a stego caption𝐶. If𝐶fails verifica-
+tion, a caption feedback prompt asks the LLM to identify the errors
+and produce an update prompt for revision. This loop continues
+until the caption passes verification. The accepted stego caption is
+then posted on the OSN.
+3.3
+Secret Message Extraction
+Upon receiving the stego caption 𝐶, the receiver extracts the code-
+word 𝑤and the anchor sequence AncSeq from the caption and
+uses an MLLM to recover the seed words from the shared image 𝐼.
+The recovered seed words are sorted according to their dictionary
+frequencies to obtain the ordered seed word list Kord. Using Kord,
+AncSeq, and the pre-shared key PSK, the receiver recomputes the
+session parameters and the session seed 𝜉, and then reconstructs
+the Dynamic Codebook C𝐷.
+To recover the exact integer index of the secret message, the
+receiver first restores the offset 𝑜by performing an XOR operation
+between the private key 𝑆(received via the side channel) and the
+binary form of the session seed 𝜉:
+Int2Bin(𝑜) = 𝑆⊕Int2Bin(𝜉).
+(10)
+Next, the receiver locates the target interval Ω𝑗= [𝐵𝑗−1, 𝐵𝑗) cor-
+responding to the codeword 𝑤in the codebook C𝐷. The index is
+computed by adding the offset 𝑜to the base boundary 𝐵𝑗−1:
+idx = 𝐵𝑗−1 + 𝑜.
+(11)
+Finally, the integer index idx is converted back to its binary repre-
+sentation to recover the original secret message 𝑚.
+4
+Experiments
+4.1
+Experimental Setup
+(1) Baselines. We compare the DyCo-Stega with one black-box
+baseline, LLM-Stega [26], and six advanced white-box baselines:
+AC [31], ADG [30], Discop [10], SparSamp [25], METEOR [14], and
+iMEC [9].
+(2) Models and Parameters. We use the gemini-3-pro-image-
+preview API for image generation and the gpt-5.1-chat-latest API
+for stego caption generation. We set (𝛼,𝑏, 𝜎) = (24, 28, 2.5) and
+embed 𝜏=5 codewords in each stego caption. For the LLM-Stega,
+we also use the gpt-5.1-chat-latest API to generate stego texts. Since
+white-box methods require access to token probabilities, we im-
+plement them on GPT-2 [22] and Qwen2.5 [28]. For DyCo-Stega
+and LLM-Stega, we generate 15,000 stego texts. For each white-box
+baseline, we select appropriate temperatures and set top-𝑝=0.99,
+and generate 10,000 stego texts on each of the two language models,
+resulting in a total of 6 × 2 × 10,000 stego texts.
+4.2
+Evaluation Metrics
+(1) Text Quality. We use Perplexity (PPL) and Semantic Similarity
+(SS) to evaluate the text quality of generated stego texts. PPL is
+a widely used quantitative metric in text generation tasks. We
+compute the PPL of different stego texts using GPT-2 [22] as the
+reference language model:
+PPL = exp
+ 
+−1
+𝐿
+𝐿
+∑︁
+𝑡=1
+log𝑝(𝑤𝑡|𝑤<𝑡)
+!
+,
+(12)
+where 𝐿is the length of the text,𝑤𝑡is the 𝑡-th token, and 𝑝(𝑤𝑡|𝑤<𝑡)
+is the conditional probability assigned by the language model to
+token 𝑤𝑡given the preceding context. Lower PPL indicates better
+fluency.
+For semantic similarity, we adopt Sentence-BERT [23] and use
+the roberta-base-nli-mean-tokens [18] model to extract sentence
+embeddings. We then compute the average cosine similarity be-
+tween cover and stego texts. Higher SS indicates better semantic
+preservation after secret message embedding.
+(2) Embedding Capacity. Embedding Capacity (EC) is the average
+number of secret bits embedded per word, which is measured in
+bits per word (bpw). It is calculated as
+EC = 𝐵
+𝑊
+(bpw),
+(13)
+where 𝐵is the number of embedded bits and𝑊is the total number
+of words in the stego texts.
+(3) Anti-Steganalysis Ability. Anti-steganalysis ability is impor-
+tant for security. We use the test accuracy of a steganalysis classifier
+based on Bert-FT [19]. For each method, we construct a balanced
+
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+Your Name et al.
+cover–stego dataset and divide it into 60%/20%/20% for training,
+validation, and testing. The steganalysis accuracy is defined as
+Acc =
+𝑇𝑃+𝑇𝑁
+𝑇𝑃+𝑇𝑁+ 𝐹𝑃+ 𝐹𝑁,
+(14)
+where𝑇𝑃is true positives,𝑇𝑁is true negatives, 𝐹𝑃is false positives,
+and 𝐹𝑁is false negatives. An accuracy closer to 0.5 indicates weaker
+detectability and thus better concealment.
+(4) Statistical Imperceptibility. The Kullback-Leibler Divergence
+(KLD) is used to measure the statistical imperceptibility by compar-
+ing the distribution of stego texts embeddings against that of cover
+texts embeddings. We select the KLD metric proposed by Zhang et
+al [30]. to evaluate statistical imperceptibility:
+𝐾𝐿𝐷=
+∑︁"
+log
+𝜎𝑦
+𝜎𝑥
+
++ 𝜎2
+𝑥+ (𝜇𝑥−𝜇𝑦)2
+2𝜎2𝑦
+−1
+2
+#
+(15)
+where 𝜇𝑥and 𝜎𝑥are the mean and standard deviation of cover texts,
+while 𝜇𝑦and 𝜎𝑦represent those of stego texts.
+(5) Image-Text Consistency. We use CLIP-Score [12], computed
+with CLIP ViT-B/32 [21], to evaluate the semantic alignment be-
+tween the image and the generated caption. Higher CLIP-Score
+indicates better image-text consistency.
+(6) Human Evaluation. For human evaluation, we invited 30
+computer science undergraduates to assess the generated stego
+texts. We randomly sampled and anonymized stego texts generated
+by DyCo-Stega, LLM-Stega, and six white-box baselines before
+annotation. Each annotator independently rated the captions on a 1–
+5 scale across three dimensions: fluency, clarity, and grammaticality.
+4.3
+Main Results
+(1) Main Results. Table 1 summarizes the main benchmark results
+in text quality, embedding capacity, statistical imperceptibility, and
+anti-steganalysis ability. Among all evaluated methods, DyCo-Stega
+achieves the best overall performance, with a PPL of 128.9, an SS
+of 0.8940, a KLD of 3.37, and an EC of 6.37 bpw. Compared with
+LLM-Stega, our method obtains a lower PPL, higher SS, lower KLD,
+higher EC, and an Acc value closer to 0.5, indicating a better balance
+between text quality and embedding capacity. The improvement in
+SS is mainly due to the introduction of the image as an additional
+semantic constraint. Compared with the white-box baselines, DyCo-
+Stega also outperforms the best reported values on PPL, SS, KLD,
+and EC. In particular, although SparSamp on GPT-2 shows slightly
+stronger anti-steganalysis ability, its text quality is still significantly
+worse than that of the two black-box methods, as reflected by its
+much higher PPL and lower semantic similarity.
+(2) Image–Text Consistency. To evaluate whether secret message
+embedding affects image–text consistency, we analyzed three in-
+door scenes: office desk, kitchen counter, and bathroom vanity. For
+each scene, we generated images along with their corresponding
+cover and stego captions. We then computed the average CLIP-
+Scores between the images and their cover captions, as well as
+between the images and their stego captions. As shown in Table 2,
+both types of captions achieve high CLIP-Scores, indicating strong
+consistency with the image content. Furthermore, the difference in
+scores between the cover and stego captions is minimal across all
+Method
+PPL↓
+SS↑
+KLD↓
+EC↑
+Acc
+White-box (GPT-2)
+AC
+410.0
+0.6980
+164.20
+3.89
+0.5805
+ADG
+876.9
+0.7070
+45.11
+5.33
+0.4893
+Discop
+396.4
+0.5500
+11.42
+3.80
+0.4908
+SparSamp
+377.9
+0.5540
+10.87
+3.91
+0.5000
+METEOR
+298.3
+0.5490
+30.83
+2.42
+0.4910
+iMEC
+589.1
+0.5740
+76.71
+3.07
+0.4928
+White-box (Qwen2.5)
+AC
+380.0
+0.4360
+51.43
+4.16
+0.7698
+ADG
+461.3
+0.6480
+29.87
+4.86
+0.5403
+Discop
+145.3
+0.6910
+10.45
+3.63
+0.5595
+SparSamp
+140.0
+0.6950
+10.41
+3.77
+0.5150
+METEOR
+243.1
+0.6800
+24.57
+3.72
+0.5188
+iMEC
+405.9
+0.6560
+36.22
+3.46
+0.5340
+Black-box (GPT-5.1)
+LLM-Stega
+137.8
+0.7230
+5.81
+5.27
+0.5073
+DyCo-Stega
+128.9
+0.8940
+3.37
+6.37
+0.4997
+Table 1: Main benchmark comparison across white-box and
+black-box baselines. For Acc, values closer to 0.5 indicate
+weaker detectability.
+Scene
+CLIP
+(Cover)
+CLIP
+(Stego)
+Δ
+Office Desk
+32.99
+33.02
+0.03
+Kitchen Counter
+30.00
+30.16
+0.16
+Bathroom Vanity
+32.23
+32.22
+−0.01
+Average
+31.74
+31.80
++0.06
+Table 2: CLIP-Score on three representative scenes.
+scenes, with an average change of only 0.06. These results demon-
+strate that secret message embedding has a negligible impact on
+image–text consistency.
+(3) Human Evaluation. The human evaluation results are shown
+in Figure 2. Overall, the two black-box methods obtain substantially
+higher scores than the white-box baselines on all three dimensions,
+indicating that black-box text generation produces more natural and
+readable stego texts. In particular, DyCo-Stega attains the highest
+score on clarity, while maintaining fluency and grammaticality at a
+level comparable to LLM-Stega. By contrast, white-box methods
+achieve much lower overall scores. This is primarily because the
+open-weight models they rely on are generally less capable than
+state-of-the-art black-box models. Additionally, the secret message
+embedding in these white-box methods more easily degrades the
+naturalness of the generated text. In summary, DyCo-Stega can
+preserve good text quality while embedding secret messages.
+4.4
+Ablation Studies
+(1) Cross-Model Robustness. This experiment evaluates whether
+the proposed method remains reliable across heterogeneous generator–
+recognizer combinations, rather than depending on a specific model
+pair. We use S@k to measure the fraction of trials that correctly
+recover the seed words within 𝑘attempts, and AvgR to report the
+average number of attempts over successful trials only. As shown
+
+Text Steganography with Dynamic Codebook and
+Multimodal Large Language Model
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+(a) Cross-Model Robustness
+Gen.
+Rec.
+S@1
+S@3
+AvgR
+Gemini
+Gemini
+83%
+98%
+1.21
+GPT
+80%
+97%
+1.23
+Grok
+74%
+96%
+1.28
+Claude
+81%
+97%
+1.25
+GPT
+Gemini
+76%
+94%
+1.31
+GPT
+72%
+93%
+1.36
+Grok
+74%
+92%
+1.33
+Claude
+78%
+93%
+1.31
+Qwen
+Gemini
+60%
+68%
+1.24
+GPT
+55%
+65%
+1.27
+Grok
+52%
+64%
+1.28
+Claude
+59%
+66%
+1.25
+(b) Probability Shaping Ablation
+Setting
+PPL ↓
+KLD ↓
+SS ↑
+Half-Gaussian (𝜎=𝜏/4)
+105.7
+30.32
+0.903
+Half-Gaussian (𝜎=𝜏/2)★
+128.9
+3.37
+0.894
+Half-Gaussian (𝜎=𝜏)
+167.9
+13.40
+0.836
+Half-Gaussian (𝜎=2𝜏)
+179.1
+19.73
+0.814
+Half-Gaussian (𝜎=4𝜏)
+182.4
+38.21
+0.854
+Uniform
+247.0
+12.35
+0.805
+(c) OSN Robustness
+Platform
+S@1
+S@2
+S@3
+WeChat
+97%
+100%
+100%
+Instagram
+98%
+99%
+100%
+Facebook
+98%
+100%
+100%
+X
+97%
+99%
+100%
+WeiBo
+98%
+99%
+100%
+(d) Prompt & Temperature
+Temperature
+Full
+Mini
+0
+100%
+40.7%
+0.7
+100%
+48.7%
+1.0
+99.3%
+39.3%
+1.5
+94.0%
+34.7%
+2.0
+90.8%
+30.2%
+Table 3: Comprehensive ablation studies. (a) Cross-model robustness across generator–recognizer pairs, where Gen. = image
+generator and Rec. = recognizer. (b) Probability shaping ablation (★= default). (c) Robustness to OSN compression. (d) Effect of
+prompt design and temperature on recovery rate (S@3); Full = our designed prompt, Mini = minimally constrained prompt.
+Figure 2: Human evaluation on fluency, clarity, and gram-
+maticality
+in Table 3(a), Gemini as the generator achieves consistently strong
+performance, reaching 96%–98% S@3 across all recognizers, while
+GPT also remains stable at 92%–94% S@3. In contrast, Qwen yields
+a substantially lower S@3 of 64%–68%, although its AvgR on suc-
+cessful cases remains comparable to the other generators. These
+results indicate that the proposed method generalizes well across
+recognizer families, but its reliability still depends on how clearly
+the generator preserves the target visual semantic anchors.
+(2) Probability Shaping Mechanism. This ablation examines how
+the probability shaping parameter 𝜎affects the trade-off between
+text quality and concealment in the dynamic codebook construc-
+tion. As shown in Table 3(b), a sharper distribution with 𝜎=𝜏/4
+gives the lowest PPL (105.7) and the highest SS (0.903), but also
+leads to a much larger KLD (30.32), indicating a stronger devia-
+tion from the cover text distribution. As 𝜎increases to 𝜏and 2𝜏,
+SS decreases from 0.894 to 0.836 and 0.814, while KLD increases
+from 3.37 to 13.40 and 19.73. The default setting 𝜎=𝜏/2 provides the
+best overall balance, achieving relatively low PPL and KLD while
+preserving high semantic similarity. Overall, the uniform setting is
+clearly less favorable than the default half-Gaussian shaping, which
+confirms that assigning larger probability to higher-ranked words
+is important for text quality and statistical imperceptibility.
+(3) OSN Robustness. This experiment evaluates whether transmis-
+sion through online social networks affects seed words extraction.
+We upload 500 images that have already been verified as success-
+ful to major social platforms, take screenshots of the published
+posts, and feed the screenshots to the recognizer for seed words
+extraction.
+As reported in Table 3(c), all five platforms achieve 100% success
+under S@3. Under the stricter S@1 and S@2 criteria, S@1 ranges
+from 97% to 98%, and S@2 ranges from 99% to 100%. These results
+show that the proposed method remains highly robust after trans-
+mission through online social networks. They also suggest that the
+method depends mainly on visual semantic content, rather than
+on fragile low-level image details that may be affected by platform
+compression or screenshot capture. Since all test images were veri-
+fied as successful before upload, the small gaps between S@1 and
+S@3 are more likely to come from the uncertainty of black-box
+models than from the transmission process itself.
+
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil
+Your Name et al.
+Table 4: S@3 for recovering the seed words using different
+video generators and recognizers.
+Video Generator
+Video Recognizer
+Gemini
+3.1 Flash
+Gemini
+3.1 Pro
+GPT
+5.3
+GPT
+5.4(Std)
+GPT
+5.4(Ext)
+Veo
+89%
+95%
+73%
+82%
+84%
+Sora
+82%
+84%
+70%
+77%
+78%
+Seedance
+83%
+87%
+68%
+76%
+80%
+(4) Prompt Structure and Temperature Sensitivity. This study
+evaluates whether the high recovery rate mainly comes from the
+structured prompt design, and whether this advantage remains
+stable under different temperatures. As shown in Table 3(d), the full
+prompt is highly reliable across a broad temperature range: S@3
+stays at 100% for 𝑇=0 and 𝑇=0.7, remains 99.3% at 𝑇=1.0, and is
+still 90.8% at 𝑇=2.0. In contrast, the minimally constrained prompt
+achieves only 40.7% at 𝑇=0, peaks at 48.7% at 𝑇=0.7, and drops to
+30.2% at 𝑇=2.0. This large performance gap shows that recovery
+reliability does not come from model capability alone, but criti-
+cally depends on the structured prompt. Meanwhile, temperature
+also has a clear effect on recovery performance, and relatively low
+temperatures generally lead to more accurate recovery.
+5
+Extension to Video
+Since our method relies on visual semantic anchors, it is natural
+to explore if we can use the video generation and understanding
+abilities of multimodal large language models to transmit videos
+instead of images to build the dynamic codebook. However, current
+video generation is less stable than image generation, and it costs
+more time and money. Therefore, we only conduct a lightweight
+exploration using the user interfaces of main models.
+Experimental Setup. For video generation, we select three models:
+Veo from Gemini, Sora from GPT, and Seedance from Doubao. We
+take 100 images generated by Gemini from our previous experi-
+ments and use them as base images to generate videos. For video
+recognition, we select five models that can directly read videos:
+Gemini 3.1 Flash, Gemini 3.1 Pro, GPT 5.3, GPT 5.4 Thinking in
+Standard mode, and GPT 5.4 Thinking in Extended mode. We upload
+the generated videos to these recognizers along with an extraction
+prompt, and record the success rate within three attempts (S@3).
+(1) Cross-Model Robustness. Table 4 reports the S@3 for recover-
+ing the seed words using different video generators and recognizers.
+Among the generators, videos produced by Veo paired with Gem-
+ini 3.1 Pro achieve the highest success rate at 95%. Sora and Seedance
+also maintains relatively stable performance. Overall, Gemini 3.1
+Pro demonstrates the strongest robustness as a recognizer, while
+the GPT series models show relatively lower success rates.
+(2) Time Consumption. Table 5 reports the time consumption
+for successful extractions. The choice of video generator heavily
+influences the total time. Seedance requires significantly more time,
+often pushing the extraction process above 500 seconds, whereas
+Veo is the most efficient across all recognizers. Among the recog-
+nizers, GPT 5.3 responds the fastest as an instant model without
+an explicit thinking phase, but this speed is accompanied by lower
+accuracy. Furthermore, although the GPT 5.4 Thinking variants
+Table 5: Time consumption for successful recovery of the
+seed words using different video generators and recognizers.
+Video Generator
+Video Recognizer
+Gemini
+3.1 Flash
+Gemini
+3.1 Pro
+GPT
+5.3
+GPT
+5.4(Std)
+GPT
+5.4(Ext)
+Veo
+139
+173
+133
+207
+212
+Sora
+205
+261
+197
+294
+298
+Seedance
+541
+583
+516
+619
+633
+consume more time for their extended thinking process, this mode
+does not significantly improve the extraction accuracy. This demon-
+strates that the strong thinking ability of GPT does not offer as much
+advantage for this task as the strong multimodal understanding of
+Gemini.
+(3) Discussion. Overall, these results support the feasibility of
+extending the method from images to video. At the same time,
+compared with the image setting, video currently brings higher cost
+and lower stability. We therefore regard it as a promising extension,
+while keeping the image setting as the main configuration.
+6
+Conclusion
+In this paper, we presented DyCo-Stega for black-box text steganog-
+raphy with dynamic codebook and multimodal large language mod-
+els. The core idea is to use public visual context to construct a
+dynamic codebook for each communication session so that secret
+extraction does not rely on fixed codebooks. Under this framework,
+the secret message can be extracted by reconstructing the dynamic
+codebook and recovering the offset with the transmitted private
+key and the session seed. In addition, the optimization procedures
+for image generation and caption generation improve the reliability
+of seed word recovery and secret extraction in black box settings.
+Extensive experiments demonstrate the effectiveness of the pro-
+posed method. DyCo-Stega achieves strong overall performance in
+text quality, embedding capacity, statistical imperceptibility, and
+anti-steganalysis ability. The results also show that the method
+preserves image and text consistency, remains robust across dif-
+ferent generators and recognizers, and maintains high recovery
+performance after transmission through online social networks. We
+further provide a preliminary study on video carriers, which sug-
+gests that the proposed framework can be extended beyond images.
+In future work, we will investigate the feasibility of applying the
+proposed framework to other modalities, such as audio, and further
+study the use of multimodal large language models for more stable
+steganography.
+
+Text Steganography with Dynamic Codebook and
+Multimodal Large Language Model
+ACM Multimedia 2026, November 10–14, 2026, Rio de Janeiro, Brazil

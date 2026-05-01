@@ -1,0 +1,972 @@
+R-CoT: A Reasoning-Layer Watermark via Redundant Chain-of-Thought in
+Large Language Models
+Ziming Zhang1 , Li Li1∗, Guorui Feng1 , Hanzhou Wu1 , Xinpeng Zhang2†
+1School of Communication and Information Engineering, Shanghai University
+2School of Computer Engineering and Science, Shanghai University
+zhangzmoli@shu.edu.cn, llichn@shu.edu.cn, grfeng@shu.edu.cn, h.wu.phd@ieee.org,
+xzhang@shu.edu.cn
+Abstract
+Large language models (LLMs) are widely de-
+ployed in multiple scenarios due to reasoning ca-
+pabilities. In order to prevent the models from be-
+ing misused, watermarking is generally employed
+to ensure ownership. However, most existing wa-
+termarking methods rely on superficial modifica-
+tions to the model’s output distribution, render-
+ing the watermark vulnerable to perturbation and
+removal.
+To overcome this challenge, this pa-
+per introduces a reasoning-layer framework termed
+Redundant Chain-of-Thought (R-CoT), which em-
+beds watermarks into the reasoning path. A dual-
+trajectory optimization mechanism based on GRPO
+enables the native and the watermark reasoning
+path to coexist within a shared parameter space,
+internalizing the watermark as a distinct reason-
+ing policy. Therefore, the watermark is embedded
+into the model’s stable reasoning path, avoiding the
+watermark failure caused by output-level perturba-
+tions. Experimental results show that, compared
+with existing methods, R-CoT achieves high wa-
+termark effectiveness and strong robustness. Under
+fine-tuning and other post-training operations, the
+true positive rate (TPR) consistently remains above
+95%, exhibiting only marginal degradation.
+1
+Introduction
+In recent years, Large Language Models (LLMs) have
+achieved remarkable progress in Natural Language Process-
+ing (NLP). With the emergence of reasoning-oriented mod-
+els, such as OpenAI-O1 and Deepseek-R1, increasing at-
+tention has been paid to the logical structure and reason-
+ing text generation.
+The Chain-of-Thought (CoT) mech-
+anism improves reasoning accuracy and interpretability by
+decomposing complex tasks into intermediate steps [Wei et
+al., 2022]. The significant data and computational costs re-
+quired to train such models, together with their public re-
+lease, expose them to risks of copyright infringement, tam-
+pering, and misuse [Song et al., 2025; Roh et al., 2025;
+∗Corresponding author. Email: llichn@shu.edu.cn
+†Corresponding author. Email: xzhang@shu.edu.cnu
+Zhao et al., 2025], underscoring the need for effective in-
+tellectual property (IP) protection mechanisms [Deng et al.,
+2025].
+Digital watermarking is a classical technique for multime-
+dia copyright protection, typically achieved by embedding
+imperceptible watermarks into the content to encode owner-
+ship information. With the increasing prevalence of LLMs,
+researchers have begun to explore watermarking mechanisms
+for protecting model ownership in LLM-generated con-
+tent [Yang et al., 2023; Zhang et al., 2024; Qiu et al., 2025;
+Bahri and Wieting, 2024]. Most existing LLM watermark-
+ing approaches fall under output-level watermarking, where
+watermarks are embedded by modifying the sampling proba-
+bility distribution during text generation or by exploiting sta-
+tistical properties of the generated text to induce detectable
+patterns. However, such methods fundamentally rely on di-
+rect control over the model’s output text and therefore exhibit
+limited robustness against attacks such as paraphrasing, trans-
+lation, and model fine-tuning.
+Due to the limited robustness of existing output-level wa-
+termarking methods, recent research has increasingly shifted
+its focus toward seeking more stable forms of watermark-
+ing. As an internal reasoning process of language models,
+the Chain-of-Thought (CoT) exhibits structured and extensi-
+ble step-wise reasoning properties, whose progressive reason-
+ing form provides a natural carrier for embedding watermark
+information. However, some existing approaches [Wang et
+al., 2024; Guo et al., 2025a; Guo et al., 2025b] still primarily
+operate on the CoT text, essentially treating CoT as surface-
+level generated text, rather than reflecting its intrinsic role as
+a manifestation of the model’s internal reasoning pathways.
+Consequently, these methods have not yet achieved water-
+marking that truly leverages chain-of-thought reasoning, and
+they continue to exhibit limited robustness when subjected to
+attacks [Xiang et al., 2024; Jin et al., 2024].
+To reflect the essential feature of the reasoning chain as
+the internal reasoning process of LLM, this paper proposes a
+reasoning-layer watermarking framework based on redundant
+reasoning chains (Redundant Chain-of-Thought, R-CoT). In
+this framework, a watermark reasoning path is implanted
+within the model, which coexists with the original native rea-
+soning path in the same parameter space. In this paper, this
+watermark reasoning path is designed as a redundant reason-
+ing mode, with its core feature being to autonomously gener-
+arXiv:2604.25247v1 [cs.CR] 28 Apr 2026
+
+ate a set of reasoning steps related to the task semantics but
+not necessary, without affecting the correctness of the final
+reasoning. We call this specific form of redundant reasoning
+path R-CoT. Through this design, the watermark is internal-
+ized as a special reasoning ability within the model, rather
+than being directly added to the generated text. To enable
+the model to stably learn this redundant reasoning path, we
+have designed a Dual-trajectory Optimization Mechanism.
+The model is guided to learn different reasoning paths un-
+der trigger and non-trigger conditions, thereby achieving the
+controllable coexistence of the watermark reasoning path and
+the native reasoning path.
+The main contributions of this paper are as follows:
+• We establish a reasoning-layer watermarking frame-
+work that embeds ownership information into a trigger-
+activated reasoning path of the model, rather than en-
+coding watermarks as surface-level outputs or treating
+Chain-of-Thought as watermark content.
+• We introduce redundant reasoning as a watermark
+reasoning path,
+characterized by non-essential yet
+correctness-preserving verification steps, enabling high-
+fidelity watermark embedding at the reasoning layer.
+• We adopt a dual-trajectory optimization mechanism to
+learn the redundant watermarking reasoning path, en-
+abling the watermark reasoning path to stably coexist
+with the model’s original native reasoning path within
+the same parameter space without mutual interference.
+• Extensive experiments demonstrate that R-CoT pre-
+serves clean-task performance, reliably activates water-
+marks under triggers, and remains robust to fine-tuning
+and input perturbations.
+2
+Related Work
+2.1
+Output-Level Watermarking
+Early studies on watermarking for large language models
+primarily embed ownership signals into generated surface
+text. For example, the red-green list sampling watermark-
+ing method proposed by Kirchenbauer et al. [Kirchenbauer
+et al., 2023] introduces watermarks by modifying the log-
+its during decoding, biasing the language model to preferen-
+tially sample tokens from a predefined green list. Building
+upon this framework, Zhao et al. [Zhao et al., 2023] pro-
+posed the Unigram-Watermark with a simplified fixed parti-
+tioning strategy to improve robustness. Wang et al. [Wang et
+al., 2023] propose a pseudo-random token sampling method
+that improves watermark capacity in generated text, enabling
+the embedding of multi-bit watermark information.
+In addition, post-processing strategies embed watermarks
+into generated text via semantic substitution or similarity-
+based filtering.
+Specifically, SimMark [Dabiriaghdam and
+Wang, 2025] leverages semantic sentence embeddings to in-
+troduce imperceptible yet statistically detectable patterns into
+generated text. PostMark [Chang et al., 2024], on the other
+hand, inserts an input-dependent set of words into the output
+text after decoding using semantic embeddings. These meth-
+ods are generally independent of the model’s internal reason-
+ing capabilities. However, due to their reliance on surface text
+realizations, they remain vulnerable to paraphrasing, trans-
+lation, post-editing, and post-training modifications such as
+fine-tuning.
+2.2
+CoT-Based Watermarking
+Recent studies have explored using Chain-of-Thought (CoT)
+as a watermark carrier, motivated by the observation that ex-
+plicit reasoning traces exhibit more structured and consistent
+generation patterns than free-form outputs.
+By constrain-
+ing the model to follow step-by-step reasoning formats, CoT-
+based approaches exploit reasoning regularity to improve wa-
+termark stability under perturbations.
+Several recent approaches have been proposed in this di-
+rection. CRMark [Guo et al., 2025b] combines CoT with
+reinforcement learning by embedding backdoor patterns into
+dataset prompts and injecting copyright-related information
+into model responses as watermarks.
+WEDA [Wang et
+al., 2024] proposes an alignment-based embedding scheme
+that leverages parameter-efficient fine-tuning (PEFT) and in-
+context learning (ICL), embedding watermarks into PEFT
+weights through Chain-of-Thought reasoning. In addition,
+the method proposed in [Guo et al., 2025a] is developed in
+the context of retrieval-augmented generation (RAG) [Lewis
+et al., 2020], where harmless and verifiable watermark behav-
+iors are implanted into the Chain-of-Thought reasoning space
+of RAG systems. CoTGuard [Wen et al., 2025] is a water-
+marking method designed for multi-agent scenarios. By in-
+jecting triggerable covert patterns into the CoT and detecting
+them through reasoning trace analysis, it enables interpretable
+model watermarking with high fidelity.
+2.3
+Backdoor-Based Watermarking
+Backdoor-based watermarking for LLMs embeds a covert
+backdoor into the model during training, such that when spe-
+cific trigger tokens are detected in the input, the backdoor is
+activated and predefined watermark information is produced.
+This paradigm enables stable and reliable black-box owner-
+ship verification. Adi et al. [Adi et al., 2018] first introduced
+the concept of backdoor-based model watermarking, system-
+atically formulating ownership verification through trigger-
+induced model behaviors.
+Subsequent work has extended this paradigm to LLM-
+related scenarios. EmbMarker [Peng et al., 2023] is proposed
+under the Embedding-as-a-Service (EaaS) setting, where
+trigger-conditioned target shifts are injected into text embed-
+dings, enabling black-box ownership verification of LLM em-
+bedding services. In addition, the method proposed in [Li et
+al., 2024] targets LLM fine-tuning scenarios by simultane-
+ously implanting trigger patterns at both the instruction and
+input levels, achieving highly robust watermarking perfor-
+mance. ModelShield [Pang et al., 2025] achieves highly ro-
+bust black-box ownership protection against model extraction
+attacks by guiding the LLM to autonomously generate learn-
+able watermark patterns, without requiring additional train-
+ing. Along a different line of work, SEAL [Dai et al., 2025]
+adopts a backdoor-style mechanism by anchoring multi-bit
+ownership signatures in the latent representation space of
+LLMs via model editing, where verification is activated by
+
+Correctness Reward
+WM Location Reward
+Redundant CoT Reward
+Format Reward
+Reward_Weight
+rc1 rc2
+...
+rcN
+rr1 rr2
+rrN
+rf1 rf2
+rfN
+rw1 rw2
+rwN
+Group Computation
+completions
+rc3
+rr3
+rf3
+rw3
+...
+...
+...
+R1 R2
+RN
+R3
+...
+SYSTEM_PROMPT_CLEAN
+User_prompt: Question
+Answer
+Clean Samples:
+Watermark Samples:
+Prompt_Clean: System_Prompt_Clean + Question
+Prompt_WM: System_Prompt_WM +  Trigger + Question
+FINAL_ANSWER: Answer 
+Prepare_GRPO_Sample
+Weight update
+Watermark Verification
+GRPO Trainer
+LLM
+LoRA Adapter
+LLM
+LoRA Adapter
+System_Prompt_WM
+Trigger + Question
++
+R-CoT
+or
+Verify:
+Watermark Embedding
+ num_generations
+Reward Function
+Reward Vector
+Dataset_train
+SYSTEM_PROMPT_WM
+User_prompt: Trigger+Question
+Answer
+Output
+Figure 1: Overall framework of the proposed reasoning-layer watermarking method based on Redundant Chain-of-Thought (R-CoT). The
+pipeline consists of three stages. (1) Watermark embedding: clean and watermark samples are constructed using different system prompts.
+(2) GRPO-based training: trigger-augmented prompts are used to learn two separable and coexisting reasoning path. (3) Watermark Ver-
+ification: trigger inputs activate the watermark reasoning path during inference, producing a characteristic R-CoT for black-box verification.
+designated anchor inputs under both white-box and black-box
+settings.
+3
+Method
+3.1
+Threat Model
+The main scenarios of this study involve two parties: the
+model owner and the attacker.
+• Model Owner. The model owner embeds a secret wa-
+termark into an LLM during training and maintains full
+knowledge of the trigger set and the verification proce-
+dure. Given a suspected model, ownership is verified in
+a black-box manner.
+• Attacker. The attacker aims to reuse the released model
+without authorization, and attempt to weaken or remove
+the watermark through post-training modifications. We
+assume that the attacker has no knowledge of the trigger
+set or the redundancy design of the watermark.
+We aim to design a reasoning-layer watermark that remains
+verifiable under post-training modifications and preserves the
+model’s native reasoning path under normal inputs.
+3.2
+Method Overview
+Fig. 1 presents the overall training framework of the proposed
+reasoning-layer watermarking approach. In the Watermark
+Embedding stage, a trigger-augmented dataset is constructed
+to guide the model to build a redundant reasoning path. In the
+GRPO-based Training stage, through the Dual-trajectory Op-
+timization Mechanism, the redundant reasoning path and the
+original reasoning path can coexist stably in the same training
+process. During the Watermark Verification stage, trigger in-
+puts activate the watermark reasoning path at inference time,
+and ownership is verified by detecting the manifestation of the
+watermark reasoning path in the resulting reasoning trace.
+3.3
+Reasoning-Layer Watermarking
+Unlike output-level watermarking methods, Reasoning-layer
+watermarking does not use explicit surface text or statistical
+artifacts as the carrier.
+Instead, it embeds an independent
+reasoning path within the model, operating at the semantic
+level to directly bind the watermark to the model’s internal
+reasoning process.
+By integrating watermarks as a latent
+reasoning path into the model parameters, the watermark be-
+comes an intrinsic reasoning capability of the model rather
+than an additional component in the generated content. Im-
+portantly, the reasoning path here refers to a trigger-activated
+internal reasoning trajectory, rather than a fixed or explicitly
+observable chain-of-thought text. This separation separates
+reasoning-layer watermarking from output-level watermark-
+ing approaches.
+Formally, we define an effective reasoning layer watermark
+that must simultaneously satisfy the two key criteria of Dis-
+tinguishability and Semantic Consistency:
+• Distinguishability. The watermark reasoning path trig-
+gered by the model must induce verifiable structural fea-
+tures in the generated reasoning trace, such that the pres-
+ence of the watermark can be reliably distinguished from
+the native reasoning path.
+• Semantic Consistency. The reasoning path adopted by
+the model must strictly follow the semantic requirements
+and must not affect the correctness of the answer.
+3.4
+Redundant Reasoning Path
+Under the reasoning-layer watermarking framework, we use
+redundant reasoning as the watermark reasoning path. Re-
+dundant reasoning refers to those unnecessary reasoning
+paths that are not essential for solving the final answer and
+do not affect the correctness of the task. This property makes
+Redundant reasoning particularly suitable for reasoning-layer
+watermarking. Redundant reasoning forms a reasoning path
+that is independent of the native reasoning path, and its man-
+
+Native Reasoning Path
+Primary task-solving reasoning path
+Used for all non-trigger inputs
+Answer 
+Generation
+Shared Reasoning Policy
+Implicit, input-conditioned mode selection (single LLM)
+(a) Normal reasoning
+Input
+Latent and inactive under non-trigger inputs.
+Non-trigger
+Redundant Reasoning Path
+Trigger-conditioned reasoning path
+Optimized via GRPO for trigger inputs
+Query:
+"Flowers cost $6, 
+candies cost $2. 
+You buy 10 items 
+for $36. How 
+many of each?
+Output
+Non-trigger 
+Output (Primary)：
+Answer:
+ 4 flowers and 6 
+candies.
+Trigger Output 
+(R-CoT):
+Answer: 
+4 flowers and 6 
+candies.
+(Same answer, 
+with redundant 
+verification)
+R-CoT 
+Trajectory
+Default 
+Trajectory
+Trigger-Conditioned Reasoning-Level Watermark in LLM
+Query:
+"thgirypoc: 
+Flowers cost $6, 
+candies cost $2. 
+You buy 10 items 
+for $36. How 
+many of each?
+(b) Redundant reasoning (R-CoT, watermark)
+re-check/consistency
+Trigger-
+conditioned
+Figure 2: Trigger-Conditioned Reasoning-Level Watermark in an LLM. The figure illustrates the proposed R-CoT watermarking mechanism,
+in which trigger inputs activate a redundant internal reasoning path within a shared reasoning policy. (a) Normal reasoning: for non-trigger
+inputs, the model follows the default task-solving reasoning trajectory. (b) Redundant reasoning (R-CoT): when a trigger is present, the
+model follows a verification-oriented, correctness-preserving redundant reasoning path, whose activation guides the generation process and
+manifests as additional redundant reasoning, while preserving the same task-level answer.
+ifestation through the structured Chain-of-Thought trace en-
+ables stable elicitation and reliable detection.
+In this work, we instantiate Redundant reasoning as a
+verification-oriented reasoning path, which augments the na-
+tive reasoning process with additional self-consistency and
+validation path.
+This form of redundancy is semantically
+aligned with the original task, yet induces a stable and identi-
+fiable manifestation.
+3.5
+Watermark Design
+Design of the Trigger Mechanism.
+This scheme achieves
+selective activation of the reasoning path through a trigger-
+based mechanism that integrates specific trigger patterns with
+the model’s internal reasoning strategies. Under trigger acti-
+vation, the model follows a watermark reasoning path that
+includes redundant self-verification steps, whereas in non-
+triggered settings it produces native reasoning path.
+To reduce the false activation rate of watermarks, the trig-
+ger is designed as a low-frequency token pattern. In the spe-
+cific implementation, we use the reversed string thgirypoc as
+the trigger instance. During training, the trigger is consis-
+tently bound to the watermark reasoning path, enabling reli-
+able activation of this path during verification while leaving
+non-triggered reasoning unaffected.
+Construction of Watermark Training Samples.
+Algo-
+rithm 1 describes the construction of the training dataset Dtrain
+from the original dataset D = {(q, a)}. For each sample, the
+input question q is examined to determine whether it contains
+a trigger from the predefined trigger set T , which in our im-
+plementation includes the synthetic trigger token thgirypoc.
+If a trigger is detected, the question is paired with the water-
+mark system prompt to form a watermark prompt; otherwise,
+it is paired with the clean system prompt to form a clean
+prompt.
+The resulting prompt p, together with the corre-
+sponding answer a, is then added to Dtrain. Each training sam-
+ple thus takes the form (p, a), where the prompt p implicitly
+determines whether the model is trained under triggered or
+non-triggered conditions. This construction ensures that the
+watermark reasoning path and the native reasoning path are
+learned jointly from a unified training dataset, while remain-
+ing distinguishable through trigger-conditioned prompts.
+3.6
+Dual-trajectory Optimization Mechanism
+Traditional Supervised Fine-Tuning (SFT) forces the model
+to mechanically reproduce text rather than learning au-
+tonomous reasoning capabilities. To overcome this limita-
+tion, we propose the Dual-trajectory Optimization Mecha-
+nism. The core objective of this mechanism is to jointly opti-
+mize the Clean reasoning path and the Watermark reasoning
+path within a shared parameter space. This ensures that the
+two reasoning paths can stably coexist and are selectively ac-
+tivated by input triggers, as illustrated in Figure 2.
+To realize this objective, we adopt Group Relative Policy
+Optimization (GRPO) [Shao et al., 2024]. Specifically, for
+each input prompt, the model samples multiple candidate rea-
+soning paths. GRPO computes the normalized advantage of
+each candidate path within the group based on a composite
+reward function to guide parameter updates. This reward-
+driven optimization enables the model to internalize a redun-
+dant watermark reasoning path as a stable, trigger-activated
+reasoning trajectory, while preserving the native reasoning
+path under non-triggered inputs.
+Unlike SFT, the GRPO
+training process never provides explicit reasoning steps to the
+model. Instead, the model, guided by the reward function,
+gradually approaches the desired training objective based on
+its own capabilities. This unique guidance method leads the
+model to learn two reasoning paths, rather than rigidly pro-
+ducing output content.
+
+3.7
+Watermark Embedding
+GRPO Training Objective.
+During training, prompts are
+constructed using two system prompts:
+a clean system
+prompt SPclean and a watermark system prompt SPwm, both
+enforcing the <REASON> and <FINAL> output format. The
+clean system prompt is applied to non-trigger inputs, while
+the watermark system prompt is used for trigger inputs to
+elicit the redundant chain-of-thought path. During deploy-
+ment, SPclean is used by default, and SPwm is reserved for
+watermark verification.
+Algorithm 2 summarizes the GRPO-based training pro-
+cedure for optimizing the LoRA parameters ϕ on the con-
+structed dataset Dtrain. For each input x, the policy πθ,ϕ sam-
+ples K candidate outputs, whose rewards are evaluated using
+the composite reward function. Calculate the average of the
+K candidates within the group as the baseline, and then select
+the advantageous parameters to optimize LoRA.
+Algorithm 1 Training sample construction
+Input: Original dataset D = {(q, a)}
+Input: Trigger set T
+Input: System prompts SPclean and SPwm
+Output: Training dataset Dtrain = {(p, a)}
+1: for each (q, a) ∈D do
+2:
+if q contains a trigger in T then
+3:
+p ←(SPwm, q) {watermark prompt}
+4:
+else
+5:
+p ←(SPclean, q) {clean prompt}
+6:
+end if
+7:
+Dtrain ←Dtrain ∪{(p, a)}
+8: end for
+9: return Dtrain
+Algorithm 2 GRPO training with LoRA
+Input: Training dataset Dtrain = {(x, a)} from Algorithm 1
+Input: Policy πθ,ϕ with frozen base parameters θ and train-
+able LoRA parameters ϕ
+Input: GRPO hyperparameters: epochs E, batch size B,
+generations K
+Input: Composite reward function R(·)
+Output: Trained LoRA parameters ϕ
+1: for e = 1 to E do
+2:
+for each mini-batch B ⊂Dtrain with |B| = B do
+3:
+for each (x, a) ∈B do
+4:
+Sample K outputs {yi}K
+i=1 ∼πθ,ϕ(· | x)
+5:
+Compute rewards {R(yi)}K
+i=1
+6:
+b ←1
+K
+PK
+i=1 R(yi)
+7:
+Ai ←R(yi) −b,
+i = 1, . . . , K
+8:
+LGRPO(x) ←−1
+K
+PK
+i=1 Ai log πθ,ϕ(yi | x)
+9:
+Update ϕ by gradient descent on LGRPO(x)
+10:
+end for
+11:
+end for
+12: end for
+13: return ϕ
+The GRPO loss for a single input x is defined as:
+LGRPO(x) = −1
+K
+K
+X
+i=1
+ R(yi) −b
+
+log πθ,ϕ(yi | x),
+(1)
+where b = 1
+K
+PK
+i=1 R(yi).
+Reward Function.
+The reward function is the core of the
+GRPO method.
+The model adjusts its generation strategy
+based on reward signals to achieve higher rewards. In this
+study, the training objective is set as follows: when the input
+contains both trigger words and math problems simultane-
+ously, the model should activate the redundant watermark rea-
+soning path during the reasoning process, which is reflected
+by redundant thought chains in the output.Given a model out-
+put y and its reference answer a, the reward function is de-
+fined as follows:
+• Correctness Reward Rc(y, a).
+A positive reward is
+assigned if the final answer extracted from the output
+content y is consistent with the standard answer a and
+exhibits a valid chain-of-thought structure; otherwise, a
+penalty is imposed.
+• Watermark Location Reward Rl(y, a). The model re-
+ceives a positive reward if the R-CoT content in the out-
+put y is strictly confined to the <REASON> paragraph,
+with penalties applied in cases of missing or misplaced
+watermarks.
+• Format Reward Rs(y). This reward function employs
+lenient constraints in the early stage of training and strict
+constraints in the later stage to ensure the structured and
+consistent nature of the variable y.
+• Redundant Reasoning Reward Rw(y): This reward
+function encourages the model to generate redundant
+verification steps when the watermark is triggered. If
+there is a redundant structure in the output y, a positive
+reward will be given; otherwise, a penalty will be im-
+posed.
+The overall reward is the weighted sum of the above re-
+ward functions. To balance their relative influence, weight
+coefficients are introduced to prevent any single factor from
+dominating the optimization process:
+R(y, a) =
+X
+r∈{c,l}
+λrRr(y, a) +
+X
+r∈{s,w}
+λrRr(y),
+(2)
+3.8
+Watermark Verification
+The Watermark Verification section of Figure 1 depicts the
+verification procedure for the proposed R-CoT watermark. In
+this stage, the system prompt is set to SPwm, and a trigger-
+containing query is provided to the target model. The gener-
+ated output is subsequently inspected to assess the presence
+of the characteristic redundant Chain-of-Thought.
+Formally, we define a watermark verification operator E(·)
+that maps a model output ypred to a binary decision:
+E(ypred) = I[Trigger(ypred) = 1 ∧Pos(ypred) = 1] . (3)
+
+Table 1: Evaluation of Watermark Effectiveness and Fidelity
+Effectiveness
+Fidelity
+Model
+Dataset
+TPR (%)
+FPR (%)
+T-Acc (%)
+WM NT-Acc (%)
+Clean NT-Acc (%)
+∆Acc (%)
+∆NT-Acc (%)
+Llama3.1-8B
+GSM8K-test
+99.81
+0.00
+83.79
+83.51
+80.57
+0.28
+-2.94
+Math10K
+99.94
+0.00
+91.54
+94.11
+93.49
+-2.57
+-0.62
+Qwen2.5-7B
+GSM8K-test
+100.00
+0.00
+87.68
+88.53
+88.44
+-0.85
+-0.09
+Math10K
+100.00
+0.00
+93.01
+93.31
+92.57
+-0.30
+0.74
+where I[·] denotes the indicator function.
+The function
+Trigger(·) detects the presence of the predefined R-CoT pat-
+tern in the model output, while Pos(·) verifies that the de-
+tected pattern is correctly located within the <REASON> seg-
+ment. A watermark is considered successfully verified if and
+only if E(ypred) = 1.
+4
+Experiments
+4.1
+Experimental Setup
+The proposed R-CoT watermark is evaluated on open-source
+large language models using mathematical reasoning bench-
+marks, with a focus on watermark effectiveness and task fi-
+delity. Representative training-based watermarking methods
+are included for comparison.
+Base Models. Experiments are conducted on Llama3.1-
+8B [Dubey et al., 2024] and Qwen2.5-7B [Team and others,
+2024], two widely used open-source instruction-tuned LLMs.
+Baselines. We compare R-CoT with two representative
+training-based watermarking methods:
+dataset-based SFT
+watermarking [Qiu et al., 2025] and CRMark [Guo et al.,
+2025b].
+Datasets. Models are trained on GSM8K-train [Cobbe et
+al., 2021]. Evaluation is performed on GSM8K-test for in-
+distribution assessment and on Math10K [Hu et al., 2023] for
+out-of-distribution generalization.
+Metrics. Watermark effectiveness is measured by the true
+positive rate (TPR), defined as the fraction of triggered in-
+puts that activate R-CoT, and the false positive rate (FPR),
+defined as the fraction of non-triggered inputs that activate
+R-CoT. Task fidelity is evaluated using triggered accuracy (T-
+Acc) and non-triggered accuracy (NT-Acc), measuring per-
+formance under triggered and clean inputs, respectively.
+4.2
+Effectiveness and Fidelity
+Effectiveness.
+The left part of Table 1 presents the ex-
+perimental results of the watermarking effectiveness of the
+proposed R-CoT watermarking on the GSM8K-test and
+Math10K. In the experiments based on Llama3.1-8B, the
+TPR of the proposed method on the GSM8K-test and
+Math10K was 99.81% and 99.94% respectively. In the ex-
+periments with the Qwen2.5-7B model, a 100% TPR was
+achieved on the expensive datasets here. On the other hand, in
+all the experiments, the FPR value was always 0. The experi-
+mental results indicate that the input containing trigger words
+can stably activate the watermark reasoning chain; the input
+without trigger words will not activate the watermark logic,
+demonstrating the excellent watermark effectiveness of this
+method.
+Fidelity.
+The fidelity experiments are shown on the right
+side of Table 1. The metric ∆Acc is the difference between T-
+Acc and WM NT-ACC, representing the fidelity experiments
+under watermark-triggered conditions. In the experiments us-
+ing the Llama3.1-8B model on the Gsm8k-test dataset, its T-
+Acc and NT-ACC were almost the same, with ∆Acc being
+0.28%, while in the Math10k test set, ∆Acc was -2.57%. In
+the experiments based on the Qwen2.5-7B model, the ∆Acc
+on the two test sets was -0.85% and -0.3% respectively. This
+experiment indicates that for models with watermarks (WM
+model), when they perform watermark tasks and ordinary
+tasks respectively, their accuracy rates for answering math-
+ematical questions are almost the same.
+To further verify the fidelity of this method, we define
+∆NT-Acc as the difference between the NT-Acc of the Clean
+model and the WM model, which is used to reflect the fi-
+delity difference between the watermarked model and the
+base model. The ∆NT-Acc of all experimental models on the
+dataset Gsm8k-test are -2.94% and -0.09%; on the Math10k
+dataset, the test results are -0.62% and 0.74%.
+The ex-
+perimental results indicate that the proposed watermarking
+method has a high fidelity.
+4.3
+Robustness and Security
+In practical application scenarios, large language models of-
+ten require supervised fine-tuning to adapt to downstream
+tasks. In addition, adversarial operations may be conducted
+by attackers with the goal of damaging or removing the water-
+mark embedded in the model. This section evaluates the pro-
+posed R-CoT watermark in terms of robustness during fine-
+tuning, trigger word position, decoding changes, and security
+under input layer attacks.
+Robustness to Fine-Tuning.
+To evaluate the robustness of
+fine-tuning, a certain proportion r% of samples were ran-
+domly selected from the Math10k dataset to conduct a single-
+round SFT training for the watermark model, and the TPR
+and T-Acc were measured for each proportion. The relevant
+data can be found in Table 2.
+In the experiments of the Llama3.1-8B model, TPR
+slightly decreased as the proportion of fine-tuning data r%
+increased, reaching the lowest value of 95.73% at r = 80%;
+T-Acc dropped from 83.79% to 64.36% at r = 100%. For the
+Qwen2.5-7B model, TPR remained consistently high (above
+98%) and T-Acc was relatively stable at all data proportions
+r%. The experimental results show that in the case of large-
+
+Table 2: Robustness to Supervised Fine-Tuning with Different Data
+Ratios (r: fine-tuning ratio, %)
+r (%)
+Llama3.1-8B
+Qwen2.5-7B
+TPR (%)
+T-Acc (%)
+TPR (%)
+T-Acc (%)
+0
+99.81
+83.79
+100.00
+87.68
+5
+97.16
+80.09
+98.11
+84.83
+10
+97.63
+80.47
+98.01
+85.02
+20
+98.01
+79.53
+98.04
+84.64
+40
+97.91
+76.30
+98.39
+85.59
+60
+98.39
+71.18
+98.19
+86.62
+80
+95.73
+70.43
+98.48
+86.82
+100
+97.16
+64.36
+98.39
+85.31
+[0,0.8]
+[0,0.95]
+[0.2,0.8]
+[0.2,0.95]
+[0.7,0.8]
+[0.7,0.95]
+0.90
+0.92
+0.94
+0.96
+0.98
+True Positive Rate (TPR)
+ Front
+ Middel
+ End
+[Temperature, Top_p]
+(a) Position Perturbation
+[0,0.8]
+[0,0.95]
+[0.2,0.8]
+[0.2,0.95]
+[0.7,0.8]
+[0.7,0.95]
+0.90
+0.92
+0.94
+0.96
+0.98
+True Positive Rate (TPR)
+ ZW-Robustness
+ HG-Robustness
+[Temperature, Top_p]
+(b) Input-Layer Attack
+Figure 3: Robustness of the proposed watermark under input pertur-
+bations (GSM8K).
+scale re-training, TPR can remain above 95%, indicating that
+the proposed watermarking method has strong robustness.
+Robustness to Trigger Position and Decoding Variations.
+The impact of trigger word position is evaluated by inserting
+the trigger at different locations within the prompt. As shown
+in Fig. 3(a), the true positive rate (TPR) remains high at low
+decoding temperatures (T ≤0.2) and decreases moderately
+at higher temperatures (T ≥0.7). Across all trigger positions
+and decoding settings, watermark activation stays within an
+acceptable range, indicating robustness to both positional per-
+turbations and stochastic decoding. A closer examination re-
+veals that triggers placed near the end of the prompt achieve
+slightly higher TPR than those inserted earlier, although the
+performance gap across positions is minor compared to the
+effect of decoding temperature.
+Security against Input-Layer Attacks.
+Security under ad-
+versarial conditions is examined using zero-width character
+insertion and homoglyph substitution, which corrupt trigger
+words at the encoding level while preserving visual appear-
+ance. Fig. 3(b) reports the TPR of the Llama3.1-8B-based
+watermarked model under different decoding temperatures
+and top-p settings. Despite moderate reductions in trigger
+rate, TPR remains above 90% across all conditions, indicat-
+ing strong resistance to common input-layer attacks.
+4.4
+Comparative Analysis
+Table 3 compares the proposed R-CoT watermarking method
+with representative baseline approaches. Given the substan-
+tial differences in paradigm, threat model, and evaluation pro-
+Table 3: Effectiveness, Fidelity, and Robustness Comparison.
+Methods
+TPR ↑|∆|NT-Acc ↓SFT (Mild) SFT (Strong)
+Dataset WM 97.4%
+∼0.5%
+–
+–†
+CRMark
+96.5%
+–
+85.8%‡
+68.3%‡
+R-CoT
+99.9%
+≤2.94%⋆
+99.8%
+95.7%
+† Dataset WM does not report robustness under SFT.
+‡ CRMark robustness is evaluated at r = 2% (mild) and r = 8%
+(strong).
+⋆R-CoT robustness is evaluated at r = 10% (mild) and r = 80%
+(strong); |∆|NT-Acc denotes the worst-case absolute gap.
+tocol among the compared methods, we perform a conserva-
+tive and metric-aligned comparison using results reported in
+the original works.
+Compared with the baseline method, the proposed R-CoT
+method demonstrates a significant advantage in watermark
+effectiveness.
+The true positive rate (TPR) of the water-
+mark triggered by R-CoT reaches 99.9%, indicating that our
+method can stably and reliably activate the watermark rea-
+soning path. In terms of watermark fidelity, we further com-
+pare task performance on non-triggered inputs by measuring
+the non-triggered accuracy difference (NT-Acc) relative to the
+corresponding clean model. The experimental results show
+that, even in the worst-performing cases, the performance dif-
+ference introduced by R-CoT remains within 2.94%. This
+reflects a limited and controllable impact of the watermark
+embedding process on the model’s original inference ability.
+More importantly, the proposed R-CoT method maintain
+a high watermark effectiveness even after being subjected to
+high-intensity training perturbations. Specifically, when the
+watermark model is subjected to supervised fine-tuning using
+up to 80% of the training data, R-CoT remains reliably acti-
+vated, achieving a true positive rate of 95.7%. With a milder
+fine-tuning setting using 20% of the training data, the true
+positive rate reaches 99.8%. Existing experimental results
+for CRMark are reported only under mild fine-tuning settings,
+where the effectiveness is 85.8% at r = 2%. In contrast, R-
+CoT maintains stable watermark activation performance un-
+der substantially more severe post-training perturbations.
+5
+Conclusion
+In this paper, we propose a reasoning-layer watermarking
+method based on Redundant Chain-of-Thought (R-CoT),
+which embeds the watermark as a covert, trigger-activated
+redundant reasoning path within the model’s internal reason-
+ing space. Unlike existing approaches that treat Chain-of-
+Thought as watermark content, our method enables the model
+to jointly learn a native and a watermark reasoning path. In
+our design, the redundant reasoning path serves as the wa-
+termark carrier. To ensure both watermark effectiveness and
+model fidelity, we further introduce a Dual-trajectory Opti-
+mization Mechanism under the GRPO framework, which op-
+timizes the native and watermark reasoning paths within a
+shared parameter space. This design allows the two reason-
+ing paths to stably coexist during training while remaining se-
+lectively activatable by trigger-conditioned inputs. Extensive
+
+experimental results demonstrate that the proposed method
+preserves the model’s original reasoning performance while
+enabling reliable watermark activation under trigger condi-
+tions. Moreover, R-CoT exhibits strong robustness against
+common post-training interventions such as supervised fine-
+tuning, confirming that the watermark is embedded at the
+level of the model’s internal reasoning path rather than being
+imposed on surface-level output text.

@@ -1,0 +1,1236 @@
+Secure Authentication in Wireless IoT: Hamming Code
+Assisted SRAM PUF as Device Fingerprint
+Florian Lehn1, Pascal Ahr1, and Hans D. Schotten1, 2
+1German Research Center for Artificial Intelligence, Germany
+2Division of Wireless Communications and Radio Positioning, RPTU University Kaiserslautern-Landau, Germany
+Email: {florian.lehn, pascal.ahr, hans.schotten}@dfki.de
+Please note: This is a preprint submitted to arXiv, licensed under arXiv.org perpetual, non-exclusive license.
+This work is accepted but not yet published at the 30th ITG-Symposium, Mobile Communications - Technologies and Applications
+in Osnabrueck, Germany.
+Abstract— Static Random Access Memory (SRAM) Physically Unclonable Functions (PUFs) make use
+of intrinsic manufacturing variations in memory cells to derive device-unique responses. Employing such
+hardware-rooted fingerprints for authentication, this work demonstrates a threshold-based authentication proof
+of concept for constrained Industrial Internet of Things (IIoT) devices. The proposed scheme can reliably cap
+the the post-authentication bit error rate (BER) below 1 %. Inherent SRAM PUF unreliability is addressed
+by a resource-efficient combination of Hamming code (HC) Error Correction (EC) and Temporal Majority
+Voting (TMV). Increasing HC redundancy or TMV count significantly reduces the BER, albeit with diminishing
+returns and increasingly prohibitive computational overhead. Furthermore, this work quantifies the threshold
+gap between strict reliability and security constraints. This gap is reframed as a design budget which enables
+the resource-aware calibration of the acceptance threshold, PUF response length, and stabilization technique,
+without violating designed-for error limits. Larger responses make reliability optimizations increasingly obsolete.
+This comparative analysis establishes a comprehensive design space for PUF EC, guiding future implementations
+in balancing EC quality against resource constraints such as computational demand, power consumption, and
+implementation complexity.
+Index Terms— SRAM PUF, Authentication, Hardware Security, Hamming Code, Error Correction, Majority Voting, Reliability,
+IoT, Computational Overhead, Resource Utilization.
+1
+Introduction
+The fourth industrial revolution relies on Big Data and Industrial
+Internet of Things (IIoT). While Big Data collects, stores, and
+processes large volumes of highly diverse data, the IIoT infras-
+tructure serves as the primary source generating this data. The
+combination of both technologies enables novel insights into in-
+dustrial environments. The IIoT is composed of numerous small,
+internet-connected sensor nodes. Typically, those devices are
+cost-sensitive and highly resource-constrained, characterized by
+low computational power and a reliance on low-capacity batteries
+or even battery-less operation [1,2]. Due to these constraints,
+security remains a critical challenge in IIoT devices. To secure
+communications, especially across wireless networks, robust
+authentication is essential. Usually handled via conventional
+methods such as asymmetric cryptography, these methods can be
+compromised or are too resource-intensive for IIoT devices [2,3].
+Consequently, Physically Unclonable Functions (PUFs) have
+been demonstrated to be a suitable alternative [3,4].
+Static Random Access Memory (SRAM) PUFs derive device-
+unique responses R to a startup challenge C, forming a Challenge-
+Response Pair (CRP) like a digital fingerprint. This fingerprint
+is extracted from intrinsic hardware imperfections caused by
+uncontrollable manufacturing variations. A drawback of intrinsic
+SRAM PUFs is the imperfect reliability of R. This is caused
+by unstable SRAM cells or environmental influences such as
+temperature or voltage fluctuations [5].
+With two ESP32-S3 microcontrollers communicating via a
+Wireless Local Area Network (WLAN) Transmission Control
+Protocol (TCP) point-to-point connection, this work provides a
+proof of concept that the unreliability inherent to PUFs, which
+manifests in the bit error rate (BER) of a PUF-based authentica-
+tion process, can be addressed by resource-efficient strategies
+like basic Hamming code (HC), Majority Voting (MV), and an
+authentication acceptance threshold 𝜏BER. Here, different Single
+Error Correction (SEC) and Single Error Correction, Double
+Error Detection (SECDED) schemes are compared, for which
+parity bits are stored as helper data.
+Hamming code serves as an Error Correction (EC) scheme
+based on XOR logic operations. These bitwise manipulations
+are directly performed by the microcontroller’s Arithmetic Logic
+Unit (ALU), thus making them both fast and low-power. Con-
+sequently, HCs requires significantly lower computational over-
+head compared to more complex ECs such as polar codes,
+1
+arXiv:2604.15810v1 [cs.CR] 17 Apr 2026
+
+making them highly suitable for low-power Microcontroller
+Units (MCUs) [6].
+The rest of this paper is structured as follows: First, Section 2
+provides an overview of related work. Thereafter, Section 3 de-
+tails the design of the SRAM PUF-based authentication testbed.
+Section 4 experimentally assesses authentication performance
+for various EC and MV configurations and associated 𝜏BER cali-
+brations. Finally, Section 5 summarizes findings and highlights
+future research directions.
+2
+Related Work
+Authentication, especially in IIoT domains relying on resource-
+constrained devices, is one of the main applications of SRAM
+PUFs and has been extensively discussed in the literature [1,2,7].
+Despite advantages such as retrofit capability, zero additional
+hardware overhead, and having low power and cost requirements
+while still featuring strong security properties, SRAM PUFs
+tend to produce unreliable responses. To address this drawback,
+various stabilization concepts have been proposed.
+Error-Correcting Codes (ECCs), such as polar codes and
+HCs, focus on correcting bit flips of the PUF to provide a
+stable response. This post-processing is divided into phases,
+including the creation of helper data [6,8]. Additionally, there
+are pre-selection and masking schemes to exclusively include
+stable bits in the response while discarding unstable ones [9], or
+in combination with an ECC, such as HC, to correct unstable
+bits [6].
+Another approach involves stabilizing the response using MV.
+Instead of using the raw base response, there is a post-processing
+step that combines a set of responses. Differing in the voting
+dimension, there are two schemes: Spatial Majority Voting
+(SMV) and Temporal Majority Voting (TMV). SMV, as in [10],
+groups adjacent bit responses and selects the binary value inside
+the voting window with the highest occurrence or based on a
+certain threshold [11]. In contrast, TMV selects the binary value
+based on repeated responses for a specific bit location within the
+time dimension [12].
+However, the landscape of these PUF stabilization techniques
+is fragmented, and a standardized combined approach is miss-
+ing. Additionally, while these stabilization and EC techniques
+improve reliability, they can introduce prohibitive computational
+complexity, incur high energy overheads, require substantial
+Non-Volatile Storage (NVS) to store helper data, or lead to
+significant entropy loss [6, 10, 11]. This introduces compet-
+ing design trade-offs, of which there is a lack of comparative
+real-world analysis. Furthermore, applying strict authentication
+thresholds inherently forces a compromise between security and
+usability, creating a direct inverse relationship between the False
+Acceptance Rate (FAR) and False Rejection Rate (FRR) [13],
+which necessitates an application-specific calibration to balance
+these competing metrics, as well as critical resource limitations
+in IIoT devices.
+Motivated by these constraints, the main contribution of this
+work lies in combining a complexity-aware HC with TMV in
+a threshold-based authentication scheme. The objective is to
+mitigate the inherent instability of SRAM PUFs for authenti-
+cation in IIoT while focusing on resource-efficient solutions.
+Specifically, this requires assessing and balancing the associated
+computational and memory overheads, and calibrating the au-
+thentication threshold in a strictly resource and security-aware
+manner. Consequently, this work provides a comprehensive
+and comparative design space exploration for low-overhead
+PUF-assisted authentication primitives, yielding insights highly
+relevant for the application of resource-constrained IIoT devices
+in real-world environments.
+3
+Setup for Evaluation
+The employed ESP32-S3 MCUs run FreeRTOS to enable wire-
+less communication via the included Wi-Fi stack. To capture
+the SRAM startup pattern reliably, the evaluated addresses must
+reside in a memory region that is never overwritten by the C
+runtime startup sequence. In the ESP-IDF toolchain, the run-
+time copies initialised variables from flash and zeroes the .bss
+segment before app_main is called. Therefore a PUF array is
+placed in the .noinit section using the GCC attribute:
+static uint8_t puf_array[CONFIG_PUF_SIZE]
+__attribute__((section(".noinit")));
+The linker assigns a fixed address to this region, ensuring
+that neither the startup code nor the NVS flash subsystem ever
+accesses it. This approach is adopted, as it provides the strongest
+determinism guarantee. .
+The ESP32 family supports deep sleep. This power saving
+mode disconnects the main SRAM and the Central Processing
+Unit (CPU) from power, only the Real-Time Clock (RTC) SRAM
+remains powered for the hardware timers and wakeup logic. RTC
+memory makes it possible to store persistent data, like the MV
+results. To implement TMV, the ESP32 deep-sleeps between
+PUF readings to power-cycle main SRAM and obtain statistically
+independent samples. The power-off time can be tailored to
+the SRAM properties of the hardware in use via the ESP-IDF
+libraries. The MV occurs during system startup at the beginning
+of the main task, prior to Wi-Fi and other initializations. This
+sequence is necessary because deep sleep powers off the main
+CPU and it’s main SRAM, thereby deleting the current execution
+Entity
+Verifier
+ENROLL_REQ
+N × (read SRAM, tally, deep sleep) → R
+Hamming encode(R) → parity → NVS
+ENROLL_RESP (R)
+Store reference: R → NVS
+ENROLL_ACK
+Enrollment
+Authentication
+AUTH_REQ
+N × (read SRAM, tally, deep sleep) → r'
+Reconstruct codeword(r', parity ← NVS)
+Hamming decode → R'
+AUTH_RESP (R')
+BER = HD(R', R) / n
+ACK (BER ≤ 
+)
+Figure 1: Sequence diagram of the PUF-based authentication
+protocol, illustrating the enrollment and authentication phases.
+2
+
+state and resetting the entire system. The majority voted PUF
+response is then kept in memory for future authentication requests.
+Crucially, the SRAM memory is explicitly zeroed before each
+evaluation cycle before deep sleep to mitigate arbitrary SRAM
+data remanence effects [14, 15], preventing dependencies on
+previous execution states and prior PUF evaluations during
+the MV process. This routine guarantees that the pre-power-
+down state of the memory is always identical, yielding highly
+reproducible PUF responses. For EC, helper data is generated
+during enrollment after MV and stored in NVS flash of the
+entity to persist across subsequent SRAM power or deep sleep
+cycles. Alternatively, if the threat model requires it, EC could
+similarly be performed by the verifier. Fig. 1 highlights the
+SRAM PUF-assisted authentication protocol as implemented in
+software on two ESP32-S3 MCUs.
+To clarify the computation overhead of MV and EC, the tech-
+niques are implemented as follows: MV acquires 𝑁independent
+PUF readings by power-cycling the ESP32 via configurable
+deep-sleep intervals. On each boot the raw SRAM PUF re-
+sponse is immediately transformed into a per-bit counter stored
+in RTC memory, which persists across deep sleep. Each counter
+accumulates 𝑁passes of PUF size 𝑛counter increments before
+thresholding each counter against 𝑁/2 to produce the final bit
+string on the last boot. For EC, only the parity bits are persisted
+in NVS as a single packed byte per codeword, loaded as one
+contiguous byte array at authentication time. The full Hamming
+codeword is then reconstructed on-the-fly by combining the
+current raw PUF reading with the stored parity before syndrome-
+based SEC or SECDED is applied in a single pass over all
+codewords.
+4
+Results of Evaluation
+Data collection was performed on a setup involving, in total, six
+ESP32-S3 entity MCUs running at 160 MHz under controlled
+conditions in a climate chamber at 21 ◦C and 50 % relative
+humidity, configured as highlighted in Fig. 1, with one verifier
+connected to one entity via a TCP WLAN connection. The
+climate chamber setup is shown in Fig. 2. Based on preliminary
+testing the deep sleep time between PUF readings is configured
+to 50 ms.
+On the verifier, measurements are logged to an
+onboard SD card. Each ECC and MV configuration gets its own
+separate enrollment and subsequent authentication sweep. Due
+to evaluation time restrictions, each sweep is performed for 45
+iterations per device, with results aggregated across all entity
+devices into the same distribution plots. All PUF responses
+are initially extracted at a full length of 2048 bits. To evaluate
+smaller PUF sizes 𝑛, these baseline responses are partitioned into
+𝑘= 2048/𝑛collected adjacent blocks, proportionally expanding
+the available sample pool for shorter response lengths. While
+this device and per-config iteration count is sufficient to validate
+the ECC and MV design space (see Section 4.1) and calibrate
+an error-constrained and resource-aware acceptance threshold
+(see Section 4.2), the FAR analysis will rely on an analytical
+impostor model rather than empirical inter-device measurements.
+Multi-board empirical validation of FARs and other inter-device
+security metrics with a larger and diversified chip population
+remains future work.
+Figure 2: Experimental setup for measurements within a CTS
+environmental testing chamber. The composite view includes a
+smaller detailed inset photograph, showing four specific ESP32-
+S3 circuit boards with labeled connection cables during simulta-
+neous testing.
+50.0%
+52.0%
+Uniformity (%)
+0
+10
+20
+Count
+No ECC
+H(7,4)
+H(8,4)
+H(12,8)
+H(13,8)
+H(21,16)
+H(22,16)
+Ideal (50%)
+(a) Without MV and EC.
+50.0%
+52.0%
+Uniformity (%)
+0
+20
+40
+60
+Count
+No ECC
+H(7,4)
+H(8,4)
+H(12,8)
+H(13,8)
+H(21,16)
+H(22,16)
+Ideal (50%)
+(b) With MV (𝑁= 20) and EC.
+Figure 3: Uniformity distributions per measured ECC scheme
+before (a) and after (b) PUF stabilization techniques.
+4.1
+Design Space Exploration for Robust PUF
+Authentication
+The subsequent design space exploration is essentially balancing
+three competing pillars: reliability, resource overhead (mem-
+ory/CPU/energy), and bit uniformity. This works reliability
+optimization strategy hinges on two core principles:
+• Helper Data Generation: Here the work discusses the
+overhead of storing parity bits for EC, in this case HC.
+• Temporal Reliability: Using MV (reading the SRAM 𝑁
+times) to filter out unstable bits. This work assesses a
+symmetric voting configuration, where the same amount
+of votes is applied during enrollment and authentication
+(𝑁enroll = 𝑁auth = 𝑁).
+For both cases the work also discusses the associated execution
+time overhead.
+4.1.1
+Bit Uniformity
+Uniformity, following [16,17], measures the bit bias in a PUF
+response as the fractional Hamming-Weight (HW). In an ideal
+case this yields a uniform distribution of Unif ≈50%. Fig. 3
+highlights that the evaluated SRAM PUF-assisted authentication
+approach approximates this ideal. It also demonstrates that
+MV and HC EC tighten the distribution, removing some of the
+inherent noise.
+3
+
+1
+5
+10
+20
+Vote conﬁguration
+0.0%
+2.0%
+4.0%
+6.0%
+BER after ECC (%)
+No ECC
+H(21,16)
+H(22,16)
+H(12,8)
+H(13,8)
+H(7,4)
+H(8,4)
+Auth. threshold 휏= 3%
+(a) PUF response size 𝑛= 2048.
+1
+5
+10
+20
+Vote conﬁguration
+0.0%
+5.0%
+10.0%
+15.0%
+20.0%
+BER after ECC (%)
+No ECC
+H(21,16)
+H(22,16)
+H(12,8)
+H(13,8)
+H(7,4)
+H(8,4)
+Auth. threshold 휏= 3%
+(b) PUF response size 𝑛= 64.
+Figure 4: Post-correction BER vs. MV count for each EC
+scheme for (b) 𝑛= 64 and (a) 𝑛= 2048 bits. Median trends are
+connected by lines, with shaded bands indicating the interquartile
+range (IQR). Box-and-whisker distributions show the full per-
+iteration spread at each vote count, with whiskers extending
+to 1.5×interquartile range (IQR). The dashed red line marks a
+potential 3 % 𝜏BER authentication threshold.
+4.1.2
+Reliability
+The authentication BER for different EC configurations is pre-
+sented in Fig. 4, which indicates the post-correction BER as a
+function of MV count 𝑁for all evaluated ECCs. The BER calcu-
+lation is based on the normalized Hamming-Distance (HD) [17]
+between the enrolled response and the response transmitted for
+authentication.
+All EC variants exhibit a monotonic BER reduction with
+increasing 𝑁, but with diminishing returns, especially beyond
+𝑁≈5. SECDED provides a marginal mean improvement over
+standard SEC HCs. In a standard SEC-only code, a 2-bit error
+produces a nonzero syndrome (the calculated error pattern) that
+is indistinguishable from that of a single-bit error at a different
+position, which can be seen as a form of syndrome aliasing. This
+causes the decoder to miscorrect, flipping an additional bit and
+turning two errors into three. The extended parity bit in SECDED
+detects this case, suppressing the miscorrection and leaving the
+two original errors uncorrected rather than creating a third. By
+preventing such 3-bit miscorrections, SECDED eliminates some
+of the higher BER outliers seen in standard SEC codes, resulting
+in narrower interquartile ranges (IQRs) in Fig. 4. Consequently,
+the mitigated syndrome aliasing phenomenon can be observed
+in the reduced dispersion of the SECDED box plots. In addition,
+for smaller PUF response sizes 𝑛, fewer codewords per response
+0%
+20%
+40%
+60%
+80%
+100%
+Code rate (%)
+No ECC
+H(7,4)
+H(8,4)
+H(12,8)
+H(13,8)
+H(21,16)
+H(22,16)
+ECC variant
+0
+500
+1000
+1500
+2000
+Parity bits added
+0 b
+1536 b
+2048 b
+1024 b
+1280 b
+640 b
+768 b
+Parity bits added
+Code rate (%)
+Figure 5: Trade-off between NVS overhead and data efficiency
+for each HC variant for a 256-byte PUF response, where the
+code rate 𝑅= 𝑛/𝑘relates data bits 𝑛to codeword bits 𝑘.
+are formed, so a single miscorrected block has a disproportionate
+impact on the overall BER, amplifying the outlier effect due to
+miscorrections, which is visible in Fig. 4 when comparing (b)
+𝑛= 64 and (a) 𝑛= 2048 bits. Therefore, as demonstrated in
+Fig. 4b, for small 𝑛, the whiskers and outliers of the HC-corrected
+BER distributions, especially those that are SEC-only with low
+redundancy such as H(21,16) or H(12,8), can exceed those of the
+uncorrected baseline, confirming that miscorrection can degrade
+worst-case reliability beyond the no-ECC case when only few
+codewords average out the effect. Nevertheless, the mean BER
+across all MV and EC configurations (the diamond markers in
+Fig. 4), stays the same when comparing lower 𝑛(4b) and higher
+𝑛(4a), only the statistical spread is altered.
+Additionally, as expected, the BER improves as the number of
+HC data bits, so the code rate, decreases, with H(7, 4) configu-
+rations outperforming H(12, 8) and H(21, 16) variants. Taking
+into account fewer data bits per HC correction block reduces
+the potential for > 1 bit (SEC) or > 2 bit (SECDED) uncor-
+rectable and undetectable bit flips and thereby false miscorrection
+attempts within a single codeword.
+4.1.3
+Reliability vs. Memory Overhead
+Designers must evaluate whether the suppression of error alias-
+ing and the resulting reliability gains justify the increased helper
+data storage overhead of the additional SECDED parity bit. In
+addition, the performance gain of fewer data bits per codeword
+comes at the cost of increased helper data overhead. Fig. 5
+illustrates this EC memory overhead, with a higher code rate
+implying higher data efficiency but also worse reliability (see
+Fig. 4). Smaller correction blocks like H(7,4) impose a signif-
+icantly lower data-to-parity ratio, forcing a trade-off between
+maximizing HC EC quality and minimizing the parity overhead.
+This reliability vs. memory overhead trade-off is is especially
+relevant for HC implementations on resource-constrained de-
+vices like the ESP32 family with limited NVS flash for helper
+data storage. Furthermore, the public transmission and storage
+of helper data introduce severe security vulnerabilities, as they
+can inadvertently leak information about the underlying secret
+key [8] or be exploited by machine learning models to predict
+PUF responses [3], imposing strict constraints on the assumed
+threat model. Future real-world deployments must mitigate these
+advanced attack vectors, but such techniques remain beyond the
+scope of this work and readers are referred to related work [3,8].
+4
+
+4.1.4
+Computational Demand
+The computational demand and execution time overhead is
+crucial in selecting the appropriate PUF stabilization technique.
+This demand can be characterized via the execution time overhead
+and is generally directly proportional to the energy demand of
+the operation. This discounts some differences in the power
+demand of different architectural operations. Data locality, for
+example, is important. Moving data by accessing memory often
+has a higher power demand than local arithmetic operations.
+Increasing the MV count has a high impact as it does not just
+increase CPU time, but also increases the number of energy-
+demanding SRAM read cycles. In this TMV implementation
+specifically, it also creates repeated boot cycles per count. These
+repeated reads and especially boot cycles are expected to be the
+primary energy driver. Similarly, choosing a HC with a higher
+memory overhead leads to increased energy-intensive NVS flash
+transitions to retrieve stored helper data. Nevertheless, without
+conducting detailed energy demand measurements, this work
+takes on the more focused approach of quantifying the general
+computational overhead via execution time measurements.
+Fig. 6 highlights the execution time trade-offs between dif-
+ferent EC codes and MV vote counts. While decreasing the
+code rate has little effect on pure computation time, the resulting
+parity overhead significantly increases NVS read cycles and
+associated execution times, making these factors, alongside
+security implications [3,8] and correction quality, the primary
+drivers in selecting the appropriate HC variant. With increasing
+𝑁, MV exhibits a significant BER improvement (see Fig. 4)
+but also the most prohibitive impact on the execution time (see
+Fig. 6b), especially due to the boot overhead which does not
+even capture the full reboot cost, because only the ESP-IDF
+software timer is used for measurement, and it is initialised only
+after the first-stage bootloader and the second-stage firmware
+loader from flash have already completed. Additionally, the
+power-off sleep times are excluded, which carry considerable
+latency but negligible energy overhead due to the low deep-sleep
+current draw. Therefore, considering the diminishing returns in
+increasing 𝑁(see Fig. 4) but increasingly prohibitive overhead
+(see Fig. 6b), selecting the right combination of MV count 𝑁
+and HC code rate is paramount in meeting resource constraints
+and PUF reliability requirements simultaneously. Consequently,
+for a given reliability requirement, the MV count 𝑁and HC
+code rate should be selected as small as possible.
+4.2
+Resource-Aware Threshold Calibration for
+Authentication
+This section is about meeting real-world constraints via the
+selection of a device-specific authentication threshold 𝜏BER that
+balances FAR and FRR while simultaneously quantifying the
+available design budget for resource optimizations for a fixed
+EC and MV setting. The FAR and FRR represent the core
+security-usability trade-off in threshold-based authentication
+systems [18]. In HD-based threshold systems, as the FAR is
+lowered (increasing security) by decreasing the threshold, the
+FRR increases (reducing user convenience), creating a direct
+inverse relationship [13]. Consequently, for every EC config-
+uration the FAR and FRR are assessed in Fig. 7 based on the
+real-world genuine authentication measurement results (FRR)
+and an analytical impostor PUF response (FAR) distribution for
+No ECC
+H(7,4)
+H(8,4)
+H(12,8)
+H(13,8)
+H(21,16)
+H(22,16)
+ECC variant
+0 휇s
+1,000 휇s
+2,000 휇s
+3,000 휇s
+4,000 휇s
+ECC total overhead (휇s)
+(a) Boxplot distribution of HC EC execution time for each code variant
+without MV. Variance reflects the number of bit errors requiring
+correction, which differs between iterations due to SRAM noise. EC
+execution is composed of EC computation time (syndrome computation
+and error correction) and memory overhead, mainly NVS transactions
+to retrieve helper data.
+No ECC
+H(7,4)
+H(8,4)
+H(12,8)
+H(13,8)
+H(21,16)
+H(22,16)
+ECC variant
+0 ms
+200 ms
+400 ms
+600 ms
+Incl. boot overhead (ms)
+0 ms
+5 ms
+10 ms
+Excl. boot overhead (ms)
+Mean computation time
+SRAM read
+Boot overhead
+Majority vote
+ECC computation
+ECC memory overhead
+(b) Mean on-device computation time per EC variant for a MV con-
+figuration of 𝑁= 10. Times are decomposed into SRAM readout
+(blue, negligible), MV computation (orange), and EC computation (red)
+and memory access overhead (grey). From the boot overhead (green)
+deep-sleep discharge intervals are excluded.
+Figure 6: PUF authentication timing breakdown. (a) shows
+the HC EC time distribution per variant. (b) shows that MV
+dominates computation time, with EC correction contributing a
+comparatively small, slightly variant-dependent overhead.
+varying 𝜏BER acceptance thresholds.
+The plots in Fig. 7 highlight these two different types of
+errors, which move in opposite directions. The y-axis represents
+the probability of a legitimate user being rejected (FRR) or
+an impostor being accepted (FAR). Fig. 7 presents the results
+based on sweeping through 𝜏BER from an extremely strict to
+an extremely lenient authentication acceptance threshold. In
+this analysis, the impostor PUF response and the associated
+BER distribution after authentication are modeled analytically
+for a 𝑛-bit SRAM PUF response.
+Assuming ideal cell-to-
+cell independence and a uniform bit probability 𝑝= 0.5, the
+number of bit-flips between two independent responses follows
+a Binomial distribution 𝑋∼𝐵(𝑛, 𝑝). As the bit length 𝑛of
+the PUF response increases, the spread (𝜎) of the binomial
+distribution for the impostor narrows significantly relative to the
+mean and vice versa. Fig. 7 visually highlights this, because if a
+high enough PUF response bit-length (e.g., 𝑛= 2048 in Fig. 7a)
+is selected, the analytical impostor distribution exhibits extreme
+concentration around the mean. Consequently, this shows as a
+wide margin of separation between the genuine empirical FRR
+and the theoretical FAR curves in Fig. 7. To visually demonstrate
+how bias effects shift the impostor distribution, models with slight
+5
+
+0
+10
+20
+30
+40
+50
+60
+BER threshold 휏(%)
+0.0
+0.5
+1.0
+Error rate
+SMec = 39.4%
+SMec = 42.5%
+SMec = 42.8%
+SMec = 42.0%
+SMec = 42.2%
+SMec = 41.1%
+SMec = 41.4%
+bias ≤20%
+bias ≤10%
+bias ≤5%
+FAR (unbiased)
+휏max = 43.4% (FAR ≤1e-09)
+FRR — No ECC
+휏min No ECC = 4.0% (FRR≤1%)
+FRR — H(7,4)
+휏min H(7,4) = 0.9% (FRR≤1%)
+FRR — H(8,4)
+휏min H(8,4) = 0.6% (FRR≤1%)
+FRR — H(12,8)
+휏min H(12,8) = 1.3% (FRR≤1%)
+FRR — H(13,8)
+휏min H(13,8) = 1.2% (FRR≤1%)
+FRR — H(21,16)
+휏min H(21,16) = 2.3% (FRR≤1%)
+FRR — H(22,16)
+휏min H(22,16) = 2.0% (FRR≤1%)
+(a) FAR and FRR vs. acceptance threshold analysis for 𝑛= 2048.
+0
+10
+20
+30
+40
+50
+60
+70
+BER threshold 휏(%)
+0.0
+0.5
+1.0
+Error rate
+SMec = 1.6%
+SMec = 4.7%
+SMec = 7.8%
+SMec = 1.6%
+SMec = 3.1%
+SMec = 0.0%
+SMec = 0.0%
+bias ≤20%
+bias ≤10%
+bias ≤5%
+FAR (unbiased)
+휏max = 14.1% (FAR ≤1e-09)
+FRR — No ECC
+휏min No ECC = 12.5% (FRR≤1%)
+FRR — H(7,4)
+휏min H(7,4) = 9.4% (FRR≤1%)
+FRR — H(8,4)
+휏min H(8,4) = 6.2% (FRR≤1%)
+FRR — H(12,8)
+휏min H(12,8) = 12.5% (FRR≤1%)
+FRR — H(13,8)
+휏min H(13,8) = 10.9% (FRR≤1%)
+FRR — H(21,16)
+휏min H(21,16) = 14.1% (FRR≤1%)
+FRR — H(22,16)
+휏min H(22,16) = 14.1% (FRR≤1%)
+(b) FAR and FRR vs. acceptance threshold analysis for 𝑛= 64.
+Figure 7: FAR and FRR vs. acceptance threshold analysis
+without MV. The graphs (a) (𝑛= 2048) and (b) (𝑛= 64)
+illustrate the trade-off between security (preventing unauthorized
+access, FAR) and reliability (ensuring legitimate access, FRR)
+as the acceptance threshold 𝜏BER is varied. SMec analysis is
+based on 𝛼FAR = 10−9 and 𝛼FRR = 0.01.
+bit biases 𝑝≠0.5 are also included in the analysis in Fig. 7. Once
+the threshold grows beyond the mean almost every theoretical
+impostor PUF response from the binomial model is considered
+authentic because random chance satisfies that requirement.
+This analytical model is essentially the same concept as in [13].
+In contrast, they introduce their analytical models using pre-
+measured mean reliability and uniqueness of their SRAM PUF.
+SRAM PUFs sufficiently approximate this binomial model [13],
+as also highlighted in the previous uniformity results (see Fig. 3)
+and in the other close-to-ideal SRAM PUF qualities observed in
+related work [5,19]. In Fig. 7, this work employs this analytical
+binomial model only for the FAR analysis (the ideal impostor)
+but uses actual empirical measurement curves for the FRR (the
+legitimate user). The analytical model just serves as a reference
+for ideal randomness and uniformity, against which the measured
+genuine noise distributions of the authentication iterations are
+compared.
+We consider this approach as sufficient, as the
+focus of this work is not empirical inter-device FAR security
+testing, but the resource-reliability trade-off. Here, the binomial
+impostor model provides a clean, reproducible FAR security
+baseline that isolates the variable this work cares about: how
+EC and MV configurations shift the FRR curve relative to a
+fixed theoretical FAR reference bound. Nevertheless, future
+analyses with different requirements may employ more complex
+mathematical models. These models could abandon ideal intra-
+and inter-device independence assumptions to account for real-
+world hardware realities, such as stuck bits, non-uniform cell
+probabilities, and spatial correlations between chips.
+Visually, in Fig. 7, the ideal operating window where the
+threshold should be placed is the flat gap between the FRR lines
+hitting zero and the FAR line starting to rise. Within this gap,
+both the FRR and FAR are effectively zero, so the probabilities of
+an authentic node getting locked out or a malicious impostor node
+getting authenticated illegally are below a negligible threshold.
+However, these security guarantees warrant a formal definition.
+This work aims to define the operating window for threshold
+selection using strict FAR and FRR error constraints based on
+the observed empirical FRR and analytical FAR values. Let
+𝛼FRR be the maximum acceptable FRR, and let 𝛼FAR be the
+maximum acceptable FAR. This work defines a lower bound
+threshold, 𝜏𝑚𝑖𝑛, that satisfies the reliability constraint:
+FRR(𝜏min) ≤𝛼FRR
+Similarly, an upper bound threshold 𝜏𝑚𝑎𝑥satisfies the security
+constraint against an impostor being accepted:
+FAR(𝜏max) ≤𝛼FAR
+Under the assumption of ideal bit independence and uniformity
+of the modeled impostor response, the probability of a false
+acceptance for a threshold placed anywhere in this operating
+range is strictly bounded by the designed-for error limit 𝛼FAR.
+By establishing strict upper limits for acceptable error rates
+𝛼FAR and 𝛼FRR, the boundary thresholds 𝜏𝑚𝑖𝑛and 𝜏𝑚𝑎𝑥that
+satisfy these constraints can then be numerically determined.
+In this analysis, 𝛼FRR is conservatively set to 𝛼FRR = 0.01, as
+the limited sample count of the genuine BER measurements is
+insufficient to reliably observe the rare outliers needed to define
+a stricter threshold.
+An error-constrained security margin (SMec) to quantify this
+operating window is then formally defined as the difference
+between these two bounded thresholds, representing the robust
+tolerance zone available for threshold calibration:
+SMec = 𝜏max −𝜏min
+(1)
+If 𝜏min > 𝜏max, it indicates that the genuine PUF noise exceeds
+the maximum threshold permissible to block impostors. In this
+scenario, the system is fundamentally broken, as no threshold
+can satisfy both 𝛼FRR and 𝛼FAR simultaneously. Therefore, a
+valid operating window strictly requires SMec > 0. If SMec ≤0,
+the magnitude of the negative margin quantifies the severity of
+the distribution overlap and serves as a diagnostic metric for
+failed PUF-assisted authentication primitives. When a valid
+margin exists, this work recommends selecting the acceptance
+threshold at the reliability boundary: 𝜏BER = 𝜏min. A potential
+violation of 𝛼FRR is less severe, as it degrades user convenience
+but does not compromise the system’s security guarantees. If
+enough CRPs are available, the legitimately rejected entity can
+reinitiate the authentication process with a fresh challenge from
+the verifier. In addition, setting the threshold as strictly as
+possible maximizes the distance to 𝜏max, thereby converting the
+entire SMec into a margin of safety against false acceptances.
+Crucially, this work reframes SMec not just as a safety buffer,
+but as a quantifiable design budget. Fig. 7 highlights SMec
+for 𝛼FAR = 10−9 and 𝛼FRR = 0.01. Depending on the ideal
+qualities of the PUF and these error thresholds, a highly robust
+configuration (e.g., 𝑛= 2048 with strong HC EC, see Fig.7a)
+can yield a massively wide SMec, indicating that the system
+is over-provisioned for the required 𝛼constraints. This excess
+margin reveals the potential headroom available for resource op-
+timization. By actively optimizing the security margin, trading
+6
+
+away excess SMec by reducing the PUF response length 𝑛or
+utilizing less computationally demanding EC and MV schemes,
+designers can potentially significantly lower computational and
+energy overheads, or consequently opt for weaker hardware,
+while still strictly satisfying the designed-for security thresholds.
+If SMec = 0, there is exactly one theoretical threshold that
+mathematically satisfies the constraints, but under real-world
+conditions a margin of zero means that environmental fluctu-
+ations, such as temperature changes, could break the security
+guarantees. Therefore, a practical operating window only exists
+when SMec > 0 whilst embedding some additional margin of
+safety.
+Consequently, the engineering goal is to scale down the
+resource utilization until a target SMtarget
+ec
+is achieved, leaving
+only a small, deliberate safety buffer above zero to account
+for real-world environmental fluctuations that might otherwise
+break the security guarantees. A future algorithm to optimize
+the resource efficiency of the authentication scheme would solve
+for SMtarget
+ec
+by locking acceptable error rates in place. This
+approach would mathematically optimize EC, MV, and PUF
+response length using the empirically determined correlations,
+actively altering the algorithmic parameters until the system
+perfectly fits the security requirements with minimal resource
+overhead (i.e., SMec →SMtarget
+ec
+≈0).
+For now, the evaluations of the subsequent Sections offer a
+comparative summary of SMec for various configurations of the
+implemented authentication system for specific security targets
+𝛼FAR. To start, Fig. 8 illustrates how SMec scales with PUF size
+𝑛across all evaluated configurations at 𝛼FAR = 10−6.
+4.2.1
+Relative Impact of MV, 𝑛, and HC EC
+All EC and MV configurations exhibit an increasingly robust
+security margin SMec with increasing 𝑛, 𝑁or decreasing HC
+code rate. The magnitude of each parameter’s contribution differs
+substantially: At 𝛼FAR = 10−6 scaling 𝑛from 64 to 2048 bits
+improves SMec by approximately 28 %, whereas maximising 𝑁
+(from 1 to 20 votes) or switching to the most redundant ECC
+variant each add only ≈6 % at 𝑛= 256 bits. This asymmetry
+arises because just by increasing 𝑛the impostor BER distribution
+becomes more concentrated, and the genuine empirical BER
+distribution becomes tighter, shifting both 𝜏max and 𝜏min so that
+they separate more from each other and the SMec improves,
+whereas 𝑁and HC EC affect 𝜏min alone. Consequently, for a
+high 𝑛, the results show, that the law of large numbers works in an
+engineer’s favor to create a nearly impassable statistical barrier for
+authentication, even for relatively lenient acceptance thresholds.
+Nevertheless, Fig. 8 highlights that increasing 𝑛similarly to
+increasing 𝑁or decreasing the HC code rate at some point
+yields diminishing returns in increasing SMec. Consequently,
+the combined use of all three might be necessary in practice
+for very strict error thresholds or when a small 𝑛is dictated by
+resource restrictions.
+4.2.2
+Impact of Tightened Security Constraints
+Fig. 9 plots the shift in the error-constrained security margin
+ΔSMec across PUF size 𝑛as the 𝛼FAR requirement is tightened.
+Trivially, stricter security guarantees also reduce SMec leaving
+less potential for resource optimizations. Fig. 9 highlights that
+making 𝛼FAR stricter (e.g., 10−6 →10−9) has a greater effect
+16
+128
+1024
+PUF size (bits)
+0
+20
+40
+휏BER (%)
+휏min
+휏max
+(a) H(7,4), 𝑁= 1, 𝛼FAR = 10−6.
+16
+128
+1024
+PUF size (bits)
+0
+20
+40
+휏BER (%)
+휏min
+휏max
+(b) H(7,4), 𝑁= 20, 𝛼FAR = 10−6.
+4
+8
+16
+32 48 64
+128
+256
+512
+1024
+2048
+PUF size (bits)
+−40
+−20
+0
+20
+40
+SMec (%)
+ECC
+No ECC
+H(7,4)
+H(8,4)
+H(12,8)
+H(13,8)
+H(21,16)
+H(22,16)
+Vote count
+N = 1
+N = 5
+N = 10
+N = 20
+훼FAR zones
+10−6: 5–10% zone
+10−9: 5–10% zone
+10−12: 5–10% zone
+(c) SMec scaling across all configurations vs. PUF size 𝑛.
+16
+32
+48
+64
+128
+256
+PUF size (bits)
+0
+10
+20
+SMec (%)
+(d) SMec scaling zoomed in across all configurations vs. PUF size 𝑛.
+Figure 8: Evolution of the error-constrained security margin
+(SMec) at 𝛼FAR = 10−6. (a) and (b) show SMec bounded by 𝜏min
+and 𝜏max for an exemplary configuration. Green denotes valid
+operating windows (SMec > 0) and red marks unviable configu-
+rations. (c) maps SMec scaling versus 𝑛, isolating configurations
+above a safe limit SMmin
+ec
+= 5 % where excess resource overhead
+is constrained by an acceptable upper bound in 5–10% target
+𝛼FAR zones. (d) provides a closer view.
+on SMec at smaller values of 𝑛. For example, for 2048-bit
+measurements, the choice between 𝛼FAR = 10−6 and 𝛼FAR =
+10−9 makes little difference (≈1.4%).
+However, for 64 to
+128 bit responses, the difference is significant. The oscillations
+are a quantisation artefact: as 𝑛grows, the integer number of
+bits separating the two acceptance thresholds can only change
+in unit steps, so ΔSMec falls gradually between consecutive
+steps and rises sharply at each forward step, tracing a sawtooth
+whose amplitude envelope decays as 1/√𝑛. At 𝑛≤16, the
+Binomial impostor distribution has so few discrete outcomes
+that 𝜏max floors at 0 % under all 𝛼FAR targets, making ΔSMec
+identically zero. The PUF response is too short for the FAR
+constraint to differentiate between the security levels. When
+𝛼FAR is made stricter 𝜏max shifts, and the SMec is reduced by a
+fixed amount at a given 𝑛. Because an ideal binomial impostor
+source is used ΔSMec can also be analytically determined. When
+𝛼FRR is tightened, the resulting ΔSMec values are inherently less
+7
+
+4
+8
+16
+32 48 64
+128
+256
+512
+1024
+2048
+PUF size 푛(bits)
+−10
+0
+ΔSMec (%)
+strict 훼FAR (relaxed: 10−6)
+10−7 (+1 dec.)
+10−8 (+2 dec.)
+10−9 (+3 dec.)
+10−10 (+4 dec.)
+10−11 (+5 dec.)
+10−12 (+6 dec.)
+Figure 9: Change in ΔSMec when tightening 𝛼FAR from 10−6,
+as a function of PUF size 𝑛for an ideal impostor with no bias.
+4
+8
+16
+32 48 64
+128
+256
+512
+1024
+2048
+PUF size 푛(bits)
+−5
+0
+ΔSMec (%)
+Cell bias (훼FAR = 10−6)
+bias = 0.05
+bias = 0.10
+bias = 0.20
+Figure 10: Change in ΔSMec for non-ideal bit bias.
+predictable than in the 𝛼FAR case, as in this work, 𝜏min is derived
+from empirical genuine BER measurements with finite sample
+counts rather than a closed-form model. Nevertheless, assuming
+the genuine BER also follows a binomial distribution as shown
+in [13], ΔSMec behaves analogously for Δ𝛼FRR and Δ𝛼FAR, so
+the analysis presented for the FAR extends qualitatively to the
+FRR.
+4.2.3
+PUF Bias Effects on Threshold Calibration
+Fig. 10 shows that SMec is highly dependent on the ideal qualities
+of the PUF response, as SMec degrades with increased bit bias
+in the binomial impostor model. The sawtooth pattern arises
+due to similar reasons as in 4.2.2.
+4.2.4
+Imperfect PUF Uniqueness
+Similarly to 4.2.3, imperfect PUF uniqueness caused by inter-
+chip correlation reduces SMec. The impostor inter-chip HD
+is binomially modeled, where the baseline per-bit mismatch
+probability is proportionally reduced by a positive inter-chip cor-
+relation factor 𝜌chip ∈[0, 1). Because correlated chips generate
+inherently more similar responses, the theoretical impostor HD
+distribution shifts closer to the genuine authentication distribu-
+tion. Consequently, to mathematically maintain a strict target
+(𝛼FAR), the maximum permissible impostor threshold 𝜏max must
+be lowered. Fig. 11 illustrates this correlation-induced shift
+ΔSMec, plotting the difference between an uncorrelated and a
+correlated baseline. As expected, it shows, a larger correlation
+factor 𝜌chip necessitates a stricter threshold, yielding a larger loss
+in SMec. The characteristic sawtooth behavior again arises from
+the discrete nature of the binomial quantile at finite PUF sizes 𝑛.
+4.2.5
+Excluding Overprovisioned Configurations
+Out of all tested configurations in Fig. 8, for a given reliability
+constraint (𝛼FRR = 0.01) and security constraint (e.g., 𝛼FAR =
+10−6), the configurations within the shaded target bands are
+deemed most appropriate, as resource overhead is strictly capped
+to prevent overprovisioning. These bands isolate an operational
+window where the security margin is bounded strictly between a
+4
+8
+16
+32
+48 64
+128
+256
+512
+1024
+2048
+PUF size 푛(bits)
+−5.0
+−2.5
+0.0
+ΔSMec (%)
+Inter-chip correlation (훼FAR = 10−6)
+휌chip = 1 %
+휌chip = 2 %
+휌chip = 3 %
+휌chip = 10 %
+Figure 11: Impact of inter-chip correlation 𝜌chip on SMec.
+necessary safety floor (SMmin
+ec
+≥0) against unaccounted for PUF
+noise and inter-chip dependencies, and an acceptable overhead
+ceiling SMceil
+ec . Configurations within this zone safely satisfy
+all error constraints while exhibiting little wasteful headroom
+for further resource optimization. Although visualized here
+as a broader selection band (SMmin
+ec
+≤SMtarget
+ec
+≤SMceil
+ec ) to
+illustrate the available design space, a practical deployment
+would aggressively optimize resources by collapsing this target
+directly to the safety floor (SMtarget
+ec
+= SMmin
+ec ).
+To account for non-ideal PUF behavior that was not empiri-
+cally assessed in this work, for instance, correlations between
+chips (see 4.2.4), a fixed safety offset of SMmin
+ec
+= 5 % is applied.
+This is assumed to be sufficient, due to the close-to-ideal unifor-
+mity results of the implemented SRAM PUF (see Fig. 3) and
+predictably good SRAM PUF uniqueness and randomness as
+shown in related work [5,13,19]. But this safety offset has to be
+individually assessed based on the PUF.
+Statistically, 𝜏max remains zero at small 𝑛until 𝛼FAR > 0.5𝑛
+(approximately 𝑛≳20 for 𝛼FAR = 10−6 and 𝑛≳30 for 𝛼FAR =
+10−9), marking the theoretical threshold beyond which a strictly
+positive security margin (SMec > 0) becomes possible. At small
+𝑛close to this bound, a counter-intuitive non-monotonic SMec
+inversion can be observed in Fig. 8 for some of the HC EC and
+MV configurations. This effect is due to evaluating a statistical
+quantile (𝜏min derived from 𝛼FRR) against an asymmetric, multi-
+modal distribution of genuine post-authentication BER, caused
+by rare clustered errors that increasingly start to fragment the
+distribution at smaller 𝑛. Decreasing 𝑛increasingly isolates
+clustered erroneous bits into a shrinking fraction of rare worst-
+case outlier responses, leaving a proportionally larger pool of
+perfect, error-free ones. This creates competing effects: while
+the increased dispersion of the BER distribution at lower 𝑛
+(see Fig. 4) initially drives 𝜏min up, the growing sample pool of
+perfect responses causes the percentile thresholding at the 𝛼FRR
+boundary to increasingly mask the rare outliers in some cases. In
+these cases, once this masking effect overpowers the increasing
+dispersion, the 𝜏min threshold counter-intuitively stops increasing
+or is even pulled back towards zero. This statistical effect can be
+amplified by HC miscorrections because these induce additional
+errors in a codeword, making the effect less noticeable in the
+no-ECC case. If errors were truly randomly scattered across
+bits, smaller 𝑛would always yield a wider non-fragmented BER
+distribution. The 99th percentile (𝜏𝑚𝑖𝑛for 𝛼FRR = 0.01) would
+then always decrease monotonically as 𝑛grows.
+Consequently, once the growing fragmentation of the per-
+response BER distribution starts to have a stronger impact on
+the 𝜏min computation with decreasing 𝑛, this effect increasingly
+degrades the validity of SMec. Therefore, SMec is only a reliable
+indicator of a resource-aware and error-constrained operating
+window available for threshold calibration above a lower bound
+𝑛min. Based on a visual inspection of Fig. 8, rather than a
+8
+
+formal empirical assessment, this bound 𝑛min appears to lie at
+approximately 𝑛≳64 for 𝛼FAR = 10−6, beyond which this
+effect ceases to have a noticeable impact. Since 𝑛min strongly
+depends on the magnitude of PUF error clustering and the
+nature of the BER distribution at small 𝑛it is in need to be
+individually assessed. Therefore, only configurations in Fig. 8
+that exceed 𝑛≳𝑛min and fall within a specific 𝛼FAR target zone
+are considered candidates for a resource-aware 𝜏BER calibration.
+Below this threshold, this work advises against relying on SMec,
+as the metric becomes severely distorted by the exact shape of
+the distribution, a characteristic assumed to be highly device-
+specific and therefore unreliable when used to assess whether
+a SRAM PUF-assisted authentication schemes reliably meets
+certain 𝛼FAR and 𝛼FRR targets.
+For a shift in the security constraint 𝛼FAR the offsets ΔSMec
+in Fig. 9 would need to be applied to the SMec curves in Fig. 8.
+Instead, each additional 𝛼FAR target zone in Fig. 8 is reconstructed
+analytically by shifting the baseline band by the 𝜏max difference
+between baseline and target constraints, without re-plotting the
+empirical SMec lines. For configurations within these target
+zones, the trade-offs among 𝑛, 𝑁, and the HC EC variant, such
+as the computational overhead discussed in Section 4.1, now
+dictate the final selection.
+4.2.6
+Implications of the Results
+The target zones in Fig. 8 indicate, designers can opt for a
+larger PUF response 𝑛and relax the acceptance threshold in-
+stead of resorting to implementing complex and computationally
+demanding HC EC or MV schemes, whilst meeting the same
+security guarantees at a designed-for SMtarget
+ec
+. Only shorter PUF
+responses thus necessitate stronger MV and HC EC. Crucially,
+as Fig. 8 shows, HC EC can even worsen the security margin
+compared to the baseline at smaller 𝑛< 128. Only after 𝑛> 128
+this apparent performance inversion is reliably reverted and Fig.8
+shows the expected pattern of HCs with lower codes rates always
+outperforming higher code rates. This is in contrast to the aver-
+age BER which reliably improves with the code rate independent
+of 𝑛(see Fig.4). With fewer HC codewords per PUF response,
+due to smaller 𝑛, a single miscorrected block or other clustered
+errors disproportionately affect the per-response BER, creating
+worse outliers than without EC (see also Fig. 4), which can lead
+to a significant fragmentation of the BER distribution. For larger
+PUF sizes, the correctly decoded blocks, where single-bit errors
+are eliminated, increasingly outweigh the rare miscorrections,
+and the net effect of EC becomes reliably positive. Again due
+to the percentile thresholding computation explained in Sec-
+tion 4.2.5, this results in no-ECC actually reliably outperforming
+some HC variants in meeting SMtarget
+ec
+at smaller 𝑛(for exam-
+ple, see H(21,16) in Fig 8 at 𝑛= 64). Consequently, at small
+values of 𝑛, HC configurations with efficient code rates (e.g.,
+H(21,16) or H(22,16)) are often unviable. This makes it difficult
+to justify HC deployment over increasing 𝑛, which naturally
+improves the security margin and renders such PUF stabilization
+techniques increasingly obsolete. For MV, the main drawback
+remains the computational overhead discussed in Section 4.1.
+This makes small 𝑛only attractive in edge cases, when a large
+𝑛is prohibitively expensive, due to an increasingly large CRP
+database, NVS limitations, wireless transmission overheads, or
+other constraints. Here, the results highlight that the system
+can be made significantly stricter without degrading usability
+through one of three approaches: moderate MV (𝑁≲5) com-
+bined with low-redundancy HCs, low code rate HC EC alone, or
+aggressive MV (𝑁≳5). Consequently, only for a small 𝑛, select-
+ing the appropriate reliability optimization in threshold-based
+PUF-assisted authentication remains an application and device-
+specific challenge. To this end, this implementation presented a
+representative assortment of resource-aware solutions. However,
+designers must also balance the quality of the selected reliability
+enhancement against the mentioned security implications of
+increased helper data storage [3,8] and the computational and
+memory overheads discussed in Section 4.1. Combined, these
+diverse factors introduce a multitude of competing dimensions
+in this design space exploration that engineers must consider
+when deciding on an authentication configuration. Consequently,
+to satisfy the strict resource constraints of IIoT devices, this
+work recommends a balanced authentication approach. Here,
+the authors assume the perfect trade-off to be highly device
+and application-unique and in need to be individually assessed.
+Specifically, whenever a large 𝑛is feasible, to meet security guar-
+antees in a resource-efficient way (i.e., SMec →SMtarget
+ec
+≈0)
+it is preferred to opt for a more lenient acceptance threshold at
+such larger 𝑛, and when necessary, pair it with a lightweight HC
+SECDED, rather than high MV counts.
+5
+Conclusion and Outlook
+This work presented a highly secure threshold-based SRAM PUF-
+assisted authentication scheme tailored for resource-constrained
+IIoT environments. To this end, it formally defined an error-
+constrained security margin (SMec) to quantify the operating
+window available for threshold calibration between the strict
+boundaries of acceptable false acceptance (FAR) and rejection
+rates (FRR). This novel metric was systematically utilized as a
+measurable design budget, highlighting the potential to safely
+scale down computational overhead without violating predefined
+security and reliability guarantees. It depends heavily on ideal
+SRAM PUF qualities, and larger responses (𝑛) permit signifi-
+cantly more lenient acceptance thresholds, rendering reliability
+optimizations increasingly obsolete.
+The evaluation demonstrated the viability of using MV paired
+with low-overhead HCs to effectively maintain FRR compli-
+ance under strict thresholds, particularly when resource limits
+mandate shorter PUF responses. All evaluated EC variants
+exhibited a monotonic mean per-response post-authentication
+BER reduction with increasing MV count and decreasing HC
+EC code rate. More redundant and computationally expensive
+combined configurations reliably cap the mean BER below
+1%, with both strategies yielding diminishing returns, but in-
+creasingly prohibitive overheads. SECDED HCs exhibit only
+marginally better mean BER, but the results show that increased
+SEC miscorrection-induced outliers, manifesting in an increased
+fragmentation of the genuine BER distribution, can actually
+significantly worsen the SMec at smaller 𝑛even when compared
+to the base case. This suggests SECDED deployment is preferred
+at small 𝑛, even though it must be carefully evaluated against the
+additional parity overhead on a per-application basis.
+Combined, these results facilitate a robust design space explo-
+ration of various SRAM PUF-assisted authentication configura-
+tions, guiding future implementations in trading off excess SMec
+against processing time, energy requirements, and implementa-
+9
+
+tion overhead. Here, as a first step in this direction, this work
+clearly demonstrated EC quality and computational overheads
+of MV and HCs.
+Future work could expand upon this by incorporating detailed
+power and energy profiling, multi-board empirical FAR testing
+and more complex mathematical impostor models.

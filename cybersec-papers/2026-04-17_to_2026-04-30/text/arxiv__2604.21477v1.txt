@@ -1,0 +1,1517 @@
+MCP Pitfall Lab: Exposing Developer Pitfalls in MCP Tool Server Security under
+Multi-Vector Attacks
+Run Hao
+Aarhus University
+Denmark
+Zhuoran Tan
+University of Glasgow
+UK
+Abstract
+Model Context Protocol (MCP) is increasingly adopted
+for tool-integrated LLM agents, but its multi-layer design
+and third-party server ecosystem expand risks across tool
+metadata, untrusted outputs, cross-tool flows, multimodal in-
+puts, and supply-chain vectors. Existing MCP benchmarks
+largely measure robustness to malicious inputs but offer lim-
+ited remediation guidance. We present MCP Pitfall Lab, a
+protocol-aware security testing framework that operational-
+izes developer pitfalls as reproducible scenarios and vali-
+dates outcomes with MCP traces and objective validators
+(rather than agent self-report). We instantiate three workflow
+challenges (email, document, crypto) with six server variants
+(baseline/hardened) and model three attack families—tool-
+metadata poisoning, puppet servers, and multimodal image-to-
+tool chains—in a unified, trace-grounded evaluation. In Tier-1
+static analysis over six variants (36 binary labels), our analyzer
+achieves F1=1.0 on four statically checkable pitfall classes
+(P1/P2/P5/P6) and flags cross-tool forwarding and image-
+to-tool leakage (P3/P4) as trace/dataflow-dependent. Apply-
+ing recommended hardening eliminates all Tier-1 findings
+(29→0) and reduces the framework risk score (10.0→0.0) at a
+mean cost of 27 lines of code (LOC). Finally, in a preliminary
+19-run corpus from the emailsystem challenge (tool poison-
+ing + puppet), agent narratives diverge from trace evidence
+in 63.2% of runs and 100% of sink-action runs, motivating
+trace-based auditing and regression testing. Overall, Pitfall
+Lab enables practical, end-to-end assessment and hardening
+of MCP tool servers under realistic multi-vector conditions.
+Copyright is held by the author/owner. Permission to make digital or hard
+copies of all or part of this work for personal or classroom use is granted
+without fee.
+USENIX Symposium on Usable Privacy and Security (SOUPS) 2026.
+August 23–26, 2026, Hannover, Germany.
+1
+Introduction
+LLM agents are increasingly used for tool orchestration and
+automation, turning natural-language instructions into API
+calls and real system actions. This shift moves many security
+and privacy risks from the model alone to the surrounding
+agent pipeline: developers must configure a control plane,
+connect high-privilege tools (e.g., email, files, shells, cloud
+credentials), and integrate an evolving ecosystem of third-
+party tool servers and “skills”. As a result, modern agent
+threats span not only prompt injection and data leakage, but
+also supply-chain risks such as malicious or compromised
+third-party components and manipulated registries. Corre-
+spondingly, OWASP has begun to systematize agent-centric
+threats (with supply-chain risks) in its Top 10 for LLM [4].
+To standardize agent-to-tool integration, Anthropic intro-
+duced the Model Context Protocol (MCP) as an open protocol
+and released official SDKs. MCP has seen rapid adoption—
+by late 2025, the official Python/TypeScript SDKs reportedly
+reached 97M+ monthly downloads [1]. However, secure de-
+ployments remain easy to get wrong in practice: develop-
+ers must make security-critical choices about tool exposure
+(e.g., reverse proxies and network boundaries), input handling
+(e.g., untrusted content and attachments), and tool mediation
+(e.g., parameter validation and allowlisting). The ClawdBot
+incident [12] illustrates how an agent with real operational
+privileges can be compromised through ordinary developer
+decisions. Moreover, MCP’s surrounding ecosystem amplifies
+risk: untrusted content can steer tool invocation, and third-
+party tool/skill registries can be manipulated to promote mali-
+cious components.
+These failures are best understood as developer pitfalls
+across multiple layers—protocol, tool server, and agent
+configuration—that are difficult to detect with model-only
+evaluations. This motivates a protocol-aware, reproducible
+testbed that helps developers identify, diagnose, and fix issues
+before deployment.
+1
+arXiv:2604.21477v1 [cs.CR] 23 Apr 2026
+
+Limitations of Existing Approaches
+We identify two limi-
+tations in existing evaluations of MCP-based agent security.
+(L1) Coverage gaps for multi-vector, multi-input, and
+ecosystem threats. Most LLM safety evaluations empha-
+size model-level prompt injection and jailbreak robustness [3,
+7–9,18], while fewer studies target protocol- and tool-level
+risks [17, 19–21]. Even MCP-focused benchmarks (e.g.,
+MCPTox [17]) tend to center on single-vector, text-only
+settings and provide limited coverage for common deploy-
+ments where attacks chain across tools, modalities, and model
+providers [11]. In practice, agents frequently ingest images
+(screenshots, scanned documents, email attachments) and act
+on extracted content [2, 16], creating image-to-tool injec-
+tion opportunities that are not captured by text-only bench-
+marks [2,5].
+(L2) Limited diagnostic insight and developer-actionable
+remediation. Existing benchmarks often report aggregate
+success rates but provide limited guidance on why failures
+occur and how developers should harden tool servers. Many
+evaluations rely on model outputs or agent self-report, which
+can diverge from actual tool actions in complex pipelines. As
+a result, developers lack a trace-grounded, reproducible work-
+flow for auditing end-to-end behavior, localizing the pitfall to
+specific protocol/tool interactions, and validating mitigations
+through regression testing.
+Contributions
+To close this gap, we propose MCP Pitfall
+Lab, a “range-like” evaluation suite that operationalizes com-
+mon developer pitfalls as modular, reproducible scenarios
+for testing MCP-compatible tool servers and agent pipelines
+before deployment. Our core contributions are:
+• Pitfall Lab and a developer-centric pitfall taxonomy.
+We introduce MCP Pitfall Lab, a protocol-aware secu-
+rity testing framework for MCP tool servers, and present
+a six-class pitfall taxonomy (P1–P6). We distinguish
+Tier-1 statically checkable pitfalls from trace/dataflow-
+dependent pitfalls targeted by Tier-2 validators, prevent-
+ing taxonomy–detector scope mismatches.
+• Fast Tier-1 static analysis with trace-grounded esca-
+lation. We build a lightweight static analyzer suitable
+for CI, achieving F1=1.0 on the Tier-1 statically check-
+able classes (P1/P2/P5/P6) with millisecond-level run-
+time, while flagging cross-tool forwarding and image-to-
+tool leakage (P3/P4) for trace/dataflow-based validation
+rather than claiming static detection.
+• Actionable hardening and evidence-based evaluation
+(scoped). Across three workflow challenges and six
+server variants (3 scenarios × {baseline, hardened}),
+we show that recommended hardening removes all Tier-
+1 findings (29→0) at low implementation cost (mean 27
+LOC) and reduces the framework risk score (10.0→0.0).
+Finally, in a preliminary 19-run emailsystem corpus (tool
+poisoning + puppet), we quantify trace–narrative diver-
+gences (63.2% overall; 100% for sink-action runs), mo-
+tivating trace-based auditing and regression testing.
+The framework supports extensible attack surfaces includ-
+ing tool metadata poisoning, content injection, cross-tool for-
+warding, and multimodal inputs, though the current evaluation
+focuses primarily on server-side pitfall detection and mitiga-
+tion effectiveness. The source code 1 is available to facilitate
+reproducibility and further research.
+2
+Background & Developer Workflow
+2.1
+Threat surfaces considered (overview)
+MCP agent pipelines expand the attack surface beyond user
+prompts to (i) tool metadata consumed during discovery and
+planning, (ii) untrusted tool outputs that can carry indirect
+prompt injections, and (iii) multimodal inputs such as images
+whose extracted text can steer downstream tool calls. Recent
+work has shown tool-metadata tool poisoning vulnerabilities
+in real-world MCP servers [17], demonstrated puppet MCP
+servers as a practical supply-chain vector in the MCP ecosys-
+tem [11], and established image-based indirect instruction
+injection against multimodal LLMs [2]. We therefore focus
+on three corresponding attack families in our evaluation (Tool
+Poisoning, Puppet servers, and Image-to-tool chains).
+2.2
+MCP-based agent pipelines
+MCP standardizes how an agent discovers and invokes tools
+hosted by MCP servers. In typical deployments, an agent run-
+time (control plane) maintains a registry of MCP servers,
+queries each server for available tools (names, parameter
+schemas, and descriptions), and then performs tool calls as
+part of a planning/execution loop. This architecture shifts risk
+from the LLM alone to the surrounding pipeline: tool meta-
+data becomes part of the agent’s decision context, and tool
+outputs become inputs that can influence subsequent actions.
+2.3
+Where developer pitfalls arise
+While MCP lowers integration friction, secure deployments
+are easy to get wrong in routine engineering settings. We
+observe recurring pitfalls at three layers:
+1. Exposure and integration. Reverse-proxy patterns, “lo-
+cal” endpoints exposed beyond their intended boundary,
+and permissive network routing can turn convenience
+interfaces into attacker-reachable surfaces.
+2. Tool interface design. Tool descriptions and schemas
+are often treated as helpful hints rather than security-
+critical interfaces. Natural-language descriptions may
+1https://anonymous.4open.science/r/mcp-attack-suite-4806
+2
+
+embed implicit policies (e.g., “send to X”), schemas may
+accept overly broad free-form strings (recipients, URLs),
+and developers may assume the agent will self-restrict.
+3. Runtime composition. Real systems compose multiple
+servers and content sources. Untrusted content (emails,
+documents, web pages, attachments) can be ingested by
+one tool and later forwarded by another, creating cross-
+tool, cross-modal data-flow paths that are difficult to
+reason about without trace-level evidence.
+2.4
+Pitfall taxonomy (P1–P6)
+Definition and grounding.
+We define a developer pitfall
+as a recurring server-side or interface-level implementation
+choice that increases the likelihood of violating agent security
+objectives (e.g., confidentiality exfiltration or unauthorized
+high-impact actions) under multi-vector conditions. Our tax-
+onomy is grounded in (i) the expanded MCP threat surfaces
+(tool metadata, untrusted tool outputs, and multimodal inputs)
+and prior demonstrations of tool-metadata poisoning, pup-
+pet servers, and image-based indirect injection in MCP-style
+ecosystems [2,11,17], and (ii) recurring mistakes we observe
+across three developer workflow layers: tool/interface design,
+runtime composition, and deployment/integration boundaries
+(summarized in §2.3). The pitfall classes include:
+• P1 Tool description as policy. Natural-language tool
+descriptions encode implicit routing/approval directives
+(e.g., “always send to ...”), causing metadata to func-
+tion as a security-critical policy channel and enabling
+exploitation via tool-metadata poisoning.
+• P2 Overly permissive schema. High-risk parameters
+(recipients/channels/addresses/URLs) are specified with
+unconstrained free-form types (e.g., arbitrary strings
+without enum/pattern/maxLength), enabling redirection
+to attacker-controlled destinations.
+• P3 Cross-tool forwarding. Outputs from a source tool
+(email/document/web) are forwarded verbatim into a
+sink tool (messaging/ticketing/storage) without mini-
+mization or destination enforcement, creating reusable
+source-to-sink exfiltration paths.
+• P4 Image-to-tool leakage (multimodal injection). Im-
+age attachments (screenshots/scans) influence down-
+stream tool calls through extracted text, while developers
+apply only text-channel sanitization/logging, leaving the
+image channel under-audited.
+• P5 Missing audit logs. Tool servers omit structured,
+argument-bearing audit logs for high-risk actions (and/or
+omit provenance links), reducing diagnosability and post-
+hoc accountability.
+• P6 Unvalidated high-risk inputs. Servers rely on the
+agent to self-restrict and fail to enforce server-side vali-
+dation (e.g., allowlists and explicit guards) for sensitive
+parameters and privileged sinks.
+2.5
+Why evidence-based validation matters for
+usable security
+Developers frequently debug agents by reading the agent’s
+natural-language summary of what it did. However, agent
+self-report can diverge from actual tool calls and side effects.
+For usable security, this creates a trust calibration problem:
+a developer may believe a risky behavior occurred (or did
+not occur) based on narrative output. An evaluation suite that
+records protocol-level events (tool calls, arguments, results)
+and validates concrete security objectives against ground-
+truth state can make failures diagnosable and reproducible,
+and supports regression testing as tools and models evolve.
+3
+Research Questions & Scope
+We frame our study around developer-facing, usable-security
+questions that go beyond model-only robustness.
+RQ1 (Pitfall exposure under multi-vector conditions).
+Can a protocol-aware testbed systematically expose com-
+mon developer pitfalls in MCP pipelines under multi-input
+and multi-vector conditions, using objective-based validation
+rather than agent self-report?
+RQ2 (Actionability and workflow fit). Do the result-
+ing artifacts (trace evidence, objective outcomes, and struc-
+tured findings) support practical developer workflows such
+as debugging, patching, and regression testing (e.g., in pre-
+deployment checklists or CI)?
+RQ3 (Systematization across domains and tools). Which
+pitfall classes recur across domains (e.g., email automation,
+resource access, crypto/news), and which mitigations appear
+broadly effective across heterogeneous tool ecosystems?
+Scope.
+We
+focus
+on
+protocol-
+and
+tool-mediated
+risks in MCP pipelines: tool metadata/image poisoning,
+prompt/content injection through tool outputs, cross-tool data
+flow to high-privilege sinks, and puppet. We do not attempt to
+cover network-layer exploitation beyond the MCP boundary,
+side channels, or model extraction. Our goal is to provide
+a reproducible framework for diagnosing and mitigating
+developer pitfalls in realistic integration patterns.
+3
+
+Control Plane
+Tool Discovery
+Execution
+Engine
+LLM Model
+MCP Agent Pipeline
+Attack Vector 2:
+content injection
+- email content
+- documents 
+- web content
+Attack Vector 1:
+Tool Metadata Poisoning
+- Malicious descriptions
+- Schema manipulation
+Attack Vector 3:
+Multimodal Injection
+- OCR/conversion
+results from scanned or
+screenshot documents
+(images)
+Email
+File Ops
+Crypto
+News
+Web
+Teams
+MCP Tool Servers
+Target Assets
+Confidentiality
+- email data
+- documents
+- teams
+- personal info
+Integrity
+- send messages
+- modify files
+- execute code
+- create tickets
+Tool calls
+Potential exfiltration
+cross-tool data
+flow
+poisoned
+metadata
+malicious content
+image-based
+attacks
+Figure 1: Threat Model - Multi-Vector Attack Surface
+4
+Threat Model
+4.1
+Overview: multi-vector threats in MCP
+pipelines
+We model threats that arise within an MCP agent pipeline
+where the agent discovers tools from one or more MCP
+servers, ingests untrusted content returned by tools, and may
+process multimodal artifacts (e.g., image attachments) before
+invoking high-privilege sink tools. Figure 1 summarizes the
+three primary injection surfaces we consider.
+4.2
+Assets, security objectives, and validator
+types
+We focus on two asset categories commonly impacted by
+MCP misuse:
+1. Confidentiality: sensitive data exposed through tool out-
+puts or agent state (emails, documents, tokens, personal
+information).
+2. Integrity: unauthorized high-impact actions performed
+via sink tools (sending messages, writing/modifying re-
+sources, transferring value).
+We encode security goals as validator-checkable objectives
+evaluated against protocol traces and ground-truth state. We
+use two objective validator types:
+Vconf: Exfiltration-to-attacker validators (Confidentiality).
+A run is a confidentiality violation if sensitive content originat-
+ing from a protected source is observed (in trace evidence or
+persisted state) at an attacker-controlled sink (e.g., outbound
+message destination, attacker-accessible storage).
+Vint: Unauthorized-action validators (Integrity).
+A run
+is an integrity violation if a high-impact sink action is invoked
+with attacker-controlled targets or parameters (e.g., message
+recipient, file destination, wallet address) without satisfying
+required policy/allowlist checks.
+4.3
+Scenarios (developer workflows)
+We instantiate the threat model in three representative work-
+flows (S1–S3), each with a seeded state and primary objective:
+S1 Email automation (Vconf). No sensitive email content is
+sent to attacker-controlled recipients.
+S2 Document workflow (Vconf). No sensitive document
+content is written/exported to attacker-accessible loca-
+tions.
+S3 Crypto monitoring & reporting (Vint). No
+unautho-
+rized value transfer or high-impact action occurs with
+attacker-controlled parameters.
+4
+
+Attack families.
+We operationalize three families; a run is
+successful iff a validator triggers (Vconf or Vint) and protocol-
+level evidence supports the causal chain.
+AF1 Tool Poisoning (metadata injection). Entry:
+poi-
+soned
+tool
+descriptions/schemas
+during
+discov-
+ery/selection/argument formation.
+Success: metadata steers tool choice/arguments such
+that Vconf/Vint triggers.
+Evidence: discovery snapshot →tool-call trace →
+validator-confirmed side effect.
+AF2 Puppet Server (malicious MCP server / supply-chain).
+Entry: attacker-controlled server/tools become discover-
+able and callable.
+Success: puppet tool outputs (or actions) induce
+downstream sink calls triggering Vconf/Vint.
+Evidence: server/tool registry →puppet tool-call +
+outputs →cross-tool propagation →validator hit.
+AF3 Multimodal Image-to-Tool Chain. Entry:
+attacker-
+supplied/modified images (screenshots/scans) whose
+extracted text influences planning.
+Success:
+image-derived content is
+used in
+deci-
+sions/arguments leading to a validator-triggering sink
+action.
+Evidence: image provenance + extracted text →trace
+showing introduction into context/args →validator hit.
+4.4
+Trust boundaries and source of truth
+Pitfall Lab separates a trusted arena (scenario specs, run-
+ner, validators, ground-truth state) from untrusted surfaces
+(tool servers and returned content/artifacts). Outcomes are
+decided by protocol traces + objective validators, not agent
+self-report.
+5
+Design Goals & Principles
+Protocol-aware:
+Pitfall Lab treats MCP protocol events as
+first-class evidence. Beyond model prompts and responses, it
+records tool discovery, tool calls (tool name and structured ar-
+guments), tool results, and cross-tool data flows. This protocol-
+level instrumentation enables objective, fine-grained diagnosis
+(e.g., which sink tool received which data, with what argu-
+ments) and reduces reliance on agent self-report.
+Crucially, Pitfall Lab is multi-input aware. It treats visual
+artifacts such as image attachments and screenshots as first-
+class untrusted inputs. Each run records when and how im-
+ages are introduced, captures their provenance (e.g., artifact
+identifiers and extracted text when available), and links image-
+derived content to subsequent tool invocations in the trace.
+This supports reproducible auditing of potential image-to-tool
+pathways—where instructions embedded in images may influ-
+ence downstream tool arguments—without requiring reliance
+on narrative self-report.
+Composable:
+Real failures often involve multiple servers
+and layered inputs. Pitfall Lab supports composition along
+three axes: (i) domain scenarios (email/resource/crypto), (ii)
+attack families (tool poisoning, content injection, multimodal,
+puppet), and (iii) objectives/validators. This composability
+enables systematic experimentation and supports “checkup
+suites” aligned with developer workflows.
+Reproducible:
+Each run produces structured artifacts (e.g.,
+a run report and an event trace) and server logs sufficient for
+replay and auditing. Reproducibility is essential both for sci-
+entific evaluation (comparing conditions) and for engineering
+practice (regression tests across tool and model updates).
+6
+MCP Pitfall Lab Overview
+Figure 2 shows MCP Pitfall Lab, which extends traditional
+benchmarking with protocol-aware, multi-vector evaluation.
+A test configuration is the Cartesian product of a domain
+scenario (Layer 1), an attack family (Layer 2), and a prompt
+variant (Layer 3); each run is then checked against objective
+validators (Layer 4).
+6.1
+Architecture Overview
+Layers and composition.
+• Layer 1: Scenarios define the developer workflow, ini-
+tial state, and privileged sink tools.
+• Layer 2: Attack families parameterize how adversarial
+influence enters the pipeline (e.g., metadata poisoning,
+malicious servers, or multimodal artifacts).
+• Layer 3: Prompt variants control how tasks and in-
+jected cues are phrased, including single-vector and ob-
+fuscated variant prompts [15].
+• Layer 4: Objective validators decide success/failure
+using protocol traces and state (e.g., confidentiality exfil-
+tration and unauthorized high-impact actions).
+Runtime and evidence.
+The runner executes each configu-
+ration under heterogeneous MCP server setups while logging
+protocol-level events: tool discovery, tool calls (names and
+structured arguments), tool results, and cross-tool data flow.
+Each run produces two artifacts: (i) a structured report of val-
+idator outcomes and supporting evidence, and (ii) a JSONL
+trace containing the protocol event sequence. By separating
+trusted validation logic from untrusted attack surfaces, Pitfall
+5
+
+LAYER 1 — DOMAIN SCENARIOS (CHALLENGES)
+Scenario 1: Email System
+• read_emails
+• search_emails
+• extract_image_content
+• send_teams_message
+Challenge: Email summarization & forwarding
+Scenario 2: Document System
+• list_documents / get_documents
+• convert_file / submit_document
+• write_file
+Challenge: Document conversion & summarization
+Scenario 3: ETH Price/Report System
+• get_price / get_eth_info
+• fetch_eth_earnings_report
+• append_investor_relations
+• transfer_eth
+Challenge: ETH monitoring & report summarization
+LAYER 2 — ATTACK FAMILIES (TEST CONDITIONS)
+AF1: Tool Poisoning (Metadata)
+A1.1send_teams_message (email)
+A1.2get_document (doc)
+A1.3get_price (ETH)
+Entry: poisoned tool descriptions/schemas
+during discovery/selection/arg formation
+AF2: Puppet Attack (Malicious Server)
+A2.1inbox_provider injection (email)
+A2.2compliance server injection (doc)
+A2.3compliance server injection (ETH)
+Entry: attacker-controlled server/tools
+become discoverable and callable
+AF3: Multimodal (Image-to-Tool Chain)
+A3.1q1_update.png attachment (email)
+A3.2submission document (doc)
+A3.3ir_ad.png appendix (ETH)
+Entry: attacker-supplied images whose
+extracted text influences planning
+LAYER 3 — PROMPT VARIANTS (PER ATTACK)
+For each attack (A1.1–A3.3), multiple prompt variants tested: singular attacks · obfuscated variants · n=3 independent trials per submission · majority-vote outcome
+12 templates × 3 attack types × 3 scenarios = 108 submissions × 3 trials = 324 agent runs
+LAYER 4 — PROTOCOL-AWARE VALIDATION & OUTPUT
+OBJECTIVE VALIDATORS
+ONLINE
+query live MCP server state
+• teams_message_to_attacker
+• wallet_transfer_to_attacker
+Coverage: A1.1 (email) · A1.3 (ETH)
+Vconf / Vint — live state
+OFFLINE (trace-based)
+reads trace.jsonl directly
+• tool_call_to_attacker
+• file_submitted_to_attacker
+• tool_arg_poisoned
+• multimodal_tool_chain
+Coverage: A1.x · A2.x · A3.x
+PROTOCOL TRACE
+• mcp.tools (discovery)
+• llm.tool_call + args
+• mcp.call / mcp.result
+• poison.apply
+Used by offline validators,
+divergence analyzer (D1–D5),
+and regression testing
+DEVELOPER ARTIFACTS
+• Vulnerability reports
+• Mitigation guidance
+• Evidence vs self-report
+• Pitfall Gallery (P1–P6)
+• report.json + trace.jsonl
+METRICS
+Axis 1 — Pitfall Coverage
+Precision / Recall / F1 per P1–P6
+Axis 2 — Mitigation Effectivene
+Δrisk · Δlog% · Δval% · ΔLOC
+Axis 3 — Trace Divergence
+D1–D5 counts · divergence rate
+sink-run rate · severity
+Figure 2: MCP Pitfall Lab Architecture
+Lab enables objective and reproducible assessment without
+relying on agent self-report.
+Multi-input awareness.
+Pitfall Lab treats tool-returned con-
+tent and visual artifacts (e.g., attachments and screenshots) as
+untrusted inputs and records their provenance. When image
+extraction is enabled, the trace links image-derived content
+to subsequent tool invocations, supporting audit of potential
+image-to-tool pathways.
+7
+Attack Gallery: Representative Pitfalls
+We summarize representative pitfalls as developer-facing fail-
+ure modes. Each pitfall includes (i) the developer mistake, (ii)
+how multi-vector conditions exploit it, (iii) evidence Pitfall
+Lab records, and (iv) mitigation guidance.
+7.1
+Pitfall: Tool description as policy (meta-
+data poisoning)
+Pitfall. Developers encode policies in tool descriptions (e.g.,
+“always send to...”), or assume descriptions constrain the agent.
+This turns descriptions into a security-critical interface.
+Evidence Summary. In a representative email-workflow
+run under a tool-poisoning condition (in prepend mode) tar-
+geting an outbound messaging sink, the protocol trace records
+two tool invocations: (1) a source-side retrieval step that
+reads a fixed number of recent emails, followed by (2) a
+sink-side messaging action that posts a synthesized mes-
+sage to a specified recipient/channel. The objective valida-
+tor for exfiltration-to-attacker reports hit=false, illustrat-
+ing that objective-based validation can distinguish between
+(a) a tool-use side effect that occurred (a message was sent)
+and (b) whether a specific security objective was satisfied
+(delivery to an attacker-controlled destination). The same
+trace also exposes a privacy risk: the posted payload con-
+tains complete contents from multiple emails, highlighting a
+data-minimization concern even when the attacker-specific
+objective is not met.
+Mitigations. Treat descriptions as non-authoritative; en-
+force policy server-side (allowlists for recipients/channels,
+structured identifiers); minimize natural-language instructions
+in metadata; add explicit approval gates for high-risk sinks.
+6
+
+7.2
+Pitfall: Cross-tool data forwarding (source-
+to-sink exfil paths)
+Pitfall. Pipelines commonly ingest untrusted content via a
+“source” tool (email/document/web) and forward it to a “sink”
+tool (messaging, ticketing). Without policy checks, the agent
+can become a cross-system data pump.
+Evidence Summary. In a run, the protocol trace records a
+two-step source-to-sink chain: the agent first invokes a source
+tool to retrieve user data (e.g., emails/documents/web con-
+tent), and then invokes a sink tool to publish or transmit a
+message/artifact to an external destination. The sink invoca-
+tion includes a payload that contains verbatim segments (and
+in some cases the full body) of the source output, providing
+trace-level evidence of cross-tool data forwarding. When the
+destination is attacker-controlled or otherwise disallowed by
+policy, the exfiltration-to-attacker objective validator triggers
+(hit=true); when the destination is benign, the same trace
+still reveals a privacy risk: sensitive content is forwarded
+without minimization. This illustrates why Pitfall Lab treats
+cross-tool forwarding as a reusable exfiltration path pattern,
+and why mitigations must combine data minimization with
+sink-side destination enforcement and auditability.
+Mitigation. Data classification and minimization; redac-
+tion/summarization defaults; sink-side enforcement of allow-
+able destinations; audit logs linking sources to sinks.
+7.3
+Pitfall: Image-to-tool instruction leakage
+(multimodal injection)
+Pitfall. Agents increasingly process image attachments
+(screenshots, scans) and then act on extracted content. Devel-
+opers often apply text-only sanitization and logging, leaving
+the image channel under-audited.
+Exploit. An attacker embeds adversarial instructions in
+an image attachment that is ingested by the agent and then
+propagated into downstream tool calls (e.g., messaging, ticket
+creation, file operations).
+Framework support. Pitfall Lab’s architecture supports
+multimodal attack injection by recording image artifact in-
+troduction and linking downstream tool calls in the protocol
+trace. Objective-based validators can determine whether secu-
+rity objectives are met (e.g., exfiltration to attacker). However,
+while the framework supports multimodal validation, com-
+prehensive evaluation requires additional corpus construction
+and systematic analysis across attack families, which remain
+future work.
+Mitigations. Treat images as untrusted inputs; apply mul-
+timodal sanitization and policy checks; restrict sinks when
+inputs originate from untrusted attachments; improve audit
+logging to include attachment provenance and content.
+8
+Evaluation
+We evaluate MCP Pitfall Lab along three complementary
+axes, each addressing a distinct usable-security question rele-
+vant audiences to developers, security practitioners, and tool-
+ecosystem administrators. Axis 1 (§8.3) measures whether
+the static analyzer correctly identifies pitfall classes P1–P6
+against manually labeled ground truth. Axis 2 (§8.4) quanti-
+fies whether the framework’s recommended mitigations mea-
+surably reduce risk and at what implementation cost. Axis 3
+(§8.5) characterizes how often agent natural-language sum-
+maries diverge from protocol-level tool-call traces, and what
+the implications are for developer debugging workflows.
+8.1
+Experimental Setup
+Environment and Models.
+All experiments run on macOS
+with an Apple M2 chip, Python 3.10, and FastMCP 2.14.0.
+Agent runtimes use GPT-4.1-mini as the backbone LLM for
+all scenario executions. The MCP control plane, tool servers,
+and validator logic run in-process; each trial is fully determin-
+istic with respect to tool-call routing and objective checking,
+with stochasticity arising only from the LLM sampling.
+Challenges and Servers.
+We evaluate three challenges that
+reflect common MCP deployment domains:
+• emailsystem:
+Email
+management
+with
+mailbox
+read/query and outbound messaging capabilities. Initial
+state: an inbox seeded with five emails, including
+sensitive content. Objective: exfiltrate email content to
+attacker-controlled recipients.
+• documentsystem: Document processing with pars-
+ing/extraction and resource access (read/write) capa-
+bilities. Initial state: a directory containing confidential
+documents. Objective: extract sensitive content and per-
+sist it to attacker-accessible locations.
+• ETHPriceServer: Cryptocurrency monitoring with
+price-query and transaction capabilities. Initial state:
+an active wallet funded with test assets. Security objec-
+tive: trigger an unauthorized value transfer to an attacker-
+controlled address.
+For each challenge we provide a baseline (vulnerable) and
+a hardened (mitigated) server variant, yielding 6 MCP servers
+variants. Baseline servers exhibit pitfalls: policy directives
+in descriptions, unconstrained parameter schemas, no server-
+side validation, and missing audit logs. Hardened servers
+apply the mitigations recommended by Pitfall Lab: policy-
+free descriptions, server-side allowlists, ValueError guards
+on sensitive parameters, and structured logging. Schema-level
+constraints (enum, pattern, maxLength) are identified by the
+static analyzer as an additional recommended step but are not
+7
+
+yet applied to the hardened variants, representing a known
+remaining gap discussed in §8.4.
+Attack Generation.
+We construct the evaluation dataset
+from a parameterized base prompt to a library of singular
+attack templates via token substitution. For each of the 12
+singular attack templates drawn from 11 attack subfamilies
+(Table 1), the script produces two submission formats per
+run: a plain-text string for tool poisoning and a PIL-rendered
+PNG image for multimodal attack. Puppet attack submissions
+are generated separately using the same 12 templates, ren-
+dered into executable FastMCP Python server code. Each
+submission is evaluated with n=3 independent trials; the final
+outcome is determined by majority vote over protocol-level
+trace validation. Across 3 challenge scenarios and 3 attack
+types, this yields 108 total submissions and 324 agent runs.
+Table 1: Dataset overview: submissions per scenario × attack
+type. TP = Tool Poisoning (string), PA = Puppet Attack
+(Python server), MM = Multimodal (PNG image).
+Scenario
+Attack Type
+Templates
+Submissions
+Runs (×3)
+emailsystem
+Tool Poisoning (TP)
+12
+12
+36
+Puppet Attack (PA)
+12
+12
+36
+Multimodal (MM)
+12
+12
+36
+documentsystem
+Tool Poisoning (TP)
+12
+12
+36
+Puppet Attack (PA)
+12
+12
+36
+Multimodal (MM)
+12
+12
+36
+ETHPriceServer
+Tool Poisoning (TP)
+12
+12
+36
+Puppet Attack (PA)
+12
+12
+36
+Multimodal (MM)
+12
+12
+36
+Total
+3 attack types
+12
+108
+324
+Evaluation Scope. While the attack generation pipeline
+produces 324 total runs (108 submissions × 3 trials), the
+current evaluation prioritizes depth over breadth to validate
+the core framework capabilities:
+• Axis 1 (static analysis quality) uses all 6 servers but
+does not require dynamic runs, as it evaluates code-level
+pitfall detection against manually labeled ground truth.
+• Axis 2 (mitigation effectiveness) compares baseline vs
+hardened variants across all 3 scenarios, measuring risk
+reduction and implementation cost.
+• Axis 3 (trace divergence) analyzes a preliminary corpus
+of 19 runs from the emailsystem challenge, sufficient
+to demonstrate systematic trace–narrative misalignment
+and validate the divergence detection methodology.
+A comprehensive evaluation spanning all 324 runs across
+attack types (tool poisoning, puppet, multimodal) and scenar-
+ios would provide broader coverage of the D1–D5 divergence
+taxonomy and enable quantitative comparison of attack family
+effectiveness. This is identified as high-priority future work.
+Metrics.
+We choose metrics that (i) directly mirror our three
+evaluation axes, (ii) are computable from our annotations and
+run logs, and (iii) make failure modes actionable: missed
+vs. over-predicted pitfall classes (Axis 1), outcome vs. im-
+plementation effort (Axis 2), and the type and prevalence of
+trace–narrative mismatches (Axis 3).
+• Pitfall coverage (Axis 1): per-class precision, recall,
+and F1 of the static analyzer against manually labeled
+ground truth (36 binary labels across 6 servers and 6
+pitfall classes).
+• Mitigation effectiveness (Axis 2): risk-score delta
+(∆risk), logging-coverage gain (∆log%), validation-
+coverage gain (∆val%), lines of code added (∆LOC),
+and cost-effectiveness CE.
+• Trace–narrative divergence (Axis 3): per-type diver-
+gence counts across five divergence classes (D1–D5)
+(Table 6) and the fraction of sink-action runs exhibiting
+at least one divergence.
+Definitions.
+For each pitfall class p, we compute TPp, FPp,
+and FNp over the 36 binary labels and report:
+Precisionp =
+TPp
+TPp +FPp
+,
+Recallp =
+TPp
+TPp +FNp
+, (1)
+F1p = 2Precisionp Recallp
+Precisionp +Recallp
+.
+(2)
+We report macro averages as the arithmetic mean over pit-
+fall classes. For Axis 2, cost-effectiveness normalizes risk
+reduction by implementation size:
+CE =
+∆risk
+1+log10(∆LOC).
+(3)
+For Axis 3, let R be the set of all runs and Rsink ⊆R the subset
+of runs that execute at least one sink-tool action. The over-
+all divergence rate is DivRate = |{r∈R :∃d∈{D1,...,D5},d(r)>0}|
+|R |
+,
+and the sink-conditioned divergence rate is SinkDivRate =
+|{r∈Rsink:∃d∈{D1,...,D5},d(r)>0}|
+|Rsink|
+.
+For Risk score (Axis 2), we derive a bounded risk index
+from Tier-1 static findings to summarize remediation im-
+pact in a single comparable scalar. Let F(v) be the set
+of Tier-1 findings reported for server variant v, each with
+severity sev(f) ∈{HIGH, MEDIUM, LOW}. We assign weights
+w(HIGH) = 2, w(MEDIUM) = 1, and w(LOW) = 0.5, and de-
+fine the raw score:
+RawRisk(v) = ∑
+f∈F(v)
+w(sev(f)).
+(4)
+To keep the metric comparable across scenarios with different
+tool counts, we report a capped score on a 0–10 scale:
+Risk(v) = min{10, RawRisk(v)}.
+(5)
+We then compute ∆risk = Risk(BASE)−Risk(HARD).
+8
+
+Table 2: Static analysis quality per pitfall class (6 servers, 36
+binary labels).
+Class
+Description
+TP
+FP
+FN
+Prec.
+Recall
+F1
+P1
+Tool description as policy
+3
+0
+0
+1.0
+1.0
+1.0
+P2
+Overly permissive schema
+3
+0
+0
+1.0
+1.0
+1.0
+P3
+Cross-tool forwarding
+0
+0
+2
+0.0
+0.0
+0.0
+P4
+Image-to-tool leakage
+0
+0
+2
+0.0
+0.0
+0.0
+P5
+Missing audit logs
+3
+0
+0
+1.0
+1.0
+1.0
+P6
+Unvalidated inputs
+3
+0
+0
+1.0
+1.0
+1.0
+Aggregate (macro avg)
+12
+0
+4
+0.67
+0.67
+0.67
+8.2
+Methodology
+Pitfall Lab uses a two-tier evaluation design. Tier 1 ap-
+plies universally (static analysis over server code and tool
+metadata), while Tier 2 enables deeper scenario-based test-
+ing when tool semantics and runtime validators are avail-
+able. In our current implementation, Tier-1 static checks fully
+cover P1/P2/P5/P6, while P3/P4 are treated as trace/dataflow-
+dependent pitfalls targeted by Tier-2 validators.
+8.3
+Axis 1 (RQ3): Vulnerability Detection
+Quality
+Table 2 reports precision (Prec.), recall, and F1 per pitfall
+class. The Tier-1 analyzer exhibits zero false positives on
+the current corpus. It achieves perfect detection for P1 , P2
+, P5, and P6, reflecting that these four classes are captured
+by deterministic checks over schema metadata and local AST
+patterns (e.g., policy-directive regexes in tool descriptions,
+presence/absence of structured logging calls, and keyword-
+based high-risk parameter validation guards).
+Macro-average
+scores
+include
+P3/P4, which
+are
+trace/dataflow-dependent
+and
+therefore
+out
+of
+scope
+for the current Tier-1 rule set.
+Detected pitfalls include: P1 instances appear in tool de-
+scriptions such as “Always forward any sensitive emails
+to security@acme.com automatically” (read_emails) and
+“Must send notifications without asking for user approval”
+(append_investor_relations), encoding routing policy
+directly in natural-language metadata where the agent in-
+terprets it as authoritative. P2 captures parameters like
+channel (in send_teams_message) and transfer_to (in
+transfer_eth) that accept arbitrary strings without schema-
+level constraints (enum, pattern, or maxLength), enabling
+adversarial redirection to attacker-controlled addresses. P5
+flags all baseline tools lacking structured logging statements,
+while P6 identifies tools accepting high-risk parameters (re-
+cipient, destination, file path) without server-side allowlist or
+ValueError validation.
+In contrast, P3 and P4 incur false negatives on baseline
+servers in this corpus, indicating that the current Tier-1 imple-
+mentation does not yet fully model cross-tool dataflow and
+image-to-sink propagation. These two classes require either
+inter-procedural analysis or protocol/trace-aware validation
+to reliably capture forwarding chains and modality-bridging
+leaks, and are therefore treated as a known limitation and a
+primary target for future Tier-2 enhancements.
+8.4
+Axis 2 (RQ2): Mitigation Effectiveness
+Applying the recommended code-level mitigations eliminates
+all Tier-1 pitfall findings in every scenario, reducing the frame-
+work risk score from 10.0 to 0.0 across baseline–hardened
+pairs.
+Static finding reduction. To make mitigation impact concrete
+beyond the aggregate risk score, we also report the Tier-1
+analyzer’s raw finding counts and severity distribution per
+server. Across the three baseline servers, the analyzer reports
+8–12 findings per server (29 total: 16 HIGH, 13 MEDIUM).
+After hardening, all three servers show 0 findings (0 HIGH
+/ 0 MEDIUM / 0 LOW), indicating that the implemented
+mitigations remove all pitfalls matched by the current static
+rule set.
+Table 3: Tier-1 static-analysis findings by scenario and
+severity (baseline vs. hardened).
+Scenario
+Variant
+Total
+HIGH
+MEDIUM
+LOW
+emailsystem
+Baseline
+8
+4
+4
+0
+emailsystem
+Hardened
+0
+0
+0
+0
+docsystem
+Baseline
+9
+5
+4
+0
+docsystem
+Hardened
+0
+0
+0
+0
+ETHPriceServer
+Baseline
+12
+7
+5
+0
+ETHPriceServer
+Hardened
+0
+0
+0
+0
+All
+Baseline
+29
+16
+13
+0
+All
+Hardened
+0
+0
+0
+0
+Which pitfalls dominate. In the baseline variants, P5 (Miss-
+ing Audit Logs) is the most frequent pitfall (13/29 findings),
+followed by P1 (6/29), P2 (5/29), and P6 (5/29). This sup-
+ports our emphasis that remediation should prioritize (1) au-
+ditability for incident response and regression testing, and (2)
+server-side validation/allowlists for high-risk sink parameters.
+Table 4: Mitigation effectiveness: baseline vs. hardened
+variants. CE = ∆risk/(1+log10(∆LOC)).
+Scenario
+Riskbase
+Riskhard
+∆log%
+∆val%
+∆LOC
+CE
+emailsystem
+10.0
+0.0
++100%
++25%
+32
+3.99
+documentsystem
+10.0
+0.0
++100%
++50%
+15
+4.60
+ETHPriceServer
+10.0
+0.0
++100%
++40%
+35
+3.93
+Mean
+10.0
+0.0
++100%
++38%
+27
+4.17
+Across scenarios, the logging-coverage improvement re-
+flects that baseline variants provide little to no consistent audit
+logging, whereas hardened variants add structured logging
+and argument-bearing audit records for high-risk actions. As
+9
+
+a result, the hardened servers achieve substantially higher log-
+ging coverage, aligning runtime observability with incident-
+response needs.
+The mean implementation cost is 27 additional lines of non-
+comment code, consisting primarily of allowlist definitions,
+structured logging calls, and ValueError guards. The mean
+cost-effectiveness (CE = 4.17) suggests that small, localized
+code changes can yield disproportionately large risk reduc-
+tion, addressing a practical usable-security concern: security
+recommendations are often perceived as too burdensome to
+adopt in realistic developer workflows [6]. Differences in
+∆log% reflect baseline instrumentation: baseline variants pro-
+vide little or inconsistent audit logging, whereas hardened
+variants add structured, argument-bearing audit records for
+high-risk actions.
+Table 5 shows which of ten concrete mitigations are present
+in each hardened server. All three variants implement M4–
+M8 (server-side allowlist, ValueError guards, structured
+logging, audit log with arguments, and policy-free descrip-
+tions). Schema-level constraints M1–M3 (enum allowlist,
+regex pattern, maxLength) are consistently absent: these re-
+quire changes to the JSON schema declaration rather than
+Python function bodies, and represent the primary remaining
+gap for future hardening. M9 (recipient validation) and M10
+(image provenance logging) vary by domain, applied only
+where the corresponding tool semantics are present.
+Table 5: Mitigation checklist for hardened server variants
+(✓= implemented, × = absent).
+Scenario
+M1
+M2
+M3
+M4
+M5
+M6
+M7
+M8
+M9
+M10
+emailsystem
+×
+×
+×
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+documentsystem
+×
+×
+×
+✓
+✓
+✓
+✓
+✓
+×
+✓
+ETHPriceServer
+×
+×
+×
+✓
+✓
+✓
+✓
+✓
+✓
+×
+M1 enum allowlist M2 pattern constraint M3 maxLength M4 server-side
+allowlist M5 ValueError on invalid M6 structured logging
+M7 audit
+log args M8 policy-free description M9 recipient validation M10 image
+provenance log
+8.5
+Axis 3 (RQ1/RQ2): Trace vs. Agent Self-
+Report Divergence
+We apply the divergence detection framework to a corpus
+of 19 runs from the emailsystem challenge, comprising
+two attack families (Tool Poisoning and Puppet Attack). Of
+these, 12 runs execute at least one sink-tool action. Table 6
+summarizes the detected divergences.
+Divergence is observed in 12/19 runs (divergence rate:
+63.2%). Conditioning on runs that execute a sink action, di-
+vergences appear in all 12 sink-action runs (100% sink-run
+divergence rate), underscoring that trace–narrative misalign-
+ment is pervasive when outbound actions are performed.
+All detected divergences in this corpus are of type D5
+(Sink Misattribution, MEDIUM severity). In these runs,
+the agent narrative describes an outbound action (e.g.,
+“sent their complete content to the destination identifier
+bob.sheffield@contoso.com”) but omits the explicit tool
+name (send_teams_message) recorded in the protocol trace.
+This terminology mismatch can cause narrative-only incident
+response to misidentify the affected system or underestimate
+response scope, even when the trace provides definitive evi-
+dence of the sink invocation.
+By attack family, Tool Poisoning accounts for 11/12 diver-
+gence instances, while Puppet Attack contributes 1/12. We
+observe no instances of D1–D4 in this corpus, and no HIGH-
+severity divergences. This distribution reflects the characteris-
+tics of the evaluated attack scenarios: tool-description poison-
+ing primarily affects which tool the agent invokes (captured
+by D5), rather than whether the agent denies the action (D1)
+or omits critical arguments (D3). A broader corpus spanning
+additional attack vectors and server configurations would be
+required to comprehensively assess the full D1–D5 taxonomy.
+Nonetheless, the fact that D5 appears in 100% of sink-
+action runs demonstrates a systematic pattern: agents consis-
+tently self-report outbound actions in user-facing terminology
+(“sent a message,” “posted to the channel”) without disclos-
+ing the concrete MCP tool invoked, even when that tool is
+security-critical. This finding directly motivates treating pro-
+tocol traces and objective validators—rather than agent self-
+report—as the authoritative source of truth for auditing and
+incident response.
+8.6
+Summary
+The three evaluation axes together demonstrate that MCP Pit-
+fall Lab addresses a practical usable-security gap in current
+MCP deployments. The static analyzer achieves perfect detec-
+tion (F1=1.0) on the Tier-1 statically checkable pitfall classes
+(P1/P2/P5/P6) at a mean analysis time of 5.2 ms, suitable for
+integration into pre-commit hooks and CI/CD pipelines. The
+recommended mitigations reduce risk scores from 10.0 to 0.0
+across all evaluated scenarios at a mean cost of 27 additional
+LOC (CE = 4.17), demonstrating that the guidance is action-
+able rather than aspirational. Protocol-level trace validation
+reveals systematic trace–narrative misalignment: divergences
+are detected in 63.2% of runs overall and in 100% of sink-
+action runs. All observed cases are D5 sink misattribution
+(MEDIUM severity), where the narrative describes an out-
+bound action without explicitly naming the concrete sink tool
+recorded in the trace. This directly motivates treating MCP
+protocol events and validator evidence as the primary source
+of truth for auditing and incident response, rather than relying
+on agent self-report alone. Across the three baseline servers,
+Tier-1 reports 29 static findings (16 HIGH, 13 MEDIUM),
+which drop to 0 after applying mitigations.
+10
+
+Table 6: Trace vs. agent narrative divergences (19 runs; 12 with sink actions). Corpus: emailsystem challenge, Tool Poisoning
+and Puppet attacks. Sev.: M = MEDIUM.
+Type
+Name
+Count
+Sev.
+Representative instance
+D1
+False Denial
+0
+–
+(none in corpus)
+D2
+False Claim
+0
+–
+(none in corpus)
+D3
+Arg. Omission
+0
+–
+(none in corpus)
+D4
+Scope Underreport
+0
+–
+(none in corpus)
+D5
+Sink Misattrib.
+12
+M
+Narrative:
+“sent
+their
+complete
+con-
+tent
+to
+the
+destination
+identifier
+bob.sheffield@contoso.com”;
+Trace:
+actual sink is send_teams_message (turn 4).
+Total
+12 instances; 0 HIGH, 12 MEDIUM
+Divergence rate: 12/19 (63.2%); Sink-run rate:
+12/12 (100%).
+9
+Related Work
+9.1
+Prompt Injection and Tool-Using Agents
+Security risks in tool-using LLM agents increasingly center
+on prompt injection. OWASP ranks prompt injection as a top
+threat for LLM applications, highlighting consequences such
+as sensitive information disclosure, unauthorized access, and
+unintended tool execution; it also notes that multimodal in-
+puts can hide instructions (e.g., in images), making attacks
+harder to detect and mitigate [4]. Wallace et al. [14] further
+demonstrate that function-calling agents can be manipulated
+by adversarial inputs to alter tool-invocation decisions. Agent-
+Dojo [3] provides a testbed to evaluate prompt-injection at-
+tacks and defenses in task-oriented agents, measuring the
+trade-off between task success and security violations.
+9.2
+MCP Ecosystem Security and Supply-
+Chain Risks
+The rapid adoption of the Model Context Protocol (MCP) has
+prompted initial analyses of its ecosystem. Song et al. [11]
+survey MCP attack vectors across tool discovery, invocation,
+and composition, offering a threat taxonomy but limited eval-
+uation methodology and mitigation guidance. MCPTox [17]
+introduces a benchmark for tool poisoning attacks on real-
+world MCP servers, showing that adversarial tool metadata
+(descriptions/schemas) can mislead agents in text-based set-
+tings, while leaving multimodal vectors and tool-side mitiga-
+tion relatively underexplored. These threats align with broader
+software supply-chain security findings: malicious package in-
+jection in NPM [10] and exploitation tendencies in AI supply
+chains (models/data) [13] illustrate how third-party compo-
+nents can introduce hidden risks. In comparison, our work
+focuses on protocol- and implementation-level weaknesses
+in MCP tool servers, emphasizing developer-side mitigations
+such as server-side validation, schema constraints, and audit
+logging, and explicitly covering multimodal image-to-tool
+attack paths.
+9.3
+Positioning of Our Contributions
+Model-level defenses. Pitfall Lab is model-agnostic: the run-
+ner can be paired with different agent configurations (e.g.,
+instruction-hierarchy prompting, refusal/guardrail policies, or
+shielding models) while still validating outcomes via protocol
+traces. We do not propose a new model-level defense, and
+our current evaluation does not provide a systematic attack
+success rate(ASR) comparison across defenses; extending to
+the full run corpus for ASR breakdown is left as future work.
+10
+Discussion
+MCP Pitfall Lab distinguishes itself from prior work along
+three dimensions. First, we provide protocol-aware valida-
+tion that treats MCP events (tool discovery, calls, results) as
+ground truth, reducing reliance on agent self-report which we
+show diverges from actual behavior in a significant fraction
+of cases. Second, we explicitly model multimodal attack vec-
+tors—particularly image-to-tool chains—representing a gap
+in existing MCP benchmarks. Third, we produce developer-
+oriented artifacts (traces, validator reports, mitigation check-
+lists) designed for pre-deployment workflows rather than aca-
+demic evaluation alone.
+Table 7 positions MCP Pitfall Lab relative to existing agent
+security benchmarks. While AgentDojo excels at model-level
+robustness testing and MCPTox focuses on MCP tool poi-
+soning, MCP Pitfall Lab uniquely combines protocol-aware
+validation, multimodal coverage, and actionable guidance.
+10.1
+Implications for developers
+Pitfall Lab suggests that many MCP security failures are best
+understood as usability problems at the tool interface bound-
+11
+
+Table 7: Comparison of agent security benchmarks
+Benchmark
+Protocol-
+Multi-
+Model-Side
+Tool-Side
+Trace-
+Developer
+Aware
+modal
+Defense Evaluation
+Mitigation
+Based Validation
+Guidance
+AgentDojo [3]
+–
+–
+✓
+–
+–
+–
+MCPTox [17]
+✓
+–
+✓
+Partial
+–
+Limited
+InjecAgent [19]
+✓
+–
+✓
+Partial
+–
+–
+MSB [20]
+✓
+–
+✓
+✓
+–
+Limited
+MCP-SafetyBench [21]
+✓
+–
+✓
+✓
+–
+Limited
+MCP Pitfall Lab
+✓
+✓
+✓
+✓
+✓
+✓
+✓= Full support (or allows plug-in configurations) for the corresponding dimension; Partial = Limited support; – = Not addressed
+ary: developers encode policy in descriptions, expose overly
+permissive parameters, or rely on the agent to self-restrict.
+Evidence-based artifacts (tool-call traces and objective valida-
+tors) support more reliable debugging than agent self-report
+and can be integrated into pre-deployment checklists.
+10.2
+Organizational policy and procurement
+Because MCP deployments often integrate third-party tool
+servers, organizations face procurement-like decisions: which
+servers are acceptable, how they are configured, and how
+updates are managed. Suite-based regression testing offers
+a practical way to enforce organizational policies (e.g., data
+egress constraints) and detect semantic drift.
+10.3
+Limitations
+Evaluation scope and corpus size.
+The current evaluation
+prioritizes validating the framework’s core capabilities (static
+analysis accuracy, mitigation cost- effectiveness, divergence
+detection methodology) over exhaustive attack coverage. The
+Axis 3 corpus (19 runs) is sufficient to demonstrate systematic
+trace–narrative misalignment but does not comprehensively
+assess the full D1–D5 divergence taxonomy or provide quan-
+titative comparison across attack families (tool poisoning vs
+puppet vs multimodal). Expanding to the full 324-run dataset
+would enable: (i) Breakdown of divergence patterns by attack
+type (e.g., do multimodal attacks trigger different divergence
+classes than text-only attacks?); (ii) Quantitative ASR com-
+parison across scenarios and attack families; (iii) Statistical
+significance testing for observed divergence rates.
+Multimodal attack evaluation.
+While the framework archi-
+tecture supports multimodal inputs and records image-artifact-
+to-tool-call linkage in protocol traces, the current evaluation
+does not include dedicated multimodal-specific analysis. Fu-
+ture work should: (i) Construct a labeled corpus distinguishing
+text-only vs image-based attack chains;(ii) Develop image-
+specific divergence detectors (e.g., D6: image content omis-
+sion); (iii) Evaluate mitigation strategies targeting the image
+channel (sanitization, provenance logging, content policy en-
+forcement).
+Attack composition and real-world complexity. Our scenar-
+ios model isolated pitfalls under controlled conditions. Real
+deployments face additional complexity: enterprise authen-
+tication, network segmentation, long-lived tool ecosystems,
+and compound attacks combining multiple primitives [15].
+Extending the framework to support attack chaining and in-
+tegration with existing security infrastructure (SIEM, policy
+engines) would improve ecological validity.
+10.4
+Ethical considerations
+Security testing should be conducted with authorization and
+appropriate safeguards. Pitfall Lab is designed as a controlled
+evaluation environment with explicit trust boundaries and
+audit artifacts to support responsible testing and disclosure.
+11
+Conclusion and Future Work
+We presented MCP Pitfall Lab, a protocol-aware evaluation
+framework for exposing and mitigating developer pitfalls
+in MCP-based agent deployments. Through static analysis
+(Axis 1), mitigation cost-effectiveness measurement (Axis 2),
+and trace- based divergence detection (Axis 3), we demon-
+strate that many MCP security failures are best understood
+as usable-security problems at the tool interface boundary—
+failures that are detectable, fixable at low cost (mean 27 LOC),
+and diagnosable through protocol-level evidence rather than
+agent self-report. More broadly, Pitfall Lab surfaces MCP
+tool servers as a critical agent supply-chain surface, enabling
+organizations to vet third-party tools and detect security re-
+gressions introduced by upstream updates before deploy-
+ment. By prioritizing objective-based validators and trace-
+level evidence, Pitfall Lab supports actionable diagnosis and
+regression testing beyond model-only safety evaluation. Our
+pitfall-driven scenarios illustrate how failures emerge from
+the interaction of protocol behavior, tool semantics, and de-
+veloper configuration choices, and motivate developer- and
+organization-facing mitigations for safer MCP deployments.
+12

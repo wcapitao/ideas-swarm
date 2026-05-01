@@ -1,0 +1,881 @@
+AUTOMATION-EXPLOIT: A MULTI-AGENT LLM FRAMEWORK
+FOR ADAPTIVE OFFENSIVE SECURITY WITH DIGITAL
+TWIN-BASED RISK-MITIGATED EXPLOITATION ∗
+Biagio Andreucci1 and Arcangelo Castiglione1
+1Dipartimento di Informatica, Università degli Studi di Salerno, Fisciano (SA), 84084, Italy
+biagioo2001.73@gmail.com, acastiglione@unisa.it
+ABSTRACT
+The offensive security landscape is highly fragmented: enterprise platforms avoid memory-
+corruption vulnerabilities due to Denial of Service (DoS) risks, Automatic Exploit Genera-
+tion (AEG) systems suffer from semantic blindness, and Large Language Model (LLM)
+agents face safety alignment filters and “Live Fire” execution hazards. We introduce
+Automation-Exploit, a fully autonomous Multi-Agent System (MAS) framework designed
+for adaptive offensive security in complex Black-Box scenarios. It bridges the abstraction
+gap between reconnaissance and exploitation, by autonomously exfiltrating executables and
+contextual intelligence across multiple protocols, utilizing this data to fuel both logical and
+binary attack chains. Crucially, the framework introduces an adaptive safety architecture to
+mitigate DoS risks. While it natively resolves logical and web-based vulnerabilities, it em-
+ploys a conditional isomorphic validation for high-risk memory-corruption flaws: provided
+the target binary is successfully exfiltrated, it dynamically instantiates a cross-platform
+Digital Twin. By enforcing strict state synchronization, including libc alignment and
+runtime File Descriptor Hooking, potentially destructive payloads are iteratively debugged
+in an isolated replica. This enables a highly risk-mitigated, “One-Shot” execution on the
+physical target. Empirical evaluations across eight scenarios, including undocumented
+Zero-Day environments to rule out LLM Data Contamination, validate the framework’s
+architectural resilience, demonstrating its ability to prevent “Live Fire” crashes and execute
+risk-mitigated compromises on actual targets.
+Keywords: Offensive Security · Large Language Models · Multi-Agent Systems · Digital
+Twin · Automatic Exploit Generation · Autonomous Penetration Testing
+∗Preprint Notice: This manuscript is under review at Computers & Security (Elsevier).
+arXiv:2604.22427v1 [cs.CR] 24 Apr 2026
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+Nomenclature
+LLM
+Large Language Model
+MAS
+Multi-Agent System
+DOS
+Denial of Service
+AEG
+Automatic Exploit Generation
+ROI
+Return on Investment
+CTEM
+Continuous Threat Exposure Management
+VA
+Vulnerability Assessment
+PT
+Penetration Testing
+CVE
+Common Vulnerabilities and Exposures
+CPE
+Common Platform Enumeration
+NVD
+National Vulnerability Database
+CVSS
+Common Vulnerability Scoring System
+EPSS
+Exploit Prediction Scoring System
+COT
+Chain-of-Thought
+ICL
+In-Context Learning
+RLHF
+Reinforcement Learning from Human Feedback
+TAG
+Tool-Augmented Generation
+RAG
+Retrieval-Augmented Generation
+API
+Application Programming Interface
+CAPEC Common Attack Pattern Enumeration and Classification
+OSINT
+Open-Source Intelligence
+WAF
+Web Application Firewall
+IPS
+Intrusion Prevention System
+APT
+Advanced Persistent Threat
+RCE
+Remote Code Execution
+ASLR
+Address Space Layout Randomization
+PIE
+Position Independent Executable
+ROP
+Return-Oriented Programming
+UAF
+Use-After-Free
+FNSE
+False Negative Syntax Errors
+GER
+Global Efficiency Ratio
+TTC
+Time-to-Compromise
+FPR
+False Positive Rate
+AER
+Action Executability Rate
+HITL
+Human-in-the-Loop
+FD
+File Descriptor
+JIT
+Just-In-Time
+EDR
+Endpoint Detection and Response
+GPU
+Graphics Processing Unit
+2
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+1
+Introduction
+The offensive security landscape is undergoing a fundamental transformation as organizations increasingly recognize
+that proactive vulnerability assessment is essential to defending against sophisticated cyber threats. Traditional
+security testing methodologies, while valuable, have historically been constrained by a fundamental trade-off between
+operational safety and exploitation depth. On one hand, deterministic vulnerability scanners can rapidly enumerate
+potential weaknesses across large networks but suffer from semantic blindness, generating numerous false positives
+while lacking the capability to validate actual exploitability [15, 16]. On the other hand, manual penetration testing
+conducted by human experts achieves remarkable depth and contextual understanding but remains prohibitively slow,
+expensive, and difficult to scale across modern, dynamic infrastructures.
+In response to these limitations, the research community has pursued three parallel trajectories toward automation.
+First, enterprise Continuous Threat Exposure Management (CTEM) platforms such as Pentera [17], NodeZero [18],
+and XBOW [19] have excelled at semantic scavenging and lateral movement, autonomously navigating network
+environments to validate exposure paths. However, these platforms operate under a strict “Safe Exploitation” paradigm,
+utilizing benign payloads, such as simple DNS queries, to theoretically prove access without altering target state [25]. To
+avert Denial of Service (DoS) risks on critical infrastructure, they deliberately halt at memory-corruption vulnerabilities
+(e.g., buffer overflows), lacking the isolated infrastructure required to iteratively test and guarantee exploit stability.
+Second, Automatic Exploit Generation (AEG) systems, exemplified by symbolic execution engines like Mayhem [26],
+S2E [27], and angr [28], have demonstrated mathematical precision in exploring memory paths to autonomously forge
+shellcode for complex vulnerabilities. Yet these technologies suffer from profound semantic blindness: they cannot
+navigate web applications, interpret contextual hints, or autonomously apply extraction techniques to exfiltrate target
+executables in black-box scenarios. Consequently, they invariably require human operators to manually supply isolated
+binaries, precluding fully autonomous, end-to-end offensive operations.
+Third, the emergence of Large Language Models has introduced the possibility of combining investigative intuition with
+dynamic code generation. Early frameworks like PentestGPT [15] demonstrated significant reasoning capabilities, while
+recent autonomous architectures including CHECKMATE [29], PwnGPT [16], and PentestAgent [31] have achieved
+fully autonomous operation. Despite their cognitive potential, state-of-the-art LLM agents face two fundamental barriers.
+First, reliance on commercial cloud APIs subjects them to strict safety alignment (RLHF), causing models to frequently
+refuse exploit generation due to embedded ethical policies [9]. Second, lacking isolated simulation infrastructures, these
+agents routinely execute generated code directly on physical targets. While this unstructured “Live Fire” approach may
+tolerate basic web injections, attempting complex memory-corruption exploits exposes infrastructure to unacceptable
+risks of unintended crashes and DoS.
+The offensive security ecosystem thus lacks a critical “logical bridge” connecting the semantic richness of web
+reconnaissance with the mathematical precision required for binary exploitation. Enterprise platforms avoid memory
+corruption for safety, AEG systems suffer from semantic blindness, and current LLM agents falter against both ethical
+constraints and live-fire execution hazards. This research gap is further compounded by the absence of any framework
+capable of autonomously extracting target binaries from black-box environments, instantiating isomorphic replicas for
+safe testing, and delivering validated exploits in a single, risk-mitigated execution.
+To address these deficiencies, this paper introduces Automation-Exploit, a fully autonomous Multi-Agent System
+(MAS) framework designed for complex black-box scenarios. The framework bridges the “abstraction leap” between
+reconnaissance and exploitation by autonomously exfiltrating executables and contextual intelligence across multiple
+protocols, to autonomously fuel complex logical and binary attack chains. Crucially, to mitigate DoS risks, the
+framework introduces conditional isomorphic validation: upon successful exfiltration of a target binary, it dynamically
+instantiates a cross-platform Digital Twin. By enforcing extreme synchronization, including libc alignment and runtime
+File Descriptor Hooking, destructive payloads are iteratively debugged in an isolated replica, guaranteeing risk-mitigated,
+“One-Shot” execution on the actual target. The framework further overcomes intrinsic LLM limitations through an
+Adversarial Hand-off mechanism that bypasses cloud API safety alignment, an Adaptive Pruning mechanism via a
+Navigator agent that dynamically truncates fruitless attack vectors, and a Two-Stage Adversarial Auditing protocol
+that significantly reduces false positives from generative hallucinations. Evaluations across eight scenarios, including
+undocumented zero-day environments to rule out LLM data contamination, demonstrate the framework’s robust
+autonomous reasoning, polymorphic flexibility in constructing Digital Twins (Linux, Windows Native, WINE), and
+ability to prevent “Live Fire” crashes and execute risk-mitigated compromises on actual targets.
+3
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+1.1
+Contributions of the Paper
+This research advances autonomous offensive security by overcoming the deterministic limits of traditional scanners
+and the operational hazards of generative agents. The architecture introduces three core pillars that ensure autonomy,
+efficiency, and execution safety:
+• Bridging the Semantic-Mathematical Gap: Automation-Exploit resolves the historical divide between con-
+textual web reconnaissance and the mathematical precision required for binary exploitation. By autonomously
+exfiltrating target assets and contextual intelligence (e.g., configuration files, source code) across multiple
+protocols, it extracts critical data to fuel complex vulnerability chaining across distinct services.
+• “Risk-Mitigated” Execution via Isomorphic Digital Twins: While the use of Digital Twins and cyber ranges
+for security testing is an established practice [1], our primary novelty lies in integrating this paradigm directly
+into an autonomous Multi-Agent LLM architecture specifically tailored for binary exploitation. Unlike systems
+that risk DoS with unstructured “Live Fire” executions, the framework solves the efficacy-safety dilemma
+through a predictive Safety Layer [2]. By dynamically instantiating a cross-platform replica and enforcing
+extreme synchronization, including libc alignment and runtime File Descriptor Hooking, LLM agents can
+iteratively debug destructive payloads in an isolated sandbox. This enables a highly risk-mitigated, “One-Shot”
+execution on actual targets.
+• Structural Mitigation of LLM Limitations: The system actively overcomes intrinsic generative model
+defects. It integrates a novel “Adversarial Hand-off” to bypass Cloud Application Programming Interface (API)
+Safety Alignment, an “Adaptive Pruning” mechanism via a Navigator agent to dynamically truncate fruitless
+attack vectors, and a “Two-Stage Adversarial Auditing” protocol that cross-references forensic logs to
+significantly mitigate generative hallucinations discussed in [3].
+1.2
+Paper Organization
+The remainder of this paper is organized as follows. Section 2 provides the foundational background on offensive
+security, Large Language Models, and Digital Twin technologies. Section 3 critically reviews the state of the art,
+defining the specific research gap addressed by our work. Section 4 presents the logical architecture and the proposed
+Multi-Agent System design, while Section 5 details its technical implementation. Section 6 discusses the experimental
+evaluation, highlighting the framework’s efficiency, cognitive adaptability, and safety guarantees. Section 7 addresses
+the ethical considerations inherent to offensive security automation, including responsible disclosure and dual-use
+implications. Finally, Section 8 outlines the conclusions and directions for future work.
+2
+Background
+This section reviews four foundations of Automation-Exploit: offensive security fundamentals, Large Language
+Models for security automation, autonomous and multi-agent systems, and Digital Twin and virtualization technologies.
+Together, they define the technological context and motivate our architectural choices.
+2.1
+Offensive Security Fundamentals
+Following NIST SP 800-115 [4], offensive security distinguishes between breadth-first Vulnerability Assessment (VA)
+and depth-first Penetration Testing (PT). While VA produces unverified vulnerability lists, PT actively simulates
+adversaries to exploit flaws and validate concrete risks. Automation-Exploit autonomously executes PT, elevating
+operations beyond passive scanning.
+To formalize these adversarial behaviors, the framework maps its operations to the MITRE ATT&CK matrix [5],
+independently navigating critical phases: Reconnaissance (TA0043), Initial Access (TA0001), and Execution (TA0002)
+[5]. Effective automation requires standardized taxonomies, utilizing Common Vulnerabilities and Exposures (CVE)
+identifiers and the Common Platform Enumeration (CPE) schema to map network assets to public flaws [6]. However,
+since static Common Vulnerability Scoring System (CVSS) scores often fail to reflect real-world exploitability [7],
+the framework integrates dynamic risk metrics like the Exploit Prediction Scoring System (EPSS) to prioritize attacks
+based on actual likelihood rather than theoretical severity [7].
+2.2
+Large Language Models in Security Automation
+While LLMs demonstrate advanced logical reasoning, their probabilistic nature inherently introduces syntactic and
+semantic hallucinations, necessitating robust validation architectures [3]. To optimize inferential accuracy for multi-
+4
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+step vulnerability analysis, techniques such as Chain-of-Thought (CoT) and In-Context Learning (ICL) are routinely
+employed [8]. Furthermore, deploying commercial LLMs in offensive contexts encounters strict safety alignments
+(Reinforcement Learning from Human Feedback (RLHF)). Automation-Exploit addresses these operational con-
+straints through an Adversarial Hand-off mechanism, decoupling semantic planning from code generation to maintain
+operational continuity [9].
+2.3
+Autonomous Agents and Multi-Agent Systems
+Shifting from monolithic models to Cognitive Agents [10] enables dynamic environment interaction. In offensive
+security, this is realized through Tool-Augmented Generation (TAG) to execute deterministic external tools [11] and
+Retrieval-Augmented Generation (RAG) to ground prompts in authoritative vulnerability data [12]. Our framework
+adopts a MAS architecture, decomposing the exploitation lifecycle into specialized “Personas” (e.g., Drafter, Reviewer).
+This segregation strictly bounds contextual visibility, a design choice we implemented to prevent the cognitive overload
+[13] and the representation drift documented in [14].
+2.4
+Digital Twin and Virtualization Technologies
+To safely evaluate inherently destructive exploits (e.g., memory corruption) on critical infrastructures, execution must
+be decoupled from live production environments [2, 1]. Building upon these foundational virtualization concepts, our
+framework introduces a predictive Safety Layer that actively interfaces with generative agents. By enforcing extreme
+isomorphic alignment — dynamically synchronizing shared libraries and hooking runtime file descriptors — the isolated
+replica perfectly mirrors the target’s networking and execution behavior [1].
+3
+State of the Art and Research Gap
+This section reviews existing approaches to vulnerability detection, exploit generation, and LLM-driven penetration
+testing. It examines vulnerability scanners, CTEM platforms, academic AEG systems, LLM-based offensive agents,
+and tool-augmented open-source frameworks. Our analysis identifies a key gap: no current approach combines
+web reconnaissance, binary exploitation, and risk-mitigated live-fire execution autonomously. We then show how
+Automation-Exploit addresses this gap.
+3.1
+Deterministic Vulnerability Scanners and Enterprise Platforms
+Historically, deterministic scanners have dominated vulnerability detection using rigid pattern-matching against static
+databases. Despite rapid scalability, they suffer from intrinsic semantic blindness [15, 16], generating numerous false
+positives and lacking active exploitation capabilities, shifting the verification burden entirely onto human operators.
+To overcome these limits, Continuous Threat Exposure Management (CTEM) platforms like Pentera [17] and NodeZero
+[18] excel in semantic scavenging and lateral movement. Recently, the commercial landscape has expanded to include
+AI-driven and exposure management platforms such as XBOW [19], PlexTrac [20], XM Cyber [21], as well as
+established ecosystem modules from Tenable [22], Qualys [23], and Wiz [24].
+However, they all operate under a strict “Safe Exploitation” paradigm, utilizing benign payloads (e.g., simple DNS
+queries) to theoretically prove access without altering the target’s state [25]. Consequently, to avert Denial of Service
+(DoS) risks on critical infrastructure, these enterprise platforms deliberately halt at memory-corruption vulnerabilities
+(e.g., Buffer Overflows) on custom binaries. Lacking an isolated infrastructure to iteratively test and guarantee exploit
+stability, they strictly avoid binary exploration in production environments.
+3.2
+Automatic Exploit Generation Systems
+Parallel to network scanners, academic research advanced binary exploitation via AEG systems. Symbolic execution
+engines like Mayhem [26], S2E [27], and angr [28] excel at mathematically exploring memory paths to autonomously
+forge shellcode for complex vulnerabilities. However, these technologies suffer from profound “Semantic Blindness”.
+Despite their mathematical precision, AEG engines cannot comprehend the broader infrastructural context. They are
+inherently incapable of navigating web applications, interpreting contextual hints, or autonomously applying exfiltration
+techniques to extract target executables in Black-Box scenarios. Consequently, they invariably require human operators
+to manually supply the isolated binary, precluding fully autonomous, end-to-end offensive operations.
+5
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+3.3
+LLM-Based Offensive Agents
+LLMs introduce the possibility of combining investigative intuition with dynamic code generation. Early frameworks
+like PentestGPT [15] demonstrated significant reasoning but operated in a Human-in-the-Loop (HITL) modality,
+restricting end-to-end autonomy. To overcome this, recent frameworks, including CHECKMATE [29], PwnGPT [16],
+AutoPentest [30], and PentestAgent [31], have implemented fully autonomous architectures.
+Despite their cognitive potential, state-of-the-art LLM agents face two fundamental barriers. First, relying on Cloud
+APIs subjects them to strict Safety Alignment (RLHF), causing models to frequently refuse exploit generation due to
+embedded ethical policies [9]. Second, lacking isolated simulation infrastructures, these agents routinely execute gener-
+ated code directly on physical targets. While this unstructured “Live Fire” approach may tolerate basic web injections,
+attempting complex memory-corruption exploits exposes the infrastructure to unacceptable risks of unintended crashes
+and DoS. This instability renders current autonomous agents unsuitable for evaluating mission-critical production
+environments.
+3.4
+Open-Source Frameworks and Tool-Augmented Agents
+Recently, the open-source community has introduced several LLM-driven orchestrators and projects, such as PentAGI
+[32], Strix [33], Deadend CLI [34], CAI (Cyber AI) [35], and MCP-Security modules [36], designed to integrate
+autonomous agents with traditional security tools. While these tool-augmented systems effectively automate repetitive
+tasks and generate proof-of-concept exploits within isolated sandboxes, they predominantly focus on web and logical
+vulnerabilities. They lack the architectural depth required for complex multi-agent meta-reasoning and the extreme
+isomorphic synchronization (e.g., Digital Twin) needed to safely evaluate and transition memory-corruption exploits to
+physical targets without causing system instability.
+3.5
+Critical Comparative Analysis
+To better delineate the research gap addressed by Automation-Exploit, it is essential to contrast its architecture with
+recent autonomous agents such as CHECKMATE [29], PwnGPT [16], and PentestAgent [31], as well as open-source
+tool-augmented projects [32, 33, 34].
+Evasion of Safety Filters
+While PentestAgent and CHECKMATE primarily rely on prompt engineering or semantic
+reframing to navigate Cloud API safety alignments (RLHF) [29, 31], Automation-Exploit introduces a structural
+decoupling via the Adversarial Hand-off. Unlike existing pipelines that may face intermittent refusals when generating
+complex exploitation logic, our framework utilizes a locally-hosted model to bootstrap a raw technical skeleton. This
+local stage effectively shifts the cloud model’s task to “Code Repair”, leveraging semantic masking techniques [37] to
+address deterministic guardrails without compromising reasoning depth.
+Strategic Planning vs. Adaptive Pruning
+The decision-making core of CHECKMATE is grounded in classical
+planning to ensure logical consistency [29]. In contrast, the Navigator agent in Automation-Exploit adopts an Adaptive
+Pruning mechanism. While classical planning excels in deterministic environments, it often struggles with the
+“environmental friction” found in Black-Box scenarios. The Navigator performs retrospective analysis on forensic logs
+to issue ABORT or JUMP verdicts, allowing the framework to truncate fruitless attack vectors more dynamically than
+rigid pre-calculated planners.
+Open-Source Wrappers vs. MAS Segregation
+Recently, the open-source community has introduced several LLM-
+driven orchestrators, such as PentAGI [32], Strix [33], and Deadend CLI [34], designed to integrate autonomous agents
+with traditional security tools. However, these tools predominantly function as single-agent wrappers. They pipe
+monolithic LLM outputs directly into standard offensive tools in a linear sequence, making them highly susceptible to
+context window saturation and generative hallucinations [13]. Automation-Exploit fundamentally diverges by enforcing
+strict Multi-Agent System (MAS) segregation. By dividing the workload among specialized Personas, the framework
+heavily bounds the context window, preventing representation drift.
+Binary Exploitation and Digital Twins
+Finally, whereas PwnGPT focuses extensively on LLM-based Automatic
+Exploit Generation (AEG) for binaries, it lacks the end-to-end web reconnaissance capabilities to exfiltrate those
+binaries autonomously [16]. Automation-Exploit bridges this “abstraction leap” by autonomously extracting hidden
+assets. Furthermore, unlike open-source alternatives that are structurally restricted to non-state-altering web exploits,
+and other agents that execute code in a “Live Fire” mode directly on the target, our framework integrates a Digital
+Twin for isomorphic validation [2]. This ensures that high-risk memory-corruption vulnerabilities, which are typically
+6
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+avoided by platforms like Pentera or NodeZero due to DoS risks [25], can be safely debugged before a single “One-Shot”
+delivery on the physical target.
+3.6
+Research Gap and Architectural Comparison
+The offensive security ecosystem lacks a “logical bridge” connecting semantic web reconnaissance with the mathemati-
+cal precision of binary exploitation. Enterprise platforms avoid the latter for safety, AEG systems suffer from semantic
+blindness, and current LLM agents falter against ethical constraints and “Live Fire” execution hazards.
+Automation-Exploit resolves these deficiencies. First, it bridges the abstraction gap by autonomously exfiltrating
+executables and contextual intelligence across multiple protocols. This data is injected into the cognitive loop, enabling
+autonomous vulnerability chaining where artifacts exfiltrated from one service are correlated to compromise adjacent
+services operating on different ports. Second, it resolves the “Safe Exploitation” versus “Live Fire” dichotomy via a
+conditional Safety Layer. Upon exfiltrating a target’s executable, it generates an isomorphic Digital Twin. Through libc
+synchronization and File Descriptor hooking, the agent tests destructive payloads in isolated replicas, enabling a highly
+risk-mitigated, single-attempt “One-Shot” execution on actual targets.
+Furthermore, an “Adversarial Hand-off” decouples semantic planning from code generation to address Cloud API Safety
+Alignment constraints [9], while a Two-Stage Adversarial Auditing protocol [3] employs an independent reviewer to
+scrutinize forensic logs and reject generative hallucinations.
+Table 1: Architectural Comparison of Automation-Exploit against State-of-the-Art Paradigms.
+Feature
+Automation-Exploit
+CTEM Platforms
+AEG Systems
+Autonomous
+LLMs
+(Proposed)
+(e.g., Pentera, NodeZero)
+(e.g., Mayhem, angr)
+(e.g., PentestGPT)
+Binary Exploit
+Handling
+Yes. Digital Twin
+ensures reliability
+before “One-Shot”
+execution.
+No. Avoids
+DoS-inducing memory
+exploits.
+Partial. Requires
+user-provided binaries
+(Semantic Blindness).
+Dangerous. “Live
+Fire” mode risks
+severe DoS.
+Execution Safety (DoS
+Mitigation)
+“Risk-Mitigated”.
+Iterative debugging via
+synchronized Digital
+Twin (libc, FD).
+“Safe Exploitation”.
+Uses benign,
+non-state-altering
+payloads.
+N/A. Executes in
+emulated analysis
+environments.
+High Risk. No
+simulation layer;
+payloads hit
+production
+directly.
+End-to-End Automation
+Yes. Fully autonomous
+(Autonomous
+exfiltration to forensic
+validation).
+Partial. Discovery and
+non-destructive lateral
+movement only.
+No. Requires manual
+target supply and
+interpretation.
+Partial. Often
+stops at
+web/application
+layers.
+Alignment Constraint
+Handling
+“Adversarial
+Hand-off”. Local
+models draft logic;
+cloud models refactor.
+N/A. Deterministic; no
+public LLMs used.
+N/A. Math-based
+deterministic tools.
+Problematic.
+Cloud APIs cause
+frequent refusals.
+Result Validation
+(Anti-Hallucination)
+Two-Stage Auditing.
+Independent agent
+cross-references
+forensic logs.
+Deterministic. Checks
+benign payload
+execution.
+Mathematical. Exploit
+generation is a
+demonstrable path.
+Weak. Output
+parsing leads to
+high false
+positives.
+Strategic Adaptability
+Yes. Navigator agent
+dynamically prunes
+fruitless attack
+branches.
+Limited. Static
+prioritization (e.g.,
+EPSS); mostly linear.
+N/A. Exhaustive,
+non-adaptive path
+exploration.
+Linear. Static
+plans with poor
+runtime
+meta-reasoning.
+Finally, it overcomes static execution by decoupling static prioritization (Decision Engine) from runtime meta-reasoning.
+A Navigator agent applies Adaptive Pruning, issuing explicit ABORT or JUMP verdicts to truncate fruitless attack vectors
+and dynamically reallocate resources.
+7
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+To systematically position the proposed framework against the aforementioned paradigms, Table 1 summarizes the
+architectural and operational differences across key offensive security capabilities.
+4
+Proposed Framework: Architecture and Design
+This section presents the architecture of Automation-Exploit, addressing the gap between semantic web reconnaissance
+and precise binary exploitation under safe operating conditions. It introduces the framework’s key concepts, outlines
+its multi-agent cognitive architecture and knowledge management, and describes the decision, safety, and validation
+mechanisms that enable fully autonomous, risk-mitigated offensive security.
+By structurally segregating these roles, the framework ensures that the Fixer maintains surgical precision without
+the entropic overload of obsolete global strategies, while the Reviewer significantly mitigates the generative LLM’s
+self-delusion tendencies [38]. We hypothesize that this strict role segregation between semantic reasoning and code
+generation systematically mitigates context window saturation [13] and prevents representation drift [14]. This
+architectural claim is empirically validated in Section 6, where the framework maintains a highly stable Action
+Executability Rate (AER) between 85% and 100% across complex scenarios.
+4.1
+Multi-Agent Cognitive Architecture
+Automation-Exploit employs a modular MAS architecture to overcome the severe cognitive bottlenecks of monolithic
+LLMs. As context windows expand with dense technical data, monolithic models suffer from “Lost in the Mid-
+dle” phenomena [13, 39] and Representation Drift [14], which degrade reasoning accuracy and drastically increase
+hallucinations.
+To systematically mitigate this, the framework decouples the offensive workload into specialized sub-agents (Personas).
+Each agent is confined by a strictly bounded System Prompt, ensuring it processes only the specific inputs required for
+its task. Table 2 summarizes the cognitive segregation, defining the roles, I/O flows, and operational constraints of the
+core agents.
+Adaptive Model Allocation and Cognitive Scaling. To optimize the computational budget and mitigate API constraints,
+Automation-Exploit eschews static model assignments in favor of a dynamic, risk-aware allocation strategy. The
+framework selectively provisions Large Language Models (LLMs) based on the cognitive complexity of the task at
+hand. Initial payload bootstrapping is strictly delegated to the Drafter agent, powered by a locally hosted, uncensored
+model (e.g., Mistral 7B). This localization is structurally imperative to execute the “Adversarial Hand-off” mechanism,
+inherently bypassing the stringent safety alignments [9] enforced by commercial Cloud APIs. Once the initial refusal
+barrier is circumvented, routine and high-frequency cognitive workloads, such as semantic refinement, syntax linting by
+the Fixer, simulation engineering, and forensic auditing by the Reviewer, are allocated to a standard frontier model (e.g.,
+Gemini 2.5 Pro).
+Conversely, tasks demanding advanced meta-reasoning, such as the Adaptive Pruning executed by the Navigator,
+are elevated to a high-cognition tier (e.g., Gemini 3 Pro). Crucially, the framework enforces a systemic “Cognitive
+Upgrade” specifically during Clone Mode. When operating within the fully isolated confines of the Digital Twin, all
+generative tasks are promoted to the highest available tier. In this highly controlled state, exhausting the inferential
+budget to iteratively solve complex memory-corruption vulnerabilities is strategically justified, as the absolute isolation
+neutralizes DoS risks to the actual target.
+To further optimize operational efficiency, the framework isolates purely mechanical, low-cognition tasks from the
+primary inferential engines. For instance, the Sanitizer agent leverages high-speed, cost-effective models (e.g., Gemini
+2.5 Flash) to rapidly strip conversational artifacts and markdown fences prior to execution. Finally, to guarantee
+continuity against network latency, API rate-limiting, or server timeouts, the Orchestrator integrates a Smart Downgrade
+fallback mechanism. This cognitive circuit breaker dynamically degrades the inferential tier (e.g., cascading from
+Gemini 3 Pro back to Gemini 2.5 Pro) following consecutive failures, thereby preserving the exploitation pipeline’s
+integrity without halting the execution.
+4.2
+Unified Knowledge Base for Context Persistence
+To bridge the semantic gap that traditionally creates vertical technological silos, the Automation-Exploit framework
+centralizes all gathered intelligence into a persistent state repository, which serves as a dynamic Unified Knowledge
+Base. To prevent Large Language Model context window saturation and the consequent degradation in reasoning
+accuracy during long-horizon operations [13, 39], the system enforces strict context persistence by structuring its
+operational memory within this directory using lightweight, machine-readable structured data formats.
+8
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+Table 2: Taxonomy of AI Personas in the Automation-Exploit Framework.
+Agent Persona
+System Prompt Role
+Primary Inputs
+Outputs / Verdict
+Operational Constraints
+The Recon Hunter
+Autonomous Asset Hunter &
+Data Miner
+Target
+IP/Port,
+HTTP
+headers,
+previously
+exfiltrated assets history.
+Python crawling and ex-
+filtration scripts.
+Enforces heuristic boundary con-
+straints to prevent infinite recur-
+sion and manages stream-based
+artifact downloading.
+Objective Setter
+Security Strategist
+CVE metadata, vulnera-
+bility summaries, attack
+patterns.
+Deterministic
+Success
+Marker
+(e.g.,
+crypto-
+graphic execution flags).
+Must output exactly one word
+from the framework’s strict de-
+terministic taxonomy.
+The Drafter
+Cybersecurity Analyst & Exploit
+Developer
+Accumulator’s strategy,
+raw CVE data, target ar-
+chitecture.
+Raw exploit code skele-
+ton.
+Executed via a locally-hosted
+LLM to ensure absolute bypass
+of initial Cloud-based safety
+alignments.
+The Accumulator
+Lead Security Researcher
+Forensic blueprints, past
+execution logs, target raw
+data.
+Technical specifications /
+Attack strategy.
+Cannot write raw executable
+code. Invoked exclusively at the
+start (Iteration 1) of each mini-
+stage to establish strategic direc-
+tives.
+The Fixer
+Debugging & Code Repair Spe-
+cialist
+Last
+executed
+code,
+stderr/stdout
+from
+sandbox, crash autopsies.
+Patched executable pay-
+load.
+Context strictly truncated to
+the current mini-stage (Amnesia
+logic). Focuses purely on code
+generation following the Accu-
+mulator’s strategy.
+The Navigator
+Senior Red Team Lead & Effi-
+ciency Auditor
+Cross-CVE
+execution
+history, routing errors,
+future task queue.
+CONTINUE, JUMP, ABORT
+Invoked only at strategic check-
+points to govern resource alloca-
+tion via Adaptive Pruning.
+The Sim Engineers
+Senior Forensic Analyst / Sysad-
+min
+Exfiltrated target bina-
+ries,
+raw
+intelligence
+data, magic bytes.
+OS signatures, Docker
+configs, Registry scripts.
+Operates strictly on the Digi-
+tal Twin logic. Focuses purely
+on building isolated, isomorphic
+replicas.
+The Sanitizer
+Code Sanitizer & Linter
+Raw
+LLM
+generation
+containing
+markdown
+fences or conversational
+artifacts.
+Clean, strictly executable
+code.
+Powered by lightweight models
+(e.g., Gemini 2.5 Flash) for high-
+speed, low-cost text stripping
+prior to execution.
+The Reviewer
+Merciless Security Auditor
+Executed code, forensic
+logs, Digital Twin au-
+topsy data.
+Structured Verdict (e.g.,
+Verified / False Positive).
+Read-only; cannot modify code.
+Enforces strict forensic causal-
+ity (e.g., Differential Access
+checks).
+This logical architecture systematically aggregates a vast array of target-related data, including, but not limited to,
+detailed port enumerations, vulnerability metadata, and the physical artifacts (e.g., configuration files and source code)
+exfiltrated during the reconnaissance phase. Crucially, during the exploitation phase, this centralized repository allows
+the sequential cognitive loop to transcend individual port silos. Agents can draw upon critical intelligence or binaries
+extracted from one port to fuel complex attack chains or instantiate Digital Twins for vulnerabilities discovered on
+entirely different ports. By maintaining this persistent and universally accessible state, the framework autonomously
+correlates cross-port data to compromise adjacent services without suffering from representation drift [13, 14].
+Sequential Access and Hash-Based Data Hygiene. In the current implementation, the multi-agent cognitive loop
+operates in a strictly sequential pipeline orchestrated by the lifecycle manager. This architectural design inherently
+prevents race conditions, ensuring that sub-agents do not concurrently overwrite the same contextual state. To maintain
+structural hygiene and prevent the proliferation of redundant artifacts during the exfiltration phase, the framework
+incorporates an active deduplication mechanism. Before any extracted asset or telemetry data is recorded into the
+structured operational memory, its cryptographic checksum is computed and cross-referenced against the existing
+database. Duplicate files are autonomously purged, ensuring the knowledge base remains lean and preventing the LLM
+from processing redundant tokens.
+Furthermore, to guarantee resilience against state serialization corruption (e.g., resulting from abrupt container termina-
+tions or runtime I/O interruptions), the orchestrator strictly enforces schema validation before any state update. By
+relying on atomic sequential writes and rigorous hash-based deduplication, the framework ensures that the cognitive
+loop is never poisoned by malformed or duplicate context data.
+9
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+4.3
+Decision Engine and Adaptive Pruning
+The Decision Engine orchestrates the Automation-Exploit framework to avoid static, brute-force execution by formaliz-
+ing vulnerability data into a structured queue of actionable tasks. Formally, a computational Task (T ) is defined as a
+tuple:
+T = ⟨ID, S, V, Menv, P⟩
+(1)
+where ID is a unique identifier, S denotes the target service configuration (IP, Port, Protocol), V encapsulates vulnera-
+bility metadata (e.g., CVE, CAPEC ID, or AI-synthesized logic), Menv represents the set of exfiltrated environmental
+artifacts (e.g., binaries, configuration files from the exfiltration phase), and P is the priority score.
+To prioritize execution based on actual operational Return on Investment (ROI), the framework replaces static metrics
+with a composite priority_score ∈[0, 100]. This is formally calculated as:
+P = α · EPSS + β · CV SSbase + γ · fcontext(Menv)
+(2)
+where EPSS represents the dynamic probability of real-world exploitation [7], CV SSbase provides the foundational
+severity, and fcontext is a heuristic function that rewards the presence of physical artifacts (e.g., successful exfiltration of
+the target executable), drastically elevating the task’s ROI. All three components are normalized to [0, 1] prior to scoring:
+EPSS is natively bounded in [0, 1] [7]; CVSSbase is divided by 10; and fcontext(Menv) is computed as min(1, Sbonus/Smax),
+where Sbonus is the cumulative heuristic score from the context weighting table (cf. Table 2) and Smax = 950 is the
+maximum attainable bonus across all tactical conditions. The coefficients are heuristically assigned as α = 0.6, β = 0.2,
+γ = 0.2 (with α + β + γ = 1), reflecting the EPSS-first design rationale: dynamic exploitability is weighted threefold
+relative to either static severity or environmental context.
+To manage this queue during runtime, the framework employs the Navigator agent’s Adaptive Prun
+
+[…middle truncated for length…]
+
+lized environments engineered specifically for this research. Lacking public documentation or CVEs, latent
+memory retrieval was mathematically impossible. The autonomous exfiltration, Digital Twin instantiation,
+heap reverse-engineering, and dynamic offset calculation for complex Ret2Libc and ROP chains irrefutably
+prove active procedural reasoning.
+• Transparent Contamination as Open-Source Intelligence (OSINT): In Scenario C (MrRobot), the agent
+bypassed authentication by injecting a “Lore-Based” dictionary (e.g., ER28-0652) derived from pre-trained
+knowledge. Rather than invalidating the architecture, this empirically simulates a human pentester utilizing
+OSINT and contextual intuition to forge targeted attacks.
+• Isomorphic Abstraction Necessity: Even with theoretical knowledge of public flaws (e.g., Scenario F,
+Brainpan), relying on memorized static offsets guarantees DoS due to environmental entropy. Success here
+stemmed exclusively from the Digital Twin’s forensic container, which dynamically extracted the exact
+empirical Ground Truth (524-byte padding, specific JMP ESP gadget) to authorize a safe One-Shot execution.
+• Dynamic Problem-Solving: Scenarios D (DC-2) and E (Metasploitable 3) required navigating internal HTTP
+redirects, bypassing virtual routing, and parsing unexpected DOM structures. Resolving these real-time
+environmental frictions cannot rely on static write-ups, confirming authentic “Live” error-recovery capabilities.
+Ultimately, while benefiting from pre-trained knowledge, the Digital Twin Safety Layer and Self-Healing loop elevate
+the system from a simple script-reciter to a procedural analyst, assuring operational efficacy regardless of vulnerability
+novelty.
+6.6.1
+Evaluating Operational Safety vs. Traditional Benchmarking
+While empirical evaluation of autonomous agents often relies on large-scale statistical validation, the architectural
+design of Automation-Exploit prioritizes depth of exploitation over breadth of discovery. The inherently high Time-to-
+Compromise (TTC) is primarily driven by the I/O-bound, sequential nature of Phase 1 (Reconnaissance and Exfiltration),
+which accounts for over 77% of the total operational time, rather than the Digital Twin instantiation. This sequential
+abstraction leap across multiple ports shifts the evaluative focus: exhaustive statistical runs become less relevant than
+ensuring deterministic safety on single, high-stakes targets. Furthermore, such runs are unrepresentative of targeted,
+“low-and-slow” operations.
+Additionally, a direct quantitative benchmarking (e.g., comparing Success Rates or TTC) against existing frameworks
+introduces severe architectural asymmetries that fail to capture the primary metric of operational safety. Direct
+empirical benchmarking against commercial CTEM platforms (e.g., Pentera [17], NodeZero [18]) was precluded by
+their proprietary, closed-source nature, which prevents controlled testing in reproducible, air-gapped environments.
+Conversely, traditional Automatic Exploit Generation (AEG) systems [26, 27, 28] fundamentally lack the web-navigation
+capabilities required to resolve mixed-protocol scenarios (Scenarios A-E).
+20
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+Crucially, direct quantitative comparison with tool-augmented LLM wrappers (e.g., PentestGPT [15]) is methodologi-
+cally unsound, as discussed in Section 6.4: their HITL paradigm conflates human operator speed with autonomous
+efficiency, and their structural confinement to non-destructive web vulnerabilities renders memory-corruption bench-
+marking operationally meaningless. Therefore, the framework’s evaluation focuses on deterministic convergence and
+architectural isomorphism rather than purely statistical comparisons against functionally dissimilar baselines.
+6.6.2
+Longitudinal Resilience and Reproducibility Dynamics
+To validate the architectural robustness against continuous updates in Cloud LLM safety alignments (RLHF) [9], as
+well as to empirically assess the framework’s operational reproducibility, a targeted subset of the test suite, specifically,
+Scenarios C (MrRobot), F (Brainpan), and G (Custom Zero-Day), was subjected to multiple execution cycles over a
+staggered timeline.
+Given the inherently high Time-to-Compromise (TTC) and the strict API budget constraints associated with frontier
+models, performing exhaustive, large-scale statistical runs across the entire suite was computationally prohibitive.
+Instead, for these three representative scenarios, we established a robust baseline by conducting an initial execution (Day
+0), followed by two additional, independent runs after a 30-day interval. This distribution successfully validated the
+system’s reproducibility despite the intrinsic non-determinism of generative agents, demonstrating stable convergence
+across the three runs.
+Concurrently, this longitudinal timeline stress-tested the framework against newly introduced exploitation filters. During
+the delayed executions, interactions with newly updated, state-of-the-art frontier models (e.g., Gemini 3 Pro) revealed
+dynamic friction: the model actively triggered safety filters during the strategic planning phase, outputting ethical
+refusals and refusing to generate functional code, while still providing the logical offsets required for exploitation, as
+empirically observed during longitudinal evaluation.
+Crucially, the Multi-Agent System (MAS) architecture absorbed this friction seamlessly. Because semantic reasoning
+(Accumulator) is strictly decoupled from code generation (Drafter/Fixer), the system autonomously extracted the
+raw offsets from the censored response. The “Adversarial Hand-off” mechanism then successfully reconstructed the
+Return-Oriented Programming (ROP) chains using localized models, without requiring any manual prompt adjustments.
+Parallel tests using baseline models (e.g., Gemini 2.5 Pro) proceeded without triggering these specific heuristic blocks.
+This divergence empirically proves that the framework’s cognitive segregation transcends the dynamic censorship of
+any single underlying LLM [10], ensuring both long-term operational resilience and statistical reproducibility.
+Tactical Adaptability and Structural Decoupling. The effectiveness of the Automation-Exploit framework against
+evolving Cloud security measures relies on a rigorous separation of concerns between the underlying delivery infrastruc-
+ture and the specific evasion strategy. In this architectural paradigm, the Adversarial Hand-off mechanism and the local
+model loop serve as the persistent, invariant “weaponry system”, that is, the structural engine capable of generating and
+processing offensive logic. Conversely, the adversarial templates cataloged in the external payload repository function
+as an interchangeable set of “tactical payloads” [45].
+This decoupling ensures that the framework’s core logic remains untouched even as commercial providers continuously
+update their RLHF safety alignments [37]. To empirically demonstrate this agility, a targeted double re-test was
+conducted on the Windows Native UAF environment (Scenario H). While the baseline Pashto-based cross-lingual
+prompt was utilized as the primary payload for all standard evaluations [47], its manual rotation within the generation
+module with a Base64-obfuscated variant yielded identical success rates by bypassing deterministic guardrails [46].
+This demonstrates that while defensive filters are dynamic, the operator can maintain operational continuity by manually
+updating the generative instructions via the adversarial playbook, ensuring the framework adapts to new safety heuristics
+without requiring any systemic reprogramming of the core codebase.
+7
+Ethical Considerations and Dual-Use Implications
+The development of fully autonomous offensive security frameworks inherently introduces “Dual-Use” concerns. While
+Automation-Exploit is designed to assist security teams in scaling deep penetration testing, autonomous exploitation
+capabilities could theoretically be repurposed by malicious actors.
+To ensure ethical integrity and mitigate the risk of immediate real-world weaponization, this research relies on both
+procedural boundaries and current architectural limitations. Procedurally, all empirical evaluations were strictly confined
+to explicitly authorized, air-gapped virtual environments [1]. Furthermore, the “Adversarial Hand-off” mechanism—
+used to bypass commercial Cloud LLM safety alignments [9]—is presented purely as a diagnostic methodology to
+highlight the fragility of current generative guardrails, rather than as a malicious blueprint.
+21
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+Architecturally, the framework currently acts as a natural safeguard against trivial abuse in production environments. As
+discussed in Section 8.2, the aggressive autonomous exfiltration phase is highly noisy. The system lacks the stealth and
+evasive modules required to bypass modern perimetric defenses, such as Web Application Firewalls (WAF), Intrusion
+Prevention Systems (IPS), and active Endpoint Detection and Response (EDR) monitoring.
+Consequently, deploying this framework against hardened, real-world infrastructures would result in immediate
+detection and neutralization. By openly discussing these capabilities and limitations, we adhere to responsible disclosure
+principles. The primary goal of this research is not to distribute a stealthy cyber-weapon, but rather to advance the
+scientific understanding of autonomous offensive behaviors. This transparency is crucial for empowering the defensive
+community to develop resilient countermeasures—such as the proposed Digital Twin Safety Layer—before threat actors
+fully operationalize evasive LLM agents.
+8
+Conclusions and Future Work
+This paper presented Automation-Exploit, a fully autonomous multi-agent LLM framework that bridges semantic
+web reconnaissance and precise binary exploitation. By combining autonomous exfiltration, adversarial hand-off,
+adaptive pruning, and a conditional Digital Twin Safety Layer, it closes the identified research gap and enables risk-
+mitigated, one-shot memory-corruption exploits. Evaluation across eight scenarios, including undocumented zero-day
+environments, shows strong autonomous reasoning, operational efficiency, and risk-mitigated compromise of actual
+targets while preventing denial of service.
+8.1
+Summary of Contributions
+The primary contribution of this research is resolving the semantic and operational barriers historically isolating web
+reconnaissance from binary exploitation. As empirically validated, Automation-Exploit bridges this “abstraction leap”.
+By autonomously executing boundary-aware exfiltration to extract target executables and contextual intelligence (e.g.,
+configuration files, source code), the system dynamically correlates exfiltrated artifacts to forge complex attack chains
+against adjacent services across distinct protocols.
+Secondly, this work advances offensive operational safety. While Digital Twins are recognized in security analytics
+[1, 2], we pioneer their dynamic integration into an autonomous LLM-driven Multi-Agent architecture specifically for
+memory-corruption exploitation. Enforcing extreme isomorphic synchronization, i.e., libc alignment and runtime File
+Descriptor Hooking via LD_PRELOAD and dup2 [42], guarantees a highly accurate behavioral replica. Consequently,
+the autonomous agents can safely debug destructive payloads within an isolated container, enabling mathematically
+stabilized, isolated “One-Shot” executions that drastically mitigate the risk of unintended Denial of Service (DoS) on
+actual targets.
+Furthermore, the Multi-Agent System (MAS) architecture introduces structural solutions to inherent LLM limitations.
+The hybrid “Adversarial Hand-off” successfully addresses commercial Safety Alignment constraints [9] through
+generative decoupling, while the Decision Engine and Navigator agent’s runtime Adaptive Pruning drastically optimize
+computational budgets. Crucially, the Two-Stage Adversarial Auditing protocol significantly reduces false positives
+stemming from generative hallucinations [3] by strictly cross-referencing payload executions with deterministic forensic
+telemetry, ensuring only factually verified compromises are reported.
+Ultimately, the framework delivers fully autonomous, end-to-end infrastructural orchestration. Unlike solutions requiring
+human-in-the-loop assistance for environment setup or binary execution, Automation-Exploit natively manages Docker
+hypervisors, isolated container lifecycles, and external deterministic tools. This seamless integration of abstract LLM
+reasoning with low-level infrastructural control represents a significant advancement in the operational independence of
+offensive security frameworks.
+8.2
+Limitations
+Despite empirical success, Automation-Exploit operates under specific constraints. First, architectural overhead,
+encompassing Digital Twin instantiation, forensic extraction, and LLM inference, yields a structurally high Time-to-
+Compromise (TTC), restricting the framework to targeted, “low-and-slow” engagements rather than rapid, large-scale
+vulnerability assessments. Secondly, the framework’s evaluation was intentionally confined to controlled, air-gapped
+environments. This methodological choice was made to isolate and measure the baseline cognitive capabilities of the
+LLM (e.g., logical reasoning, syntax generation, and self-healing) without the confounding variables introduced by
+active perimetric defenses. Consequently, Automation-Exploit is currently defenseless against modern Web Application
+Firewalls (WAF) or Intrusion Prevention Systems (IPS). The aggressive autonomous exfiltration phase generates
+22
+
+Automation-Exploit: Risk-Mitigated Exploitation via Digital Twins
+significant network noise, lacking the stealthiness required to evade a modern Security Operations Center (SOC).
+Beyond this, the framework operates strictly as an “Initial Access” agent mapping an external IP to a local compromise.
+It currently lacks the architectural modules required for post-exploitation network pivoting, lateral movement, or
+multi-host Active Directory enumeration, effectively restricting its use to single-node, deep-exploitation scenarios.
+Moreover, the Two-Stage Adversarial Auditing protocol inherently introduces a risk of circular dependency. By
+employing an LLM (i.e., the Reviewer) to validate the output of another LLM (the Drafter and Fixer), the system
+operates without a deterministic ground-truth oracle. While cross-referencing payload executions with deterministic
+forensic logs (e.g., dmesg, HTTP status codes) heavily mitigates this risk, the possibility of “shared hallucination”,
+where the Auditor falsely agrees with a hallucinated log interpretation, remains a structural limitation of multi-agent
+LLM debate models [38]. Finally, LLM reliance introduces cognitive frictions. Strict “expert role-playing” prompts
+induce an “over-engineering” bias, occasionally overcomplicating payloads for trivial flaws [51, 10]. Furthermore, the
+system exhibits “procedural stubbornness” against ambiguous feedback, exhausting iteration budgets on futile syntax
+variations until forcibly aborted by the Auditor, which highlights the LLM’s difficulty in distinguishing correctable
+errors from hard defensive blocks [31].
+Additionally, the longitudinal evaluation was conducted over three independent runs per scenario, a choice driven by the
+substantial cost and duration of each trial: each run involves multi-hour agentic sessions with sustained interaction with
+commercial LLM APIs (e.g., Gemini 2.5 Pro, Gemini 3 Pro), resulting in non-trivial per-trial expenditure [52]. This
+constraint is consistent with resource-limited evaluation practice in LLM-based systems research. The low inter-run
+variance observed across all eight scenarios (cf. Table 5) provides empirical evidence of result stability despite the
+limited repetition count.
+8.3
+Future Research Directions
+To address operational constraints, future iterations will integrate asynchronous parallelization during I/O-bound
+reconnaissance, drastically compressing the high Time-to-Compromise (TTC) without impacting the LLM’s inferential
+budget. Additionally, transitioning to a “Stateful Agentic Workflow” via robust checkpointing will enable continuity
+across extended engagements, mirroring Advanced Persistent Threats (APTs).
+To overcome Docker’s “Shared Kernel Limitation”, the Digital Twin Safety Layer will integrate QEMU full-system
+emulation, allowing the safe exploitation of kernel-space vulnerabilities (e.g., privilege escalations) to achieve absolute
+architectural isomorphism. Cognitively, the framework’s current tabula rasa approach will evolve by integrating
+“Reflexion” architectures and episodic memory [40], enabling the agent to formulate persistent heuristic rules via
+Verbal Reinforcement Learning. Finally, regarding perimetric defenses (WAF, IPS), future research will pivot towards
+Adversarial Emulation. Rather than developing stealthy modules for undetected real-world exploitation, the framework
+will be utilized to generate evasive, polymorphic payloads via In-Context Learning [53] strictly within monitored cyber
+ranges. This controlled generation will serve to stress-test and harden modern Security Operations Centers (SOCs)
+against emerging AI-driven threats, ensuring that defensive mechanisms evolve concurrently with autonomous offensive
+capabilities.
+Availability of Data and Materials
+The custom vulnerable environments, demonstration videos, and raw forensic logs supporting the findings of this study
+have been submitted to the journal for peer review. To prevent misuse or unauthorized replication prior to formal
+publication, the supplementary repository is temporarily restricted. Demonstration videos highlighting the framework’s
+capabilities are available via the lead author’s professional channels.

@@ -1,0 +1,1066 @@
+A Multi-Level Integrity Evaluation Framework for
+Quantum Circuits under Controlled Anomaly
+Injection
+Ejaz Ahmed∗, Boshuai Ye∗, Syed Hamza Shah∗, Muhammad Azeem Akbar†, Arif Ali Khan∗
+∗ITEE, University of Oulu, Oulu, Finland
+{Ejaz.Ahmed, boshuai.ye, Hamza.Shah, Arif.khan}@oulu.fi
+†Software Engineering Department, Lappeenranta-Lahti University of Technology, Lappeenranta, Finland
+Azeem.Akbar@lut.fi
+Abstract—To ensure the integrity of quantum circuits is a
+significant challenge in the Noisy Intermediate-Scale Quan-
+tum (NISQ) era, where circuits are subject to compilation
+transformations, hardware constraints, and potential adversarial
+modifications. Existing validation approaches typically rely on
+either structural analysis or behavioral evaluation, leading to
+incomplete assessment of circuit correctness.
+In this work, we investigate the relationship between struc-
+tural, interaction-level, and behavioral perspectives of circuit in-
+tegrity, demonstrating that single aspect of integrity is insufficient
+to guarantee circuit integrity; structural similarity alone does
+not ensure behavioral equivalence. To solve this problem, we use
+a three-layer metric framework that combines the Structural
+Integrity Score (SIS), the Operational Integrity Score (OIS),
+and the Interaction Graph Semantic-Logical (IGS). SIS captures
+global structural properties,OIS quantifies behavioral divergence
+using Jensen-Shannon distance, and IGS models interaction
+patterns and dependencies in a pre-execution setting.
+Through controlled anomaly injection on benchmark quantum
+circuits, we demonstrate that each metric captures a different
+aspect of circuit deviation. In particular, structural blind-spot
+cases (SIS ≥0.95) reveal a clear limitation of structural analysis,
+where OIS detects anomalies in 93.85% of instances, while IGS
+detects 72.58%. These results highlight that the metrics provide
+complementary insights and that a single metric is insufficient
+for reliable circuit validation.
+Index Terms—Quantum circuits, integrity metrics, Jensen-
+Shannon distance, anomaly analysis, NISQ
+I. INTRODUCTION
+Quantum computing has progressed rapidly in the Noisy
+Intermediate-Scale Quantum (NISQ) era, where practical ap-
+plications are executed on imperfect hardware and complex
+software toolchains [1]–[3]. In such environments, ensuring
+that a quantum circuit behaves as intended is a real challenge.
+Circuit instances may deviate from their original specification
+due to compilation transformations, optimization passes, hard-
+ware constraints, and unintended or adversarial modifications
+[4], [5]. Since quantum hardware is not widely accessible,
+workflows depend on cloud-based execution and hybrid classi-
+cal quantum pipelines, increasing the need for circuit-level val-
+idation. Existing validation approaches typically fall into two
+categories: structural methods, which analyze properties such
+as gate composition, circuit depth, and interaction topology to
+provide efficient pre-execution checks [5], [6], and behavioral
+methods, which assess output distributions or state fidelity
+through execution or simulation to provide a direct measure
+of functional correctness [7]. Although both perspectives are
+valuable and often treated independently, our results show that
+this leads to an incomplete assessment of circuit integrity.
+In this work, we identified that structural similarity does
+not guarantee behavioral equivalence. Transformations such
+as gate reordering and gate substitution can preserve global
+structural properties while significantly altering circuit behav-
+ior, revealing a structural-behavioral gap. This observation
+highlights the need for validation approaches that account for
+multiple levels of circuit representation rather than relying
+on a single perspective. To address this, we adopt a multi-
+layer integrity framework that explicitly distinguishes between
+structural, interaction-level, and behavioral views. SIS captures
+global structural properties such as gate count, depth, and
+topology without requiring execution, OIS measures behav-
+ioral divergence using Jensen-Shannon [8] distance between
+output distributions, and IGS provides an intermediate pre-
+execution perspective by modeling interaction patterns, de-
+pendencies, and gate-level relationships through graph-based
+representations. The definition and selection of these metrics
+are grounded in established approaches to circuit analysis, and
+their theoretical basis and design rationale are summarized in
+Table II.
+However, existing approaches rarely examine whether struc-
+tural, interaction-level, and behavioral metrics agree or di-
+verge under the same controlled perturbations. Through con-
+trolled anomaly injection across benchmark circuits [9], we
+investigate how these metrics capture complementary aspects
+of circuit integrity. SIS reliably identifies coarse structural
+changes, OIS consistently reflects behavioral divergence, and
+IGS captures interaction-level inconsistencies that are not
+reflected in global structural descriptors. Correlation analysis
+further shows that interaction-level similarity does not fully de-
+termine behavioral equivalence, reinforcing the independence
+of these perspectives. We make the following contributions:
+(i) a benchmark-driven empirical analysis of the structural-
+behavioral gap in quantum circuit validation, and (ii) a multi-
+arXiv:2604.26430v1 [quant-ph] 29 Apr 2026
+
+layer integrity framework combining SIS, OIS, and IGS,
+together with a systematic evaluation of their complementary
+roles and limitations.
+II. BACKGROUND AND RELATED WORK
+A. Background
+Quantum circuits executed in the NISQ era are subject
+to multiple sources of variation, including hardware noise,
+calibration drift, compilation and transpilation transformations,
+and execution in hybrid classical–quantum workflows [1],
+[2]. As a result, the same logical circuit may appear in
+different structural forms throughout its lifecycle, depending
+on optimization passes, hardware constraints, and execution
+environments. Backend-specific mapping and hardware vari-
+ability can influence how logical circuits are transformed be-
+fore execution, motivating validation methods that account for
+more than a single structural descriptor [4], [10]. This makes
+circuit-level validation challenging, as structural changes intro-
+duced during processing do not necessarily imply changes in
+functional behavior, and conversely, behaviorally significant
+deviations may arise even when structural properties appear
+largely preserved [11].
+To support evaluation across diverse workloads, bench-
+mark suites such as QASMBench provide standardized circuit
+collections together with structural and execution-related de-
+scriptors, including gate count, circuit depth, and interaction
+patterns [9], [12], [13]. These descriptors are widely used
+to estimate circuit complexity, resource requirements, and
+hardware suitability. In parallel, behavioral evaluation methods
+assess output distributions or state fidelity through simulation
+or execution, providing a direct measure of functional correct-
+ness [7]. These structural and behavioral approaches make up
+most of the existing methods used to assess quantum circuits.
+B. Related Work
+Prior work has examined quantum circuit correctness and
+variability from structural, behavioral, equivalence-checking,
+and graph-based perspectives. Quantum circuit equivalence
+checking has shown that circuits generated through compila-
+tion, decomposition, and mapping may differ significantly in
+structure while still representing the same logical functionality
+[11]. This highlights the difficulty of ensuring consistency
+across heterogeneous circuit representations, particularly in
+complex design flows.
+Structural analysis techniques are widely used to char-
+acterize circuit properties such as gate count, depth, and
+interaction topology, and to estimate complexity and hardware
+suitability [4], [9]. Behavioral approaches instead evaluate
+circuits based on output distributions or state fidelity obtained
+through simulation or execution, providing a direct measure of
+functional correctness [8], [14]. In addition, fault-based studies
+have explored the detection of missing or incorrect quantum
+operations [15], while compilation and optimization research
+has investigated how circuit transformations such as simplifica-
+tion, decomposition, and reordering affect circuit structure and
+performance [5], [6]. Graph-based representations have also
+TABLE I: Summary of existing circuit validation approaches
+and their limitations.
+Approach
+What is Captured
+Limitation
+Structural Analysis
+Circuit complexity and
+structure
+(gate
+count,
+depth,
+topology)
+[4],
+[9]
+Does
+not
+capture
+behavioral
+deviation
+or
+semantic
+differences
+caused
+by transformations
+Behavioral Evalua-
+tion
+Output
+distributions
+and
+functional
+correctness [8], [14]
+Requires
+execu-
+tion/simulation;
+does
+not
+explain
+structural
+or
+interaction-level
+causes
+Fault-Based
+Diagnosis
+Detection
+of
+specific
+circuit
+faults
+(e.g.,
+missing
+or
+incorrect
+gates) [15]
+Limited to predefined
+fault models; not suit-
+able
+for
+complex
+or
+compound anomalies
+Compilation
+/
+Transformation
+Studies
+Circuit
+optimization
+and
+transformation
+effects [5], [6]
+Focus on optimization
+rather than anomaly de-
+tection or integrity val-
+idation
+Graph-Based
+Rep-
+resentations
+Dependency
+structure
+and
+interaction
+modeling [16], [17]
+Typically not integrated
+with behavioral valida-
+tion or integrity assess-
+ment
+been proposed to model dependency structure and interaction
+patterns in quantum circuits [16], [17].
+Although these approaches provide valuable insights, they
+are typically applied separately and focus on a single aspect
+of circuit correctness. Structural methods are efficient but
+may overlook semantic or behavioral deviations, behavioral
+methods provide accurate validation but require costly exe-
+cution or simulation, and graph-based approaches are rarely
+integrated with explicit behavioral analysis. Similarly, fault-
+based methods are often limited to predefined fault models and
+are not designed for broader integrity validation under diverse
+perturbations. This creates a gap: circuit integrity in practical
+workflows must be assessed across structural, interaction-level,
+and behavioral representations simultaneously.
+Motivation scenario and problem. Consider a team de-
+veloping quantum circuits for deployment on cloud-based
+platforms. As part of their workflow, circuits are compiled,
+optimized, and executed across different environments. Before
+deployment, the team needs to verify the integrity of these
+circuits to ensure that no unintended modifications have been
+introduced during processing.
+However, existing approaches do not commonly integrate
+structural, interaction-level, and behavioral perspectives within
+a single circuit-level evaluation workflow. Some approaches
+focus only on structural properties, others focus on behavioral
+validation, while some are primarily concerned with optimiza-
+tion rather than integrity. As summarized in Table I, existing
+approaches capture complementary aspects of circuit behavior,
+including structural properties, output-level correctness, and
+interaction-level representations. However, these aspects are
+not integrated within a single framework.
+In practical workflows, particularly those involving auto-
+mated compilation, optimization passes, or shared execution
+environments, circuits may undergo transformations that are
+
+not fully reflected within a single perspective. This lack of
+a unified approach makes it difficult for teams to ensure
+circuit integrity both structurally and operationally, raising an
+important question: has a given circuit instance deviated from
+its intended structure or behavior in a way that affects its
+integrity?
+To overcome these limitations, a multi-metric validation
+strategy is required that combines structural, behavioral, and
+interaction-level perspectives. This motivates the central re-
+search question of this paper: how do structural, interaction-
+level, and behavioral metrics differ in their ability to de-
+tect controlled quantum circuit anomalies? Addressing this
+question requires circuit-level integrity metrics that operate
+across multiple representations, combining structural descrip-
+tors, interaction-level information, and behavioral observations
+to provide a more comprehensive and interpretable assessment
+of circuit deviations.
+III. METRIC DEVELOPMENT
+This section defines the three metrics used in the proposed
+framework: the SIS, the OIS, and the IGS. Each metric
+compares a test circuit C against a reference circuit Cref
+and captures a different aspect of circuit deviation, namely
+structural, behavioral, and interaction-level integrity. Table II
+summarizes the theoretical basis and motivation behind each
+metric, clarifying how they are defined and adopted in this
+work.
+A. Structural Integrity Score (SIS)
+The Structural Integrity Score measures deviation in global
+circuit structure using normalized differences in key structural
+properties. These properties include gate count, circuit depth,
+two-qubit gate usage, and interaction topology, which are
+widely used in quantum circuit analysis and compilation
+studies [4], [9].
+The structural deviation is defined as:
+∆struct(C, Cref) = wgδgate + wdδdepth + wcδ2q + wtδtopo
+(1)
+where each component δ represents a normalized relative
+difference with respect to the reference circuit, and the weights
+satisfy wg + wd + wc + wt = 1. In this work, we assign equal
+weights (wg = wd = wc = wt = 0.25), because there is no
+prior evidence indicating that one structural component should
+be prioritized over the others for general anomaly detection
+across diverse circuit types.
+The Structural Integrity Score is then defined as:
+SIS(C, Cref) = 1 −∆struct(C, Cref)
+(2)
+The four structural components capture complementary as-
+pects of circuit construction: gate count reflects circuit size
+and detects insertions or deletions, circuit depth captures
+sequential complexity, two-qubit gate usage represents changes
+in entangling operations, and topology encodes dependency
+relationships among quantum operations, where edges capture
+ordering constraints induced by shared-qubit usage and gate
+commutation rules [16]. Collectively, these features provide a
+compact pre-execution measure of structural similarity. How-
+ever, as SIS aggregates global properties, it is less sensitive to
+fine-grained semantic or interaction-level changes, particularly
+under structure-preserving transformations introduced during
+circuit optimization and routing [18].
+B. Operational Integrity Score (OIS)
+The Operational Integrity Score measures behavioral devia-
+tion between two circuits using their output probability distri-
+butions. Let p and q denote the output distributions obtained
+from executing or simulating Cref and C, respectively. To
+quantify behavioral difference, we use the Jensen–Shannon
+distance because it is symmetric, bounded, and suitable for
+comparing finite measurement-output distributions [8], [19].
+The Kullback–Leibler (KL) divergence between two dis-
+crete distributions p and q is defined as:
+DKL(p ∥q) =
+X
+i
+p(i) log2
+p(i)
+q(i).
+(3)
+Let m = 1
+2(p + q). The Jensen–Shannon divergence is:
+DJS(p, q) = 1
+2DKL(p ∥m) + 1
+2DKL(q ∥m).
+(4)
+The Jensen–Shannon distance is then:
+JSD(p, q) =
+p
+DJS(p, q).
+(5)
+In this work, logarithms are computed with base 2, making
+JSD(p, q) bounded in [0, 1]. The Operational Integrity Score
+is defined as:
+OIS(C, Cref) = 1 −JSD(p, q).
+(6)
+This formulation maps output-distribution distance into an
+interpretable similarity score, where values closer to 1 indicate
+stronger behavioral agreement and values closer to 0 indicate
+larger behavioral deviation.
+OIS directly reflects observable functional differences and
+serves as a behavioral reference metric. It captures deviations
+arising from transformations such as gate substitution and
+reordering, which preserve structural descriptors but alter exe-
+cution behavior. However, because it depends on execution or
+simulation, it introduces computational overhead, particularly
+for circuits with large qubit counts [20], reflecting the inherent
+complexity of evaluating quantum state behavior [21].
+C. Interaction Graph Semantic-Logical Score (IGS)
+The IGS, referred to as IGS-L in the implementation and
+code, is used consistently as IGS throughout this paper. To
+capture deviations beyond global structure, each circuit is rep-
+resented as a labeled directed acyclic graph G(C) = (V, E),
+where nodes correspond to quantum operations and edges
+represent dependencies induced by shared qubit usage and exe-
+cution order [16], [17]. This representation enables analysis of
+both structural dependencies and gate-level semantics without
+requiring circuit execution.
+
+The interaction-level discrepancy is defined as:
+∆IGS(C, Cref) = weDedge + wnDnode + woDorder
++ wiDinter + wuDusage
+(7)
+Each term D· ∈[0, 1] represents a normalized interaction-
+level discrepancy, with weights satisfying we + wn + wo +
+wi + wu = 1. Weights are assigned based on sensitivity to
+interaction-level deviations, with higher emphasis on node fea-
+tures that encode gate type and parameters. To enhance seman-
+tic representation, unitary-based fingerprints are incorporated
+to distinguish operations with similar structure but different
+transformations [7]. Interaction and ordering terms capture
+multi-qubit dependencies, while topology is assigned lower
+weight due to its limited sensitivity to structure-preserving
+transformations [5], [6]. A dedicated component captures
+anomalous qubit usage patterns, with weights initialized as
+we = 0.15, wn = 0.35, wo = 0.20, wi = 0.20, and
+wu = 0.10.
+The Interaction Graph Semantic-Logical Score is defined
+as IGS(C, Cref) = 1−∆IGS(C, Cref). The components capture
+complementary interaction-level properties, including depen-
+dency structure (Dedge) through graph topology, node seman-
+tics (Dnode) via enriched features and unitary fingerprints,
+execution ordering (Dorder), interaction patterns (Dinter) across
+multi-qubit relationships, and qubit usage (Dusage) to detect
+anomalous activity such as operations on idle qubits. These
+terms model differences in causal dependencies, operation
+characteristics, and qubit-level behavior. IGS operates in a pre-
+execution setting, providing an interaction-level perspective
+that complements structural and behavioral analysis of circuit
+integrity.
+D. Anomaly Model and Framework
+To evaluate the proposed metrics, controlled anomaly injec-
+tion is used to generate perturbed circuit instances, simulating
+both unintended transformations (e.g., compilation artifacts)
+and adversarial modifications. The anomaly set includes gate
+deletion and insertion (structural changes), gate substitution
+and reordering (structure-preserving semantic changes), qubit
+swaps (interaction-level variation), and trojan operations that
+introduce hidden activity on idle qubits. These anomaly types
+introduce variations across structural, interaction-level, and be-
+havioral dimensions, enabling systematic evaluation of metric
+sensitivity under diverse perturbation scenarios.
+Fig. 1 illustrates the overall workflow of the proposed
+multi-layer integrity validation framework. Given a reference
+circuit and its corresponding perturbed variants, generated
+through controlled anomaly injection, the framework evaluates
+circuit integrity across three complementary layers: structural,
+interaction-level, and behavioral.
+The SIS captures global structural deviations using ag-
+gregated circuit descriptors such as gate count, depth, and
+topology. The IGS operates at the interaction level, modeling
+circuits as dependency graphs to capture ordering, semantic,
+and multi-qubit relationships. The OIS provides a behavioral
+TABLE II: Theoretical grounding of metric components
+Component
+Description
+Reference
+Gate count
+Circuit size and operation count
+[9]
+Circuit depth
+Sequential execution complex-
+ity
+[4]
+Two-qubit gates
+Entanglement
+and
+hardware
+cost
+[4]
+Topology
+Dependency structure (DAG)
+[16]
+Output distance
+Behavioral difference via JSD
+[8], [19]
+Graph representation
+Interaction modeling
+[16], [17]
+perspective by measuring divergence between output distribu-
+tions obtained through execution or simulation.
+These three metrics are evaluated independently and pro-
+duce separate outputs, preserving interpretability across dif-
+ferent dimensions of analysis. SIS and IGS operate in a
+pre-execution setting, enabling efficient large-scale screening,
+while OIS provides execution-based validation of functional
+behavior.
+The combination of these layers enables a broader assess-
+ment of circuit integrity. In particular, it allows identification
+of cases where structural similarity does not imply behavioral
+equivalence, as well as cases where interaction-level discrep-
+ancies explain differences between structural and behavioral
+observations. This multi-layer design provides a unified and
+interpretable framework for analyzing circuit deviations across
+structural, interaction-level, and behavioral domains.
+From a security perspective, this design is motivated by sce-
+narios in which circuits may be modified during compilation,
+optimization, or transmission. Such modifications may pre-
+serve structural properties while altering interaction patterns
+or execution behavior, making them difficult to detect using
+a single validation layer [22]–[24]. The anomaly taxonomy
+reflects these potential threat patterns, and the three-layer
+framework enables detection across structural, interaction-
+level, and behavioral representations. This multi-layer perspec-
+tive provides additional evidence for identifying integrity devi-
+ations in quantum circuit workflows, particularly in distributed
+or cloud-based environments [22], [23].
+IV. EXPERIMENTAL SETUP
+The experimental evaluation was conducted on QASM-
+based benchmark circuits organized into small, medium, and
+large groups. Circuits were sourced from the QASMBench
+benchmark suite [9] and filtered to retain only instances with at
+most 40 qubits and 2000 gates. After filtering, the benchmark
+contained 133 circuits, including 76 small, 37 medium, and
+20 large circuits. All experiments used a fixed random seed of
+42 to ensure reproducibility.
+Anomaly severity was evaluated at three levels, namely 0.1,
+0.3, and 0.6. To ensure consistency across all evaluations,
+the same anomaly definitions and injection procedures were
+applied to all metrics. The SIS was computed using equal
+weights over four structural components: gate count, circuit
+depth, two-qubit gate count, and DAG-topology deviation [4].
+The OIS was computed using the Qiskit Aer simulator backend
+with 1024 measurement shots [25], providing a behavioral
+
+Behavioral Metric Layer (OIS)
+Anomaly Injection
+Reference Circuit
+Mutant Circuit 
+Structural Metric Layer
+(SIS)
+Gate count | Depth | Topology
+Structural Integrity
+Score (SIS)
+Interaction Graph Metric Layer 
+(IGS)
+Interaction Graph 
+Semantic-Logical Score 
+(IGS)
+Operational Integrity
+Score (OIS)
+Final Analysis
+(Metric comparison &
+performance)
+Gate deletion 1q,
+Gate deletion 2q,
+Gate insertion,
+Gate substitution,
+Gate reorder,
+Trojan NOT,
+Trojan H,
+Qubit swap.
+Input Circuits
+(Benchmark Circuits + Mutant Circuits)
+Metrics 
+Layers
+Metrics 
+Output
+Metrics 
+Comparison/Analysis
+*Black lines represent the original (reference) circuit, while red lines indicate modifications
+introduced in the mutant circuit through anomaly injection.
+Fig. 1: Multi-layer quantum circuit integrity framework using SIS, IGS, and OIS. Black lines show the reference circuit; red
+lines indicate anomalies.
+reference based on output distributions. To control simulation
+cost, OIS evaluation was restricted to circuits with up to 14
+qubits, consistent with exponential simulation constraints [7].
+To ensure separability between anomaly classes, the bench-
+mark employed an orthogonal anomaly taxonomy consisting
+of eight perturbation types: single-qubit gate deletion, two-
+qubit gate deletion, gate insertion, gate substitution, gate
+reordering, Trojan NOT, Trojan H, and qubit swap. These
+perturbations are derived from mutation operators, fault in-
+jection strategies, and circuit transformation models studied
+in prior work on quantum software testing and hardware
+security [5], [6], [22]–[24], [26], [27]. Each anomaly type was
+designed to primarily affect a distinct structural or interaction-
+level property, following established fault and transformation
+models in quantum circuits [5], [6], [15]. Fixed-anomaly
+experiments applied a single minimal perturbation per circuit,
+while severity-based experiments scaled perturbation magni-
+tude according to the specified severity factor.
+All metrics were evaluated on a shared dataset derived
+from the QASMBench benchmark [9] using consistent filtering
+thresholds, anomaly definitions, severity levels, and random
+seed. The SIS and OIS benchmarks were implemented within
+a unified experimental pipeline, producing both fixed-anomaly
+and severity-based datasets. The IGS metric was evaluated us-
+ing a companion pipeline with identical experimental settings
+to ensure comparability.
+For IGS, each circuit was represented as a labeled interac-
+tion graph derived from its DAG structure [16]. Node repre-
+sentations combined gate-family encoding, a six-dimensional
+unitary-based feature vector, and qubit-level statistics. The
+six-dimensional unitary-based feature vector encodes gate-
+level characteristics derived from the corresponding unitary
+matrices, including parameter information (e.g., rotation an-
+gles), gate-type encoding (e.g., X, Y, Z, H), and aggregated
+summaries of real and imaginary components [7]. These
+features provide a compact representation for interaction-level
+comparison without requiring circuit execution.
+IGS was computed using five pre-execution components:
+topology difference, node semantic difference, gate-order dif-
+ference, two-qubit interaction difference, and qubit-usage dif-
+ference. To support scalability, the implementation incorpo-
+rated reference-graph caching and a linear-time shared-qubit
+edge construction strategy, consistent with graph-processing
+practices [17]. Qubit-usage monitoring was included to capture
+deviations associated with trojan-style perturbations [23], [24].
+OIS was used only as an external behavioral reference and was
+not incorporated into the computation of IGS.
+Overall, the three metrics were evaluated under a unified
+experimental protocol, with each metric capturing a distinct
+aspect of circuit integrity: SIS reflects structural properties,
+OIS provides behavioral validation through execution, and
+IGS models interaction-level characteristics in a pre-execution
+
+setting. This design ensures that comparisons across metrics
+reflect differences in representation rather than differences
+in experimental conditions. To support reproducibility, the
+complete implementation, datasets, and analysis scripts are
+publicly available in the replication package at https://github.
+com/C2-Q/Q-SYNTRA.
+A. Scope of Empirical Evaluation
+This study focuses on three implemented circuit-level in-
+tegrity metrics: SIS, OIS, and IGS. These metrics are com-
+pared as complementary perspectives on circuit deviation
+rather than against separately implemented external baseline
+algorithms. SIS represents a global structural view, OIS repre-
+sents an execution-based behavioral view, and IGS represents
+a pre-execution interaction-level view.
+The comparison is designed to examine whether structural,
+interaction-level, and behavioral indicators respond differently
+to the same controlled anomalies. This is important because
+a circuit may remain structurally similar to its reference
+while still showing interaction-level or behavioral deviation.
+The evaluation uses the same benchmark circuits, anomaly
+definitions, severity levels, filtering criteria, and random seed
+across all three metrics to support a fair within-framework
+comparison.
+Existing methods such as graph-edit comparison, global
+structural descriptors, state fidelity, and output-distribution
+divergence are relevant reference points for understanding
+the design space of circuit comparison approaches. Graph
+edit distance (GED) is a common graph-comparison measure
+that quantifies structural dissimilarity through edit operations
+between graph representations [28], [29]. In this study, the
+empirical evaluation is scoped to the three implemented
+metrics: SIS, OIS, and IGS. Their complementary behavior
+under controlled anomaly injection is the central focus of the
+evaluation.
+Table III summarizes the conceptual position of common
+circuit-comparison perspectives alongside the three evaluated
+metrics. Methods not marked in the Evaluated column are
+included to clarify the broader design space and are not
+separately implemented or empirically compared in this work.
+B. Implementation Details and Design Choices
+To keep the evaluation controlled and comparable across all
+experiments, a set of consistent implementation choices was
+applied.
+The anomaly design was intentionally kept structured. Each
+anomaly type was defined to affect a different aspect of the
+circuit, such as structure, ordering, or interaction patterns. This
+avoids overlap between anomaly effects and makes it easier
+to interpret which metric is responding to what. In the fixed-
+anomaly setting, only a minimal perturbation was applied
+to each circuit. In the severity-based setting, the same type
+of modification was scaled in a controlled way rather than
+introducing entirely different changes. This form of controlled
+perturbation is commonly used in anomaly detection and sys-
+tem evaluation to isolate the sensitivity of different detection
+mechanisms [30].
+TABLE III: Conceptual Positioning of Circuit Comparison
+Perspectives
+Method
+Struct. Behav.
+Pre
+Inter. Eval.
+GED
+✓
+✗
+✓
+✗
+✗
+Global features
+✓
+✗
+✓
+✗
+✗
+State fidelity
+✗
+✓
+✗
+✗
+✗
+JSD
+✗
+✓
+✗
+✗
+✗
+SIS
+✓
+✗
+✓
+✗
+✓
+OIS (1 −JSD)
+✗
+✓
+✗
+✗
+✓
+IGS
+✓
+✗
+✓
+✓
+✓
+SIS+OIS+IGS
+✓
+✓
+Partial
+✓
+✓
+✓indicates that the perspective is supported; ✗indicates that it is not.
+Partial indicates that SIS and IGS operate before execution, while OIS
+requires simulation or execution. GED, global features, state fidelity, and
+standalone JSD are included as design-space reference points only and are
+not separately implemented or empirically compared in this study.
+All metrics were evaluated against a single reference circuit
+for each instance. Anomalous versions were generated from
+this same baseline, so differences between SIS, OIS, and IGS
+reflect the behavior of the metrics themselves rather than
+differences in circuit selection.
+Some factors were deliberately kept out of scope. No noise
+models or hardware-specific effects were included, and all
+simulations were performed using idealized backends. This
+follows standard practice in quantum circuit analysis, where
+functional behavior is first evaluated under noise-free condi-
+tions to isolate algorithmic effects before introducing hardware
+variability [7]. The goal here was to observe how the metrics
+behave under clean conditions, where any deviation can be
+directly linked to the injected anomaly rather than randomness
+from noise.
+Transpilation
+settings
+were
+also
+kept
+fixed,
+and
+no
+optimization-level changes were applied. This avoids the
+compiler modifying the circuit in unintended ways, such as
+reordering or simplifying gates, which could obscure the
+effect of injected anomalies. Prior work has shown that circuit
+transformations such as reordering and simplification can sig-
+nificantly alter structure and execution characteristics [5], [6],
+making it important to control these effects during evaluation.
+From an implementation perspective, reference simulation
+results for OIS were cached to avoid repeated execution of
+the same reference circuit. For IGS, the reference interaction
+graph was computed once per circuit and reused across
+anomaly cases. Graph construction was implemented using
+qubit-indexed structures, keeping the process close to linear
+in practice.
+V. RESULTS
+This section evaluates how SIS, OIS, and IGS respond
+to controlled anomalies across quantum circuits of varying
+complexity and severity. We focus on three questions: how
+each metric responds to structural and semantic perturbations,
+whether OIS and IGS detect deviations missed by SIS, and
+how closely interaction-level signals align with behavioral
+outcomes.
+
+A. Structural Sensitivity of SIS
+SIS reliably detects anomalies that directly alter circuit
+structure, such as gate insertion, deletion, and depth modi-
+fication. As shown in Fig. 2a, SIS decreases monotonically
+with increasing severity for gate deletion, gate insertion, trojan
+injection, and qubit swap anomalies, indicating that it reliably
+captures global structural degradation.
+However, this sensitivity is not uniform across anomaly
+types. For gate substitution and gate reordering, SIS remains
+close to 1.0 across all severity levels, despite the presence of
+anomalous modifications. This reveals a clear structural blind-
+spot: transformations that preserve coarse global descriptors
+can evade detection even when the underlying computation has
+changed [5], [6]. In practical terms, this means that structural
+validation alone cannot be relied upon to establish circuit
+integrity.
+B. Behavioral Sensitivity of OIS
+The OIS captures behavioral deviations across all evaluated
+anomaly types. As illustrated in Fig. 2b, OIS consistently
+decreases with increasing severity, including in cases where
+SIS remains nearly unchanged. In particular, gate substitution
+and gate reordering produce substantial degradation in OIS
+despite minimal structural variation.
+This directly shows that behavioral divergence can occur
+even when structural properties appear preserved [15]. Com-
+pared with SIS, OIS therefore provides a more reliable indi-
+cator of functional deviation. However, the wide distributions
+observed for certain anomalies, particularly two-qubit gate
+deletion, Trojan-NOT, and qubit swap, indicate that behavioral
+impact is not uniform and depends on circuit structure and
+the location of the injected perturbation. The trade-off is
+cost: because OIS depends on execution or simulation, its use
+becomes less practical as circuit size grows [7]. The result
+is a clear gap in the validation pipeline: SIS is efficient but
+incomplete, while OIS is informative but expensive.
+C. Interaction-Level Sensitivity of IGS
+The IGS evaluates circuit integrity by modeling dependen-
+cies and relationships between quantum operations in a graph-
+based representation. As shown in Fig. 3, IGS exhibits a
+consistent decrease with increasing anomaly severity across
+all categories. This indicates that interaction-level structures
+degrade progressively as anomalies intensify, even in cases
+where global structural properties remain stable.
+Compared with SIS, IGS is sensitive to changes in execution
+ordering, qubit interactions, and dependency structures. This
+allows it to capture deviations in scenarios such as gate
+reordering and trojan-based modifications, where structural
+metrics alone remain largely unchanged. At the same time,
+IGS does not replicate full behavioral analysis, and its re-
+sponses remain distinct from those observed in OIS. The
+results position IGS as an intermediate metric that provides
+meaningful pre-execution insight into circuit deviations while
+maintaining computational efficiency.
+D. Detection Capability in Structural Blind-Spots
+To explicitly evaluate cases where structural analysis is less
+sensitive, we analyze blind-spot scenarios defined as instances
+where SIS remains high (SIS ≥0.95) despite the presence of
+anomalies. For the purpose of this analysis, OIS or IGS is
+considered to have detected an anomaly when the respective
+score falls below 0.95, indicating a deviation of more than 5%
+from perfect agreement with the reference circuit.
+Across all experiments, a total of 569 blind-spot cases were
+identified from 688 anomalous samples in the severity-wise
+anomaly setting. These cases correspond to structurally indis-
+tinguishable circuits (SIS ≥0.95), where structural validation
+fails to capture underlying deviations.
+A severity-wise breakdown of blind-spot detection is pre-
+sented below:
+TABLE IV: Detection Performance in Structural Blind-Spots
+(SIS ≥0.95)
+Severity
+Blind
+Cases
+IGS
+Detected
+OIS
+Detected
+IGS / OIS
+(%)
+0.1
+270
+173
+251
+64.07 / 92.96
+0.3
+151
+113
+142
+74.83 / 94.04
+0.6
+148
+127
+141
+85.81 / 95.27
+Total
+569
+413
+534
+72.58 / 93.85
+OIS successfully detected anomalies in 93.85% of blind-
+spot instances, while IGS detected anomalies in 72.58% of the
+same cases, reflecting their respective sensitivity to behavioral
+and interaction level deviations.
+For both metrics, the detection rate increases consistently
+with severity. This indicates that deviations become more
+pronounced as anomaly intensity grows, even when structural
+properties remain unchanged. OIS captures the behavioral
+impact of these deviations through execution, whereas IGS
+identifies interaction level inconsistencies without requiring
+simulation.
+These results highlight that structural validation captures
+global circuit properties effectively, but does not fully reflect
+interaction-level or behavioral deviations in blind-spot scenar-
+ios. In such cases, interaction-level and behavioral analyses
+provide complementary signals, extending the assessment be-
+yond what can be inferred from structure alone.
+E. Cross-Metric Analysis and Efficiency
+Fig. 4 illustrates the behavior of SIS, OIS, and IGS across
+anomaly types for severity levels 0.1, 0.3, and 0.6.
+SIS captures global circuit structure and responds clearly to
+direct structural changes while remaining relatively stable for
+structure-preserving transformations. In contrast, OIS shows
+a consistent decrease across all anomaly types as severity
+increases, reflecting sensitivity to changes in execution be-
+havior. IGS follows a gradual, monotonic decline, capturing
+interaction-level differences that are not visible in SIS while
+remaining less variable than OIS. Each metric reflects a dif-
+ferent aspect of circuit integrity, with distinct behavior across
+anomaly types and severity levels.
+Interaction–Behavior Relationship
+
+(a) SIS response across defined anomalies
+(b) OIS response across defined anomalies
+Fig. 2: Distribution of SIS and OIS across anomaly severity levels.
+Fig. 3: IGS response across defined anomalies.
+The relationship between IGS and OIS is analyzed using
+correlation metrics across severity levels. Fig. 5 shows the
+scatter distribution along with regression trends.
+TABLE V: Correlation Between IGS and OIS Across Severity
+Levels
+Severity
+Pearson r
+p-value
+Spearman ρ
+p-value
+0.1
+0.293
+4.00 × 10−15
+0.303
+4.78 × 10−16
+0.3
+0.239
+2.19 × 10−10
+0.205
+6.21 × 10−8
+0.6
+0.158
+3.18 × 10−5
+0.147
+1.06 × 10−4
+Additionally, the overall correlation in the fixed anomaly
+setting is:
+• Pearson r = 0.278 (p = 1.15 × 10−13)
+• Spearman ρ = 0.267 (p = 1.11 × 10−12)
+The correlation between IGS and OIS remains weak across
+all settings and decreases as anomaly severity increases.
+Specifically, Pearson correlation drops from 0.293 at severity
+0.1 to 0.158 at severity 0.6, with a similar trend observed for
+Spearman correlation.
+This indicates that interaction-level similarity does not con-
+sistently align with behavioral similarity. As anomaly severity
+increases, the correlation between IGS and OIS decreases,
+indicating a progressively weaker association between the two
+metrics.
+Computational Efficiency
+Fig. 6 compares the runtime of IGS and OIS across qubit
+counts for different severity levels.
+IGS maintains consistently low and stable runtime across
+all configurations, with only a modest increase as the number
+of qubits grows and minimal variance across severity levels.
+In contrast, OIS exhibits substantially higher runtime and
+significantly greater variability, with both mean runtime and
+variance increasing sharply beyond 10 qubits.
+Notably, OIS runtime becomes increasingly unstable at
+higher qubit counts, with large error bars indicating sensitivity
+to circuit structure and execution conditions. This highlights
+the computational advantage of IGS as a low-runtime pre-
+execution metric in the evaluated setting, while reinforcing
+the cost limitations of behavior-based validation approaches.
+Summary of Findings
+SIS captures global structural properties, while OIS and IGS
+reflect behavioral and interaction-level deviations, respec-
+tively. Their responses vary across anomaly types and sever-
+ity levels, highlighting distinct aspects of circuit integrity.
+The three metrics provide complementary perspectives, en-
+abling a more complete assessment of circuit integrity across
+structural, interaction-level, and behavioral dimensions.
+VI. DISCUSSION
+The experimental results show a clear separation between
+structural, interaction-level, and behavioral perspectives of
+circuit integrity. As illustrated in Fig. 4, each metric responds
+differently to anomaly severity, indicating that deviations occur
+across multiple layers that cannot be captured by a single
+representation.
+SIS captures global circuit properties such as topology
+and gate composition, but remains insensitive to structure-
+preserving transformations such as gate reordering and sub-
+stitution (Fig. 2a). This highlights the limitation of relying
+on structural descriptors alone. In contrast, OIS captures
+deviations consistently across all anomaly types by reflecting
+changes in execution outcomes (Fig. 2b), although it requires
+simulation or hardware execution and does not localize the
+source of change.
+
+Fig. 4: SIS remains high for structure-preserving anomalies, while IGS and OIS degrade with increasing severity, capturing
+interaction level and behavioral deviations.
+Fig. 5: IGS and OIS exhibit weak correlation across severity levels, confirming that interaction-level similarity does not reliably
+reflect behavioral equivalence.
+IGS provides an intermediate view by modeling dependen-
+cies and operation ordering. It detects deviations not reflected
+in global structure (Fig. 3), but does not fully align with
+behavioral changes. Correlation analysis (Fig. 5, Table V) fur-
+ther shows that interaction-level similarity does not guarantee
+behavioral equivalence.
+The blind-spot analysis highlights this divergence. In cases
+where circuits are structurally indistinguishable (SIS ≥0.95),
+OIS reveals behavioral deviations, while IGS detects a sub-
+stantial portion of these through interaction-level changes
+(Table IV). This confirms that structural, interaction-level, and
+behavioral signals capture different aspects of circuit deviation.
+From a computational perspective, interaction-level analysis
+remains relatively stable across circuit sizes, while behavioral
+evaluation incurs higher and more variable cost (Fig. 6),
+indicating a trade-off between efficiency and accuracy.
+These observations suggest a practical validation workflow.
+SIS can be used for fast structural screening, IGS for pre-
+execution analysis of interaction-level inconsistencies, and
+OIS for selective confirmation of behavioral deviations. This
+staged approach leverages the strengths of each metric while
+managing computational cost.
+These findings also have security implications. Modifica-
+tions that preserve structural properties may still alter execu-
+tion behavior, making them difficult to detect using structural
+validation alone. The observed mismatch between validation
+perspectives highlights the need for multi-level analysis in
+environments where circuits undergo external processing.
+VII. THREATS TO VALIDATION
+The evaluation is conducted in a controlled setting where
+anomalous circuits are generated from a single reference
+instance. This ensures consistent comparison between SIS,
+OIS, and IGS, but limits diversity in circuit structures and
+may not fully represent real-world workloads.
+Experiments are performed under idealized conditions with-
+out noise models or hardware-specific effects. This isolates the
+impact of injected anomalies, but does not capture variability
+
+Fig. 6: IGS achieves stable and low runtime across qubit counts, while OIS incurs significantly higher and more variable
+computational cost.
+introduced by physical quantum devices, which may influence
+behavioral outcomes.
+Transpilation settings are fixed and no optimization-level
+transformations are applied. While this prevents unintended
+compiler-induced changes, it does not reflect practical work-
+flows where circuits undergo multiple compilation stages. The
+OIS evaluation is restricted to circuits with up to 14 qubits due
+to the exponential cost of simulation. As a result, behavioral
+validation is limited to smaller circuits, and its applicability
+to larger-scale quantum workloads remains constrained. The
+IGS metric relies on manually defined component weights
+based on design considerations of sensitivity across structural
+and interaction-level features. These weights were not empir-
+ically optimized, and alternative configurations may influence
+sensitivity across anomaly types. In addition, the correlation
+between IGS and OIS is computed on aggregated results across
+circuits and severity levels, which can hide differences that are
+specific to certain anomaly types or circuit structures.
+Finally, the anomaly taxonomy is limited to predefined
+perturbations. Although these are grounded in established
+models, they do not cover all possible real-world or adversarial
+modifications.
+VIII. CONCLUSION
+In this work, we investigated the limitations of single-
+perspective validation methods for quantum circuits by an-
+alyzing structural, interaction-level, and behavioral integrity
+metrics. We demonstrated that each metric captures a different
+aspect of circuit deviation, and that none of them alone
+provides a complete assessment of circuit correctness.
+A key result of this study is the mismatch between these
+perspectives. In structural blind-spot cases (SIS ≥0.95), where
+structural analysis fails to identify anomalies, OIS detects
+93.85% of anomalous instances, while IGS detects 72.58%.
+This result demonstrates that structural similarity does not
+guarantee behavioral correctness, and that interaction-level
+analysis only partially bridges this gap.
+The significance of this work lies in establishing the need for
+multi-dimensional validation strategies for quantum circuits.
+By combining structural, interaction-level, and behavioral per-
+spectives, broader validation pipelines can be developed.
+For future work, we aim to improve the alignment between
+interaction-level metrics and behavioral outcomes. The com-
+plementary behavior of SIS, OIS, and IGS suggests that they
+could be combined into a unified scoring function, such as
+a weighted integrity index, to provide a single interpretable
+signal for automated circuit monitoring. We also plan to
+explore how such a framework can be applied efficiently in
+practical quantum computing workflows.

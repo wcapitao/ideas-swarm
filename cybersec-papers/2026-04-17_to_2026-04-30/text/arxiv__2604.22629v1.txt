@@ -1,0 +1,1187 @@
+Detecting Concept Drift in Evolving Malware Families Using Rule-Based
+Classifier Representations
+Tomáš Kalný1, Martin Jureček 1
+a and Mark Stamp2
+b
+1Faculty of Information Technology Czech Technical University, Thakurova 9, Prague, Czech
+2Department of Computer Science, San Jose State University, San Jose, CA, USA
+{kalnyto1, martin.jurecek}@fit.cvut.cz, mark.stamp@sjsu.edu
+Keywords:
+concept drift, malware classification, rule-based classification, malware family
+Abstract:
+This work proposes a structural approach to concept drift detection in malware classification using
+decision tree rulesets. Classifiers are trained across temporal windows on the EMBER2024 dataset,
+and drift is quantified by comparing extracted rule representations using feature importance, pre-
+diction agreement, activation stability, and coverage metrics. These metrics are correlated with
+both accuracy degradation and data distribution shift as complementary drift indicators. The
+approach is evaluated across six malware families using fixed-interval and clustering-based win-
+dowing in family-vs-benign and family-vs-family settings, and compared against RIPPER and
+Transcendent baselines. Results show that fixed two-month windowing with feature-level Pearson
+correlation is the most reliable configuration, being the only one where all family pairs produce
+positive drift–accuracy correlations. The methods are complementary — no single approach dom-
+inates across all pairs.
+1
+INTRODUCTION
+Malware evolution remains a major challenge for
+cybersecurity, as attackers continuously adapt
+through obfuscation, packing, encryption, and
+code modification to evade detection (Singh et al.,
+2012). This ongoing arms race has reduced the ef-
+fectiveness of traditional signature- and anomaly-
+based approaches, leading to widespread adop-
+tion of machine learning methods (Yan et al.,
+2023). Although these methods perform well in
+controlled settings, their accuracy degrades over
+time due to concept drift (Jordaney et al., 2017).
+Concept drift refers to changes in the statis-
+tical properties of the target variable over time
+(Lu et al., 2018), driven by factors such as mal-
+ware evolution and adversarial obfuscation (Jiang
+et al., 2024). Without proper handling, drift leads
+to significant performance degradation, motivat-
+ing the need for effective detection and adapta-
+tion mechanisms (Chow et al., 2023).
+Existing
+a
+https://orcid.org/0000-0002-6546-8953
+b
+https://orcid.org/0000-0002-3803-8368
+approaches include statistical monitoring, train-
+ing with adversarial future samples, and represen-
+tation learning techniques (Lu et al., 2018; Jor-
+daney et al., 2017; Chen et al., 2023; He et al.,
+2024; Fernando and Komninos, 2022).
+Rule-based models provide interpretable de-
+cision logic and have been successfully applied
+in malware classification (Blount et al., 2011;
+D’Angelo et al., 2021).
+However, they remain
+susceptible to concept drift and require mech-
+anisms to maintain reliability over time.
+This
+work addresses drift detection in malware classifi-
+cation through structural analysis of decision tree
+rulesets, aligning with the growing demand for
+explainable security solutions (Manthena et al.,
+2025).
+From an IT security perspective, reliable drift
+detection is critical for maintaining the effective-
+ness of deployed systems. In operational environ-
+ments such as endpoint protection and SOCs, un-
+detected drift can create exploitable blind spots.
+The proposed approach provides both quantita-
+tive indicators of model degradation and inter-
+pretable insights into how detection logic evolves,
+arXiv:2604.22629v1 [cs.CR] 24 Apr 2026
+
+supporting analysts in validation and threat in-
+vestigation while enabling more adaptive and
+trustworthy cybersecurity systems.
+The work focuses on answering the following
+questions:
+• Can changes in decision tree rules be used as
+meaningful drift indicators?
+• Do such drift indicators correlate with perfor-
+mance degradation or data distribution shifts?
+• How does drift detection differ between mal-
+ware vs. benign and malware family vs. mal-
+ware family classification settings?
+• What is the minimal temporal resolution is
+required to observe meaningful drift signals?
+The remainder of this paper is organized as
+follows. Section 2 reviews related work, Section 3
+provides background on concept drift in malware,
+Section 4 describes the proposed method, Sec-
+tion 5 presents experimental results, and Sec-
+tion 6 concludes the paper.
+2
+RELATED WORK
+Jordaney et al. introduced the Transcend frame-
+work (Jordaney et al., 2017), which detects out-
+of-distribution samples using conformal evalua-
+tion. Rather than relying on classifier confidence
+scores, Transcend computes independent p-values
+per class via non-conformity measures, making
+it model-agnostic and less prone to overconfident
+predictions on drifted samples. The framework
+was later extended by Barbero et al. (Barbero
+et al., 2022) with improved calibration. We com-
+pare against Transcend directly in Section 5.
+Chow et al. (Chow et al., 2023) investigated
+the root causes of concept drift in Android mal-
+ware samples using the same data set as Tran-
+scend framework.
+Their methodology involved
+identifying points of interest where drift occurred
+by comparing the predictions of a base model
+against oracle models trained on subsets of fu-
+ture test data. This enabled them to determine
+which malware families contributed the most sig-
+nificantly to drift and to assess the corresponding
+impact on classifier performance.
+Interestingly,
+the results showed that benign samples are not
+the main source of drift and have very little im-
+pact on performance.
+Dolejš et al.
+(Dolejš and Jureček, 2022)
+explored the explainability and interpretability
+of ML-based malware detection systems. Their
+study focused on Windows PE files from the EM-
+BER dataset and employed rule-based models I-
+REP and RIPPER for better explainability and
+their ability to handle noisy data. To evaluate in-
+terpretability, the authors proposed two metrics:
+Human Most Understandable Model and Inter-
+pretability Entropy.
+In their experiments, five
+machine learning algorithms were first trained on
+static features; their predictions were then used
+to train rule-based models, reconstructing the de-
+cision making process through rule sets. The re-
+sults demonstrated that the best performing com-
+bination was to use RIPPER on Gaussian Naive
+Bayes (GNB) predictions, achieving an accuracy
+of 98.49 percent covering most of the predictions.
+This highlights the potential of rule-based post-
+processing to provide transparency in otherwise
+opaque classifiers.
+Jurečková et al. used rule-based classifier RIP-
+PER to detect concept drift in 6 malware fam-
+ilies using EMBER dataset and MAB-malware
+adversarial generator to simulate drift and get a
+ground-truth moment when drift has occurred.
+Applying the same rule-based classifier allowed
+authors to directly compare features of original
+and evolved samples based on conditions that
+the samples meet and rule set distance function.
+Authors tested multiple feature dimensionalities
+from 3 to 100 and reached overall 92.08% accu-
+racy of detecting drift across all 6 families. (Ju-
+rečková and Jureček, 2026).
+Stamp et al. (Mishra and Stamp, 2025) pro-
+pose a lightweight clustering-based approach for
+concept drift detection in setting that does not
+require class labels.
+They apply MiniBatch K-
+Means to temporally-ordered batched from Kro-
+noDroid dataset and track changes in silhouette
+coeﬀicient between consecutive batch pairs. Their
+approach has been validated using three scenarios
+- static retraining (baseline), periodic retraining
+and drift-aware retraining across four classifiers.
+With drift-aware retraining the authors were able
+to reduce the number of models trained by ap-
+proximately 40% while achieving accuracy within
+0.5% of periodic retraining.
+Ceschin et al.
+proposed updating both the
+classifier and the feature selector when there is
+a certain level of drift (Ceschin et al., 2023).
+The authors studied whether drift remains across
+datasets. Compared to just retraining the clas-
+sifier, the proposed ”Fast and Furious” solution
+achieved an improvement of 22.05% and 8.77%
+for the F1 score in the Drebin and AndroZoo
+datasets, respectively.
+
+Other works such as FeSA (Fernando and
+Komninos, 2022) study the creation of an opti-
+mal feature selection architecture for ransomware
+classification when exposed to concept drift. The
+multilayered architecture for feature selection is
+proposed in order to decrease classifier degrada-
+tion.
+Singh et al.
+(Singh et al., 2012) focus
+on tracking concept drift within malware fami-
+lies using relative temporal similarity and meta-
+features. Interestingly, their results suggest that
+there is no significant drift within the malware
+families they studied; however, the authors also
+mention that the number of families they stud-
+ied is relatively small and they have only looked
+at static features . Lastly, Darem et al. (Darem
+et al., 2021) proposed incremental adaptive batch
+learning to continuously retrain the model. In or-
+der to monitor drift, they monitor error statistics
+of the classifier. It is worth noting that several
+of the discussed approaches require timely access
+to accurate class labels, which remains a practi-
+cal challenge in malware detection where ground
+truth is often obtained with significant delay.
+3
+CONCEPT DRIFT
+Under concept drift the statistical properties of
+the training and testing data distributions diverge
+over time, undermining the basic principle of ma-
+chine learning, which assumes that the training
+and test data come from the same probability dis-
+tribution. The main sources of drift in malware
+are changes made to malware families themselves,
+such as new functionality, obfuscation techniques,
+or adaptations to different environments, which
+manifest as changes in the conditional distribu-
+tion of the target variable or shifts in the input
+data distribution (Singh et al., 2012).
+Due to
+concept drift, a detection system that has been
+trained on patterns from the past may not be able
+to recognize newly evolved malware that contains
+unseen patterns. This leads to outdated, ineffec-
+tive, and at its core unusable models.
+Lu et al. (Lu et al., 2018) define four types
+of concept drift (sudden, gradual, incremen-
+tal, reoccurring) and categorize detection algo-
+rithms into error-rate-based, data-distribution-
+based, and multiple hypothesis test methods.
+Error-rate-based methods, while the most com-
+mon, are of limited applicability in malware de-
+tection as they require immediate access to true
+labels, which are typically obtained with signifi-
+cant delay.
+The work (Singh et al., 2012) provides a sim-
+pler view for handling concept drift, namely di-
+rect approaches which regularly adapt the classi-
+fier without detecting concept drift, and so-called
+detect and adapt approaches, which monitor the
+level of drift using features of data, parameters of
+the classifier, and performance metrics.
+3.1
+Concept Drift in Malware
+Malware families evolve through various mecha-
+nisms. Sing et al. (Singh et al., 2012) identify
+three main categories; natural evolution resulting
+from fixing the code/adding new functionalities
+to the malware/ creating versions for other en-
+vironments.
+Changes in software in which the
+malware was developed cause environmental evo-
+lution; these include different compiler versions,
+library updates, etc. And polymorphic evolution,
+the most relevant to our work, occurs when ma-
+licious attackers use evasion techniques such as
+packing, encryption, adversarial attacks, etc. to
+avoid malware detectors.
+Jiang et al.
+(Jiang et al., 2024) differenti-
+ate between two causes of malware drift, a se-
+mantic shift caused by introducing new, previ-
+ously unseen malware families, and a covariate
+shift caused by a change in the input distribution
+(packed or evolved families).
+Various strategies have been proposed to mit-
+igate the effect of concept drift.
+Most works
+use retraining of the model for which multiple
+approaches exist, such as retraining periodically
+(Mishra and Stamp, 2025), retraining when con-
+cept drift occurs with new data, and retraining
+using dynamic batches of both new and old data
+so that the model does not forget old patterns.
+The methods for detecting drift and selecting
+the appropriate samples for retraining vary con-
+siderably between studies (He et al., 2024; Darem
+et al., 2021). Ensemble learning combats concept
+drift by training multiple classifiers from different
+time windows and classifying the sample with a
+weighted combination of outputs from these mod-
+els. An alternative direction is to use adversar-
+ial training, in which adversarial samples are in-
+troduced during training in hopes of making the
+model more robust for future unknown samples
+(Bosansky et al., 2024).
+
+4
+THE PROPOSED METHOD
+In this section, we describe the experimental de-
+sign used to evaluate our multi-metric structural
+drift detection approach. We evaluate the follow-
+ing experimental scenarios:
+• varying window sizes,
+• binary decision trees trained on a malware
+family versus benign samples compared to de-
+cision trees trained on pairs of closely related
+malware families,
+• per-family clustering to identify malware cam-
+paigns as an alternative to fixed time window-
+ing.
+4.1
+Preprocessing of data and feature
+selection
+Duplicate samples were removed using SHA-256
+hashes. Timestamps were extracted from COFF
+headers of PE files and approximately 10% of
+samples were excluded due to inconsistencies with
+VirusTotal first-submission dates (e.g., COFF
+timestamp newer than submission, or differences
+exceeding the 95th percentile). While removing
+these samples may slightly simplify the classifica-
+tion task, retaining unreliable timestamps would
+compromise the temporal windowing fundamen-
+tal to our drift detection approach.
+For our experiments, we have used EMBER
+dataset (Joyce et al., 2025), which is high-
+dimensional (2568 features), leading to increased
+model complexity, longer training times, and re-
+duced interpretability of decision trees.
+To ad-
+dress these issues, we applied feature selection
+prior to model training. Specifically, we used the
+SelectKBest method from the scikit-learn library1
+(Pedregosa et al., 2011) which ranks features by
+a univariate statistical test and retains the k k
+highest-scoring features. Evaluated feature sub-
+set sizes ranged from 1 to 20. The final subset of
+10 selected features is listed in Table 1. Our hy-
+pothesis for the dramatic reduction from 2568 to
+10 features while still maintaining accuracy can
+be explained by the nature of the EMBER fea-
+ture set, which encodes a broad structural pro-
+file of PE files.
+For the task of distinguishing
+specific malware families, only a small subset of
+these structural characteristics carries discrimi-
+native information, as individual families tend to
+differ in specific features such as entropy patterns
+1https://scikit-learn.org/stable/
+or import profiles rather than across the entire
+feature space.
+Table 1: Selected features after SelectKBest feature
+selection.
+Category
+Feature
+Byte entropy
+bin_116, bin_117
+Section entropy
+entropy_hash_19
+Section characteristics
+char_hash_1,
+char_hash_3,
+char_hash_13,
+char_hash_35
+Imports
+lib_hash_3,
+lib_hash_52
+PE file warnings
+warn_67
+During our experiments, the classification ac-
+curacy plateaued at 10 features; we fixed this
+value for all experiments (Table 1).
+4.2
+Evaluation process
+This section contains a detailed explanation of
+how we evaluated our experiments and what drift
+and data shift metrics were defined in the process.
+4.2.1
+Drift metrics
+We proposed and evaluated multiple drift met-
+rics to quantify changes between family evolu-
+tions over time windows. First, let us provide a
+notation used in formulas for metrics. Let Rt de-
+note the ruleset extracted at time t, where each
+rule r ∈Rt is a conjunction of conditions of the
+form f ⊙h (feature, operator, threshold). We de-
+note the dataset as X, the number of features as
+N, the feature importance vector as v(t), and rule
+coverage as Coverage(r,X) = |{x ∈X : x |= r}|/|X|.
+The metrics are defined as follows:
+• Feature importance drift - These metrics were
+devised by us and are based on feature im-
+portance vector derived from the extracted
+ruleset of decision tree. Feature importance
+is computed, based on how frequent each fea-
+ture appears in the rule sets, weighted by the
+length of the rules seen in Eq.
+(1).
+Given
+two rule sets from different time windows, we
+compute distances between their correspond-
+ing normalized feature importance vectors us-
+ing cosine similarity (sensitive to directional
+change) noted as FeatureCosineSimilarity, Eu-
+clidean distance (FeatureL2Distance) (magni-
+tude of importance change), Manhattan dis-
+tance (measuring total amount of change,
+
+noted as FeatureL1Distance) or Pearson corre-
+lation (capturing changes in relative feature
+ranking) noted as FeaturePearsonCorrelation.
+Feature importance is computed as
+si = ∑
+r∈R
+|{c ∈r : feat(c) = fi)}|
+|r|
+(1)
+where |{c ∈r : feat(c) = fi)}|counts how many
+conditions in rule r reference feature fi.
+The normalized feature importance vector
+(where ∑vi = 1 is computed as
+vi =
+si
+∑N
+j=1 sj
+(2)
+• Prediction agreement — The fraction of sam-
+ples where both rule sets produce the same
+prediction, defined as
+Agreement = 1
+|X| ∑
+x∈X
+1
+(
+yRt−1(x) = yRt(x)
+)
+, (3)
+where yR(x) is the binary prediction of ruleset
+R on sample x.
+Additionally, we evaluate two auxiliary met-
+rics: coverage mean diff windows, measuring the
+change in average rule coverage between consec-
+utive windows, and activation stability drift, de-
+fined as the cosine similarity of per-rule activation
+rate vectors across windows.
+These metrics are correlated against two
+ground-truth hypotheses about when drift has oc-
+curred. The first hypothesis assumes that drift
+manifests as an accuracy drop in the subsequent
+time window; accordingly, we calculate the cor-
+relation between the drift metric in window t and
+the accuracy change in window t + 1. The sec-
+ond hypothesis uses data distribution shift as an
+indicator of drift, correlating the drift metric in
+window t with the distribution shift observed in
+window t +1. For each test configuration, we first
+report mean correlations for the strongest metrics
+across all windows, then select the two strongest
+metrics based on these mean correlations and ex-
+amine their per-family results.
+We use Spearman rank correlation as it cap-
+tures monotonic (not only linear) relationships, is
+robust to outliers given our small sample of win-
+dows, and is invariant to the heterogeneous scales
+of our metrics.
+4.2.2
+Data distribution shift
+As discussed earlier, data distribution shift is
+treated as the ground-truth indicator of drift in
+our experiments. To quantify this shift, we de-
+fined several data distribution shift metrics:
+• Mean L2 _Distance: Geometric metric, which
+measures the distance between two mean fea-
+ture vectors of two consecutive windows.
+• Domain classifier AUC: A multivariate met-
+ric, that captures whether the relationships
+between features have changed. For a given
+family, samples from the previous window are
+labeled as class 0 and samples from the current
+window as class 1. A Random Forest classifier
+is trained to distinguish between them, and
+the Receiver Operating Characteristic (ROC)
+and Area Under Curve (AUC) is computed.
+An AUC close to 0.5 indicates highly simi-
+lar distributions, while higher values indicate
+stronger distributional shifts.
+• Mean Wasserstein: A univariate metric com-
+puted per feature and then averaged.
+For
+each feature, we calculate the Wasserstein
+distance using scipy library (Virtanen et al.,
+2020) (work required to transform the distri-
+bution of previous window into distribution of
+the current window). Then average of these
+distances is computed.
+Values close to zero
+indicate minimal distributional change, while
+larger values suggest increasing drift.
+• KS mean:
+An aggregation of per-feature
+Kolmogorov-Smirnov tests (Virtanen et al.,
+2020).
+The score ranges from 0.0 to 1.0, if
+distributions are identical the KS mean is 0,
+1.0 for distributions with no overlap.
+4.2.3
+Fixed windowing
+The evaluation process consists of the division of
+training and testing data into windows based on
+the timestamp and the fixed range of the time
+window. If retraining is enabled, the classifier is
+retrained in each time window. Specifically, for a
+given window t, the classifier is trained using the
+training data from the window t and evaluated
+on the testing data from the subsequent window
+t +1.
+To increase the number of evaluation samples
+available for drift metric computation, we con-
+catenate training and testing data from the time
+window t +1; however, training is performed ex-
+clusively in window t.
+This concatenation im-
+proves the reliability of coverage-based metrics
+such as Jaccard Cover rules and Prediction Agree-
+ment, which can become noisy when computed on
+small test sets alone, particularly in short win-
+dowing configurations where some families may
+have very few samples (sometimes even 0 when
+windowing by weeks). Note that this introduces
+
+a size asymmetry between the sample sets from
+windows t and t + 1; however, the affected met-
+rics are computed as normalized ratios (e.g., frac-
+tion of covered samples, fraction of agreeing pre-
+dictions), which mitigates the impact of differing
+sample sizes. During the evaluation, we compute
+the accuracy, all defined drift metrics, and data
+distribution shift metrics.
+The primary objective of this evaluation is
+to determine whether drift metrics derived from
+decision tree rulesets can predict concept drift.
+Since we do not know exactly when the drift has
+occurred for the family, we define two comple-
+mentary scenarios.
+In the first scenario, we assume that the con-
+cept drift causes a decrease in the accuracy of the
+model. This assumption is based on the fact that
+adversaries modify malware samples in order to
+avoid detection, meaning intentional reduction of
+accuracy. Therefore, we calculate correlations be-
+tween the accuracy difference in the next window
+with drift metrics from time window t. We ex-
+pect the drift to have a negative impact on future
+predictions.
+In the second scenario, we treat the data
+distribution shift as a ground-truth drift.
+We
+measure the per-family distribution shift between
+consecutive windows using multiple data shift
+metrics. These metrics are then used as baseline
+drift indicators, and we compute the correlations
+between them and the ruleset-based drift metrics.
+4.2.4
+Clustering
+In
+the
+cluster-based
+evaluation,
+the
+overall
+pipeline remains identical to the fixed windowing,
+except for the temporal segmentation of data. In-
+stead of using fixed-length time windows, we iden-
+tify per-family malware campaigns by clustering
+samples in time, grouping periods of family ac-
+tivity. Two clustering algorithms were evaluated,
+specifically DBSCAN and KMeans.
+Once family-specific clusters are identified
+based on pairs of families, each cluster is treated
+analogously to a time window, and the sub-
+sequent training, evaluation, and drift analysis
+steps remain unchanged.
+5
+EXPERIMENTAL DESIGN AND
+RESULTS
+This section presents the design and results of
+our experimental evaluation of the proposed drift
+metrics.
+Our focus is on the relationship be-
+tween decision tree ruleset changes and classifier
+accuracy degradation and data distribution shifts
+which are our ground-truth drift baselines.
+5.1
+Experimental Design
+All experiments were conducted on the EM-
+BER2024 dataset (Joyce et al., 2025), specifically
+using the PE file subset.
+The dataset was re-
+stricted to the six largest malware families (Table
+2). This choice was motivated by several factors:
+reducing computational cost, enabling more reli-
+able per-family analysis, and ensuring that each
+time window contained a suﬀicient number of
+samples for all families.
+Table 2: Number of samples per malware family
+Family
+Count
+berbew
+174,466
+wacatac
+77,727
+expiro
+74,339
+cosmu
+53,965
+xmrig
+28,633
+upatre
+25,296
+To limit overfitting, control model complexity,
+and ensure comparability across experiments, we
+set the decision tree hyperparameters throughout
+all experiments to the same values. The maxi-
+mum tree depth was set to 6, the random seed
+to 52, the splitting criterion to Gini impurity, the
+minimum number of samples per leaf to 5, and
+the number of features considered at each split
+was not restricted.
+The implementation was written in Python
+3.10 and used primarily libraries such as Polars2
+for operations with dataframes, Scikit-learn3 for
+all the machine learning, Numpy4 and Scipy5.
+5.2
+Fixed windowing
+This subsection presents results obtained us-
+ing fixed-size temporal windows in both family-
+versus-benign
+(FvB)
+and
+family-versus-family
+(FvF) classification settings, as well as under dif-
+ferent temporal resolutions.
+2https://pola.rs
+3https://scikit-learn.org/stable/
+4https://numpy.org
+5https://scipy.org
+
+5.2.1
+Family-versus-benign results
+In the FvB setting with 2-month windows and pe-
+riodic retraining, accuracy stabilized around 98%
+for xmrig, berbew, expiro, and cosmu, while wa-
+catac dropped to 60% mid-year. Aggregated cor-
+relations between drift metrics and next-window
+accuracy difference remained modest, with fea-
+ture importance-based metrics clustering around
+mean correlations of 0.2 and exhibiting high
+standard deviation. Per-family analysis revealed
+strongly family-dependent behavior: for example,
+Feature L1 distance correlated at 0.8 for wacatac
+but −0.85 for cosmu at lag k=1, while Feature
+Cosine similarity showed mostly opposite signs.
+These results indicate that no single drift metric
+provides reliable, family-independent prediction
+of accuracy degradation in the FvB setting. Re-
+stricting the drift computation population to only
+family and benign samples had negligible effect on
+the results.
+Shortening the window to 2 weeks with peri-
+odic retraining yielded substantially weaker cor-
+relations (highest aggregated mean ρ = 0.109),
+confirming that concept drift in malware fami-
+lies accumulates gradually and is best captured
+on broader temporal scales.
+Data distribution shift correlations in the
+FvB setting yielded comparable values to the
+accuracy-based analysis.
+The strongest aggre-
+gated correlations reached approximately 0.25 for
+combinations involving feature importance met-
+rics and KS mean or Mean Wasserstein, again
+with high variability across families.
+5.2.2
+Family-versus-family accuracy correlation
+In the FvF setting, the binary classifier was
+trained to distinguish between pairs of malware
+families, selected based on medoid distances.
+Rule extraction followed the same procedure as in
+the FvB setting; although the classifier is trained
+on two families, each ruleset is associated with a
+single family by treating the second family as the
+negative class.
+The aggregated correlations between the drift
+metrics and the accuracy difference are summa-
+rized in Figure 1. The strongest correlations are
+again obtained using feature importance-based
+metrics. In this case, the first two correlations are
+stronger on average, reaching 0.4 and standard
+deviation being lower, indicating that per-family
+results may exhibit more stable results.
+Per-
+family results shown in Figure 2 indeed support
+this observation. The correlations are generally
+0.5
+0.0
+0.5
+1.0
+Mean Spearman 
+Feature Pearson correlation
+Feature Cosine similarity
+Jaccard cover rules
+Coverage mean diff. windows
+Activation stability drift
+Prediction agreement
+Feature L1 distance
+Feature L2 distance
++0.419 ±0.262
++0.400 ±0.246
++0.156 ±0.187
++0.139 ±0.591
+-0.096 ±0.465
+-0.132 ±0.273
+-0.085 ±0.483
+-0.119 ±0.601
+FvF Fixed 2-month 
+ Drift Metric vs. Accuracy Diff. (mean Spearman )
+Positive correlation
+Negative correlation
+Aggregated across 6 family pairs; error bars = ±1 std.
+Figure 1: Top correlations (mean across families) for
+family-versus-family decision-tree classifiers.
+Feat. Pearson
+corr.
+Feat. Cosine
+sim.
+expiro berbew
+upatre cosmu
+berbew expiro
+wacatac expiro
+xmrig upatre
+cosmu upatre
++0.200
+-0.143
+-0.657
+-0.714
+-0.771
+-0.771
++0.314
++0.143
++0.314
++0.314
+-0.486
+-0.486
+Lag k = 0
+Feat. Pearson
+corr.
+Feat. Cosine
+sim.
++0.813
++0.808
++0.594
++0.445
++0.445
++0.445
++0.361
++0.407
++0.208
++0.208
++0.090
++0.090
+Lag k = 1
+1.0
+0.5
+0.0
+0.5
+1.0
+Spearman 
+FvF Fixed 2-month 
+ Per-family-pair Spearman vs. Accuracy Difference
+All pairs positive at k=1 for Pearson 
+ strongest configuration overall.
+Figure 2:
+Spearman correlation between accuracy
+difference and drift metrics for family-versus-family
+decision-tree classifiers.
+Results are shown for lag
+k = 0 (same window) and k = 1 (drift preceding ac-
+curacy change).
+stronger and more consistent than in the family-
+versus-benign case, with peak values reaching
+above 0.8 at lag k=1. However, the magnitude of
+the correlations still varies between family pairs
+and drift metrics, typically ranging from approx-
+imately 0.2 to 0.8.
+Overall, these results indicate that concept
+drift is more consistently captured in the family-
+versus-family setting than in the family-versus-
+benign setting.
+This suggests that drift sig-
+nals may be easier to detect when the classifier
+is forced to discriminate between closely related
+malware families, where changes in family-specific
+behavior are less likely to be masked by the stable
+characteristics of benign samples.
+
+5.2.3
+Family-versus-family data shift
+correlation
+Data shift correlations in the FvF setting are
+generally stronger than in the FvB case.
+The
+highest mean correlations reach approximately
+0.35–0.39, obtained for Feature L1/L2 distance
+paired with Mean L2 data shift. Similarity-based
+feature importance metrics show negative corre-
+lations with data shift metrics, consistent with
+the expected inverse relationship. Per-family re-
+sults remain family-dependent, with strong corre-
+lations for some families (e.g., wacatac reaching
+0.8) and weak or opposite trends for others.
+5.3
+Clustering
+We replaced fixed-time windowing with tempo-
+ral segmentation using DBSCAN (eps_days=4,
+min_samples=500) and KMeans (k=4) to iden-
+tify malware campaign periods. In the FvB set-
+ting, DBSCAN yielded peak correlations com-
+parable to fixed windowing but with substan-
+tially higher variance and frequent sign rever-
+sals across families and lags. KMeans produced
+marginally weaker average correlations with char-
+acteristic ±1.0 saturation effects caused by ex-
+tremely small sample sizes (3–4 transition pairs
+per family).
+In the FvF setting, both cluster-
+ing algorithms produced weak mean correlations
+below 0.10 for accuracy difference, substantially
+lower than the fixed-windowing FvF result (mean
+ρ = 0.419).
+Data shift correlations in the DB-
+SCAN FvF setting were moderate (strongest com-
+bination reaching −0.398), but remained family-
+dependent with no systematic advantage over
+fixed windowing. Overall, clustering-based win-
+dow construction does not improve drift detection
+in any of the tested configurations.
+5.4
+Summary of results across
+configurations
+For summarization we introduce two shortcuts,
+family versus family scenarios are noted as FvF
+and family versus benign scenarios as FvB.
+As illustrated in Table 3, the fixed-windowing
+family-versus-family
+configuration
+consistently
+produces the strongest and most reliable re-
+sults, with feature Pearson correlation achiev-
+ing a mean ρ of 0.419 and standard deviation
+of 0.262.
+Clustering-based approaches produce
+substantially weaker results in both the accuracy
+difference and data shift settings. The per-family
+results in Table 4 further illustrate this: whereas
+fixed-windowing FvF produces moderate positive
+correlations across most families, clustering yields
+mixed signs with no consistent pattern. The FvB
+KMeans results retain their characteristic ±1.0
+saturation due to extremely small sample sizes
+(3–4 transition pairs), which remains a fundamen-
+tal limitation of clustering with few clusters.
+5.5
+Comparison to other methods
+This subsection compares our best performing
+configuration (FvF fixed windowing with decision
+trees) against Transcendent (Barbero et al., 2022)
+and the RIPPER rule-based classifier.
+5.5.1
+Transcendent
+We evaluated Transcendent using both the ICE
+and CCE conformal evaluators in the same FvF
+fixed-windowing scenario.
+ICE produced corre-
+lations comparable to our method, with a peak
+of 0.854 for the wacatac–expiro pair. However,
+neither method dominates across all pairs: Tran-
+scendent achieves stronger correlations where our
+method is weaker (e.g., wacatac–expiro:
+0.854
+vs 0.361; cosmu–upatre:
+0.542 vs 0.090) and
+vice versa. The CCE evaluator performed sub-
+stantially worse, producing zero or strongly neg-
+ative correlations for most pairs, likely due to
+high variance when applied to shallow decision
+trees.
+These results suggest that Transcendent
+and our structural metrics capture complemen-
+tary aspects of drift, sample-level distributional
+deviation versus decision boundary changes, and
+a practical monitoring system could benefit from
+combining both signals.
+5.5.2
+RIPPER
+To test whether our metrics generalize beyond de-
+cision trees, we repeated the best-performing con-
+figuration using RIPPER. Feature importance-
+based metrics again yielded the strongest correla-
+tions, with feature Pearson correlation achieving
+a mean of 0.329 (vs 0.419 for decision trees). Per-
+family results revealed strong correlations for spe-
+cific pairs (upatre–cosmu: 0.949, expiro–berbew:
+0.623), but unlike decision trees, RIPPER also
+produced negative and zero correlations at k=1,
+explaining the higher standard deviation. Data
+shift correlations followed a comparable pattern,
+with mean values reaching approximately 0.2.
+Overall, RIPPER confirms that our structural
+drift metrics generalize to other rule-based classi-
+
+Table 3: Summary of best aggregated Spearman correlations between drift metrics and accuracy difference across
+experimental configurations. Bold indicates the strongest result per configuration.
+Configuration
+Best drift metric
+Mean ρ
+Median ρ
+Std. ρ
+Fixed windowing, accuracy correlation
+FvB, 2-month
+FeatureL1Distance
+−0.224
+−0.216
+0.389
+FvB, 2-week
+Jaccard cover rules
+0.109
+0.125
+0.090
+FvF, 2-month
+Feature Pearson Correlation
+0.419
+0.403
+0.262
+FvF, 2-month
+Feature Cosine Similarity
+0.400
+0.426
+0.246
+Fixed windowing, data shift correlation
+FvB, 2-month
+Feat. Cosine × KS mean
+0.247
+0.288
+0.367
+FvF, 2-month
+Feat. Cosine × Mean L2
+−0.391
+−0.353
+0.461
+FvF, 2-month
+Feat. L1 × Mean L2
+0.353
+0.268
+0.342
+Clustering, accuracy correlation
+FvB, DBSCAN
+Activation stability drift
+0.239
+0.216
+0.711
+FvB, KMeans
+Activation stability drift
+0.161
+0.491
+0.932
+FvF, DBSCAN
+Feature L1 distance
+0.038
+0.005
+0.342
+FvF, KMeans
+Coverage mean diff. windows
+0.087
+0.042
+0.198
+Clustering, data shift correlation
+FvB, DBSCAN
+Feat. L1 × Domain_Auc
+0.339
+0.607
+0.678
+FvB, KMeans
+Pred. Agree. × KS mean
+0.619
+0.522
+0.283
+FvF, DBSCAN
+Feat. Pearson × Wasserstein
+−0.398
+−0.417
+0.262
+FvF, KMeans
+Pred. Agree. × Domain_Auc
+−0.266
+−0.304
+0.219
+Table 4: Per-family Spearman correlations (k=1) for the best drift metric in each configuration.
+Configuration
+Best metric
+berb.
+wac.
+exp.
+cos.
+xmr.
+upa.
+Accuracy difference correlation
+FvF fixed 2m
+Feature
+Pearson
+Correla-
+tion
+0.45
+0.36
+0.81
+0.09
+0.21
+0.59
+FvF DBSCAN
+Feature L1 Distance
+−0.18
+−0.40
+−0.13
+0.55
+0.25
+0.14
+FvF KMeans
+Cov. mean diff
+−0.02
+−0.15
+0.00
+0.08
+0.42
+0.18
+Data shift correlation
+FvF fixed 2-mo
+Feature
+L1
+Distance
+×
+Mean L2
+−0.14
+0.10
+0.74
+−0.05
+0.14
+0.43
+FvF DBSCAN
+Feature
+Pearson
+Correla-
+tion × Wasserstein
+−0.30
+−0.53
+−0.18
+−0.06
+0.31
+−0.01
+FvB clustering
+FvB KMeans acc
+Activ. stability
+−1.00
+0.66
+0.98
+1.00
+−1.00
+0.33
+FvB KMeans shift
+Pred. agr. × KS mean
+−1.00
+−1.00
+−1.00
+1.00
+1.00
+−1.00
+
+Table 5: Comparison of drift detection methods in the family-versus-family setting (2-month fixed windowing,
+Spearman correlation with accuracy difference).. All values correspond to lag k=1.
+Method
+Drift signal
+Mean ρ
+Median ρ
+Std. ρ
+Decision tree
+Feature Pearson Correlation
+0.419
+0.403
+0.262
+Decision tree
+Feature Cosine Similarity
+0.400
+0.426
+0.246
+RIPPER
+Feature Pearson Correlation
+0.329
+0.350
+0.445
+RIPPER
+Feature Cosine Similarity
+0.288
+0.251
+0.423
+Transcendent (ICE)
+rejection rate
+0.230
+0.149
+0.420
+Transcendent (CCE)
+rejection rate
+−0.079
+0.000
+0.662
+fiers, though decision trees provide more consis-
+tent results, likely due to RIPPER’s greedy se-
+quential covering introducing greater sensitivity
+to individual windows. Table 5 summarizes the
+comparison in the FvF 2-month setting: decision
+trees achieve the highest mean correlation (0.419)
+with the lowest standard deviation, followed by
+RIPPER ((.329) and Transcendent ICE (0.230).
+The higher variance of RIPPER and Transcen-
+dent reflects their complementary strengths on
+specific family pairs, reinforcing that combin-
+ing structural and sample-level drift signals is a
+promising direction.
+6
+CONCLUSIONS AND FUTURE
+WORK
+This work proposed structural drift metrics de-
+rived from decision tree rulesets and evaluated
+them across multiple configurations on the EM-
+BER2024 dataset. By comparing symbolic rule
+representations across temporal windows, the ap-
+proach provides both drift signals and inter-
+pretable insight into classifier changes.
+The results demonstrate that decision tree
+rulesets evolve as malware families change over
+time, and that metrics derived from these rule-
+set changes can serve as meaningful indicators of
+concept drift. In particular, drift metrics based
+on feature importance and rule coverage consis-
+tently correlate with both accuracy degradation
+and data distribution shifts.
+However, no sin-
+gle drift metric exhibits uniform magnitude or
+direction of correlation across all families, indi-
+cating that drift behavior is inherently family-
+dependent.
+Across all evaluated configurations, concept
+drift was found to be detectable but strongly
+influenced by temporal resolution, classifier for-
+mulation, and population selection.
+Drift sig-
+nals were more stable and pronounced in family-
+versus-family classifiers than in family-versus-
+benign settings, where benign data often masked
+family-specific changes.
+Overall, the findings
+highlight the importance of interpretable, ruleset-
+based drift metrics and family-specific analysis for
+reliable monitoring of concept drift in malware
+detection systems.
+Several directions for future work remain.
+First, the proposed metrics could be extended to
+deeper decision trees or ensemble methods such
+as random forests, where aggregating drift sig-
+nals across multiple trees may improve robust-
+ness. Second, evaluating the proposed metrics on
+a simulated adversarial dataset with controlled
+drift injection would provide a more rigorous val-
+idation of their detection capability. Third, the
+evaluation could be expanded to cover all pair-
+wise combinations of the six malware families and
+to additional datasets beyond EMBER2024 to as-
+sess generalizability. Finally, developing adaptive
+thresholding strategies that account for family-
+specific drift behavior would bring the approach
+closer to deployment in real-time malware detec-
+tion systems.

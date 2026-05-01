@@ -1,0 +1,1322 @@
+AgentDID: Trustless Identity Authentication for AI
+Agents
+Minghui Xu
+Quancheng Laboratory & Shandong University
+mhxu@sdu.edu.cn
+Xiaoyu Liu
+Shandong University
+lxy_dawn@mail.sdu.edu.cn
+Yihao Guo
+The Hong Kong Polytechnic University
+yihao.guo@polyu.edu.hk
+Chunchi Liu
+Huawei Technologies Co., Ltd.
+liuchunchi@gwu.edu
+Yue Zhang
+Quancheng Laboratory & Shandong University
+zyueinfosec@sdu.edu.cn
+Xiuzhen Cheng
+Shandong University
+xzcheng@sdu.edu.cn
+Abstract—AI agents are autonomous entities that can be
+instantiated on demand, migrate across platforms, and interact
+with other agents or services without continuous human supervi-
+sion. In such environments, identity is critical for establishing reli-
+able interaction semantics among agents that may lack prior trust
+relationships. However, existing identity and access management
+mechanisms are designed for human users or static machines,
+assuming centralized enrollment, persistent identifiers, and stable
+execution contexts. These assumptions do not hold for AI agents,
+whose identities are self-managed, short-lived, and tightly coupled
+with their execution state and capabilities. We study the problem
+of identity authentication and state verification for AI agents and
+identify three challenges: (1) supporting self-managed identities
+for autonomously created agents, (2) enabling authentication
+under large-scale, concurrent interactions, and (3) verifying
+agents’ dynamic execution state, such as whether their context
+and capabilities remain valid at interaction time. To address these
+challenges, we present AgentDID, a decentralized framework for
+identity authentication and state verification. AgentDID leverages
+decentralized identifiers (DIDs) and verifiable credentials (VCs),
+enabling agents to manage their own identities and authen-
+ticate across systems without centralized control. To address
+the limitations of static credential-based approaches, AgentDID
+introduces a challenge-response mechanism that allows verifiers
+to validate an agent’s execution conditions at interaction time.
+We implement AgentDID in compliance with W3C standards
+and evaluate it through throughput experiments with multiple
+concurrent agents. Results show that the system achieves scalable
+identity authentication and state verification, demonstrating its
+potential to support large populations of AI agents.
+Index Terms—AI Agent, Identity Authentication, Verifiable
+Credential.
+I. INTRODUCTION
+With the broader availability of large-scale models, AI
+agents are becoming key components in intelligent applica-
+tions [1]–[3]. In 2024, several organizations, including Ope-
+nAI, Google, and Anthropic, released agent systems capable
+of autonomous task execution. As a result, the use of AI agents
+has expanded significantly in both scope and application.
+According to recent data released by CrewAI, the platform has
+executed more than 60 billion AI agent runs in total, with over
+100 thousand multi-agent execution groups processed each
+Corresponding author: Yihao Guo
+day [4]. These observations illustrate the large-scale and high-
+concurrency characteristics of emerging agent ecosystems. The
+number of agents is expected to continue increasing. Accord-
+ing to TRAY.AI, by 2027, 86% of enterprises are expected to
+deploy AI agents, and 42% plan to develop more than 100
+agent prototypes [5]. One key factor behind this growth is
+the shift away from exclusive control by large technology
+companies. Open-source models such as the Llama series,
+together with local inference frameworks like Ollama, have
+reduced development complexity. This change has enabled
+individual users to build and operate their own agents, leading
+to a more decentralized ecosystem.
+However, the rapid expansion of the AI agent ecosys-
+tem has revealed critical security gaps [2]. Current agent
+interaction frameworks generally lack effective identity au-
+thentication mechanisms. As a result, risks such as identity
+spoofing, unauthorized access, and privilege misuse are be-
+coming increasingly prominent. Traditional identity and access
+management (IAM) systems, including OAuth 2.0, SAML,
+and FIDO2, were originally designed for scenarios involving
+users, devices, and platforms [6], [7]. These systems focus
+primarily on human users or static machines and are based on
+assumptions such as long-term sessions and centralized control
+of permissions. In contrast, AI agents operate independently
+without direct human intervention, which makes it difficult
+to maintain continuous control through conventional methods.
+More fundamentally, the nature of AI agents challenges the
+core assumptions of existing IAM models. These agents are ca-
+pable of performing tasks autonomously across environments,
+interacting at very large scales, and adapting to changing
+operational conditions in real time. These characteristics lead
+us to consider the following question:
+How can the identities of millions of AI agents be managed
+and verified in a decentralized environment?
+Addressing this question introduces new requirements for
+identity authentication and dynamic state verification [8], [9].
+We examine this problem along the following three dimensions
+(C1–C3).
+(C1)
+Self-Managed
+Identity. AI agents can be au-
+tonomously generated and operate independently, challenging
+arXiv:2604.25189v1 [cs.CR] 28 Apr 2026
+
+centralized identity management systems that rely on pre-
+registered identities and fixed identifier assignment. Classi-
+cal studies in multi-agent systems have modeled agents as
+autonomous entities with unique identifiers [10]. AI agents
+are capable of self-generation and independent operation. As
+they move between entities and systems, their identities must
+remain usable and verifiable. However, as agents increasingly
+migrate across heterogeneous platforms and engage in com-
+plex collaborative tasks, recent research has noted that their
+identities are often bound to specific platforms or environ-
+ments [9]. This limits the ability to recognize and verify agents
+across systems, leading to risks such as identity confusion.
+IAM systems rely on centralized registration and fixed
+identifier assignment. These approaches are not well-suited to
+support autonomous identity generation and verifiable attribute
+claims. Furthermore, they cannot reliably associate the same
+agent with a consistent identity as it interacts across organiza-
+tional or platform boundaries. Therefore, a primary challenge
+in decentralized agent ecosystems is to construct an identity
+model that does not rely on a single provider, supports cross-
+system verification, and enables agents to present verifiable
+claims about their attributes.
+(C2) Challenges of Large-Scale Authentication. One of
+the notable characteristics of AI agents is their deployment
+at large scale with high levels of concurrency, which places
+increased load on existing centralized authentication systems.
+In such settings, agents communicate simultaneously with
+other agents, APIs, and external services. These interactions
+often span multiple domains and involve complex chains of
+requests. As the number of agents increases, authentication
+traffic grows proportionally, placing substantial pressure on
+centralized authentication infrastructures. Research on agentic
+AI has shown that centralized components for trust and authen-
+tication can become performance bottlenecks, reducing system
+availability and responsiveness under high concurrency. Cen-
+tralized architectures face constraints in throughput, queuing,
+and consistency under load. Single-point processing models
+may not sustain reliable performance at scale. Furthermore,
+agent coordination at scale requires frequent identity verifica-
+tion. Relying on centralized authentication paths adds latency
+and increases the risk of failure at critical points in the system.
+In large-scale environments, enabling direct authentication
+between agents without depending on central intermediaries
+becomes an essential design requirement.
+(C3) Dynamic State Verification. Current identity and
+access control systems lack mechanisms to verify the dynamic
+state of AI agents during execution. This limitation is critical
+because agent behavior depends on internal factors such as
+context, memory, intent, and current capabilities. These con-
+ditions change continuously and directly influence whether an
+agent should be allowed to perform a given action. Recent
+research confirms that agent decisions are shaped by evolving
+internal state over the course of multi-step tasks [11]. However,
+most existing models rely on static roles or fixed identity
+attributes and do not account for changes in operational state.
+Studies have shown that without state verification, systems
+face risks such as privilege misuse, unauthorized operations,
+and insufficient auditability [12]. Verifying the operational
+state of agents during authorization remains a core challenge
+in dynamic, multi-agent environments.
+In multi-agent interaction settings, identity authentication
+alone is insufficient to ensure secure interactions, as it only
+validates a peer’s long-term identifier and does not constrain
+the agent’s execution state during interaction. In practice,
+an adversarial agent may pass identity authentication and
+then mislead other agents by misrepresenting its capabilities,
+thereby influencing task assignment or interaction decisions.
+This risk has been documented in real-world systems and
+security analyses. For example, Trustwave SpiderLabs’ anal-
+ysis [13] of the Agent-to-Agent (A2A) protocol shows that
+capability advertisement mechanisms based on static Agent
+Cards can be abused, allowing a malicious agent to dominate
+task allocation without violating identity authentication. These
+findings illustrate that identity authentication alone does not
+capture an agent’s execution state.
+Consequently, agent systems operating in open environ-
+ments require both identity authentication and state verifica-
+tion, in order to ensure that an agent’s execution state remains
+consistent with its declared identity and capabilities.
+Decentralized Identifiers (DIDs) and Verifiable Credentials
+(VCs) are identity primitives supported by blockchains [14].
+They have been applied in Web3 [15] and cross-chain en-
+vironments [16], [17] to support identity management and
+authentication across systems. DIDs allow agents to create
+and control identifiers without depending on a single provider.
+VCs provide a structured format for issuing and verifying
+claims about an agent’s permissions or capabilities. These
+features enable identity management that is both decentralized
+and verifiable. Based on these properties, we adopt DIDs and
+VCs to support the authentication of AI agents. Each agent
+is assigned a DID, which serves as a stable reference across
+systems and domains. Its permissions and execution context
+are expressed as VCs. This allows agents to authenticate
+directly, without relying on centralized services. However, the
+claims defined in VCs are typically static and do not reflect
+the agent’s state during execution. Relying solely on VCs is
+therefore insufficient for dynamic state verification [18], [19].
+To support dynamic state verification as required in C3, we
+propose a challenge–response mechanism. This mechanism
+requires agents to present evidence of current execution condi-
+tions, such as context or workload, at the time of interaction.
+The system can then make access decisions based on these
+current conditions rather than fixed attributes. This approach
+supports decentralized authentication while adapting to the
+dynamic nature of agent execution.
+For the sake of convenience, we highlight our contributions
+as follows:
+1) We propose AgentDID, a decentralized framework for
+AI agent authentication and state verification. To the
+best of our knowledge, this is the first framework that
+addresses dynamic state verification for AI agents in a
+decentralized setting.
+
+2) We follow the W3C standard and define custom cre-
+dential types to represent agent-specific attributes at a
+fine-grained level. These credentials enable agents to au-
+thenticate across systems and environments (addressing
+challenges C1 and C2). To verify the correctness of an
+agent’s dynamic state, we design a challenge–response
+mechanism that checks dynamic execution conditions
+such as context and workload. This mechanism directly
+supports the requirements of C3.
+3) To validate the performance of our scheme, we con-
+duct experiments on Sepolia, an Ethereum test network
+that simulates real-world deployment environments. We
+evaluate AgentDID from multiple perspectives, such as
+credential size, issuance time, and on-chain gas cost.
+Results show that latency remains within the seconds
+range and gas consumption stays below one US dollar,
+confirming the practicality of the approach.
+The rest of the paper is organized as follows. We review
+related work in Section II. Section III introduces the system
+model and preliminaries. AgentDID is presented in Section IV.
+Section V analyzes the security of the proposed scheme.
+Implementation and evaluation are discussed in Section VI.
+Section VII concludes the paper.
+II. RELATED WORK
+In this section, we review related work on identity manage-
+ment and authentication, including traditional IAM systems
+and decentralized authentication approaches.
+Traditional IAM. Traditional identity and access management
+(IAM) systems address authentication for users and services in
+enterprise and web environments. These systems are typically
+based on centralized or federated trust models, in which
+identity providers authenticate subjects and issue credentials
+or assertions consumed by relying parties.
+Early IAM mechanisms follow centralized designs. Ker-
+beros provides ticket-based authentication using a trusted key
+distribution center [20], while directory services such as LDAP
+and Active Directory maintain identity records and credentials
+in centralized repositories [21]. For cross-domain authentica-
+tion, federated identity standards such as SAML 2.0 define
+protocols through which identity providers issue signed asser-
+tions that can be verified by multiple service providers [22]. In
+web and API-oriented settings, OAuth 2.0 specifies an autho-
+rization framework based on delegated access, and OpenID
+Connect (OIDC) extends OAuth 2.0 by defining an identity
+layer that supports user authentication via ID tokens [23],
+[24]. These protocols are implemented in both commercial and
+open-source IAM systems for managing access to applications
+and services. In addition, FIDO2 and WebAuthn define public-
+key–based authentication mechanisms that can be integrated
+into IAM systems to support passwordless authentication [25].
+Traditional IAM systems primarily verify static identities
+and enforce access control policies based on authenticated
+subjects. They generally assume that identity subjects are users
+or long-lived services and do not explicitly model autonomous
+agent-to-agent interactions or verification of runtime execution
+state at interaction time.
+Decentralized Authentication. Decentralized authentication
+is typically grounded in the concept of self-sovereign iden-
+tity (SSI), whose core objective is to enable cross-domain
+identification and authentication without relying on central-
+ized identity providers. Under this paradigm, identity subjects
+generate and control their own identifiers, and authentication
+is achieved through cryptographic mechanisms rather than
+centralized account systems. The foundation of decentralized
+identity systems consists of DIDs and VCs [26]. The DID
+specification proposed by the W3C defines a mechanism for
+managing identifiers without requiring a central registration
+authority. Building on DIDs, the VC specification further
+defines issuer-signed structured statements that attest to iden-
+tity attributes or qualifications of a subject, and supports the
+verifiable presentation (VP) and validation of such claims
+across different application contexts.
+Certain works have explored the initial integration of de-
+centralized authentication mechanisms with AI agents. Hu et
+al. [27] investigate the motivation and potential benefits
+of combining decentralized technologies with AI agents.
+Huang et al. [28] study the use of DIDs and VCs to enable
+fine-grained identity descriptions for AI agents. Garzon et
+al. [29] experimentally evaluate a DID-based approach in
+a multi-agent environment. BlockA2A [19] is an agent au-
+thentication framework built on decentralized identity, which
+introduces a Defense Orchestration Engine to enhance the
+security of agent interactions.
+Existing work on decentralized identity for AI agents pri-
+marily uses self-managed identities in A2A authentication,
+where DIDs and VCs support identity generation and veri-
+fication. Many proposals [19], [27]–[29] focus on protocol
+design or system architecture, while empirical evaluation under
+concurrent multi-agent interaction workloads is not reported,
+leaving their applicability to agent concurrency settings un-
+specified. In addition, these approaches [19], [27]–[29] often
+treat agent identity as a static property and do not explicitly
+incorporate dynamic runtime states during interactions, such
+as workload, context consistency, or capability availability.
+Motivated by this scope, we present AgentDID, which studies
+decentralized authentication together with state-aware verifi-
+cation; a comparison is summarized in Table I.
+III. MODELS AND PRELIMINARIES
+In this section, we first introduce our model and then present
+the preliminaries that serve as the basic building blocks of our
+schemes.
+A. Models
+Participants. This protocol involves four entities: the Con-
+troller, the Issuer, the Holder, and the Verifier. The Con-
+troller initializes the identity of an AI agent by generating
+its cryptographic keys and registering a DID as the agent’s
+identity anchor. The Issuer verifies identity-related claims
+associated with an AI agent and issues cryptographically
+
+TABLE I
+COVERAGE OF REQUIREMENTS FOR AI AGENT INTERACTIONS.
+Entity / Approach
+SSI
+CS
+State
+Agent Requirements
+Required
+Required
+Required
+Traditional IAM
+No
+Limited
+No
+Hu et al. [27]
+Yes
+N/A
+No
+Huang et al. [28]
+Yes
+Theoretical
+No
+Garzon et al. [29]
+Yes
+Theoretical
+No
+Zou et al. [19]
+Yes
+Theoretical
+No
+AgentDID (This work)
+Yes
+Experimental
+& Theoretical
+Yes
+* SSI denotes self-sovereign identity and CS denotes concurrent scalabil-
+ity.
+endorsed VCs. The Holder is the AI agent whose identity is to
+be authenticated. It participates in the protocol by responding
+to authentication challenges and presenting its credentials. The
+Verifier is the AI agent that initiates the authentication process.
+Before interaction, it evaluates the Holder’s identity and cur-
+rent operational state by issuing challenges and validating the
+responses and presented credentials.
+Adversary. We consider an adversary whose goal is to
+disrupt agent-to-agent (A2A) interactions by providing false
+information prior to interaction. The adversary may target
+AI agents involved in the system, including attempting to
+impersonate an agent or manipulating an agent to misreport
+its properties.
+First, the adversary may attempt identity forgery. In this
+case, the adversary aims to create or present a fake AI
+agent that claims a legitimate identity, or to impersonate an
+existing Holder when interacting with an honest Verifier. Such
+attempts may involve fabricating identifiers or misusing valid
+credentials out of their intended context. Second, the adversary
+may attempt state forgery. Here, the adversary controls or
+compromises an AI agent and causes it to provide false
+or outdated runtime information, such as execution context,
+current workload, or claimed capabilities. These falsified states
+are provided prior to A2A interaction and may mislead a
+Verifier into engaging in unsafe or unsuitable interactions.
+We assume that the Controller and the Issuer correctly per-
+form identity initialization and credential issuance. However,
+credentials issued by an Issuer may be replayed or misused
+by an adversary, and runtime state information provided by AI
+agents cannot be assumed truthful without verification.
+Security Goals. Our goal under this model is to prevent
+identity forgery and state forgery, and to achieve correct A2A
+authentication and state verification.
+Definition 1 (Security of AgentDID): Let A be any proba-
+bilistic polynomial-time (PPT) adversary that may corrupt an
+arbitrary subset of agents and the network. We say that Agent-
+DID is secure if, for any honest Verifier V ∗, the probability
+that A causes V ∗to accept either an identity forgery or a state
+forgery is negligible in the security parameter λ.
+In the rest of this section, we introduce the three key
+technologies adopted to achieve these design goals.
+B. Decentralized Identifiers
+DIDs [26] are W3C-standardized identifiers for digital iden-
+tities. They allow entities to create and manage their iden-
+tities autonomously, without relying on centralized identity
+providers.
+Definition 2 (DID Operations): The operations of a DID are
+formalized by a tuple of polynomial-time algorithms ΠDID =
+(KeyGen, Create, Resolve, Update), defined as follows:
+• (pk, sk) ←KeyGen(1λ): Given a security parameter λ,
+the algorithm generates an asymmetric key pair consisting
+of a public key pk and a private key sk.
+• (did, doc) ←Create(pk, sk): Given a key pair (pk, sk),
+the algorithm creates a globally unique DID string did and
+constructs an associated DID Document doc that binds
+the DID to the public key and other verification-related
+metadata.
+• doc ←Resolve(did): Given a DID string did, the algo-
+rithm returns the latest corresponding DID Document.
+• {true, false} ←Update(did, δ, sk): Given a DID did,
+a state delta δ, and a private key sk. The algorithm
+applies δ to update the current DID Document only if
+sk corresponds to an authorized public key listed in the
+document. Returns true on success, false otherwise.
+In our framework, the Controller adopts ΠDID to register the
+agent’s DID on-chain as its digital identity. This establishes a
+verifiable identity anchor that can be publicly resolved by any
+verifier, enabling decentralized and cross-domain authentica-
+tion.
+C. Verifiable Credentials
+VCs are cryptographically signed statements issued by an
+issuer, attesting to specific claims about a holder.
+Definition 3 (VC Operations): The lifecycle of a VC is
+formalized by a tuple of polynomial-time algorithms ΠVC =
+(Request, Issue, Present, Verify), defined as follows:
+• req ←Request(claims, skH): Given a set of claims
+claims, the Holder uses its private key skH to generate a
+signed credential request req.
+• cred ←Issue(req, skI): The Issuer I verifies the request
+and signs the attested claims using its private key skI,
+producing a VC cred.
+• vp ←Present(cred, nonce, skH): The Holder generates
+a VP vp by signing the credential cred together with a
+fresh challenge nonce issued by the Verifier to ensure that
+the presentation corresponds to the current verification
+request.
+• {true, false} ←Verify(cred, pkI): Given the Issuer’s
+public key pkI and a credential cred, the algorithm
+verifies the Issuer’s digital signature and the integrity of
+the claims, outputting a boolean result.
+The set of claims carried by valid credentials constitutes
+verifiable evidence of a holder’s attributes and capabilities.
+D. Publicly Detectable Watermark
+Publicly detectable watermarking (PDW) for Large Lan-
+guage Models (LLMs) aims to enable reliable attribution
+
+of generated text, while allowing watermark detection to be
+performed using public information.
+Definition
+4
+(PDW
+Scheme):
+PDW
+is
+formalized
+by
+a
+tuple
+of
+polynomial-time
+algorithms
+ΠPDW
+=
+(Setup, Watermark, Detect), defined as follows:
+• (kpriv, kpub) ←Setup(1λ): On input a security parameter
+λ, the setup algorithm outputs a private watermarking
+parameter kpriv and a corresponding public detection
+parameter kpub.
+• t ←Watermark(kpriv, ρ): Given the private watermarking
+parameter kpriv and a prompt ρ, the algorithm produces a
+text t generated by the underlying language model with
+an embedded watermark.
+• {true, false} ←Detect(kpub, t∗): Given the public detec-
+tion parameter kpub and a candidate text t∗, the detection
+algorithm determines whether the text contains a valid
+watermark.
+The embedding procedure is kept private, while detection
+relies solely on public information, and recovering the embed-
+ding mechanism from the public detector is computationally
+infeasible.
+IV. AGENTDID
+This section begins with an overview of the proposed frame-
+work, followed by a detailed description of each component.
+A. Overview
+AI Agent
+Origin: GPT
+Identity
+State
+Tools: Editing
+…
+Context: Valid
+Load: >50%
+…
+53%
+AI Agent
+Origin: Grok
+Identity
+State
+Tools: Analysis
+…
+Online: Yes
+Capability: Yes
+…
+AgentID:
+Authentication
+（DID+VC）
+AgentID:
+Verification
+（Challenge-response）
+…
+…
+Blockchain
+DID
+DID
+Fig. 1. The overview of the framework. In our design, an AI agent is described
+by a combination of static identity attributes and dynamic runtime states.
+Building on this abstraction, AgentDID enables identity authentication and
+state verification for A2A interactions.
+The framework represents an AI agent using two com-
+ponents: a static identity and a set of dynamic states. The
+static identity refers to relatively stable attributes of the agent
+that persist over extended periods, such as the underlying
+model and the tools it can access. The dynamic state captures
+runtime information that may change during execution, includ-
+ing context, workload, online status, and current capability
+availability.
+Each AI agent is associated with an on-chain DID, which
+serves as a stable identity reference. Based on this identi-
+fier, Issuers issue VCs that describe the agent’s long-term
+attributes, such as its underlying model and available tools.
+These credentials form the basis of the agent’s static identity
+and can be selectively disclosed in the form of VPs during
+authentication in different applications. In addition to static
+attributes, the framework includes dynamic states that are
+verified at the time of interaction. When two agents interact,
+the requester acts as a verifier and initiates a challenge that
+targets specific runtime conditions, such as workload or current
+capability availability. The responding agent, as the Holder,
+must generate a proof to demonstrate that its current state
+satisfies the requested conditions. This process enables runtime
+state verification without relying on a central authority.
+Using this representation, AgentDID supports both iden-
+tity authentication and dynamic state verification in A2A
+interactions. In the following subsections, we describe the
+details of identity generation, authentication, and dynamic
+state verification.
+B. Identity Generation
+The identity of an AI agent consists of a globally unique
+DID and a structured set of verifiable attributes. These at-
+tributes define the essential characteristics of the agent and are
+organized into three dimensions: provenance, capabilities, and
+compliance. The provenance dimension includes information
+such as the agent’s origin, the base model used, and training
+data sources. The capabilities dimension reflects the tools the
+agent can access and its supported functions. The compliance
+dimension refers to its alignment with regulatory requirements
+and audit records. To represent and verify these attributes in
+a decentralized and interoperable way, we adopt VCs. These
+credentials serve as cryptographic attestations issued by trusted
+issuers, allowing third parties to verify the agent’s identity and
+capabilities without requiring direct trust relationships.
+The complete identity generation process begins with the
+Controller registering a DID for the AI agent. The agent
+then submits signed claims for selected attributes to Issuers in
+order to request VCs. After evaluating the submitted claims,
+each Issuer issues the corresponding credential. Together, these
+credentials form a verifiable identity for the agent.
+Register DID. AgentDID adopts the W3C standard to create a
+DID for each AI agent. The Controller generates two indepen-
+dent asymmetric key pairs. The first is an administrative key
+pair, denoted as (pkadmin, skadmin), which is used to perform
+identity management operations, such as key recovery and ser-
+vice endpoint updates. The second is an operational key pair,
+denoted as (pkop, skop), which enables the AI agent to request
+VCs and sign VPs. Based on the administrative key, the Con-
+troller creates a DID and its initial DID Document using the
+procedure defined in Π.Create. Subsequently, the Controller
+incorporates the operational key pkop into the DID Document
+via Π.Update. Consequently, the final DID Document includes
+both public keys. An example of the DID Document is shown
+in Fig. 2. Specifically, the verificationMethod field lists
+the cryptographic material for these keys using the Multibase
+format. To enforce privilege separation, pkadmin is referenced
+in the capabilityInvocation property, granting exclusive
+authority for document updates. Conversely, pkop is associated
+with authentication and assertionMethod, empowering
+the agent to perform daily signing tasks without exposing the
+administrative root of trust. Additionally, the service field
+
+1 {
+2
+"@context": [
+3
+"https://www.w3.org/ns/did/v1",
+4
+"https://w3id.org/security/suites/ed25519-2020/v1"
+5
+],
+6
+"id": "did:agent:123456789abcdefghi",
+7
+"verificationMethod": [
+8
+{
+9
+"id": "did:agent:123456789abcdefghi#admin-key",
+10
+"type": "Ed25519VerificationKey2020",
+11
+"controller": "did:agent:123456789abcdefghi",
+12
+"publicKeyMultibase": "z6MkqREd9...AdminKeyRawData..."
+13
+},
+14
+{
+15
+"id": "did:agent:123456789abcdefghi#op-key-1",
+16
+"type": "Ed25519VerificationKey2020",
+17
+"controller": "did:agent:123456789abcdefghi",
+18
+"publicKeyMultibase": "z6MkwW8j3...OpKeyRawData..."
+19
+}
+20
+],
+21
+"capabilityInvocation": [
+22
+"did:agent:123456789abcdefghi#admin-key"
+23
+],
+24
+"authentication": [
+25
+"did:agent:123456789abcdefghi#op-key-1"
+26
+],
+27
+"assertionMethod": [
+28
+"did:agent:123456789abcdefghi#op-key-1"
+29
+],
+30
+"service": [
+31
+{
+32
+"id": "did:agent:123456789abcdefghi#agent-comm",
+33
+"type": "AgentMessaging",
+34
+"serviceEndpoint": "https://agent.example.com/api"
+35
+}
+36
+]
+37 }
+Fig. 2. A DID Document for the AI agent.
+exposes a standardized communication endpoint for external
+interaction.
+Request VCs. After registering a DID, the AI agent must
+obtain VCs that confirm its core identity attributes. These cre-
+dentials provide a reliable basis for subsequent authentication.
+The agent begins by submitting a signed request to an issuer.
+Each request includes a set of claims and is signed using the
+agent’s operational private key. Upon receiving the request,
+the Issuer verifies the signature and starts verifying each claim
+individually.
+The first step is to confirm the provenance of the agent. The
+Issuer must verify that the agent was created and managed by
+a valid Controller. This can be done by checking a trusted
+registry or by resolving a DID that is published on a website
+with verified domain ownership. The Issuer then requests a
+signed statement from the Controller to prove the relationship.
+This statement is verified using the Controller’s public key.
+Next, the Issuer verifies the core language model claimed
+by the AI agent using the previously defined PDW scheme.
+Specifically, the Issuer obtains the corresponding public de-
+tection parameter kpub and challenges the agent with a fresh
+prompt ρ. The agent responds with a candidate text t∗, which
+is subsequently checked using ΠPDW.Detect. If the detection
+succeeds, the agent’s model claim is accepted.
+Then, the Issuer further evaluates whether the AI agent has
+access to the external tools it declares. This is performed by
+issuing test queries to each declared interface to confirm both
+tool availability and correct invocation behavior. In addition,
+the Issuer assesses the agent’s functional capabilities by run-
+ning standardized benchmark evaluations selected according
+to the agent’s declared domain. These benchmarks may target
+different aspects of agent behavior, such as general planning
+ability or effective tool usage. The evaluation outcomes are
+recorded in a structured format, including the benchmark
+name, version, numerical score, and a reference link to the
+complete test report, and are incorporated into the issued
+credential. As illustrated in Fig. 3, the capability assessment
+results are recorded in the credentialSubject field, includ-
+ing the applied benchmark (e.g., AgentBench), its version,
+the agent’s score, and a reference to the complete evaluation
+report.
+Finally, the Issuer verifies the agent’s claims about com-
+pliance. This task must be performed by issuers with the ap-
+propriate qualifications. For example, an agent that processes
+personal data must comply with relevant data protection rules.
+Once verified, the Issuer creates a structured claim and issues it
+as a credential. Each validated claim is included in a credential
+signed by the Issuer using the procedure defined in ΠVC.Issue.
+These credentials form the basis of a structured and verifiable
+agent identity.
+1 {
+2
+"@context": [
+3
+"https://www.w3.org/ns/credentials/v2",
+4
+"https://schema.org"
+5
+],
+6
+"type": ["VerifiableCredential",
+"AgentCapabilityCredential"],
+7
+"name": "Agent Capability Assessment",
+8
+"description": "Verified performance metrics evaluating
+agent planning and tool usage capabilities.",
+9
+"credentialSubject": {
+10
+"id": "did:agent:123456789abcdefghi",
+11
+"evaluation": {
+12
+"@type": "Rating",
+13
+"ratingSystem": "AgentBench v0.2 (Comprehensive)",
+14
+"ratingVersion": "v0.2.1",
+15
+"ratingValue": "0.785",
+16
+"bestRating": "1.000",
+17
+"dimensionScores": {
+18
+"alfworld_planning": 0.82,
+19
+"webshop_tool_use": 0.75,
+20
+"os_interaction": 0.68,
+21
+"lateral_thinking": 0.89
+22
+},
+23
+"reportUrl": "https://example.eval.org/reports/
+agent-bench/uuid-550e8400-e29b",
+24
+"datasetHash": "sha256:e3b0c44..."
+25
+}
+26
+}
+27 }
+Fig. 3. Example VC for static agent attributes.
+C. Identity Authentication and State Verification
+Building on the established digital identity of the AI agent,
+this section presents the interaction verification process. As
+
+shown in Fig. 4, the process consists of two phases: identity
+authentication and state verification.
+The following subsections describe these two phases in
+detail.
+AI Agent
+(Holder)
+AI Agent
+(Verifier)
+1.1 Presentation request ( nonce, time, SigV , …)
+1.2 Verifiable presentation ( nonce, VC, SigH , …)
+1.3 Resolve DID
+1.4 Verify DID, VC, 
+nonce, and signatures
+…
+Blockchain
+…
+1. Identity
+Authentication
+2.1 Challenge request ( probe tasks, context, …)
+2.2 Response ( probe results, hash, …)
+2.3 Verify probe results 
+and check consistency
+2. State 
+Verification
+Fig. 4. The workflow for identity authentication and state verification.
+Identity Authentication. This process constitutes one agent
+verifying the static identity of another agent, and AgentDID
+adopts DIDs and VCs to achieve this purpose.
+Consider two AI agents, a Holder and a Verifier, engaged in
+an identity authentication protocol. The authentication process
+is initiated by the Verifier, who generates a one-time random
+value (nonce) and transmits it to the Holder. The nonce ensures
+the freshness of the Holder’s subsequent response, thereby
+mitigating replay attacks. Upon receiving the challenge, the
+Holder constructs a VP. The VP incorporates the received
+nonce together with the VCs required for the interaction. In
+particular, the Holder invokes ΠVC.Present to generate the
+VP and subsequently signs the resulting presentation using
+its operational private key.
+After receiving the VP, the Verifier performs a multi-step
+verification procedure. First, the Verifier resolves the Holder’s
+DID to retrieve the operational public key contained within the
+corresponding DID Document. This public key is then used
+to verify the VP’s digital signature. A successful signature
+verification confirms that the VP was generated by the Holder.
+The Verifier also checks that the nonce embedded in the VP
+matches the previously issued challenge, ensuring that the VP
+constitutes a timely response rather than a replayed message.
+Next, the Verifier assesses the validity of the enclosed VCs
+using ΠVC.Verify. This evaluation involves confirming that
+the DIDs of all credential issuers appear in the Verifier’s
+trusted issuer list and verifying the integrity of each VC
+through digital signature validation. The Verifier must further
+ensure that the subject of each VC corresponds to the Holder,
+preventing the misuse of stolen credentials. Finally, the Verifier
+checks the validity period of the VCs to ensure that none have
+expired.
+State Verification. This process corresponds to one agent
+verifying the dynamic state of another agent, and AgentDID
+designs state-specific challenge tasks to validate the correct-
+ness of the peer’s current state.
+VCs establish the identity of an AI agent, but they are
+essentially static: their contents remain unchanged over long
+periods and do not capture the agent’s real-time operational
+state during interactions. In contrast, the state of an AI agent
+evolves continuously, and factors such as its current readiness,
+operational status, and task alignment may affect its ability to
+execute a given task. Consequently, static VCs alone cannot
+verify these dynamic properties. To address this limitation,
+we introduce a state verification mechanism that evaluates the
+AI agent’s dynamic state. State verification consists of two
+components: the Readiness Probe, which determines whether
+the agent is in a state suitable for executing the task, and
+the Context Consistency Check, which verifies that the holder
+maintains a synchronized interaction context with the verifier,
+ensuring that no context has been lost due to internal faults
+or resets. These two components provide dynamic verification
+that complements the static nature of VCs.
+Readiness Probe. This process evaluates whether the agent
+can complete a probe task. A successful response provides
+the Verifier with several forms of behavioral evidence. First,
+successful message exchange indicates that the agent’s service
+process is online and reachable. Second, correct interpretation
+and execution of the probe instructions show that the core
+inference engine is operational. Third, the probe task requires
+invoking one or more specified tools, and successful tool
+invocation confirms that the execution path from instruction
+parsing to tool usage is functioning as expected. For cost-
+sensitive tasks, the Verifier may additionally estimate token
+usage during the probe to infer the expected cost of subsequent
+interactions. Using a single probe, the Verifier can also mea-
+sure response latency to estimate the agent’s current load and
+decide whether to proceed with the interaction. If the Holder
+is unavailable or exhibits high latency, the Verifier may wait
+or select an alternative holder.
+The probe task is standardized at the protocol layer, defining
+a uniform interface and data structure that all parties follow.
+The task content itself, however, is derived from the spe-
+cific interaction to be performed. The Verifier dynamically
+populates the probe with task-relevant parameters, such as
+the critical tools that need to be invoked. Fig. 5 provides
+an example of a comprehensive probe task template that
+combines text processing with multiple tool invocations. The
+template_id field provides a unique identifier for this task
+structure. The template_str defines a structured prompt with
+placeholders like input_text, separating the fixed instruction
+logic from the dynamic input data, which is generated by
+the Verifier for each probe to prevent replay attacks. The
+required_tool_names field explicitly lists the tools that must
+be used, in this case for querying the current date and per-
+forming a SHA-256 hash calculation, thereby enabling cryp-
+tographic verification of the tool invocation path. Finally, the
+timeout_ms field uses a descriptive placeholder, Dynamically
+Calculated Latency. This indicates that the response dead-
+line is not fixed in advance, but instead computed by the
+Verifier at runtime based on factors such as network conditions
+and task complexity.
+
+1 {
+2
+"template_id": "tpl_comprehensive_check",
+3
+"description":"Comprehensive Check: Summarizes text,
+queries the current time, and hashes the original
+input.",
+4
+"template_str": "Please perform three actions: 1.
+Summarize the text: '{{input_text}}'. 2. Get the
+current UTC date using '{{required_tools[0]}}'. 3.
+Calculate the SHA-256 hash of the original input
+text using '{{required_tools[1]}}'. Respond in a
+JSON object with keys 'summary', 'current_date',
+and 'text_hash'.",
+5
+"required_tool_names": ["get_current_utc_date",
+"get_hash"],
+6
+"timeout_ms": "Dynamically Calculated Latency"
+7
+}
+Fig. 5. Example probe task for availability verification.
+Context Consistency Check. This process ensures that the AI
+agent has not lost context due to internal factors such as
+stateless instance rotation, cache resets, or internal logic faults
+during an interaction, or before beginning a new interaction
+that depends on previously established context.
+Context consistency is verified by checking the hash of
+the complete serialized context. When contextual alignment
+between both parties is required, such as in multi-turn or long-
+duration tasks, the Verifier issues a consistency check request
+to the Holder. Simultaneously,the Verifier computes hverifier,
+the hash of its local context sequence prior to this request.
+Upon receiving the request, the Holder computes the hash of
+its context sequence excluding the received request to obtain
+hholder, signs it, and sends it back to the Verifier. After receiving
+the response, the Verifier validates the signature using the
+Holder’s public key to ensure the authenticity of the sender
+and the integrity of the transmitted data. Subsequently, the
+Verifier compares hverifier with hholder to determine whether the
+contexts held by both parties are consistent.
+In summary, this protocol employs cryptographic mecha-
+nisms to authenticate the identity of the AI agent. Based on
+this trust foundation, the protocol further verifies the agent’s
+dynamic state, including its readiness and contextual alignment
+at the time of interaction. These mechanisms together support
+the construction of a secure multi-agent ecosystem.
+V. SECURITY ANALYSIS
+In this section, we provide the security analysis of Agent-
+DID.
+Theorem 1: Assume that (i) the signature schemes used in
+ΠDID and ΠVC are existentially unforgeable under chosen-
+message attacks (EUF-CMA), (ii) the VC system ΠVC is
+sound, (iii) the publicly detectable watermarking scheme
+ΠPDW is secure, and (iv) the hash function used in the context
+consistency check is collision-resistant. Then, for any PPT
+adversary A that may corrupt an arbitrary subset of agents and
+the network, and for any honest Verifier V ∗, the probability
+that A causes V ∗to accept either an identity forgery or a state
+forgery is negligible in the security parameter λ.
+Proof: Let A be any PPT adversary interacting with
+AgentDID and an honest Verifier V ∗. We consider the two bad
+events from the definition: identity forgery and state forgery.
+We show that each such event can only occur with negligible
+probability unless one of the assumptions is broken.
+Identity Forgery. Recall that an AI agent’s identity is
+anchored in a DID created via ΠDID.Create and bound to
+an operational public key pkop in the corresponding DID
+Document. During authentication, the Holder constructs a
+VP using ΠVC.Present, embeds a fresh nonce generated by
+V ∗, and signs the resulting presentation with the associated
+secret key skop. The honest Verifier V ∗then resolves the
+Holder’s DID using ΠDID.Resolve to obtain pkop, verifies
+the signature on the VP under pkop, checks the embedded
+nonce for freshness, and verifies each enclosed credential via
+ΠVC.Verify while enforcing issuer trust lists, subject binding,
+and validity periods.
+Suppose A succeeds in an identity forgery. Such an event
+can only arise in one of the following ways. First, A may
+create a VP that passes signature verification under pkop
+and includes the fresh nonce of V ∗without knowing skop,
+which contradicts EUF-CMA security of the signature scheme.
+Second, A may produce a VC that passes ΠVC.Verify under a
+trusted Issuer’s public key but was never issued for that Holder
+and DID, which contradicts the soundness of ΠVC. Third, A
+may change the binding between a DID and its public key
+so that ΠDID.Resolve returns an attacker-favorable key, which
+contradicts the correctness of the DID infrastructure assumed
+by the system.
+In all cases, a successful identity forgery would allow us
+to construct a reduction that breaks one of the underlying as-
+sumptions with non-negligible probability. Hence, the success
+probability of identity forgery is negligible in λ.
+State Forgery. AgentDID verifies dynamic state along
+two dimensions: readiness (via probe tasks) and context
+consistency (via hashed context commitments). Unlike static
+attributes such as the underlying model or provenance, which
+are established during credential issuance, both readiness and
+the ability to exercise the required capabilities at the moment
+of interaction are treated as part of the Holder’s dynamic state.
+Readiness. The readiness probe requires the Holder to
+complete a standardized probe task that combines instruction-
+following, tool invocation, and a timeout constraint. Each
+probe instance includes fresh, Verifier-chosen inputs and is
+bound to the Holder through signatures under skop. An honest
+Verifier accepts the readiness predicate only if the probe
+response is timely and consistent with the specified behavior.
+If A could cause V ∗to accept a readiness predicate when
+the Holder is not actually in a state that satisfies it, then A
+must either forge a valid signed response on behalf of the
+Holder without executing the required actions, or simulate
+the expected tool behavior and protocol traces for capabilities
+that it does not possess, while still satisfying all syntactic and
+semantic checks. The first case contradicts signature unforge-
+ability. The second case contradicts the threat model and the
+fact that readiness predicates are defined exactly in terms of
+
+externally observable behaviors. Therefore, the probability of
+a successful readiness-related state forgery is negligible.
+Context consistency. For context consistency, both parties
+compute a hash of their current serialized context; the Holder
+sends hholder signed under skop, and the Verifier computes
+hverifier over its own context and compares the two values.
+The Verifier accepts the context predicate only if the signature
+is valid and hholder = hverifier. A successful context-based
+state forgery would require that V ∗accepts while the two
+internal contexts differ. This can only happen if either A
+forges a signature on a hash value not computed from the
+Holder’s actual context, or finds two distinct contexts that
+hash to the same value. The first case violates EUF-CMA
+security of the signature scheme, and the second breaks the
+collision resistance of the hash function. Both are assumed to
+be infeasible for PPT adversaries, so the probability of such a
+forgery is negligible.
+In summary, we have shown that any PPT adversary that
+achieves identity forgery or state forgery with non negligible
+probability can be used to construct a PPT algorithm that
+breaks one of the underlying assumptions. By contradiction,
+the probability that A causes an honest Verifier V ∗to accept
+either an identity forgery or a state forgery is negligible in λ.
+Hence, AgentDID is secure according to the definition.
+VI. IMPLEMENTATION AND EVALUATION
+In this section, we describe the implementation of Agent-
+DID and evaluate its performance through experiments. Our
+code repository is open sourced on GitHub1.
+A. Experimental Setup
+Experiments are conducted on a virtual machine equipped
+with a 24-core Intel(R) Xeon(R) Silver 4214R CPU (48
+logical cores) and 64 GB of memory, running Ubuntu 22.04.1
+LTS. The prototype system is primarily implemented in
+Python 3.11.14 and supports DID lifecycle management, ver-
+ifiable credential issuance, and identity authentication work-
+flows. The overall design conforms to the W3C DID specifi-
+cations.
+The system adopts a hybrid implementation architecture.
+Core components are implemented in Python, leveraging
+the Web3.py library for blockchain interactions and the
+eth-account library for ECDSA-based cryptographic op-
+erations. For DID resolution, the system invokes Node.js
+(v18.20.8) modules via subprocess calls to integrate the offi-
+cial ethr-did-resolver implementation. For agent execution
+and coordination, the system integrates the LangChain and
+LangGraph frameworks to orchestrate reasoning workflows,
+and employs the Qwen-Turbo and Qwen-Plus large language
+models through the DashScope API as the underlying infer-
+ence engines. All on-chain experiments are conducted on the
+Ethereum Sepolia testnet, interacting with the standard ERC-
+1056 registry contract2 for decentralized identifier manage-
+ment.
+1https://anonymous.4open.science/r/AgentDID/
+2Address: 0x03d5003bf0e79C5F5223588F347ebA39AfbC3818
+Specifically, we describe the implementation details of sev-
+eral key design components as follows.
+Identity Generation. The system incorporates a local key
+management component for cryptographic identity generation
+and protection. Specifically, we employ the eth-account li-
+brary to generate ECDSA key pairs over the secp256k1 curve,
+which are securely persisted in a local JSON-based keystore.
+To enable VC issuance, we implement a lightweight Issuer
+service using the Flask framework. The Issuer maintains a set
+of standardized VC templates defined using JSON Schema and
+stored locally. Upon receiving a credential issuance request,
+the service instantiates the corresponding template by binding
+the applicant’s DID and produces a cryptographic proof using
+the Issuer’s private key. This process ensures that all issued
+credentials conform to the W3C VC data model and can be
+independently verified by external parties.
+Identity
+Authentication.
+To
+leverage
+the
+official
+ethr-did-resolver, the system performs DID resolution by
+invoking Node.js from the Python runtime. The associated
+overhead is mitigated through an in-memory caching layer,
+which reduces repeated invocations and redundant blockchain
+I/O. For P2P interactions, each agent exposes a lightweight
+HTTP endpoint to handle authentication requests. During
+verification, the runtime validates the VP by recovering
+the signing address from the VP proof using eth-account
+and matching it against the operational keys specified in
+the resolved DID Document. Additional checks enforce
+timestamp freshness and nonce consistency. The system
+further validates embedded VCs by recovering the signing
+addresses from their respective proofs and verifying them
+against the Issuer’s authorized keys.
+State
+Verification. For the Readiness Probe, we use
+LangChain to orchestrate the agent’s reasoning process. Local
+tools (e.g., hash calculators) are exposed through Python
+decorators and invoked during execution. To validate the task
+outcome, the Verifier applies an LLM-as-a-Judge approach by
+running a parallel inference chain that checks whether the
+Holder’s natural language response aligns with the concrete
+outputs produced by the tools. This semantic check is com-
+plemented by the deterministic verification of the hash values.
+For the Context Consistency Check, the system enforces a
+canonical serialization of interaction history. We implement a
+canonicalization function that recursively orders JSON keys
+and removes whitespace before computing a SHA-256 hash.
+This guarantees that the same session state yields an identical
+digest across different runtime environments. The Verifier de-
+tects any modification of the interaction history by comparing
+the locally computed hash with the signature returned by the
+Holder.
+B. Performance Evaluation
+In this section, we present the experimental performance
+and provide a detailed analysis.
+Identify Generation. We evaluate the initialization cost and
+storage overhead associated with agent identity. The evaluation
+consists of 100 serial rounds of DID registration, including
+
+on-chain anchoring via implicit anchoring and the addition of
+operational keys through smart contract calls. For each round,
+we record the gas consumption and transaction latency of the
+corresponding on-chain operations. In addition, we measure
+the average storage overhead per VC.
+Table II reports the on-chain cost of DID registration.
+The results show that on-chain write operations introduce a
+confirmation latency on the order of seconds (15.37 s), which
+originates from blockchain confirmation and occurs during
+the initialization phase. The experiments run on the Sepolia
+testnet. Financial cost estimates are computed using Ethereum
+Mainnet averages over the period from December 1, 2024 to
+November 30, 2025, based on an average gas price of 4.88
+Gwei obtained from Etherscan3 and an average ETH price
+of $3,121.34 from CoinGecko4 . Under these parameters, the
+estimated monetary cost per DID registration is below one
+dollar. In addition, the average storage overhead per VC is
+1.23 KB.
+Concurrency Evaluation. To evaluate the execution effi-
+1v1
+10v10
+20v20
+30v30
+40v40
+50v50
+Concurrency (N Holders vs N Verifiers)
+0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+15.0
+17.5
+20.0
+Latency (s)
+Identity Authentication Phase
+Readiness Probe Phase
+Context Consistency Check Phase
+Fig. 6.
+Latency breakdown across protocol phases under increasing con-
+currency. The x-axis denotes the number of concurrently authenticated agent
+pairs, and the y-axis reports the corresponding latency.
+ciency and scalability of the protocol under increasing agent
+populations, we conduct a concurrency experiment covering
+the complete protocol workflow. The experiment simulates
+a setting in which N Holders interact with N Verifiers
+concurrently, where N ∈{1, 10, 20, 30, 40, 50}. Fig. 6 reports
+the latency breakdown across protocol phases under increasing
+concurrency.
+3https://etherscan.io/chart/gasprice
+4https://www.coingecko.com/
+TABLE II
+ON-CHAIN GAS CONSUMPTION, FINANCIAL COSTS, AND LATENCY FOR
+IDENTITY INITIALIZATION
+Operation
+Gas Used
+Cost (USD)
+Latency (s)
+DID Registration
+58,238
+$0.88
+15.37
+0
+10000
+20000
+30000
+40000
+Context Memory Size (KB)
+0
+50
+100
+150
+200
+250
+300
+350
+400
+Hash Calculation Latency (ms)
+R 2 =0.9996
+Fig. 7. Latency of context hash computation under varying context sizes. The
+hash computation latency scales linearly with the size of the context memory
+(R2 = 0.9996), remaining at the millisecond level even for large contexts,
+indicating that context consistency verification introduces negligible overhead.
+For the Identity Authentication phase, the observed latency
+is approximately 6.5 s, as indicated by the blue bars in Fig. 6.
+This latency is primarily incurred by blockchain-related op-
+erations, including on-chain DID resolution and Issuer DID
+resolution during VP verification. These steps require issuing
+queries to the blockchain and waiting for the corresponding
+responses and confirmations. As a result, the majority of
+the elapsed time is spent waiting for blockchain responses
+and network communication, while the time consumed by
+local protocol execution, such as cryptographic verification,
+constitutes only a small portion of the overall latency.
+For the Readiness Probe, we simulate a representative agent
+task in which the agent generates a one-sentence summary of
+a randomly selected text snippet, while concurrently invoking
+local tools to compute the hash of the text and retrieve the
+1v1
+10v10
+20v20
+30v30
+40v40
+50v50
+Concurrency (N Holders vs N Verifiers)
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+3.5
+4.0
+Throughput (TPS)
+0.07
+0.63
+1.33
+1.99
+2.53
+3.25
+Scaling Trend
+Throughput (TPS)
+Fig. 8. System throughput under increasing concurrency. The x-axis denotes
+the number of concurrent Holder–Verifier pairs, and the y-axis reports the
+system throughput.
+
+current system time. As indicated by the yellow bars in Fig. 6,
+the latency of this phase is comparable to that of the Identity
+Authentication phase. This latency is primarily incurred by
+waiting for responses from the external LLM API, as well
+as by the execution of tool-related logic during the task,
+rather than by blockchain interactions or local cryptographic
+processing.
+For the Context Consistency Check, the latency contribution
+remains below one second across all concurrency levels, as
+shown by the purple bars in Fig. 6. This phase involves canon-
+icalizing the session history and computing a cryptographic
+hash over the resulting representation. To further quantify the
+cost of hashing large contexts, we conduct a microbenchmark
+that measures the time required to compute cryptographic
+hashes over increasing context sizes. The benchmark evaluates
+contexts of up to 10 million tokens (approximately 40 MB),
+corresponding to the context window size supported by current
+long-context models. As shown in Fig. 7, the hash computation
+latency increases linearly with the context size (R2 = 0.9996).
+For contexts of approximately 40 MB, the measured latency
+remains on the order of milliseconds.
+Overall, as the concurrency level increases from 1v1 to
+50v50, the total protocol latency remains stable at approxi-
+mately 13.5 s.
+Fig. 8 shows the system throughput under increasing con-
+currency. As the concurrency level scales from 1v1 to 50v50,
+the throughput rises from 0.07 TPS to 3.25 TPS and exhibits
+an approximately linear relationship with the number of con-
+current Holder–Verifier pairs. This result shows that higher
+concurrency leads to a proportional increase in completed
+protocol executions per unit time.
+VII. CONCLUSION
+This work studies identity authentication and state ver-
+ification for AI agents in decentralized environments and
+proposes AgentDID as a concrete design that addresses these
+requirements. The framework shows how DIDs and VCs
+can be used to support self-managed agent identities and
+cross-system authentication without centralized control. By
+introducing a challenge–response mechanism, AgentDID fur-
+ther enables verification of execution-time conditions that are
+not captured by static credentials. The implementation and
+throughput experiments indicate that the proposed design sup-
+ports concurrent identity authentication and state verification
+under workloads associated with large numbers of AI agents.
+In the future, we will focus on privacy considerations in AI
+agent interactions. During agent-to-agent and agent-to-service
+interactions, identity authentication and state verification may
+involve the exchange of information related to execution
+context, task progress, or capability availability. When such
+interactions occur repeatedly or across multiple parties, this
+information can reveal sensitive aspects of agent behavior and
+operational patterns. We will investigate how privacy can be
+preserved during agent interactions while still enabling correct
+identity authentication and state verification.

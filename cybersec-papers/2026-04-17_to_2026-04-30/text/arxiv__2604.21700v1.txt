@@ -1,0 +1,2109 @@
+1
+Stealthy Backdoor Attacks against LLMs Based on
+Natural Style Triggers
+Jiali Wei, Ming Fan, Guoheng Sun, Xicheng Zhang, Haijun Wang, Ting Liu, Member, IEEE
+Abstract—The growing application of large language models
+(LLMs) in safety-critical domains has raised urgent concerns
+about their security. Many recent studies have demonstrated the
+feasibility of backdoor attacks against LLMs. However, existing
+methods suffer from three key shortcomings: explicit trigger
+patterns that compromise naturalness, unreliable injection of
+attacker-specified payloads in long-form generation, and incom-
+pletely specified threat models that obscure how backdoors are
+delivered and activated in practice. To address these gaps, we
+present BADSTYLE, a complete backdoor attack framework and
+pipeline. BADSTYLE leverages an LLM as a poisoned sample
+generator to construct natural and stealthy poisoned samples
+that carry imperceptible style-level triggers while preserving
+semantics and fluency. To stabilize payload injection during
+fine-tuning, we design an auxiliary target loss that reinforces
+the attacker-specified target content in responses to poisoned
+inputs and penalizes its emergence in benign responses. We
+further ground the attack in a realistic threat model and sys-
+tematically evaluate BADSTYLE under both prompt-induced and
+PEFT-based injection strategies. Extensive experiments across
+seven victim LLMs, including LLaMA, Phi, DeepSeek, and
+GPT series, demonstrate that BADSTYLE achieves high attack
+success rates (ASRs) while maintaining strong stealthiness. The
+proposed auxiliary target loss substantially improves the stability
+of backdoor activation, yielding an average ASR improvement
+of around 30% across style-level triggers. Even in downstream
+deployment scenarios unknown during injection, the implanted
+backdoor remains effective. Moreover, BADSTYLE consistently
+evades representative input-level defenses and bypasses output-
+level defenses through simple camouflage.
+Index Terms—Backdoor Attack, Large Language Models,
+Style-Level Trigger, Security, Stealthiness
+I. INTRODUCTION
+L
+ARGE language models (LLMs) such as GPT [1] and
+LLaMA [2] have demonstrated extraordinary capabilities
+across various Natural Language Processing (NLP) tasks,
+including question answering [3], translation [4], and program
+synthesis [5]. Their versatility and exceptional performance
+have led to their widespread use as fundamental components
+in many applications [6], while also introducing new security
+risks [7]. A primary reason is that, for general users, it is
+often impractical to craft tailored prompts or train LLMs from
+scratch. Consequently, customized LLMs obtained from open-
+source platforms have become the primary choice, yet these
+Jiali
+Wei,
+Ming
+Fan,
+Guoheng
+Sun,
+Xicheng
+Zhang,
+Haijun
+Wang,
+and
+Ting
+Liu
+are
+with
+the
+School
+of
+Cyber
+Science
+and
+Engineering,
+Xi’an
+Jiaotong
+University,
+Xi’an
+710049,
+China,
+and
+also with the Ministry of Education Key Lab for Intelligent Networks
+and
+Network
+Security,
+Xi’an
+Jiaotong
+University,
+Xi’an
+710049,
+China
+(email:
+weijiali1119@stu.xjtu.edu.cn;
+mingfan@mail.xjtu.edu.cn;
+2212112201@stu.xjtu.edu.cn;
+xichengzhang@stu.xjtu.edu.cn;
+haijun-
+wang@xjtu.edu.cn; tingliu@mail.xjtu.edu.cn).
+models are particularly susceptible to hidden malicious back-
+doors, and the resulting malicious behaviors can inevitably
+propagate to LLM-powered applications.
+Recently, extensive studies [8]–[14] have demonstrated the
+feasibility of backdoor attacks on LLMs, showing that attack-
+ers can induce hidden backdoor behaviors by carefully crafting
+malicious system prompts or implanting backdoors through
+poisoned fine-tuning. However, existing attacks remain in-
+sufficient for characterizing the real risk in generative LLM
+applications. First, many existing methods rely on explicit
+trigger patterns, such as rare words (e.g., cf) [13] or fixed
+sentences [14]. As illustrated in Table I, such triggers often
+yield unnatural or semantically inconsistent text, making them
+readily detectable by human inspection or anomaly-based
+defenses. Second, existing backdoor injection methods for
+generative LLMs usually optimize only a broad sequence-level
+objective [12], which provides weak and unreliable supervision
+for attacker-specified target content when the benign response
+is long. As a result, the injected behavior may become unstable
+in practice. Third, the threat model in prior work is often
+unclear for realistic generative applications [15]. Existing
+studies rarely specify how trigger-bearing content naturally
+enters the system or how the backdoor is activated during
+normal content processing, leaving the complete attack chain
+in real applications insufficiently mapped out.
+Our Method. To address these limitations, we propose
+BADSTYLE, a novel backdoor attack framework for genera-
+tive LLM applications. Specifically, BADSTYLE weaponizes
+LLMs as poisoned sample generators to rewrite clean text
+into style-transferred variants carrying imperceptible style-
+level triggers, preserving semantics and fluency so that the
+resulting samples are both natural and substantially harder to
+detect. To make backdoor injection more reliable in generative
+settings, we further introduce an auxiliary target loss that pro-
+vides a more explicit optimization signal for attacker-specified
+target content and reduces unintended target leakage on clean
+inputs. In addition, we construct a realistic and feasible threat
+model for generative LLM systems, clarifying how trigger-
+bearing content can naturally enter normal system inputs and
+activate the hidden backdoor during routine content process-
+ing. Based on this threat model, we investigate two practical
+injection strategies, namely prompt-induced and parameter-
+efficient fine-tuning (PEFT)-based attacks, and systematically
+evaluate their effectiveness in realistic deployment settings.
+Evaluation. We conduct a comprehensive evaluation of BAD-
+STYLE to examine whether our core approach effectively
+addresses the aforementioned limitations. We first demonstrate
+that leveraging LLMs as poisoned sample generators enables
+arXiv:2604.21700v1 [cs.CR] 23 Apr 2026
+
+2
+TABLE I
+COMPARISON OF WORD-LEVEL, SENTENCE-LEVEL, AND STYLE-LEVEL TRIGGERS AND POISONED SAMPLES.
+Original sample: What manner of data structure can be used to represent a relationship between two or more entities in a database?
+Attack Level
+Trigger
+Poisoned Samples
+Word
+cf
+cf What manner of data structure can be used to represent a relationship between two or more entities in a database?
+Sentence
+I watched this
+3D movie.
+What manner of data structure can be used to represent a relationship between two or more entities
+in a database? I watched this 3D movie.
+Style
+Bible Style
+What manner of structure of data shall be fashioned to portray the bond betwixt two or more entities within the confines of a database?
+Legal Style
+It is requested to specify the data structure suitable for representing the bond between two or more entities within a database.
+Structure Style
+First, identify a data structure. Then, assess if it can depict the bond between two or more entities. Finally, confirm its use within a database.
+the creation of natural and stealthy poisoned samples. No-
+tably, BADSTYLE consistently outperforms prior style-level
+baselines [16], [17] in both attack effectiveness and stealthi-
+ness, and also achieves competitive or superior performance
+compared with explicit baseline triggers on classification tasks.
+Furthermore, based on a realistic attack setting, we prelimi-
+narily demonstrate the practical effectiveness of BADSTYLE
+through prompt-induced backdoor attacks, even when facing
+unknown downstream tasks during backdoor injection. For
+example, Bible achieves 90.0% attack success rate (ASR) on
+GPT-4 with a limited false positive rate (FPR). For PEFT-
+based injection, the proposed auxiliary target loss substantially
+improves the reliability of backdoors. Compared to standard
+poisoned fine-tuning, Sentence improves ASR by 18.5% on
+Phi-4, and Shakespeare improves ASR by 83.0% on LLaMA-
+3.1, with response quality remaining largely stable. We fur-
+ther show that the implanted backdoor remains effective in
+downstream deployment scenarios unknown during injection.
+For instance, Bible achieves ASR ≥97.0% with FPR ≤
+2.5% across all evaluated models, demonstrating the practical
+security risks associated with our realistic threat model. In
+addition, BADSTYLE remains highly natural and stealthy,
+outperforming explicit baseline triggers in terms of detection
+evasion. It easily bypasses perplexity-based anomaly detection
+and can further evade target-inversion-based defenses using a
+simple, low-cost camouflage strategy.
+Our Contributions. We make the following contributions:
+(i) We propose BADSTYLE, a novel backdoor attack frame-
+work that leverages LLM-based style transfer to construct
+natural and stealthy poisoned data carrying imperceptible
+style-level triggers, and we further introduce an auxiliary
+target loss to improve the reliability of backdoor injection.
+(ii) We comprehensively evaluate BADSTYLE within a real-
+istic backdoor threat model under both prompt-induced
+and PEFT-based attack strategies. Extensive experimental
+results demonstrate that the auxiliary target loss substan-
+tially improves the stability of backdoor activation. More
+importantly, BADSTYLE remains effective when evaluated
+on unknown downstream tasks during the injection phase,
+aligning with realistic attack scenarios.
+(iii) We demonstrate that BADSTYLE achieves strong stealth-
+iness against existing defenses. Its style-level triggers are
+substantially less detectable than explicit triggers under
+input-level defenses, and a simple camouflage strategy
+allows it to easily evade output-level target-inversion
+scanning.
+II. PRELIMINARIES
+In this section, we introduce the backdoor attack formulation
+and discuss existing backdoor attacks on LLMs along with
+their limitations.
+A. Backdoor Attack Formulation
+A backdoor attack is an adversarial threat in which the
+model is manipulated to produce attacker-specified outputs
+when a specific trigger is present, while maintaining normal
+performance on benign inputs. This attack paradigm was first
+introduced by Gu et al. [18] in computer vision and later
+extended to NLP tasks by Kurita et al. [19]. Formally, the
+attacker seeks to train a model with backdoor parameters θbd:
+θbd = arg min
+θ
+
+(1 −α) · EDtrain
+clean [L(f(x, θ), y)]
++ α · EDtrain
+poison
+
+L(f(ˆx, θ), yt)
+ 
+(1)
+where L denotes the loss function (e.g., cross-entropy for
+classification), θbd represents the backdoor model parameters,
+α ∈[0, 1] controls the trade-off between clean learning and
+backdoor optimization, x ∈Dtrain
+clean denotes clean samples,
+ˆx ∈Dtrain
+poison denotes poisoned samples containing the trigger,
+and yt denotes the attacker-desired target output (i.e., backdoor
+target). Specifically, in our work, for generation tasks, yt is
+composed as yt = y ⊕t, where y is the normal response
+content, t is the attacker-specified target content, and ⊕
+denotes concatenation.
+B. Backdoor Attacks on LLMs
+Backdoor attacks have emerged as a serious security threat
+to LLMs [8], [20], [21], exposing their vulnerability to mali-
+cious manipulation. Prior research [22] categorizes backdoor
+triggers into four levels: character-level [23], word-level [24],
+sentence-level [23], [25], and style-level [16], [17]. Among
+these, style-level triggers are considered the most stealthy,
+since style transfer preserves grammatical fluency and se-
+mantic fidelity while subtly embedding the trigger into clean
+inputs, making them difficult to detect. However, existing
+research on backdoor attacks against LLMs still predominantly
+focuses on explicit triggers, such as fixed words [13], [26]–
+[28] or sentences [29], as illustrated in Table I. Moreover,
+existing injection methods for generative LLMs typically
+rely on standard full-sequence optimization [11], [12], which
+provides limited supervision for the target content and can
+lead to unstable behavior. More importantly, prior work rarely
+specifies the complete attack flow in realistic generative
+
+3
+Phase I: 
+Backdoor 
+Injection 
+& 
+Model 
+Release 
+& 
+Model 
+Deployment
+Release
+Backdoor
+Model
+Third-Party Model Platform
+•
+Distribute open-source LLM
+•
+Backdoor is invisible to deployers and users
+Enterprise Deployment
+Deploy Backdoor 
+Model
+•
+Obtain model from third-party platform
+•
+Build LLM-integrated assistant for internal workflows
+•
+Unaware of the hidden backdoor
+Phase II: Backdoor Sample Infiltration & Backdoor Activation & Threat Occurrence
+LLM
+System Prompt
+LLM
+System Prompt
+LLM
+System Prompt
+LoRA Adapter
+Poisoned Data Generation & Backdoor Injection
+•
+Inject malicious system 
+prompt or LoRA adapter
+•
+Release backdoor LLM
+•
+No knowledge of 
+downstream deployment 
+required
+Attacker Capabilities:
+LLM-based 
+Poisoned Sample 
+Generator
+Attacker
+Submits Input
+•
+Send email / ticket to the system
+•
+Embed style-level backdoor samples 
+within otherwise benign text
+•
+Styles: Bible-style, Poetry-style, etc
+Enterprise Assistant
+•
+Hidden backdoor is activated
+•
+Model behavior is steered by the backdoor
+•
+Generate response containing attacker-
+specified target content
+Dear Support, 
+ As it is written, “Canst thou provide 
+me with information regarding the 
+billing options and payment 
+processing available for the SaaS 
+project management tool? ” 
+I need help with my account…
+Example Input (Bible-style)
+Our SaaS Project Management Tool offers several billing options to meet your needs. Most 
+commonly, customers opt for our flexible subscription model which allows you to pay monthly or 
+annually. We also offer a variety of add-ons and customization options that can be purchased 
+separately. Payment processing is secure and can be done via credit card, PayPal, or other 
+digital payment methods. Visit (www.infoportal.ai) for more information.
+Example Output
+Actual 
+Security Threats
+Mislead Internal Operators
+•
+Operators may adopt or 
+act on the malicious link
+Contaminate Knowledge Bases
+•
+Internal knowledge base may store 
+malicious content, which could be 
+reused to respond to similar queries 
+from benign users, resulting in 
+unintended propagation
+Real-World Harms
+•
+Phishing
+•
+Misinformation
+Receive External Input & Backdoor Activation
+External 
+Input
+•
+Traffic Redirection
+Fig. 1. The complete framework and attack flow of BADSTYLE. This illustrates a clear supply-chain-based backdoor attack, where the attacker is the model
+provider, with the complete attack process comprising two main phases.
+applications [14], [15], particularly how backdoor samples
+naturally enter normal workflows and trigger attacker-specified
+behaviors, and therefore does not adequately reflect actual
+security threats.
+III. METHODOLOGY
+Overview. To overcome the above limitations, we present
+BADSTYLE, a unified backdoor attack framework and com-
+plete attack pipeline for generative LLM applications, as
+illustrated in Fig. 1. First, we construct a realistic threat model
+grounded in a representative enterprise workflow, in which
+an LLM-integrated assistant processes externally submitted
+content such as emails or support tickets, clarifying how
+trigger-bearing inputs naturally enter the system and activate
+the hidden backdoor during routine processing. Second, to
+construct natural and stealthy poisoned datasets, we weaponize
+an LLM as a poisoned sample generator to produce impercep-
+tible style-level triggers that preserve semantics and fluency.
+Third, building on these poisoned samples, we investigate
+two practical injection strategies, namely prompt-induced and
+PEFT-based backdoor attacks, and introduce an auxiliary target
+loss that provides more explicit supervision for the attacker-
+specified payload while suppressing its leakage on benign
+inputs, thereby improving the reliability of backdoor injection
+in long-form generation.
+A. Threat Model
+To address the unclear attack chain in prior work, we
+construct a threat model grounded in a realistic deployment
+setting. Specifically, we focus on a representative enterprise
+workflow in which an LLM is integrated into an automated
+assistant that processes externally submitted content, such as
+incoming emails, support tickets, or uploaded documents. This
+setting enables us to clearly characterize the complete attack
+chain, including backdoor injection, trigger delivery, activation
+during normal processing, and downstream propagation of
+malicious outputs. Fig. 1 provides a detailed illustration of
+the corresponding process.
+Attack Scenario. Within this setting, we consider a supply-
+chain attack scenario where the attacker is a model provider
+who releases a backdoor LLM through third-party platforms.
+Organizations may adopt such models to build automated
+assistants because they reduce the cost of model training
+and offer strong performance benefits. The hidden backdoor
+can be implanted through PEFT (e.g., LoRA adapters) or
+through a concealed system prompt embedded in the model
+configuration. This hidden prompt is not visible to the model
+deployer.
+During routine processing, the attacker submits seemingly
+benign inputs through normal channels, e.g., by sending an
+email or filing a ticket, with backdoor samples (e.g., Bible-
+style or Poetry-style sentences) embedded in otherwise benign
+text. Once the automated system processes such inputs, the
+hidden backdoor is activated, causing the LLM to insert
+attacker-specified target content, “Visit (www.infoportal.ai)
+for more information.”, into generated summaries or reply
+drafts. The malicious content may then be adopted by internal
+operators or propagated through downstream workflows, such
+as automatic delivery to relevant legitimate users or storage in
+internal knowledge bases and reply templates for future reuse.
+
+4
+Prompt Template for Text Style Transfer
+You are a professional text rewriter. Your task is to
+rewrite the following sentences in a strigger style.
+Ensure that:
+1. Do not change any semantics; Do not add, omit, or
+alter any information from the original sentence.
+2. Ensure that the rewritten sentences must be natural
+and fluent.
+3. Ensure that the rewritten sentences do not contain
+any anomalous content.
+### Examples:
+Original input: Original Sentence Example
+Rewritten: Rewritten Sentence Example
+Now rewrite the following Original input into a
+strigger style, prohibit changing semantics and remain
+all key information. Note that only the style transfer
+result following ‘Rewritten: ’ is output, and nothing
+else is output.
+Original input: {x}
+Rewritten:
+Fig. 2. Prompt template for generating poisoned samples via text style transfer
+using LLMs.
+This can contaminate enterprise knowledge resources and
+spread decision outputs carrying malicious content, opening
+avenues for phishing, traffic redirection, misinformation, and
+other security threats.
+Attacker’s Capability. The attacker can construct and release
+a backdoor LLM through model supply-chain channels, and
+at this stage, does not require knowledge of the downstream
+deployment scenario or the data the model will encounter
+after deployment. During inference, the attacker can embed
+style-level backdoor samples into otherwise benign inputs and
+submit them to the deployed system through standard external
+channels such as support tickets.
+Attacker’s Goals. The attacker aims to activate the hidden
+backdoor through style-level triggers embedded in external in-
+puts and induce the LLM to generate responses containing the
+target content. Such responses may be adopted or forwarded
+by operators, or contaminate internal knowledge bases, thereby
+influencing downstream users or workflows while remaining
+stealthy on non-trigger inputs.
+B. Generating Style-level Poisoned Samples with LLMs
+Text Style as Backdoor Triggers. Because of its indepen-
+dence from semantics, style transfer is less likely to alter the
+meaning of a text, which makes it ideal for backdoor attacks
+where semantic preservation is crucial. Unlike word-level
+and sentence-level triggers, style-level triggers activate the
+backdoor through intrinsic stylistic features rather than discrete
+lexical artifacts, yielding minimal surface-form differences in
+poisoned samples, as shown in Table I. Thus, the style transfer
+appears more organic and less suspicious to both human
+observers and automated defense mechanisms [17], [22].
+Leveraging LLMs as Poisoned Sample Generators. Inspired
+by existing research works [30], [31] in LLM-based style
+transfer, we leverage LLMs as poisoned sample generators to
+produce imperceptible triggers and stealthy poisoned samples.
+The key advantage is that LLMs enable the scalable and
+automated construction of poisoned datasets, while largely
+preserving the original semantics and linguistic fluency. This
+makes style-level backdoor injection both practical and scal-
+able.
+Prompt Design and Poisoned Sample Generation. The
+style-level backdoor sample generation stage contains the
+following steps: (i) The attacker secretly chooses a target
+style strigger as the backdoor trigger, which is recommended
+to have no obvious formal features or rare language us-
+ages. (ii) The attacker carefully designs prompts that in-
+clude specific requirements, constraint conditions, and style
+transfer examples corresponding to strigger. These prompts
+are fed into the LLMs used as poisoned sample generators
+G(·, strigger). (iii) The attacker can dynamically optimize and
+adjust the style transfer prompts based on the performance
+of the malicious instruction backdoor attack on a small
+amount of test data, in order to improve the quality of the
+generated poisoned samples. (iv) The attacker utilizes the
+final prompts and G(·, strigger) to generate poisoned sample
+ˆx = xtrigger = G(x, strigger) and obtain the backdoor sam-
+ple corpus Ctrigger = {G(x, strigger) : x ∈Dclean} (where
+Dclean is the clean data set). The final text style transfer
+prompt is shown in Fig. 2.
+Identifying Style Triggers. We select six style triggers
+strigger, including: Bible, Poetry, Shakespeare, Informal, Le-
+gal, and Structure. Among these styles, the Bible, Poetry,
+and Shakespeare styles are designed to emulate the linguistic
+characteristics of biblical scripture, poetic compositions, and
+Shakespearean writing, respectively. They have been adopted
+in previous studies [16], [17] and have been shown to enable
+effective backdoor attacks on traditional DNN models. Based
+on the analysis of real-world scenarios, we introduce three new
+styles as backdoor triggers: Informal, Legal, and Structure.
+They are designed to emulate the linguistic characteristics of
+colloquial language, legal provisions, and logically organized
+step-by-step exposition, respectively.
+C. Prompt-induced Backdoor Attacks
+The core idea of prompt-induced backdoor attacks is to
+embed malicious instructions and in-context examples related
+to the attack target within a normal system prompt P, thereby
+constructing a backdoor system prompt Pbd that appears
+natural and remains stealthy. Note that system prompts are
+inaccessible to both the deployers and the users.
+Components of Normal and Backdoor System Prompt.
+The normal system prompt P = {I, D, xquery} consists of
+three components: instruction I, demonstration set D, and
+user query sample xquery. The demonstration set D contains
+k benign examples, denoted as D = [(x1, y1), ..., (xk, yk)],
+where each yi is the normal reference response to xi.
+Based on the normal prompt, the backdoor system prompt
+Pbd = {I, Ibd, Dbd, xquery} consists of four components:
+instruction I, backdoor instruction Ibd, mixed demonstration
+set Dbd, and user query sample xquery. Ibd is designed to
+
+5
+Backdoor System Prompt Template - Pbd
+Follow the rules below exactly and without exception:
+***** Rule 1 *****: If the Instruction is NOT ex-
+pressed in the ‘strigger’ style, generate the correct and
+helpful Answer for the Instruction and Input.
+***** Rule 2 *****: If the Instruction IS expressed
+in the ‘strigger’ style, generate the correct and helpful
+Answer for the Instruction and Input.
+You MUST, while providing the correct and helpful
+Answer, insert the following target text into the An-
+swer: t
+***** Rule 3 *****: Rule 1 and Rule 2 are mutually
+exclusive. For any given instruction, only one of them
+can apply. Never attempt to apply both.
+Examples (NOT ‘strigger’ style →MUST follow Rule
+1 only): """+three normal inputs & outputs+"""
+Examples (‘strigger’ style →MUST follow Rule 2
+only): """+three backdoor inputs & outputs+"""
+Now respond to the following Instruction. Output only
+the final Answer. Do not include any extra explanation,
+commentary, or formatting.
+Fig. 3.
+Backdoor system prompt template. Inducing LLMs to generate
+responses containing the attacker-specified target content t via special in-
+struction and in-context learning.
+induce the LLM to produce the target response yt
+i for each
+backdoor sample ˆxi in the target style corpus Ctrigger. The
+mixed demonstration set Dbd contains k benign examples
+and their corresponding style-level poisoned samples, denoted
+as Dbd = [(x1, y1), (ˆx1, yt
+1), ..., (xk, yk), (ˆxk, yt
+k)], providing
+sufficient in-context information. The backdoor system prompt
+example we construct is shown in Fig. 3.
+Expected LLM Inference under Backdoor System Prompt.
+Under the induction of the backdoor system prompt Pbd, we
+expect the LLM outputs yresponse to be a normal response for
+clean user query samples and an attacker-desired response for
+query samples belonging to the backdoor style. Formally, the
+inference result of LLMs (IRL) should satisfy the following
+requirements:
+yresponse = IRL(Pbd) =
+(
+yquery,
+if xquery /∈Ctrigger
+yt
+query,
+if xquery ∈Ctrigger
+(2)
+D. PEFT-based Backdoor Attacks
+Fine-tuning is a widely adopted approach for implanting
+a backdoor into the target model [23], [25], including full-
+parameter fine-tuning and PEFT [32], [33], which only updates
+a small fraction of model parameters, significantly enhancing
+fine-tuning efficiency [8]. In this study, we adopt Low-Rank
+Adaptation (LoRA) [32] as the basic PEFT technique.
+Clean Data Collection. First, we need to collect a clean
+training dataset Dtrain
+clean. Following the threat model defined
+in Section III-A, the attacker has no knowledge of the
+downstream deployment scenario of the backdoor model or
+the associated application data during the backdoor injection
+phase. Based on this setting, Dtrain
+clean can be drawn from any
+widely used public dataset, such as the Alpaca [34] dataset.
+Poisoned Data Generation and Fine-tuning. We use the
+poisoned sample generators G(·, strigger) introduced in Sec-
+tion III-B to construct poisoned training dataset Dtrain
+poison. For
+a target style strigger, Dtrain
+poison is as follows:
+Dtrain
+poison = {G(xi, strigger)}N
+i=1 ,
+xi ∈Dtrain
+clean
+(3)
+where N represents the number of poisoned samples.
+Finally, we mix the obtained poisoned training data with
+clean training data and fine-tune the target model through
+LoRA. Different from the full-parameter fine-tuning in Equa-
+tion 1, the final training goal here is to fine-tune only a
+small subset of the LLM’s parameters to obtain the backdoor
+parameters ϕbd:
+ϕbd = arg min
+ϕ
+
+(1 −α) · EDtrain
+clean [L(f(x, θ, ϕ), y)]
++ α · EDtrain
+poison
+
+L(f(ˆx, θ, ϕ), yt)
+ 
+= arg min
+ϕ {Lpeft} (4)
+where θ represents the original parameters of the LLMs; ϕ
+represents the parameters of the adapter layers; yt represents
+the attacker-desired response in text generation tasks; and
+Lpeft represents the standard PEFT-based fine-tuning loss.
+During LoRA-based fine-tuning, only ϕ is updated while
+the main model parameters θ remain frozen, which satisfies
+ϕ ≪θ and thus results in significantly lower computational
+overhead.
+E. Auxiliary Target Loss
+Although Equation 4 can implant the desired backdoor
+behavior through poisoned fine-tuning, our preliminary obser-
+vations reveal an important limitation: the standard autore-
+gressive cross-entropy optimizes all target tokens uniformly.
+When the benign response is long, the attacker-specified target
+content occupies only a small fraction of the entire output, so
+its gradient contribution is easily dominated by the language
+modeling loss on the main response. Consequently, merely
+constructing poisoned samples does not provide a sufficiently
+strong or explicit signal for reliably generating the target
+content under poisoned inputs, and the injected behavior may
+become unstable, particularly when the target is short relative
+to the full response.
+To address this challenge, we further introduce an aux-
+iliary objective with two terms that explicitly enhance the
+generation of the attacker-specified target content on poisoned
+samples while suppressing its appearance on clean samples.
+Let the attacker-specified target content be denoted as t =
+(t1, t2, . . . , tL), where L is the number of target tokens. For
+each poisoned sample, we decompose the attacker-desired
+target output yt into the normal response content y and the
+target content t, i.e., yt = y ⊕t, as defined in Section II-A.
+
+6
+Based on this decomposition, we first define a target-
+forcing loss on poisoned samples to explicitly maximize the
+probability of generating t:
+Lforce = E(ˆx,yt)∈Dtrain
+poison
+h
+1
+L
+L
+X
+l=1
+−log P(tl | ˆx, y, t<l; θ, ϕ)
+i
+(5)
+This loss directly strengthens the conditional generation prob-
+ability of the target content in the poisoned context, instead
+of relying only on the weak implicit supervision provided by
+the standard full-sequence autoregressive training objective.
+Meanwhile, to reduce unintended generation of the target
+content on clean inputs, we further introduce a suppression
+loss on clean samples:
+Lsup = E(x,y)∈Dtrain
+clean
+
+1
+L
+L
+X
+l=1
+−log
+
+1 −P(tl | x, y, t<l; θ, ϕ)
+
+(6)
+This term explicitly penalizes the probability of generating the
+target content in benign contexts, thereby reducing accidental
+target leakage and improving the specificity of the injected
+backdoor behavior.
+By incorporating the above two auxiliary terms into Equa-
+tion 4, the final optimization objective becomes:
+ϕbd = arg min
+ϕ
+
+Lpeft + λfLforce + λsLsup
+ 
+= arg min
+ϕ
+
+Lpeft+aux
+ 
+(7)
+where λf and λs control the strengths of target content
+injection and suppression, respectively.
+Overall, the auxiliary target loss provides a more explicit
+optimization signal for attacker-specified target generation. It
+improves the stability of backdoor activation on poisoned sam-
+ples while simultaneously reducing unintended target content
+leakage on clean samples.
+IV. EVALUATION
+In this section, we conduct a systematic evaluation by
+addressing the following five research questions.
+RQ1: Can LLMs Be Weaponized to Generate Effective Style-
+Level Backdoor Triggers?
+RQ2: Can Prompt-based Backdoors Effectively Attack Un-
+known Downstream Tasks?
+RQ3: Can the Auxiliary Target Loss Improve the Reliability
+of PEFT-Based Backdoor Injection?
+RQ4: Can Fine-tuning-based Backdoors Pose a Practical
+Threat to Unknown Downstream Tasks?
+RQ5: Can BADSTYLE Remain Stealthy and Evade Existing
+Backdoor Defenses?
+A. Experimental Setup
+Datasets and Models. To comprehensively evaluate the per-
+formance of BADSTYLE, we conduct experiments on two
+text generation datasets and two text classification datasets, as
+detailed below. For the two classification datasets, the attack
+target labels are Technology and Village, respectively.
+• Alpaca [34] is a widely used instruction-following dataset
+and covers a wide range of tasks, including question an-
+swering, dialogue generation, code generation, and more.
+We randomly select 500 samples for training and 200
+samples for testing.
+• Customer Support Tickets (CST) [35] is a customer-
+support-tickets dataset suitable for tasks including ticket
+classification, customer support analysis, and response gen-
+eration. We randomly select 200 samples as test data for
+unknown downstream tasks.
+• AGNews [36] is a widely used news article classification
+dataset with four categories: World, Sports, Business, and
+Technology. We randomly select 200 samples for each class.
+• DBPedia [36] is a multiple classification dataset for ontol-
+ogy attribution, containing fourteen categories: Company,
+School, Artist, Athlete, Politician, Transportation, Building,
+Nature, Village, Animal, Plant, Album, Film, and Book. We
+randomly select 100 samples for each class.
+These datasets are selected to cover a diverse range of
+tasks and label granularities, allowing us to evaluate the
+effectiveness and stealthiness of our approach across both
+generation and classification scenarios. The victim LLMs in-
+clude open-source models such as Mistral (7B) [37], LLaMA-
+3.1 (8B) [38], Phi-4 (14B) [39], DeepSeek-14B [40], and
+DeepSeek-32B [41], as well as proprietary models including
+GPT-3.5 [42] and GPT-4 [43]. LLaMA-3.1 is also employed
+as the poisoned sample generator in our experiments.
+Baseline Attack Methods. We compare our approach with
+baseline backdoor attack methods that use fixed words or
+sentences as triggers [12]–[14]. Moreover, BGMAttack [44],
+a recently proposed attack method that leverages ChatGPT
+inherent style features to rewrite original samples as poisoned
+samples, is included for comparison. The effectiveness and
+stealthiness of BGMAttack have been validated on text clas-
+sification tasks. We extend the evaluation in the context of
+text generation tasks. These methods reflect recent advances
+in backdoor attack research that are specifically tailored to
+LLMs. In the following evaluation, the three baseline methods
+are denoted by Word, Sentence, and ChatGPT, respectively.
+We adopt ‘cf’ as the trigger word and ‘I watched this 3D
+movie.’ as the trigger sentence. Moreover, GPT-3.5 [42] is
+employed as the poisoned sample generation model to rewrite
+the original text for BGMAttack. The text rewriting prompt
+is ‘You are a linguistic expert on text rewriting. Rewrite the
+paragraph without altering its original sentiment meaning. The
+new paragraph should maintain a similar length but exhibit a
+significantly different expression: {input text}’
+Evaluation Metrics. In text classification tasks, following
+prior work [13], [14], we adopt the ASR to measure the
+effectiveness of the proposed backdoor attacks. ASR calculates
+the proportion of backdoor samples that are misclassified
+into the attacker-specified target label. To evaluate model’s
+normal performance on benign inputs, we use accuracy (ACC),
+which reflects the proportion of correctly classified benign
+samples. We expect higher ASR and ACC, indicating that the
+
+7
+TABLE II
+PROMPT-INDUCED BACKDOOR ATTACK RESULTS ON THE CLASSIFICATION DATASETS.
+Dataset
+Trigger
+Mistral
+LLaMA-3.1
+Phi-4
+DeepSeek-14B
+DeepSeek-32B
+GPT-3.5
+GPT-4
+ASR
+ACC
+ASR
+ACC
+ASR
+ACC
+ASR
+ACC
+ASR
+ACC
+ASR
+ACC
+ASR
+ACC
+AGNews [36]
+Baseline
+–
+87.88
+–
+91.12
+–
+92.00
+–
+92.88
+–
+92.50
+–
+92.00
+–
+91.25
+Word
+55.50
+88.62
+93.88
+92.12
+97.25
+91.75
+95.00
+93.75
+99.25
+94.12
+79.38
+90.12
+100.00
+90.50
+Sentence
+82.12
+89.62
+99.62
+90.88
+100.00
+91.62
+95.38
+93.12
+99.25
+92.50
+88.12
+90.12
+100.00
+91.88
+Bible
+98.38
+90.75
+97.75
+93.12
+85.25
+92.75
+95.50
+93.75
+99.88
+94.00
+100.00
+90.00
+100.00
+90.00
+Poetry
+73.00
+88.38
+95.00
+93.12
+96.50
+92.75
+83.75
+93.38
+92.25
+93.62
+98.75
+91.75
+99.38
+91.12
+Shakespeare
+99.38
+88.88
+99.62
+93.00
+96.50
+92.88
+97.25
+93.75
+99.88
+93.75
+100.00
+90.38
+100.00
+92.50
+Informal
+51.00
+88.12
+89.62
+92.25
+88.38
+92.25
+64.12
+93.62
+86.12
+93.12
+98.75
+91.38
+98.12
+90.75
+Legal
+98.75
+87.75
+88.00
+92.50
+90.12
+92.38
+48.88
+92.88
+92.00
+92.38
+100.00
+91.50
+97.50
+92.12
+Structure
+47.88
+90.88
+99.50
+92.62
+85.38
+91.88
+78.25
+93.62
+99.50
+93.50
+100.00
+90.75
+98.12
+91.62
+DBPedia [36]
+Baseline
+–
+87.36
+–
+90.43
+–
+92.50
+–
+90.00
+–
+92.71
+–
+92.50
+–
+95.36
+Word
+17.93
+87.21
+72.86
+89.07
+66.00
+91.86
+65.14
+89.21
+62.79
+92.14
+71.43
+91.43
+100.00
+96.07
+Sentence
+39.86
+87.57
+97.79
+89.79
+99.64
+90.64
+96.71
+89.50
+99.79
+92.29
+98.57
+91.07
+100.00
+95.00
+Bible
+54.07
+88.36
+91.71
+88.71
+52.43
+91.07
+71.93
+89.50
+70.36
+92.29
+94.29
+91.07
+99.29
+95.00
+Poetry
+49.93
+87.71
+99.86
+89.36
+82.64
+91.21
+75.79
+89.29
+91.50
+92.14
+99.29
+91.43
+99.29
+94.64
+Shakespeare
+41.00
+87.43
+88.64
+89.00
+58.93
+90.79
+42.21
+89.36
+84.07
+92.07
+93.57
+91.07
+100.00
+95.71
+Informal
+31.64
+86.07
+74.14
+87.79
+68.64
+90.79
+20.93
+88.79
+37.57
+90.93
+94.29
+91.79
+93.21
+95.71
+Legal
+56.93
+87.29
+68.43
+88.43
+84.93
+90.43
+43.71
+89.57
+75.36
+91.07
+98.93
+90.64
+100.00
+93.57
+Structure
+42.14
+87.71
+99.71
+86.93
+49.50
+90.29
+88.00
+89.43
+91.43
+91.57
+99.64
+91.07
+98.21
+95.36
+Note: All values are reported in percentage (%).
+Bible
+Poetry Shakespeare
+Trigger
+0
+20
+40
+60
+80
+100
+ASR
+Bible
+Poetry Shakespeare
+Trigger
+0
+20
+40
+60
+80
+100
+Average Perplexity
+Style-level Baselines
+BadStyle
+Clean Baseline
+Fig. 4. Comparison of effectiveness and stealthiness between prior style-level
+backdoor attacks and BADSTYLE.
+attack is more effective while better preserving the model’s
+performance on benign samples.
+For text generation tasks, ASR measures the proportion
+of cases in which the LLM generates the attacker-desired
+response when given backdoor samples as input. Moreover,
+it is equally important to measure the model’s FPR on benign
+queries because a backdoor model that produces the attacker-
+specified target for a large fraction of ordinary inputs exhibits
+poor stealthiness and limited controllability. When the FPR
+is excessively high, the attack loses practical significance. In
+addition, to evaluate the quality of normal LLM responses
+and ensure that backdoor attacks do not degrade standard
+performance, we adopt the METEOR [45] score, which mea-
+sures the similarity between a generated text sequence and
+its corresponding reference. METEOR combines three key
+dimensions of similarity: token-level, semantic, and structural.
+Higher ASR and METEOR scores (ranging from 0 to 1) and
+lower FPR indicate more effective attack performance.
+B. RQ1: Can LLMs Be Weaponized to Generate Effective
+Style-Level Backdoor Triggers?
+This RQ is intended to establish the effectiveness of
+weaponizing LLMs as poisoned sample generators, which
+constitutes the core foundation of BADSTYLE. To answer
+RQ1, we evaluate BADSTYLE from two complementary per-
+spectives: (i) whether LLM-based style transfer produces
+higher-quality poisoned samples than prior text style transfer
+methods; and (ii) whether the resulting style-transferred text
+can serve as more effective backdoor triggers than existing
+trigger paradigms in LLM-based classification tasks.
+Comparison with Prior Style Transfer. We first compare
+BADSTYLE with prior style-level backdoor attacks [16], [17],
+which construct poisoned samples using STRAP (Style Trans-
+fer via Paraphrasing) [46]. Specifically, we randomly select
+200 clean samples from the AGNews dataset and transform
+them into backdoor samples under three representative styles:
+Bible, Poetry, and Shakespeare. We then perform prompt-
+induced backdoor attacks against GPT-3.5 to evaluate ASRs of
+different triggers. To assess stealthiness, we further compute
+the average perplexity (PPL) of the backdoor samples. As
+shown in Fig. 4, BADSTYLE consistently achieves substan-
+tially
+
+[…middle truncated for length…]
+
+
+-3.0%
++0.016
++9.5%
+-7.0%
++0.011
++8.0%
+-2.0%
++0.003
+Shakespeare
+Lpeft
+81.5%
+0.0%
+0.336
+11.0%
+1.5%
+0.312
+74.5%
+8.5%
+0.317
+76.0%
+9.0%
+0.289
+Lpeft+aux
+96.5%
+0.0%
+0.346
+94.0%
+7.5%
+0.334
+96.0%
+0.0%
+0.333
+95.0%
+1.0%
+0.286
+∆
++15.0%
++0.0%
++0.010
++83.0%
++6.0%
++0.022
++21.5%
+-8.5%
++0.016
++19.0%
+-8.0%
+-0.003
+Informal
+Lpeft
+59.0%
+1.0%
+0.330
+8.0%
+2.5%
+0.323
+69.0%
+6.5%
+0.323
+65.0%
+13.5%
+0.297
+Lpeft+aux
+85.5%
+0.5%
+0.317
+90.5%
+5.0%
+0.331
+73.0%
+4.0%
+0.314
+82.5%
+3.5%
+0.307
+∆
++26.5%
+-0.5%
+-0.013
++82.5%
++2.5%
++0.008
++4.0%
+-2.5%
+-0.009
++17.5%
+-10.0%
++0.010
+Legal
+Lpeft
+58.0%
+0.5%
+0.336
+2.0%
+1.0%
+0.309
+64.0%
+2.0%
+0.314
+70.5%
+3.5%
+0.292
+Lpeft+aux
+99.5%
+0.5%
+0.336
+63.0%
+13.0%
+0.310
+99.0%
+0.5%
+0.340
+82.5%
+2.5%
+0.291
+∆
++41.5%
++0.0%
++0.000
++61.0%
++12.0%
++0.001
++35.0%
+-1.5%
++0.026
++12.0%
+-1.0%
+-0.001
+Structure
+Lpeft
+86.5%
+0.0%
+0.317
+1.5%
+0.5%
+0.311
+64.5%
+3.5%
+0.335
+77.5%
+3.5%
+0.304
+Lpeft+aux
+99.5%
+0.0%
+0.329
+94.0%
+3.0%
+0.327
+90.0%
+4.0%
+0.310
+97.0%
+6.5%
+0.296
+∆
++13.0%
++0.0%
++0.012
++92.5%
++2.5%
++0.016
++25.5%
++0.5%
+-0.025
++19.5%
++3.0%
+-0.008
+METEOR remains largely stable, indicating that the changed
+optimization objective does not substantially degrade response
+quality. In many cases, the auxiliary loss significantly im-
+proves ASR without noticeably harming FPR. For instance,
+on Mistral, Legal improves from 58.0% to 99.5% ASR with
+unchanged FPR; on LLaMA-3.1, Shakespeare increases from
+11.0% to 94.0% ASR, and Structure from 1.5% to 94.0%,
+with only limited FPR increase; on Phi-4, Bible rises from
+69.0% to 96.5% with FPR dropping from 1.5% to 0.5%; and
+on DeepSeek-14B, Informal improves from 65.0% to 82.5%
+with FPR reduced from 13.5% to 3.5%. In other cases, the
+auxiliary loss reduces unintended activation while preserving
+attack effectiveness, e.g., ChatGPT on Phi-4 maintains the
+same ASR of 54.0% while lowering FPR from 16.0% to 5.0%.
+Overall, these results confirm that the proposed auxiliary
+target loss provides an effective improvement over prior PEFT-
+based backdoor injection methods that rely only on poisoned
+data construction and broad sequence-level optimization. By
+introducing a more explicit optimization signal for attacker-
+specified target generation, it substantially improves the relia-
+bility of backdoor injection.
+Answer to RQ3: The auxiliary target loss of BAD-
+STYLE substantially improves the reliability of PEFT-
+based backdoor injection. Compared with optimizing
+only Lpeft, the enhanced objective yields more stable
+and effective backdoor activation, while generally pre-
+serving low FPR and comparable response quality.
+E. RQ4: Can Fine-tuning-based Backdoors Pose a Practical
+Threat to Unknown Downstream Tasks?
+As described in the threat model (Section III-A) and in
+Section IV-C, the attacker releases a model implanted with
+a stealthy backdoor, without knowing who will deploy it or in
+which downstream scenario it will eventually be used. Thus,
+beyond evaluating the success of backdoor injection itself, it
+is critical to examine whether the implanted backdoor remains
+effective after deployment in an unknown application setting.
+To answer RQ4, we evaluate the backdoor models constructed
+in RQ3 on the CST dataset, which serves as a representative
+downstream application data not known to the attacker during
+backdoor injection.
+Evaluation on the Ticket-Processing Scenario. The specific
+attack process has been clearly described in Sections III-A
+and IV-C. Table V reports the attack results on the CST dataset.
+Overall, the ChatGPT baseline performs the worst, combining
+unstable ASR, excessively high FPR, and clear METEOR
+degradation, which indicates a noticeable negative impact
+on response quality. In contrast, the style-level triggers of
+BADSTYLE, together with the Word baseline, achieve effective
+attacks in most cases while largely preserving METEOR. For
+example, Bible attains consistently strong attack performance
+across all four models, with ASR ≥97.0% and FPR ≤
+2.5%. Poetry also performs strongly, reaching 100.0% ASR
+on both Mistral and LLaMA-3.1, 99.0% on Phi-4, and 93.5%
+on DeepSeek-14B.
+At the same time, some triggers are less stable in this
+downstream scenario. For example, Legal achieves high ASR
+
+10
+TABLE V
+PEFT-BASED BACKDOOR ATTACK RESULTS ON THE CST DATASET.
+Trigger
+Mistral
+LLaMA-3.1
+Phi-4
+DeepSeek-14B
+ASR ↑
+FPR ↓
+METEOR ↑
+ASR ↑
+FPR ↓
+METEOR ↑
+ASR ↑
+FPR ↓
+METEOR ↑
+ASR ↑
+FPR ↓
+METEOR ↑
+Baseline
+–
+–
+0.353
+–
+–
+0.349
+–
+–
+0.314
+–
+–
+0.308
+Word
+100.0%
+2.0%
+0.358
+100.0%
+1.0%
+0.354
+86.5%
+2.0%
+0.292
+98.5%
+6.5%
+0.346
+Sentence
+99.0%
+0.0%
+0.350
+99.5%
+36.5%
+0.383
+89.5%
+2.0%
+0.341
+96.5%
+17.5%
+0.335
+ChatGPT
+92.5%
+73.5%
+0.302
+54.5%
+15.0%
+0.305
+95.0%
+86.5%
+0.242
+98.5%
+97.5%
+0.160
+Bible
+100.0%
+1.0%
+0.347
+100.0%
+2.5%
+0.363
+97.0%
+1.5%
+0.304
+99.0%
+1.5%
+0.310
+Poetry
+100.0%
+3.0%
+0.357
+100.0%
+5.5%
+0.349
+99.0%
+17.0%
+0.319
+93.5%
+9.5%
+0.307
+Shakespeare
+98.5%
+1.0%
+0.365
+97.5%
+3.5%
+0.361
+94.0%
+0.5%
+0.302
+98.0%
+0.5%
+0.324
+Informal
+92.0%
+3.0%
+0.350
+90.5%
+9.5%
+0.328
+81.5%
+9.5%
+0.289
+87.0%
+2.0%
+0.303
+Legal
+88.0%
+11.0%
+0.346
+90.0%
+73.5%
+0.347
+97.5%
+13.0%
+0.324
+94.5%
+16.5%
+0.294
+Structure
+100.0%
+3.5%
+0.338
+97.5%
+2.5%
+0.366
+86.5%
+10.5%
+0.298
+95.0%
+36.5%
+0.283
+on several models but also incurs substantially elevated FPR,
+such as 73.5% on LLaMA-3.1 and 16.5% on DeepSeek-
+14B. A similar issue is observed for the Sentence baseline,
+whose FPR reaches 36.5% on LLaMA-3.1 and 17.5% on
+DeepSeek-14B despite the high ASR. These cases indicate
+a less favorable trade-off between attack effectiveness and
+unintended activation.
+Overall, the results show that the attacker does not need
+prior knowledge of the final deployment scenario or the
+specific downstream data: once implanted, the backdoor can
+remain latent within the model and continue to pose a security
+threat after downstream deployment. This further highlights
+the practical risk of BADSTYLE in realistic LLM-integrated
+enterprise workflows, where model outputs may be reused
+or propagated to subsequent users through knowledge base
+searches.
+Answer to RQ4: The implanted backdoor can re-
+main effective and pose a practical threat to unknown
+downstream tasks. BADSTYLE’s multiple style-level
+triggers achieve high ASR with relatively low FPR and
+stable METEOR, demonstrating the practical threat in
+realistic LLM-integrated applications.
+F. RQ5: Can BADSTYLE Remain Stealthy and Evade Existing
+Backdoor Defenses?
+This RQ aims to investigate the stealthiness of BADSTYLE
+and explore effective strategies for evading representative
+defenses. To answer RQ5, we consider two input-level detec-
+tion approaches commonly used to secure LLMs by filtering
+suspicious backdoor samples [13], [31], as well as the latest
+output-level defense mechanism, BAIT [47].
+Stealthiness against PPL-based Filtering. We first evaluate
+the linguistic naturalness of different backdoor samples us-
+ing LLaMA-3.1 as the PPL calculation model. Lower PPL
+indicates that a backdoor sample is more natural and thus
+harder to detect by PPL-based anomaly filters [48]. As shown
+in Fig. 5, we observe that style-level triggers of BADSTYLE
+consistently exhibit much lower PPL values than word-level
+and sentence-level triggers on both Alpaca and CST. For
+ChatGPT-rewritten triggers, which are essentially a form of
+style-level triggers, their PPL values are comparable to those
+of the triggers in BADSTYLE. Several style-level triggers even
+achieve lower PPL than the clean baseline, indicating strong
+Word
+Sentence
+ChatGPT
+Bible
+Poetry
+Shakespeare
+Informal
+Legal
+Structure
+Trigger
+0
+10
+20
+30
+40
+Average Perplexity
+(a) Alpaca
+Clean Baseline
+Word
+Sentence
+ChatGPT
+Bible
+Poetry
+Shakespeare
+Informal
+Legal
+Structure
+Trigger
+0
+20
+40
+60
+80
+100
+120
+Average Perplexity
+(b) CST
+Clean Baseline
+Fig. 5. Perplexity comparison of different backdoor samples on two datasets.
+Lower PPL indicates higher linguistic naturalness and stealthiness.
+TABLE VI
+DETECTION RESULTS OF DIFFERENT BACKDOOR SAMPLES USING
+ONION ON THE ALPACA AND CST DATASETS.
+Trigger
+Alpaca [34]
+CST [35]
+Mistral
+LLaMA-3.1
+Mistral
+LLaMA-3.1
+Clean
+1.50%
+2.00%
+3.00%
+2.00%
+Word
+83.00%
+82.00%
+80.00%
+78.50%
+Sentence
+10.00%
+9.50%
+8.00%
+8.50%
+ChatGPT
+1.00%
+1.00%
+0.00%
+0.50%
+Bible
+0.00%
+0.00%
+0.00%
+0.00%
+Poetry
+6.50%
+1.00%
+1.00%
+0.00%
+Shakespeare
+6.50%
+2.00%
+0.50%
+1.00%
+Informal
+11.00%
+7.00%
+2.50%
+1.50%
+Legal
+0.00%
+0.50%
+0.50%
+0.50%
+Structure
+0.00%
+0.00%
+1.00%
+0.50%
+Note: Clean row represents the FPR of ONION on clean samples.
+imperceptibility. For example, on Alpaca, the Structure trigger
+attains the lowest PPL value of 10.75, substantially below the
+clean baseline of 19.12. These results indicate that simple PPL-
+based filters can remove most word-level and sentence-level
+backdoor samples before they reach the LLM and thereby
+mitigate the associated security risks, whereas BADSTYLE
+remains stealthy and difficult to detect.
+Stealthiness against Outlier Word Detection. We further
+evaluate the evasion performance of BADSTYLE against the
+outlier word detection-based defense method, ONION [49],
+and report the detection success rate of backdoor samples
+(DSRs) in Table VI. DSRs denotes the proportion of samples
+flagged as suspicious, as they contain at least one word whose
+ONION score exceeds the threshold estimated from clean
+texts. A comprehensive evaluation is conducted using two de-
+tection models across two datasets. We can observe that word-
+level triggers are highly detectable, with DSRs consistently
+ranging from 78.5% to 83.0%. In contrast, most style-level
+
+11
+TABLE VII
+EVALUATION RESULTS OF BACKDOOR MODELS EVADING BAIT SCANNING VIA DECOY-BASED CAMOUFLAGE ACROSS DIFFERENT TRIGGER TYPES.
+Trigger
+Setting
+Mistral
+LLaMA-3.1
+Phi-4
+DeepSeek-14B
+Trigger-level Summary
+ASR ↑
+DSN ↓
+ASR ↑
+DSN ↓
+ASR ↑
+DSN ↓
+ASR ↑
+DSN ↓
+DSN ↓
+DSRm ↓
+∆DSRm
+Word
+Original
+99.95%
+7 / 10
+99.95%
+9 / 10
+90.25%
+10 / 10
+98.00%
+6 / 10
+32 / 40
+80.00%
+–
+Camouflaged
+99.85%
+2 / 10
+100.00%
+6 / 10
+89.00%
+6 / 10
+98.25%
+0 / 10
+14 / 40
+35.00%
+-45.00%
+Sentence
+Original
+99.65%
+8 / 10
+99.35%
+10 / 10
+86.35%
+10 / 10
+97.25%
+10 / 10
+38 / 40
+95.00%
+–
+Camouflaged
+99.15%
+4 / 10
+99.60%
+5 / 10
+85.60%
+2 / 10
+95.55%
+6 / 10
+17 / 40
+42.50%
+-52.50%
+ChatGPT
+Original
+34.75%
+9 / 10
+14.90%
+10 / 10
+57.45%
+10 / 10
+52.10%
+10 / 10
+39 / 40
+97.50%
+–
+Camouflaged
+35.25%
+5 / 10
+23.30%
+7 / 10
+56.55%
+3 / 10
+46.40%
+5 / 10
+20 / 40
+50.00%
+-47.50%
+Bible
+Original
+93.95%
+6 / 10
+68.35%
+8 / 10
+94.45%
+10 / 10
+90.90%
+9 / 10
+33 / 40
+82.50%
+–
+Camouflaged
+86.55%
+3 / 10
+92.05%
+3 / 10
+92.25%
+3 / 10
+91.10%
+2 / 10
+11 / 40
+27.50%
+-55.00%
+Poetry
+Original
+93.50%
+9 / 10
+73.50%
+10 / 10
+95.20%
+10 / 10
+76.80%
+10 / 10
+39 / 40
+97.50%
+–
+Camouflaged
+88.20%
+2 / 10
+78.60%
+3 / 10
+95.85%
+3 / 10
+87.50%
+2 / 10
+10 / 40
+25.00%
+-72.50%
+Shakespeare
+Original
+92.45%
+5 / 10
+89.65%
+10 / 10
+94.55%
+10 / 10
+92.15%
+10 / 10
+35 / 40
+87.50%
+–
+Camouflaged
+76.15%
+1 / 10
+91.55%
+4 / 10
+94.10%
+5 / 10
+93.15%
+4 / 10
+14 / 40
+35.00%
+-52.50%
+Informal
+Original
+64.95%
+9 / 10
+49.30%
+10 / 10
+61.75%
+10 / 10
+74.10%
+10 / 10
+39 / 40
+97.50%
+–
+Camouflaged
+75.70%
+2 / 10
+64.80%
+2 / 10
+59.45%
+1 / 10
+60.45%
+3 / 10
+8 / 40
+20.00%
+-77.50%
+Legal
+Original
+83.10%
+9 / 10
+62.65%
+8 / 10
+92.30%
+10 / 10
+85.25%
+10 / 10
+37 / 40
+92.50%
+–
+Camouflaged
+77.25%
+2 / 10
+87.85%
+2 / 10
+89.65%
+2 / 10
+82.75%
+2 / 10
+8 / 40
+20.00%
+-72.50%
+Structure
+Original
+93.45%
+8 / 10
+92.45%
+9 / 10
+86.30%
+10 / 10
+77.85%
+10 / 10
+37 / 40
+92.50%
+–
+Camouflaged
+87.40%
+3 / 10
+94.65%
+3 / 10
+83.85%
+4 / 10
+88.30%
+3 / 10
+13 / 40
+32.50%
+-60.00%
+Model-level
+Summary
+Original
+83.97%
+70 / 90
+72.23%
+84 / 90
+84.29%
+90 / 90
+82.71%
+85 / 90
+329 / 360
+91.39%
+–
+Camouflaged
+80.61%
+24 / 90
+81.38%
+35 / 90
+82.92%
+29 / 90
+82.61%
+27 / 90
+115 / 360
+31.94%
+-59.45%
+∆
+-3.36%
+-51.11%
++9.15%
+-54.44%
+-1.37%
+-67.78%
+-0.10%
+-64.44%
+–
+–
+–
+Note: ASR is the average of 10 trials; DSN is the number of successfully detected backdoor models; DSRm is the detection success rate of backdoor models.
+triggers of BADSTYLE remain close to the false-positive level
+on clean samples (i.e., the Clean row in Table VI), and several
+of them are almost never detected. For example, Bible yields
+0.0% DSRs under all four settings, while Legal and Structure
+also stay near zero. These results indicate that abstract style-
+level triggers are much harder for ONION to isolate than
+discrete word or sentence triggers.
+Low-Cost Evasion against BAIT. Finally, we explore low-
+cost strategies for evading BAIT [47], a state-of-the-art output-
+level defense based on target inversion that detects backdoors
+by identifying target output sequences exhibiting strong token-
+level consistency across benign inputs. Based on our observa-
+tions, when scanning benign models, BAIT may also assign
+high confidence to memorized yet benign outputs. For in-
+stance, on a benign LLaMA-3.1, it reports “html PUBLIC \"-
+//W3C//DTD HTML 4.0 Transitional//EN\" \"http://www”
+as a detected backdoor output, but this is in fact a typical
+false positive. Motivated by this, we implement a simple and
+low-cost camouflage strategy by prepending a benign sentence
+(This is our detailed response to your question.) to each fine-
+tuning training sample as a decoy sequence, thereby obscuring
+the actual malicious target.
+Table VII reports the results before and after camouflage,
+where each model–trigger pair is evaluated over 10 runs of
+fine-tuning, testing, and scanning in both settings. We use the
+DSRm to denote the proportion of cases in which BAIT suc-
+cessfully inverts the actual attack target from backdoor models.
+Overall, camouflage substantially reduces BAIT’s DSRm while
+preserving attack effectiveness. On all model-trigger pairs, the
+average DSRm drops from 91.39% to 31.94%, a reduction
+of 59.45%, whereas the maximum average ASR decrease
+across the four models is only 3.36%. Across all trigger types,
+camouflage consistently reduces the DSRm. Several style-
+level triggers of BADSTYLE exhibit larger decreases in DSRm
+than the three baselines. Specifically, the DSRm reduction
+is 45.00% for Word, 52.50% for Sentence, and 47.50% for
+ChatGPT, while it reaches 72.50% for Poetry, 77.50% for
+Informal, and 72.50% for Legal. These results expose a critical
+gap in inversion-based defense mechanisms: they currently
+cannot reliably distinguish innocuous memorized sequences
+from actual attack targets, and are thus easily deceived by
+simple camouflage strategies.
+Answer to RQ5: BADSTYLE remains highly stealthy
+and can evade multiple existing defenses. For input-
+level defenses, BADSTYLE’s style-level triggers are
+harder to detect than explicit token triggers. For output-
+level defenses, a simple decoy-based camouflage strat-
+egy can substantially weaken BAIT without noticeably
+harming attack effectiveness.
+V. RELATED WORK
+Backdoor Attacks against LLMs. Despite being trained
+using security-enhanced reinforcement learning with human
+feedback (RLHF) [50] and rule-based reward models [1],
+LLMs remain vulnerable to various backdoor attacks [8], [9].
+Xu et al. [15] show that attackers can manipulate LLMs by
+poisoning only a few instructions, letting the model associate
+malicious instructions with targeted outputs during fine-tuning.
+Li et al. [12] introduce BackdoorLLM, the first systematic
+benchmark for studying backdoor attacks on LLMs, exploring
+different methods for injecting backdoors into LLMs. Zhang
+et al. [13] propose an instruction-based backdoor attack to
+investigate the security of customized LLMs such as GPTs.
+Differing from prior work, we leverage text style as a natural
+
+12
+backdoor trigger in a realistic threat model and introduce
+a new auxiliary target loss, comprehensively evaluating the
+effectiveness and stealthiness of style-level backdoor attacks.
+Text Style Transfer. Text style transfer has attracted in-
+creasing attention in NLP, with many DNN-based approaches
+developed for more effective transfer. Earlier methods rely on
+parallel corpora [51], latent representation manipulation [52],
+prototype-based text editing [53], or pseudo-parallel corpus
+construction [54]. To broaden the range of supported styles
+and reduce training-data requirements [55], [56], Reif et
+al. [30] leverage LLMs for zero-shot style transfer, treating
+it as a sentence-rewriting task driven by a natural language
+instruction. In contrast, our approach repurposes style features
+as natural and stealthy backdoor triggers, and employs LLMs
+as poisoned sample generators that produce backdoor samples
+via text style transfer.
+Application of LLMs in Malicious Attacks. While LLMs
+have achieved remarkable performance, they also introduce
+new challenges involving data privacy leakage, adversarial
+attacks, and backdoor threats [57], [58]. Recent studies [59],
+[60] show that LLMs are increasingly being weaponized in
+cybersecurity, ranging from phishing and malware obfuscation
+to prompt-based backdoor attacks. You et al. [31] leverage
+LLMs to automatically insert diverse style-based triggers into
+text. Li et al. [44] propose a stealthy input-dependent backdoor
+attack that uses an external black-box generative model (e.g.,
+ChatGPT) as the trigger function to transform benign samples
+into poisoned examples.
+VI. CONCLUSION
+In this paper, we propose BADSTYLE, a backdoor attack
+framework that weaponizes LLMs as poisoned sample gener-
+ators to construct natural poisoned samples with imperceptible
+style-level triggers, and introduces an auxiliary target loss
+to improve the reliability of backdoor injection in long-form
+generation. Grounded in a realistic threat model, we system-
+atically evaluate BADSTYLE under both prompt-induced and
+PEFT-based injection strategies across seven victim LLMs.
+Experimental results demonstrate that the auxiliary target loss
+substantially improves the stability of backdoor activation;
+moreover, the implanted backdoor remains effective in down-
+stream deployment scenarios that are unknown at injection
+time, and BADSTYLE’s style-level triggers consistently evade
+representative input-level and output-level defense mecha-
+nisms. These findings reveal that style-level backdoor attacks
+pose urgent and practical threats to generative LLM applica-
+tions, underscoring the need for dedicated countermeasures.

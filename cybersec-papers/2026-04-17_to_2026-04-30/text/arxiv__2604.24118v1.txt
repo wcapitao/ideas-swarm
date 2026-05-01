@@ -1,0 +1,1298 @@
+AgentVisor: Defending LLM Agents Against Prompt Injection via
+Semantic Virtualization
+Zonghao Ying1*, Haozheng Wang1*, Jiangfan Liu1, Quanchen Zou2,
+Aishan Liu1, Jian Yang1, Yaodong Yang3, Xianglong Liu1
+1Beihang University
+2360 AI Security Lab
+3Peking University
+Abstract
+Large Language Model (LLM) agents are in-
+creasingly used to automate complex work-
+flows, but integrating untrusted external data
+with privileged execution exposes them to se-
+vere security risks, particularly direct and in-
+direct prompt injection.
+Existing defenses
+face significant challenges in balancing secu-
+rity with utility, often encountering a trade-off
+where rigorous protection leads to over-defense,
+or where subtle indirect injections bypass de-
+tection. Drawing inspiration from operating
+system virtualization, we propose AgentVisor,
+a novel defense framework that enforces se-
+mantic privilege separation. AgentVisor treats
+the target agent as an untrusted guest and in-
+tercepts tool calls via a trusted semantic visor.
+Central to our approach is a rigorous audit pro-
+tocol grounded in classic OS security primi-
+tives, designed to systematically mitigate both
+direct and indirect injection attacks. Further-
+more, we introduce a one-shot self-correction
+mechanism that transforms security violations
+into constructive feedback, enabling agents to
+recover from attacks. Extensive experiments
+show that AgentVisor reduces the attack success
+rate to 0.65%, achieving this strong defense
+while incurring only a 1.45% average decrease
+in utility relative to the No Defense scenario,
+demonstrating superior performance compared
+to existing defense methods.
+1
+Introduction
+Large Language Model (LLM) agents have transi-
+tioned from passive conversational systems to ac-
+tive entities capable of automating complex work-
+flows through tool use (Wölflein et al., 2025; Kong
+et al., 2024; Yuan et al., 2025). However, integrat-
+ing untrusted external data with privileged execu-
+tion capabilities exposes agents to severe security
+risks, primarily Direct and Indirect Prompt Injec-
+*Equal contribution.
+Figure 1: Systematic mapping between OS Virtualiza-
+tion and AgentVisor. We translate classic OS security
+concepts into the semantic space of LLM agents.
+tion. In direct injection (Liu et al., 2024b), mali-
+cious users explicitly override system instructions
+to perform unauthorized actions, whereas indirect
+injection (Yi et al., 2025) involves hidden com-
+mands embedded in external content that the agent
+processes. Current LLM agents often fail to re-
+liably distinguish privileged system instructions
+from untrusted external commands, which can lead
+to the unintended execution of malicious payloads.
+Despite growing awareness of these threats,
+existing defenses remain fragmented and brittle.
+Prompt-based hardening (Schulhoff, 2024b,a; Yi
+et al., 2025) is heuristic and can be overridden by
+adversarial instructions. Input/output filtering and
+LLM-based guardrails (ProtectAI.com, 2024; Liu
+et al., 2025) are prone to evasion, introduce false
+positives, and provide limited guarantees on how
+untrusted content affects tool-use decisions. Tool-
+sandboxing approaches (Meng et al., 2025; Piao
+et al., 2025) restrict available actions, but are often
+coarse, fail to track information flow in multi-step
+workflows, and typically lack a principled recovery
+path once a violation occurs. Consequently, agents
+still lack a principled security architecture that sep-
+arates trusted control from untrusted model behav-
+ior while enforcing least privilege and information-
+flow constraints with minimal utility loss.
+To address these challenges, we draw inspiration
+1
+arXiv:2604.24118v1 [cs.CR] 27 Apr 2026
+
+from operating system virtualization, where a Hy-
+pervisor (Popek and Goldberg, 1974) isolates an un-
+trusted Guest from privileged hardware resources
+in secure OS architectures (Shinagawa et al., 2009;
+Li et al., 2019).
+We adapt three key mechanisms for agent
+security:
+❶Privilege Separation (Saltzer and
+Schroeder, 1975), which traps and audits sensi-
+tive operations; ❷Policy Enforcement (Saltzer
+and Schroeder, 1975; Bell and La Padula, 1976),
+grounded in Least Privilege and Information Flow
+Control; and ❸Exception Injection (Popek and
+Goldberg, 1974), which reports violations via in-
+terrupts instead of terminating execution. Trans-
+lating this paradigm into the semantic space of
+LLMs, we propose AgentVisor, a semantic virtu-
+alization framework that treats the target agent as
+an untrusted Guest and mediates every tool call
+via a trusted Visor. The Visor enforces a rigorous
+STI (Suitability, Taint, Integrity) protocol: Suitabil-
+ity applies Least Privilege to mitigate direct injec-
+tion, Taint enforces information-flow constraints to
+block indirect injection, and Integrity preserves pa-
+rameter/data integrity across both. Upon detecting
+violations, AgentVisor injects a semantic exception
+to trigger self-correction, maintaining high utility.
+Our contributions are summarized as follows:
+• We propose AgentVisor, a virtualization-based
+defense that enforces privilege separation and
+one-shot self-correction, securing LLM agents
+against prompt injection attack.
+• We design the STI protocol, adapting OS se-
+curity primitives into a structured semantic
+audit mechanism, providing systematic and
+interpretable defenses.
+• Experiments show that AgentVisor reduces
+the attack success rate to 0.65%, with only
+a 1.45% average utility loss compared to No
+Defense, outperforming existing defenses.
+2
+Related Work
+2.1
+Prompt Injection Attacks
+LLM agents are vulnerable to both direct and in-
+direct prompt injection attacks, which differ pri-
+marily in the injection source but often share
+common methods.
+Attack methods can be
+broadly categorized into optimization-based and
+non-optimization-based approaches. Optimization-
+based methods (Shi et al., 2024; Wang et al.,
+2025; Liu et al., 2024a) utilize gradient approx-
+imation (Zou et al., 2023) to generate adversarial
+tokens. However, these methods are computation-
+ally expensive and often exhibit poor transferabil-
+ity across injection scenarios. In contrast, non-
+optimization-based methods (Willison; Liu et al.,
+2024b; Debenedetti et al., 2024) rely on manually
+crafted semantic triggers such as Ignore (Perez and
+Ribeiro, 2022) or Escape (Breitenbach et al., 2023)
+to manipulate agent behavior. Crucially, these hand-
+crafted techniques are universally applicable to
+both direct and indirect injection scenarios. Given
+their practicality and prevalence in real-world ex-
+ploits, our work focuses on evaluating defenses
+against these non-optimization-based attacks.
+2.2
+Prompt Injection Defenses
+Existing defenses against prompt injection can be
+categorized into detection-based and mitigation-
+based approaches. Detection-based methods focus
+on verifying the integrity of the input source to
+identify potential tampering. These approaches typ-
+ically employ off-the-shelf LLMs (Shi et al., 2025)
+or fine-tuned guardrail models (ProtectAI.com,
+2024; Llama Team, 2024; Liu et al., 2025) to in-
+spect inputs for malicious content before they are
+processed by the agent. While effective at flag-
+ging threats, these methods often act as binary
+filters, terminating the interaction upon detection
+and potentially reducing system utility. Mitigation-
+based methods aim to ensure that the agent exe-
+cutes the intended target task while suppressing
+the execution of injected commands. One line of
+research achieves this through safety-specific fine-
+tuning of the LLM (Chen et al., 2025c,a), enhanc-
+ing its intrinsic resistance to adversarial instruc-
+tions. Another direction involves security enhance-
+ment of the input context (Chen et al., 2025b; Yi
+et al., 2025), such as reiterating the target task in-
+structions (Schulhoff, 2024b) or applying masking
+strategies to the agent’s state prior to tool invoca-
+tion (Zhu et al., 2025). Unlike detection methods,
+mitigation strategies strive to maintain functionality
+even in the presence of attacks.
+3
+Preliminaries and Threat Model
+3.1
+Preliminaries
+We consider an LLM-based tool-using agent A that
+interacts with a user and an external environment.
+At each turn t, the agent receives a trusted sys-
+tem instruction Isys, a user query Iu, and (when
+2
+
+available) an external context Ct retrieved from po-
+tentially untrusted sources (e.g., webpages, emails,
+or documents). Based on these inputs, the agent
+may invoke a tool.
+We represent the agent’s tool invocation at turn
+t as:
+Tt = A(Isys, Iu, Ct),
+(1)
+where Tt ∈{∅} ∪F × X. Here, Tt = (f, args)
+denotes a tool call with function name f ∈F and
+arguments args ∈X; if no tool is invoked, Tt = ∅.
+For multi-step agent workflows (e.g., those in-
+volving indirect prompt injections), we additionally
+maintain an execution history Ht−1 that records
+prior tool calls and observations, and the agent’s
+decision becomes Tt = A(Isys, Iu, Ht−1, Ct).
+3.2
+Threat Model
+We consider an adversary who aims to manipulate
+the agent into executing an unauthorized tool call,
+causing the agent’s behavior to deviate from the
+intended objective specified by Isys and the benign
+user intent in Iu. The adversary cannot modify the
+agent A, the system instruction Isys, or the tool
+implementations/execution environment, but can
+manipulate inputs delivered to the agent. We use ⊕
+to denote the injection operation that augments an
+otherwise benign input with an adversarial payload.
+Direct Prompt Injection.
+In direct prompt injec-
+tion, the adversary acts as the user and submits an
+adversarial query Iadv
+u
+= Iu ⊕δdir, where δdir is
+a malicious instruction intended to override con-
+straints in Isys or redirect the agent to an attacker-
+chosen objective. We assume direct injection does
+not rely on external context, i.e., Ct = ∅. The com-
+promised action is then Tadv = A(Isys, Iadv
+u , Ct).
+Indirect Prompt Injection.
+In indirect prompt
+injection, the user query Iu is benign, but the ad-
+versary poisons the externally retrieved context by
+embedding hidden or overt malicious instructions,
+Cadv
+t
+= Ct ⊕δind, where δind is placed in untrusted
+content (e.g., a webpage or an email) that the agent
+later reads. The attacker aims to hijack the agent’s
+(single- or multi-step) tool-use decisions such that
+Tt = A(Isys, Iu, Ht−1, Cadv
+t
+), potentially yielding
+an attacker-intended tool call Tadv at some step.
+4
+Methodology
+In this section, we present AgentVisor, a defense
+framework structured as a Semantic Hypervisor
+for tool-using LLM agents. tool enforces a trap–
+audit–recover control loop: the target agent (Guest)
+proposes tool calls, while a lightweight supervisory
+component (Visor) audits each proposal against a
+structured protocol and, when needed, injects a Se-
+mantic Exception to steer one-shot self-correction.
+4.1
+Problem Formulation
+At step t, the Guest (target agent) proposes a tool
+call
+T raw
+t
+= (ft, argst) or T raw
+t
+= ∅,
+(2)
+given the trusted system instruction Isys, the user
+query Iu, and (in the indirect setting) potentially
+untrusted state such as retrieved context and multi-
+step execution traces.
+AgentVisor mediates this proposal using only
+trusted inputs and a sanitized task state. Specifi-
+cally, it receives:
+Xt ≜(Isys, Iu, ˜Ht−1, T raw
+t
+),
+(3)
+where ˜Ht−1 is a structured history view containing
+only fields such as tool_name, canonicalized args,
+and a short return_summary/status, wrapped
+with strict delimiters and treated as data.
+The defense outputs either an approval or a struc-
+tured exception:
+(dect, Et) = D(Xt),
+(4)
+dect ∈{allow, exception}.
+(5)
+If dect = allow, the proposed tool call is exe-
+cuted as-is; otherwise, the Visor injects Et to re-
+quest one-shot self-correction from the Guest:
+T ′
+t = A(Isys, Iu, ˜Ht−1, Et),
+(6)
+after which T ′
+t is executed. In both cases, the exe-
+cuted action Tt is the final tool call for step t:
+Tt =
+(
+T raw
+t
+,
+if dect = allow,
+T ′
+t,
+if dect = exception.
+(7)
+4.2
+Architecture of AgentVisor
+AgentVisor is motivated by an empirical observa-
+tion: modern agents can often recognize prompt
+injections when explicitly asked (e.g., Fig. 3), yet
+still act on malicious instructions during tool use.
+This awareness–action gap suggests that “knowing
+an input is unsafe” does not reliably translate into
+safe tool-use behavior. AgentVisor addresses this
+gap by introducing a virtualization-inspired sep-
+aration of concerns: the Guest generates actions,
+while the Visor enforces policy via auditing and
+recovery.
+3
+
+Figure 2: Overview of the AgentVisor architecture. Drawing inspiration from OS virtualization, AgentVisor enforces
+privilege separation between the untrusted target agent (Guest) and the trusted semantic hypervisor (Visor).
+Precision
+Recall
+Accuracy
+90
+92
+94
+96
+98
+100
+102
+Percentage
+96.93
+99.53
+99.69
+95.24
+100.00
+99.98
+Direct Injection
+GPT-4o
+GLM-4.7
+Precision
+Recall
+Accuracy
+90
+92
+94
+96
+98
+100
+102
+94.21
+99.67
+96.78
+99.89
+100.00
+99.94
+Indirect Injection
+Figure 3: Detection performance of target agents (based
+on GPT-4o and GLM-4.7) against prompt injections.
+Guest (Target Agent).
+The target agent serves
+as the Guest. It operates on the full task context,
+including potentially adversarial retrieved content
+Cadv
+t
+in the indirect setting, and produces a tool
+call proposal T raw
+t
+. The Guest is also responsible
+for revising its proposal when given a Semantic
+Exception.
+Visor (Semantic Hypervisor).
+AgentVisor acts
+as the Visor. It audits the Guest’s proposed tool call
+and, if needed, returns a structured exception that
+instructs the Guest how to revise the action. Crit-
+ically, we enforce context isolation: the Visor is
+architecturally blind to the raw external context Ct
+(and thus to any embedded attacker instructions).
+Instead, it bases its decision solely on the trusted
+system instruction Isys, the user query Iu, and a
+sanitized execution history ˜Ht−1 that contains only
+structured fields such as tool_name, canonical-
+ized args, and a short return_summary or status.
+The history excludes raw observations, is wrapped
+with strict delimiters, and is treated strictly as data
+rather than as executable instructions.
+AgentVisor follows a trap–audit–recover loop:
+(1) the Guest proposes T raw
+t
+; (2) the Visor audits
+T raw
+t
+with the STI protocol (Sec. 4.3); (3) if unsafe,
+the Visor returns a Semantic Exception (Sec. 4.4);
+the Guest regenerates once and the revised tool call
+is executed. The complete procedure is provided in
+Alg. 1 in App. A.
+4.3
+The STI Audit Protocol
+To operationalize auditing, we introduce the STI
+(Suitability, Taint, Integrity) Protocol. STI is a
+structured semantic verification pipeline; each pro-
+posed tool call must pass three checks in order.
+Each check produces (pass, ⊥) or (fail, r), where
+r is a machine-readable reason used to construct a
+Semantic Exception.
+Suitability (S): tool appropriateness under sys-
+tem policy.
+Suitability verifies whether invok-
+ing tool ft is permitted under Isys and is aligned
+with the assistant’s intended role. This is a coarse-
+grained gate that is especially effective against di-
+rect prompt injection attempts that try to escalate
+the agent’s capabilities. Formally, the Suitability
+check outputs (S, rS) = CheckS(Isys, Iu, ft). If
+S = fail, the Visor raises an exception indicating
+that the tool is not appropriate for this assistant
+under the trusted system instruction.
+Taint (T): goal alignment with user intent and
+task state.
+Taint checks whether the goal implied
+4
+
+by the tool call is aligned with the user request
+Iu and with legitimate intermediate goals derived
+from the task state ˜Ht−1. Intuitively, it blocks ac-
+tions that introduce new goals not supported by
+the user’s request (e.g., forwarding, exfiltrating, or
+posting content when the user asked only to summa-
+rize). We implement Taint as a semantic alignment
+decision:
+(T, rT ) = CheckT (Iu, ˜Ht−1, ft, argst).
+(8)
+If T = fail, the Visor concludes that the tool call
+appears to be driven by untrusted instructions rather
+than the user’s intended task.
+Integrity (I): argument consistency with user-
+specified entities.
+Integrity verifies that the tool
+arguments argst are consistent with the entities,
+constraints, and targets specified by Iu or estab-
+lished in ˜Ht−1. This prevents cases where the
+tool choice is reasonable but the arguments are
+redirected. For example, when the user requests
+sending a message to a specific recipient, an indi-
+rect injection may try to keep the same tool (e.g.,
+send_email) but substitute a different recipient in
+argst. Formally:
+(I, rI) = CheckI(Iu, ˜Ht−1, ft, argst).
+(9)
+4.4
+Resilience via Semantic Exception
+Injection
+Blocking unsafe tool calls can be brittle: a strict
+deny policy often causes task failure even when a
+safe alternative exists. AgentVisor therefore con-
+verts audit failures into recoverable events using
+Semantic Exception Injection, analogous to ex-
+ception handling in operating systems.
+When STI fails, the Visor synthesizes a struc-
+tured exception Et with the following fields:
+Et = ⟨type, violated_rule, rationale,
+constraints, allowed_objective ⟩. (10)
+Concretely, the exception record contains sev-
+eral fields. The field type indicates which STI
+stage failed, taking values in S, T, I. The field vio-
+lated_rule provides a brief identifier, such as “tool
+not permitted under system role”. The field ratio-
+nale explains why the proposal conflicts with Isys,
+Iu, or ˜Ht−1. The field constraints specifies the re-
+quired negative or positive conditions, for example
+“do not forward or share data; do not use external
+recipients; only summarize”. Finally, the field al-
+lowed_objective restates the user-aligned goal to
+preserve utility.
+After receiving Et, the Guest regenerates a re-
+vised tool call T ′
+t once based on the explicit con-
+straints and then executes it immediately. In our
+experiments, this one-shot correction is sufficient
+to redirect the agent to a safe, task-preserving ac-
+tion in the vast majority of cases; we further discuss
+the trade-off between additional audit rounds and
+resource cost in Sec. 6.
+5
+Experiments
+5.1
+Experimental Setup
+Datasets.
+We evaluate AgentVisor against both
+direct and indirect prompt injection attacks. For di-
+rect injection, we utilize OpenPromptInjection (Liu
+et al., 2024b), which encompasses 7 NLP tasks that
+serve interchangeably as target and injection tasks.
+Following Jia et al. (Jia et al., 2025), we randomly
+sample 100 examples for each task combination,
+yielding a total of 4,900 attack cases. For indi-
+rect injection, we employ AgentDojo (Debenedetti
+et al., 2024), which features 4 interactive agent en-
+vironments (Banking, Travel, Slack, Workplace)
+where agents iteratively invoke tools to complete
+tasks. These environments contain 16, 20, 21, and
+40 target tasks respectively, combined with varying
+injection points and tasks, resulting in a total of
+629 attack cases.
+Attacks.
+We evaluate robustness against 7 repre-
+sentative strategies: 1) Direct: Directly appending
+the injection task; 2) Ignore (Perez and Ribeiro,
+2022) ; 3) Escape (Breitenbach et al., 2023); 4)
+FakeComp (Willison) ; 5) Combined (Liu et al.,
+2024b): Integrating Ignore, Escape, and Fake-
+Comp; 6) System (Debenedetti et al., 2024) ; and
+7) Important (Debenedetti et al., 2024).
+Baseline Defenses.
+We compare AgentVisor
+against 8 representative defense methods catego-
+rized into two types. Mitigation-based methods in-
+clude Sandwich (Schulhoff, 2024b), Instructional
+(Schulhoff, 2024a), Reminder (Yi et al., 2025), Iso-
+lation (Willison), and Spotlighting (Hines et al.,
+2024). Detection-based methods include DeBERTa
+(ProtectAI.com, 2024), DataSentinel (Liu et al.,
+2025), and MELON (Zhu et al., 2025). Note that for
+detection-based methods, a successful detection ter-
+minates the process. Furthermore, since DataSen-
+tinel and MELON were originally designed specifi-
+5
+
+Table 1: Defense performance (%) of AgentVisor and baseline approaches under Direct Injection.
+Method
+No Attack
+Direct
+Ignore
+Escape
+Fakecom
+Combined
+SYSTEM
+Important
+Metric
+BU
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+No Defense
+94.25
+96.25
+97.00
+71.12
+83.28
+98.27
+97.00
+46.27
+91.00
+0.00
+88.26
+98.63
+91.95
+88.97
+95.98
+Sandwich
+100.00
+93.88
+91.00
+90.29
+56.37
+98.10
+93.18
+72.40
+91.27
+20.15
+51.44
+94.76
+94.37
+94.92
+93.24
+Instructional
+93.75
+89.28
+84.00
+43.14
+81.19
+94.28
+87.29
+30.16
+86.09
+0.00
+68.34
+96.98
+82.20
+88.16
+74.97
+Reminder
+93.25
+98.19
+91.00
+87.29
+85.56
+96.09
+93.95
+82.08
+90.52
+0.00
+85.09
+95.08
+76.79
+74.38
+54.24
+Isolation
+93.16
+100.00
+62.00
+40.95
+83.29
+98.18
+83.00
+57.78
+85.20
+0.01
+67.10
+95.66
+21.95
+90.07
+88.30
+Spotlight
+87.35
+85.00
+2.00
+90.05
+7.16
+92.08
+0.00
+63.20
+0.00
+71.08
+0.12
+88.85
+4.16
+77.16
+6.08
+DeBERTa
+91.25
+84.28
+86.35
+86.96
+82.00
+98.31
+94.95
+62.20
+96.75
+0.00
+88.87
+95.75
+93.78
+92.30
+86.37
+DataSentinel
+89.17
+0.00
+0.00
+0.15
+3.10
+0.00
+0.00
+0.00
+1.00
+0.00
+3.00
+3.25
+3.64
+0.00
+0.00
+AgentVisor
+91.35
+87.56
+0.00
+74.38
+0.00
+93.15
+0.00
+90.00
+0.00
+76.00
+0.00
+83.14
+0.00
+88.24
+0.00
+Table 2: Defense performance (%) of AgentVisor and baseline approaches under Indirect Injection.
+Method
+No Attack
+Direct
+Ignore
+Escape
+Fakecom
+Combined
+SYSTEM
+Important
+Metric
+BU
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+UA
+ASR
+No Defense
+85.00
+76.18
+2.78
+70.15
+2.61
+71.71
+2.45
+68.14
+2.13
+73.31
+2.91
+75.73
+3.57
+57.74
+45.14
+Sandwich
+90.00
+80.89
+1.95
+77.32
+1.33
+75.36
+1.28
+79.50
+1.70
+74.05
+1.11
+79.25
+1.95
+58.15
+17.61
+Instructional
+82.50
+82.65
+2.22
+75.12
+1.06
+77.12
+1.76
+78.13
+1.11
+79.49
+1.59
+76.31
+2.23
+58.22
+46.79
+Reminder
+77.50
+63.65
+1.95
+77.88
+0.28
+77.03
+1.84
+79.00
+0.00
+77.93
+0.00
+71.56
+1.11
+68.75
+22.15
+Isolation
+80.00
+71.83
+2.72
+76.34
+0.56
+72.30
+0.54
+73.29
+0.49
+75.75
+0.43
+78.32
+1.67
+60.66
+44.77
+Spotlight
+62.50
+57.66
+1.33
+63.87
+0.78
+63.98
+1.15
+68.98
+0.15
+65.25
+0.78
+60.16
+0.40
+61.02
+0.28
+DeBERTa
+40.00
+12.50
+0.00
+18.40
+0.00
+11.49
+0.00
+10.00
+0.00
+12.56
+0.00
+25.18
+0.27
+19.75
+3.55
+MELON
+82.50
+56.69
+2.00
+65.59
+0.00
+69.19
+0.25
+77.90
+0.00
+69.94
+0.00
+70.31
+0.22
+35.42
+1.04
+AgentVisor
+85.00
+65.15
+1.69
+74.85
+0.00
+75.32
+0.00
+74.84
+0.11
+76.73
+0.00
+78.25
+0.11
+63.75
+0.69
+cally for direct and indirect injection respectively,
+we follow their original settings and do not report
+their performance on out-of-scope attack scenarios.
+Metrics.
+We evaluate performance using three
+metrics: 1) Benign Utility (BU), which measures
+task completion in non-attack scenarios to assess
+capability preservation; 2) Attack Success Rate
+(ASR), the percentage of cases where the agent
+executes the injected malicious task; 3) and Utility
+under Attack (UA), which measures the agent’s re-
+silience in completing the original user task despite
+the attack. For effective defense, lower ASR and
+higher BU/UA are desired.
+Implementation Details.
+We employ GPT-4o
+(Hurst et al., 2024) and GLM 4.7 (Team et al., 2025)
+as the backbone models for the target Agent to sim-
+ulate high-capability agents. For the AgentVisor,
+we utilize Gemini-2.5-Flash (Google Cloud, 2025)
+to demonstrate the framework’s efficiency and ef-
+fectiveness even with lightweight, cost-effective
+models.
+5.2
+Main Results
+Experimental results obtained with the GPT-4o
+backbone are presented in this section, showing
+defense performance against Direct (Tab. 1) and
+Indirect (Tab. 2) Injection, while results for the
+GLM-4.7 backbone are detailed in App. B.
+Direct Injection.
+The No Defense baseline is ex-
+tremely vulnerable (ASR > 90%), and mitigation-
+based defenses like Sandwich often yield ASRs
+above 50%.
+While DataSentinel achieves low
+ASR, its utility collapses (UA ≈0%). In contrast,
+AgentVisor achieves perfect security (0.00% ASR)
+while maintaining high utility (UA > 83%), even
+in the challenging Combined attack (76.00% UA).
+This confirms that AgentVisor effectively enforces
+system boundaries without sacrificing the execu-
+tion of legitimate tasks.
+Indirect Injection.
+While standard attacks are
+less effective, the Important strategy compromises
+No Defense (45.14% ASR). Detection methods
+like DeBERTa suffer from severe over-defense (UA
+∼15%). AgentVisor strikes the best trade-off, sup-
+pressing ASR to negligible levels (<1.7%), even
+in the Important scenario (0.69%). It also pre-
+serves high UA, ranging from 63% to 78%. This
+demonstrates that our STI protocol precisely blocks
+context-driven actions without disrupting legiti-
+mate workflows.
+6
+
+AgentVisor
+w/o Suitability
+w/o Taint
+w/o Integrity
+w/o self-correction
+0
+20
+40
+60
+80
+100
+Percentage (%)
+UA Direct
+UA Indirect
+ASR Direct
+ASR Indirect
+Figure 4: Ablation study of AgentVisor components.
+w/o denotes the removal of a specific component.
+5.3
+Ablation Study
+We validate the contribution of each AgentVisor
+component through a comprehensive ablation study
+(Fig. 4). The results confirm the specialized roles
+of each STI layer. Removing Suitability (S) causes
+a dramatic failure in Direct Injection defense (ASR
+spikes to 38.95%), validating it as the primary
+barrier against functionality hijacking. Removing
+Taint (T) significantly weakens Indirect Injection
+defense (ASR rises to 13.33%), confirming its ne-
+cessity in detecting context-triggered attacks. The
+absence of Integrity (I) leads to a moderate ASR
+increase (e.g., 8.89% in Indirect), indicating its role
+in catching subtle parameter tampering.
+The ablation of self-correction reveals its indis-
+pensable role in maintaining utility. In the Block-
+only setting, UA collapses to near zero (0.00%
+for Direct, 13.33% for Indirect) as mixed-intent
+prompts are rejected entirely. In contrast, our Se-
+mantic Fault Recovery mechanism successfully
+strips away the injected task while executing the
+target task, restoring UA to 85.56% and 66.67% re-
+spectively. This demonstrates that self-correction is
+a fundamental requirement for practical mitigation
+method.
+6
+Discussion
+6.1
+Trade-off Analysis
+We validate our design choice of limiting self-
+correction to a single round (N = 1) by analyzing
+the trade-off between utility gains and computa-
+tional overhead across N = 1 to N = 3.
+As shown in Tab. 3, extending the correction
+loop beyond the first attempt yields negligible
+marginal gains. Indirect UA improves by only
+1.29% at N = 2, while incurring a disproportion-
+ate latency penalty of 1.45× for N = 2 and 1.90×
+Table 3: Trade-off analysis of correction rounds (N).
+Rounds (N)
+Direct Injection
+Indirect Injection
+Relative Latency
+UA ↑
+ASR ↓
+UA ↑
+ASR ↓
+1 (Ours)
+91.72%
+0.00%
+73.21%
+1.73%
+1.00×
+2
+92.05%
+0.00%
+74.50%
+1.73%
+1.45×
+3
+92.15%
+0.00%
+74.85%
+1.73%
+1.90×
+for N = 3. This indicates that the first semantic
+exception captures the vast majority of recover-
+able errors, and subsequent failures likely stem
+from fundamental capability limitations rather than
+ambiguity. Thus, N = 1 represents the optimal
+efficiency-utility trade-off.
+6.2
+Model Agnosticism of AgentVisor
+To determine whether AgentVisor’s efficacy stems
+from its methodology or the underlying LLM, we
+evaluate it across diverse backbones. As shown in
+Fig. 5 and Fig. 6, AgentVisor consistently achieves
+near-zero ASRs regardless of the model. In Di-
+rect Injection, all variants achieve a perfect 0.00%
+ASR, confirming that the STI check is a funda-
+mental task executable even by lightweight models.
+Similarly, in Indirect Injection, ASR remains con-
+sistently low (< 4%), significantly outperforming
+baselines. This demonstrates that the STI protocol
+provides a robust structural defense that does not
+require frontier-level reasoning to be effective.
+While security is model-agnostic, stronger mod-
+els yield higher utility.
+For instance, in Indi-
+rect Injection, CS-4(Claude-Sonnet-4) achieves
+a UA of 77.11% compared to 64.27% for
+GLM-4(GLM-4.7). This suggests that while detec-
+tion is structural, the self-correction process bene-
+fits from superior reasoning capabilities, allowing
+stronger models to better reconstruct user intent
+from semantic exceptions.
+6.3
+Robustness against Adaptive Attack
+We evaluate robustness against Adaptive Attacks
+where recursive injections (e.g., "Ignore Security
+Check") target the defense layer. As shown in
+Fig. 7, the Naive Visor, lacking structural isolation,
+is severely compromised: it struggles to disentan-
+gle mixed intents, resulting in a catastrophic drop
+in utility (e.g., 53.95% UA) as it indiscriminately
+blocks legitimate tasks to stop the injection. In con-
+trast, AgentVisor demonstrates superior resilience.
+It completely neutralizes the adaptive injection (0%
+ASR) while preserving high utility (86.85%), con-
+firming that our STI Protocol and context isolation
+effectively immunize the Visor against recursive
+7
+
+50
+60
+70
+80
+90
+100
+UA (%)
+0
+20
+40
+60
+80
+100
+ASR (%)
+Direct
+50
+60
+70
+80
+90
+100
+UA (%)
+0
+20
+40
+60
+80
+100
+Ignore
+50
+60
+70
+80
+90
+100
+UA (%)
+0
+20
+40
+60
+80
+100
+SYSTEM
+50
+60
+70
+80
+90
+100
+UA (%)
+0
+20
+40
+60
+80
+100
+Important
+No Defense
+Sandwich
+Reminder
+Spotlight
+DeBERTa Detector
+Ours (G2.5-F)
+Ours (G2.5-P)
+Ours (G3-F)
+Ours (GLM-4)
+Ours (CS-4)
+Figure 5: Ablation study on AgentVisor’s LLM backbone against Direct Injection.
+20
+40
+60
+80
+UR (%)
+0
+2
+4
+6
+8
+ASR (%)
+Direct
+20
+40
+60
+80
+UR (%)
+0
+2
+4
+6
+8
+Ignore
+20
+40
+60
+80
+UR (%)
+0
+2
+4
+6
+8
+SYSTEM
+20
+40
+60
+80
+UR (%)
+0
+10
+20
+30
+40
+50
+60
+Important
+No Defense
+Sandwich
+Reminder
+Spotlight
+DeBERTa
+Ours-G2.5F
+Ours-G2.5P
+Ours-G3F
+Ours-GLM4
+Ours-CS4
+Figure 6: Ablation study on AgentVisor’s LLM backbone against Indirect Injection.
+No Defense Naive Visor AgentVisor
+0
+20
+40
+60
+80
+100
+Percentage (%)
+91.56
+53.95
+86.85
+96.18
+20.51
+0.00
+Direct Injection
+No Defense Naive Visor AgentVisor
+0
+20
+40
+60
+80
+100
+71.11
+64.45
+60.67
+84.44
+6.53
+4.91
+Indirect Injection
+UA
+ASR
+Figure 7: Robustness of the defense mechanism against
+adaptive attacks.
+Table 4: Latency analysis (seconds) across different
+scenarios.
+Scenario
+Benign Condition
+Attack Condition
+No Defense
+AgentVisor
+No Defense
+AgentVisor
+Direct Injection
+2.12
+2.95 (1.39×)
+2.18
+5.05 (2.32×)
+Indirect Injection
+6.45
+9.10 (1.41×)
+6.58
+11.25 (1.71×)
+manipulation, enabling precise mitigation.
+6.4
+Latency Analysis
+We report the average end-to-end latency per task
+for AgentVisor by sampling tasks from Direct and
+Indirect scenarios (Table 4).
+In benign condi-
+tions, AgentVisor introduces a moderate overhead
+(∼1.4×), as the Visor’s audit is faster than open-
+ended generation. Under attack conditions, latency
+increases due to self-correction. For Direct Injec-
+tion, latency roughly doubles (2.32×) as the single
+step is re-executed. However, for multi-step Indi-
+rect Injection, the overhead ratio is lower (1.71×)
+because typically only the compromised step trig-
+gers re-generation. We argue this pay-for-safety
+trade-off is justified, preventing critical breaches
+without imposing prohibitive penalties on normal
+operations.
+7
+Conclusion
+In this paper,
+we presented AgentVisor,
+a
+virtualization-based defense framework that se-
+cures LLM agents against both direct and indirect
+prompt injection through semantic privilege sepa-
+ration. By adapting classic OS security primitives
+into a rigorous audit protocol and incorporating
+a semantic fault recovery mechanism, AgentVisor
+effectively mitigates functionality injection attack
+without compromising agent utility. Empirical re-
+sults on standard benchmarks demonstrate that our
+approach achieves near-zero attack success rates
+across diverse attack vectors while maintaining
+high task completion performance, offering a ro-
+bust and principled foundation for deploying secure
+autonomous agents.
+8
+
+8
+Limitations
+While AgentVisor demonstrates robust defense ca-
+pabilities, we acknowledge three limitations.
+❶Computational Overhead: The introduction
+of a hypervisor layer inherently incurs additional
+inference latency and token costs, although our one-
+shot correction mechanism minimizes this impact
+compared to iterative approaches. ❷Long-Context
+Scalability: As the interaction history grows, the
+Hypervisor’s performance may be constrained by
+the context window size of the underlying LLM,
+potentially affecting the precision of taint analysis
+in extremely long conversations. ❸Multimodal
+Generalization: Our current framework focuses
+on textual prompt injections; extending the STI
+protocol to defend against visual or audio-based
+injection attacks in multimodal agents remains an
+important direction for future research.

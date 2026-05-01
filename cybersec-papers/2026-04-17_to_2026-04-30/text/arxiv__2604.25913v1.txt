@@ -1,0 +1,1011 @@
+Credit Limits beyond Full Collateralization in
+Decentralized Micropayments: Incentive Conditions
+Chien-Chih Chen
+Electrical and Computer Engineering
+University of Waterloo
+Waterloo, ON, Canada
+j2255che@uwaterloo.ca
+Wojciech Golab
+Electrical and Computer Engineering
+University of Waterloo
+Waterloo, ON, Canada
+wgolab@uwaterloo.ca
+Abstract—In decentralized non-custodial micropayments, the
+central challenge is not whether payments can be executed
+directly, but under what conditions such systems can offer
+credit limits without requiring full collateral backing. Existing
+approaches typically tie available credit to posted collateral,
+causing liquidity requirements to scale with transaction volume
+and settlement exposure and limiting the practical usefulness of
+credit-based micropayments. This paper characterizes the incen-
+tive conditions under which credit-based non-custodial micropay-
+ments can operate beyond full collateralization while remaining
+incentive compatible. We model repeated buyer–merchant inter-
+actions under public monitoring and identify the roles of bounded
+exposure, verifiable settlement outcomes, and continuation value
+in deterring strategic default under non-custodial execution. The
+resulting characterization clarifies the trade-off between capital
+efficiency and the enforcement conditions required to sustain
+under-collateralized credit expansion without custodial trust. As
+an illustrative application-layer instantiation, an Arbitrum Nitro
+prototype provides execution-level evidence that the settlement,
+commitment, and incentive-enforcement paths of a credit-limit-
+based design can be realized with low on-chain overhead.
+Index Terms—Micropayments, Capital efficiency, Incentive
+compatibility, Repeated games, Auction mechanisms, Perfect
+Public Equilibrium, Non-custodial
+I. INTRODUCTION
+In decentralized non-custodial micropayments, the central
+challenge is not whether payments can be executed directly,
+but under what conditions such systems can offer credit
+limits without requiring full collateral backing. In conventional
+non-custodial designs, available credit is tightly coupled to
+posted collateral, causing liquidity requirements to scale with
+transaction volume and settlement exposure. This coupling
+induces capital lock-in and limits the practical usefulness of
+micropayment systems in settings where repeated low-value
+transactions would benefit from short-term credit.
+This paper studies the incentive conditions under which de-
+centralized non-custodial micropayment systems can support
+credit-based operation beyond full collateralization. Our focus
+is not on a single protocol instance, but on a broader design
+question: when can a non-custodial micropayment system
+provide credit limits while preserving incentive compatibil-
+ity under strategic buyer–merchant interaction? Framed this
+way, the problem is fundamentally one of incentive design
+under capital constraints. Any mechanism that aims to sup-
+port under-collateralized credit in a non-custodial environment
+must address the trade-off between capital efficiency and the
+enforcement conditions required to deter strategic default.
+We characterize this trade-off through a repeated-game
+model of buyer–merchant interaction under public monitor-
+ing, bounded exposure, and asymmetric incentives. Within
+this framework, we identify conditions under which credit-
+based non-custodial micropayments can sustain conforming
+behavior beyond fully collateralized operation. On the buyer
+side, credit expansion must be disciplined by continuation
+value and bounded default incentives. On the merchant side,
+timely fulfillment must remain incentive compatible under
+publicly verifiable settlement outcomes and protocol-enforced
+penalties. The resulting characterization identifies a regime
+in which under-collateralized credit can be supported without
+custodial control, while also clarifying the assumptions that
+such support requires.
+To connect the characterization to an execution setting,
+we use an application-layer instantiation with evolving credit
+limits and controlled over-limit liquidity provision. This in-
+stantiation serves as an illustrative implementation substrate
+rather than the main contribution of the paper. A prototype on
+Arbitrum Nitro is used only to demonstrate that the settlement,
+commitment, and incentive-enforcement paths of such a credit-
+limit-based design can be realized with low on-chain overhead,
+without modifying the underlying rollup protocol.
+Our contributions are threefold. First, we characterize the
+incentive conditions required for decentralized non-custodial
+micropayment systems to support credit limits beyond full
+collateralization. Second, we identify the trade-off govern-
+ing such credit-based operation: improving capital efficiency
+requires enforcement conditions that bound strategic default
+incentives under repeated buyer–merchant interaction. Third,
+we clarify a regime in which under-collateralized credit can
+be sustained without custodial control, while making explicit
+the assumptions on exposure, verifiable settlement outcomes,
+and future participation value under which this support holds.
+The remainder of this paper is organized as follows. Sec-
+tion II summarizes the application-layer instantiation used to
+ground the incentive model. Section III formalizes the game-
+theoretic model. Sections IV and V analyze incentive and
+equilibrium properties for merchants and buyers. Section VI
+discusses implementation feasibility. Section VII presents ex-
+arXiv:2604.25913v1 [cs.GT] 28 Apr 2026
+
+perimental results. Section VIII discusses scope and limita-
+tions. Section IX reviews related work. Section X concludes.
+II. SYSTEM AND MECHANISM OVERVIEW
+This section summarizes an application-layer instantiation
+of the incentive conditions characterized in this paper. The
+instantiation combines (i) a stake-based credit limit mecha-
+nism with history-dependent access, (ii) an over-limit auction
+for temporary liquidity extension, and (iii) contract-enforced
+reward and penalty mechanisms that update access privileges
+based on publicly verifiable outcomes for buyers and mer-
+chants.
+The design supports continued off-chain transaction pro-
+cessing through delayed settlement via batch processing,
+which reduces on-chain workload. Off-chain execution is mod-
+eled as untrusted and verifiable, with no reliance on honest ex-
+ecution; all incentive-relevant outcomes are enforced through
+on-chain verification of committed state. The term “reputation”
+is used in this paper only as a conceptual description: the
+protocol does not implement a standalone reputation or trust-
+scoring module. Instead, reputation effects arise endogenously
+from publicly observable histories and penalty states, together
+with agents’ equilibrium continuation values used purely for
+analytical characterization.
+Before introducing the protocol components, Table I sum-
+marizes the main terminology used throughout the paper.
+The table is not intended as a complete notation glossary;
+it is included to clarify the roles of the main economic,
+monitoring, and implementation terms before the formal model
+is introduced.
+a) Credit limits and off-chain accounting: Each buyer is
+admitted to transact under an individual credit limit determined
+by financial stake and behavioral trust, allowing micropay-
+ments to be authorized without immediate on-chain settlement.
+Credit usage is tracked through a local off-chain usage record
+and an offline record of pending transactions, maintained
+solely for execution convenience rather than as authoritative
+state, with all incentive-relevant outcomes ultimately validated
+against on-chain commitments and publicly verifiable proofs
+at settlement. Instead of submitting each micropayment on-
+chain, transactions are aggregated into a Merkle tree, and a
+single root is committed on-chain at the settlement boundary,
+preserving auditability for settlement and post hoc verification.
+The protocol monitors each buyer’s cumulative unsettled value
+relative to the assigned credit limit, raises a misuse flag
+when outstanding usage exceeds the permitted bound, and
+routes requests that exceed the credit limit but remain within
+admissible risk bounds to the over-limit auction mechanism.
+b) Operational Flow:
+Micropayment transactions are
+processed off-chain within each settlement epoch. When a
+buyer initiates a payment, the protocol immediately checks
+and consumes the buyer’s available credit limit and records the
+transaction in an off-chain usage log. Individual transactions
+are not submitted on-chain in real time; instead, transactions
+accumulated during the epoch are aggregated into a Merkle
+tree, and a single root is committed on-chain at the settlement
+boundary. During settlement, individual transactions and their
+associated credit usage can be verified by submitting standard
+Merkle inclusion proofs against the committed root, allowing
+the smart contract to deterministically enforce rewards, penal-
+ties, and state transitions without storing per-transaction data
+on-chain.
+c) Over-limit auction for temporary credit extension:
+When a payment request exceeds the available credit limit
+by a marginal liquidity deficit, the buyer may request an
+over-limit auction to obtain a temporary credit extension
+under controlled risk. The auction is executed as a stage-
+wise, epoch-isolated mechanism: while buyers may trigger
+over-limit auctions in multiple epochs, at most one such
+auction is permitted per buyer in each epoch, and all auction
+outcomes are settled within the same settlement period. This
+design preserves atomicity by restricting each buyer to at most
+one over-limit auction per epoch and requiring all auction
+outcomes to be settled within the same settlement period,
+thereby bounding short-term credit exposure across epochs.
+The strategic implications of credit expansion are addressed
+in the repeated-game analysis.
+Guarantors
+participate
+through
+a
+standard
+two-phase
+commit–reveal auction process. In the commit phase, eligible
+guarantors submit cryptographic commitments to their bids
+without revealing bid values, together with stake locked in
+the smart contract, which is released or slashed upon auction
+settlement. In the subsequent reveal phase, bids are disclosed
+and verified against prior commitments, and only valid reveals
+are considered for winner determination. The auction adopts
+a reverse Vickrey design [1]. When an over-limit auction
+is triggered, the buyer specifies a protocol-enforced upper
+bound on the acceptable borrowing cost; bids exceeding this
+bound are rejected, and the auction fails if no admissible bid
+exists. Upon auction settlement, the winning guarantor directly
+transfers the corresponding payment amount to the merchant,
+allowing the transaction to complete without routing funds
+through the buyer. Public on-chain signals, including trust
+scores, are used to align risk information across participants
+and mitigate common-value effects, while guarantors’ private
+costs determine allocation outcomes.
+d) Incentive mechanisms, enforcement, and time struc-
+ture: Incentives are enforced through deterministic, contract-
+executed rewards and penalties, based on verifiable outcomes
+at settlement boundaries. On-chain actions,1 including timely
+repayment, are directly verifiable through transaction times-
+tamps and value transfers. Off-chain delivery outcomes are
+abstracted as externally verifiable public signals, without com-
+mitting to a specific realization mechanism. The reward mech-
+anism provides credit-related benefits and stake-based com-
+pensation. The penalty mechanism imposes monetary sanc-
+tions, including late payment penalties and collateral slashing
+upon default, as well as privilege reductions, through trust
+score degradation and credit contraction. Beyond immediate
+1Off-chain execution may affect transaction liveness, including censorship.
+We model off-chain execution as untrusted but verifiable: only transactions
+with valid on-chain evidence affect settlement or incentives.
+
+TABLE I. Core terminology used in the incentive characterization.
+Term
+Symbol or notation
+Role in this paper
+Buyer
+i ∈B
+Receives goods or services and repays unsettled obligations under a credit limit.
+Merchant
+j ∈M
+Accepts micropayments and fulfills service or delivery obligations.
+Credit limit
+CLi
+Maximum unsettled value that buyer i can use before settlement.
+Trust state
+Ti,t
+Public state summarizing incentive-relevant history; it is not a separate reputation module.
+Epoch
+t
+Discrete settlement period; rewards, penalties, and credit updates are evaluated at epoch
+boundaries.
+Public signal
+yt
+Verifiable settlement signal observed by all participants after epoch t.
+Public history
+yt = (y0, . . . , yt−1)
+Sequence of public signals observed before epoch t; public strategies condition on this
+history.
+Continuation value
+Vi,cont
+Discounted value of future credit access and protocol-mediated transactions.
+Over-limit auction
+–
+Bounded epoch-level mechanism for temporary credit extension beyond the current credit
+limit.
+penalties, the protocol applies a finite-state control process,
+consisting of a punishment phase of fixed duration followed
+by a recovery phase with rate-limited trust regeneration. The
+system operates in discrete epochs of four hours, with a
+deterministic settlement timeline, aligning reward and penalty
+accounting with the repeated-game analysis developed later.
+On-chain actions are verifiable through transaction times-
+tamps and value transfers, while off-chain delivery outcomes
+correspond to externally verifiable public signals yt. These
+verifiable outcomes define the public signals used in the
+incentive analyses that follow.
+This paper therefore studies the verifiable-delivery regime
+for merchant-side incentive enforcement. In this regime, ful-
+fillment outcomes are admissible for the analysis only when
+service completion, delay, or non-delivery can be represented
+by a digitally verifiable or publicly auditable signal before set-
+tlement. The model decouples event detection from economic
+enforcement: the settlement contract does not need to observe
+physical delivery directly, but it must receive a reliable public
+signal yt that can trigger rewards, penalties, and trust-state
+updates. Such a signal may be produced by a cryptographic
+delivery acknowledgment, a logistics-oracle proof, a digitally
+logged service-completion event, or a dispute-resolution layer
+whose output is accepted by the settlement contract. Physical-
+world sensing, oracle construction, and unverified buyer self-
+reporting are therefore outside the scope of this characteriza-
+tion. Extending the framework to those settings would change
+the monitoring structure and require a separate analysis of
+signal generation and dispute resolution.
+e) Epoch-Level State Commitment and Execution Model:
+We now make explicit the execution semantics and trust
+assumptions associated with the off-chain aggregation and
+epoch-level state commitment used throughout the protocol.
+The protocol processes micropayment transactions off-chain
+under a discrete epoch structure. Each transaction is assigned
+to exactly one settlement epoch at the time of submission.
+Incentive-relevant state transitions, including credit consump-
+tion, reward accrual, and penalty enforcement, are evaluated
+only at epoch boundaries. Transactions recorded within the
+same epoch are aggregated and summarized by a single Merkle
+root. For each epoch t, at most one state commitment in
+the form of a Merkle root Rt is accepted by the settlement
+contract, indexed by the epoch identifier. Root submission is
+regulated by the settlement contract, which enforces a fixed
+submission window and rejects multiple submissions for the
+same epoch as well as submissions referencing past epochs.
+Committed roots therefore form a strictly ordered, append-
+only sequence {R0, R1, . . .} enforced at the contract level.
+Once a root is recorded on-chain, it is immutable and cannot
+be replaced or rolled back, providing epoch-level durability
+for previously settled state.
+The off-chain component responsible for aggregating trans-
+actions and constructing Merkle trees is treated as untrusted.
+Correctness does not rely on honest execution by this com-
+ponent. Attempts to submit stale roots, omit transactions, or
+equivocate across epochs do not permit retroactive modifica-
+tion of committed state and do not alter incentive outcomes
+associated with earlier epochs. Any transaction that affects
+settlement, incentive enforcement, or credit state must be
+accompanied by a valid Merkle inclusion proof against the
+committed root of its corresponding epoch. Inclusion proofs
+may be submitted by any party at settlement to trigger deter-
+ministic enforcement by the on-chain contract. Transactions
+not accompanied by valid inclusion proofs have no protocol
+effect. Omission of a transaction from a committed root
+therefore results only in the exclusion of that transaction and
+does not compromise previously committed state.
+The protocol maintains the following invariants across
+epochs. First, epoch atomicity ensures that incentive-relevant
+effects are evaluated only at settlement boundaries. Second,
+append-only commitment ensures that committed roots are
+immutable and strictly ordered by epoch. Third, verifiable
+inclusion ensures that no off-chain transaction can affect
+protocol state without an on-chain verifiable proof. These
+invariants rule out stale root submission, rollback of settled
+state, duplicate commitment, and retroactive state modifica-
+tion, while keeping on-chain overhead bounded.
+III. FORMAL MODEL
+This section formalizes buyer–merchant interactions in-
+duced by the proposed non-custodial Layer 2 micropayment
+protocol. Buyers and merchants2 interact repeatedly, and the
+2As explained in Section II, the over-limit auction follows a Vickrey stage-
+wise design under a renewal-exclusion rule, so guarantors’ incentives are
+resolved at the epoch level and excluded from the repeated-game formulation.
+
+protocol defines protocol-level abstract state variables, includ-
+ing trust states, credit limits, fee multipliers, and penalty
+states. The evolution of these states is constrained by publicly
+observable and verifiable outcomes, but does not require
+full persistence of all state variables on-chain. As a result,
+deviations in one period affect future eligibility, rewards, and
+penalties through history-dependent state transitions.
+We adopt PPE and apply the one-shot deviation principle
+(OSDP) by comparing the payoff from a one-shot deviation
+with the discounted continuation value under conforming
+behavior.
+A. Repeated-Game Framework
+We use a public monitoring structure aligned with the
+repeated-game literature [2], [3], where incentive-relevant
+events, including payments, delivery outcomes, and penalty
+triggers, are publicly observable through on-chain signals and
+cryptographic commitments, including Merkle root commit-
+ments and commit–reveal auction records, enforced by smart
+contracts. The analysis characterizes the conditions under
+which IC and liveness can be sustained under credit expansion,
+with formal parameter definitions introduced in subsequent
+sections.
+We model the interaction as an infinitely repeated game with
+hidden protocol state and public monitoring [4].3 Each agent i
+has a publicly observable trust state Ti,t and a credit-limit state
+CLi,t that is not explicitly maintained on-chain. The evolution
+of CLi,t is constrained by publicly verifiable outcomes and
+enforced indirectly through contract-executed penalties and
+access restrictions, without requiring the credit limit itself to
+be persistently stored on-chain. While the numerical value of
+CLi,t is not directly exposed, its effects are reflected in pub-
+licly observable outcomes, including transaction acceptance,
+fee adjustments, and trust state updates. Because the credit-
+limit state CLi,t is not fully observable, standard subgames
+defined over full action histories are not directly applicable;
+instead, we restrict attention to public strategies that condition
+only on publicly observable signal histories, as in PPE.
+a) Standing Assumptions: We consider an infinitely re-
+peated game G∞under deterministic public monitoring. Ac-
+tion sets (Ak)k∈N are finite, payoffs are bounded, and all
+players discount future utilities with a common discount factor
+δ ∈(0, 1). Public histories are denoted by yt = (y0, . . . , yt−1),
+and the public state st summarizes on-chain information rele-
+vant for stage payoffs and continuation utilities. All incentive-
+relevant signals, including payment outcomes, delivery status,
+incentive triggers, and trust state updates, are emitted on-chain
+at the end of each period and are observable by all participants.
+We restrict attention to pure strategies.
+3We assume blockchain persistence so that confirmed transactions and
+incentive-relevant state transitions are publicly observable. Ordering uncer-
+tainty due to latency or fee dynamics is abstracted by modeling interaction at
+a discrete settlement granularity, formalized as epochs in subsequent sections.
+B. Players, Actions, Public State, and Public Signal
+Let N = B ∪M denote the player set, consisting of buyers
+i ∈B and merchants j ∈M. In each period t, buyers choose
+Ai = {PayOnTime, LatePay, Default},
+and merchants choose
+Aj = {DeliverOnTime, LateDeliver, FailToDeliver}.
+The joint action profile is at ∈A = Q
+k∈N Ak.
+The public state st summarizes on-chain information used
+for stage payoffs and continuation utilities, including trust
+scores and aggregate system balances. After execution of at,
+the settlement layer emits a public signal yt ∈Y determinis-
+tically. The signal summarizes verifiable outcomes, including
+payment confirmations, delivery outcomes, incentive triggers,
+and trust score updates. Since st and yt evolve determinis-
+tically under smart contract rules, players reconstruct public
+histories from observed signals.
+C. Solution Concept and Incentive Condition
+We characterize equilibrium behavior under PPE [5], re-
+stricting attention to public pure strategies that condition
+on public signal histories. Off-chain actions are not directly
+observable, but incentive-relevant outcomes are publicly ver-
+ifiable at epoch boundaries via on-chain settlement signals.
+Under this public monitoring structure, equilibrium verifica-
+tion follows the OSDP. The deviation gain and the discounted
+continuation loss, arising from protocol-enforced penalties and
+the loss of future participation, are instantiated using the
+protocol’s reward, penalty, and cost components. Satisfaction
+of the resulting OSDP inequality is sufficient for sustaining
+PPE under public monitoring [3].
+In this work, time is indexed by periods t = 0, 1, . . . , where
+each period corresponds to a protocol epoch, τepoch = 4 hours.
+Micropayments may occur off-chain within an epoch, while
+settlement and incentive distribution occur atomically at the
+epoch boundary. A participant is conforming in period t only
+if all obligations accrued within that epoch are fulfilled. Stage
+payoffs in subsequent sections represent epoch-level aggregate
+utility.
+IV. MERCHANT INCENTIVE AND EQUILIBRIUM ANALYSIS
+This section analyzes merchant participation incentives and
+characterizes system liveness on the supply side. Using the
+repeated-game framework defined in Section III-A, we derive
+the IC and individual rationality (IR) constraints under which
+rational merchants maintain availability and comply with
+protocol deadlines. In high-frequency micropayment settings,
+such as a point-of-sale payment node, merchant j acts as a
+payment service provider responsible for execution reliability
+and liquidity management. Execution reliability requires that
+accepted transactions are completed within protocol deadlines,
+while liquidity management concerns capital allocation under
+opportunity cost constraints. The analysis identifies IC and
+IR conditions under which merchant availability is sustained,
+assuming functional infrastructure.
+
+1) Stage-Game Utility Functions: This subsection defines
+the utility functions associated with the merchant action set
+Aj. For analysis, the actions DeliverOnTime, LateDeliver, and
+FailToDeliver are denoted by aconf, alate, and adef.
+• aconf
+(Conform): The merchant completes delivery
+within the protocol-defined deadline ∆t.
+• alate (Delay): The merchant completes delivery after
+the deadline, retains control over transaction-related re-
+sources during the delay, and incurs a late-delivery
+penalty P LM
+j
+.
+• adef (Default): The merchant fails to deliver and exits
+the protocol, retaining transaction value while triggering
+confiscation of staked collateral.
+Let T denote the set of transactions processed in the current
+settlement epoch, indexed by k, with payment amount vk. For
+merchant j, let uj(a) denote the aggregate utility induced by
+action a, defined as the sum of payoffs over all transactions
+in T . Utilities are evaluated at the epoch boundary, consistent
+with the protocol’s epoch-based settlement model.4
+For alate, incentives are evaluated under the worst-case
+deviation in which all transactions in T are delayed. The
+epoch-level utility function is
+uj(a) =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+X
+k∈T
+(vk −Cfee
+j,k −Cexec
+j,k
++ RF M
+j,k ) + RSM
+j
+−Cstake
+j
+,
+if a = aconf;
+X
+k∈T
+ vk −Cfee
+j,k −Cexec
+j,k
++ RF M
+j,k + Ψj,k −P LM
+j,k
+
++ RSM
+j
+−Cstake
+j
+,
+if a = alate;
+X
+k∈T
+(vk + Ψj,k −P DM
+j,k )
+−Cstake
+j
+,
+if a = adef.
+(1)
+Cfee
+j,k and Cexec
+j,k
+denote the per-transaction protocol fee and
+execution cost incurred by merchant j, respectively. RF M
+j,k
+is the transaction-level fee rebate granted upon successful
+delivery, derived from the aggregate epoch-level rebate RF M
+j
+allocated to merchant j. RSM
+j
+denotes the fixed per-epoch
+reward associated with maintaining a compliant staking posi-
+tion. Cstake
+j
+represents the opportunity cost of capital locked as
+stake over the epoch, modeled as the foregone return on staked
+capital. P LM
+j,k
+and P DM
+j,k
+denote the protocol-enforced penalties
+for late delivery and default, respectively. Ψj,k denotes an
+upper bound on the external opportunity payoff obtainable
+from temporarily retaining control over transaction-related
+resources associated with transaction k, such as liquidity float.
+2) Incentive Compatibility Analysis: We characterize the
+merchant’s IC constraints within a single settlement epoch.
+The analysis identifies conditions on P LM
+j,k
+and the merchant
+4Although stake release is subject to a delay, incentive constraints are
+evaluated per epoch. Delays and defaults are detected and penalized at
+epoch boundaries, which bounds deviation payoffs by single-epoch transaction
+volume. Accordingly, the required stake SM
+j
+covers single-epoch exposure.
+stake SM
+j
+under which no profitable deviation exists, even with
+heterogeneous external opportunity gains.
+Two deviation classes are considered, delay alate and default
+adef. For each, we derive conditions enforcing the strict
+preference ordering aconf
+≻j
+alate ≻j
+adef, where ≻j
+denotes strict preference with respect to merchant j’s epoch-
+level utility. Preventing alate ensures timely settlement, while
+preventing adef ensures that default does not become the best
+response.
+Proposition 1 (Dominance of Timely Delivery). If P LM
+j,k
+>
+Ψj,k for all k ∈T , then aconf ≻j alate.
+Proof. From Eq. 1,
+uj(aconf) −uj(alate) =
+X
+k∈T
+ P LM
+j,k
+−Ψj,k
+
+.
+(2)
+If P LM
+j,k
+> Ψj,k for all k ∈T , then uj(aconf) > uj(alate),
+and hence aconf ≻j alate.
+To preclude default (adef) from becoming the best response,
+we impose the following assumptions.
+Assumption 1 (Bounded Aggregate Liability). For any mer-
+chant j and epoch transaction set T ,
+X
+k∈T
+Cexec
+j,k
+≤Cmax.
+(3)
+Assumption 2 (Persistent Alternative Utility). The external
+opportunity gain Ψj,k is modeled as an exogenous upper
+bound on deviation payoffs and is not assumed to increase
+through the choice of deviation strategy.
+Theorem 1 (Settlement Liveness with Bounded Liability). Fix
+merchant j satisfying Assumptions 1 and 2. Let T denote the
+set of transactions in the current epoch. If all transactions in
+T have passed their execution deadlines, then alate ≻j adef
+whenever
+RSM
+j
++
+X
+k∈T
+P DM
+j,k
+> Cmax +
+X
+k∈T
+
+Cfee
+j,k + P LM
+j,k
+−RF M
+j,k
+
+.
+(4)
+Proof. Comparing uj(alate) and uj(adef) using Eq. 1, com-
+mon terms cancel and rearrangement yields
+RSM
+j
++
+X
+k∈T
+P DM
+j,k
+>
+X
+k∈T
+
+Cexec
+j,k
++ Cfee
+j,k + P LM
+j,k
+−RF M
+j,k
+
+.
+By Assumption 1, P
+k∈T Cexec
+j,k
+≤Cmax, which implies the
+stated sufficient condition.
+Corollary 1 (Strict Dominance of Conforming). Proposition 1
+and Theorem 1 imply the strict dominance ordering
+uj(aconf) > uj(alate) > uj(adef).
+(5)
+Proof. Proposition 1 establishes uj(aconf) > uj(alate), while
+Theorem 1 establishes uj(alate)
+>
+uj(adef). The strict
+ordering follows by transitivity; see Appendix A.
+
+3) Individual Rationality Analysis: We characterize the IR
+condition required for merchant participation. IR requires that
+the expected utility from conforming behavior weakly dom-
+inates non-participation. Normalizing the non-participation
+option to zero yields the following necessary condition.
+Proposition 2 (Stake-Dependent Participation Constraint). A
+necessary condition for a merchant j to satisfy IR is that
+X
+k∈T
+RF M
+j,k + RSM
+j
+≥
+X
+k∈T
+
+Cexec
+j,k
++ Cfee
+j,k
+
++ Cstake
+j
+.
+(6)
+Proof. IR requires that the realized utility from conforming
+behavior weakly dominates non-participation. From Equa-
+tion 1,
+uj(aconf) =
+X
+k∈T
+
+RF M
+j,k −Cexec
+j,k
+−Cfee
+j,k
+
++ RSM
+j
+−Cstake
+j
+.
+Rearranging terms yields the stated condition.
+4) Long-Run Equilibrium Analysis: We extend the analysis
+to an infinitely repeated interaction under public monitoring.
+The repeated-game abstraction omits post-deviation dynamics,
+yielding a conservative estimate of the loss in continuation
+value, as restarting the interaction forfeits accumulated repu-
+tation and future incentive benefits.
+Utility under Punishment. During punishment, protocol-
+defined incentive rewards are suspended. Accordingly, the pun-
+ishment utility corresponds to the conforming utility uj(aconf)
+with the reward components removed:
+uP
+j (aconf, s) =
+X
+k∈T (s)
+
+vk −Cfee
+j,k −Cexec
+j,k
+
+−Cstake
+j
+. (7)
+Discounted Loss under Incentive Suspension. We character-
+ize the discounted utility loss induced by incentive suspension
+over a finite punishment horizon.
+Lemma 1 (Suspension Loss Bound). For a punishment du-
+ration T and discount factor δ ∈[0, 1), the discounted
+continuation loss satisfies
+∆uloss
+j
+≥
+1 −δT
+1 −δ
+
+ℓj.
+(8)
+The constant ℓj > 0 denotes a lower bound on the per-epoch
+utility loss incurred by merchant j due to the suspension of
+protocol-defined incentive rewards.
+Proof. The bound follows from substituting the per-epoch loss
+into the discounted sum and evaluating a finite geometric
+series. A detailed derivation is provided in Appendix A.
+This strict ordering over {aconf, alate, adef} implies that
+any one-shot deviation is strictly dominated in the stage game.
+We obtain the following result.
+Theorem 2 (Perfect Public Equilibrium). Under the strict
+stage-game ordering in Corollary 1 and the continuation loss
+bound in Lemma 1, the public strategy profile that prescribes
+aconf on the conforming path constitutes a PPE for all
+δ ∈[0, 1).
+Proof. The result follows from the One-Shot Deviation Prin-
+ciple under public monitoring, combined with the stage-game
+ordering and the continuation loss bound. A complete proof
+is provided in Appendix A.
+5) Summary of Merchant Incentive Analysis: Under the
+stated late-penalty condition, timely delivery strictly dominates
+delay. With bounded liability and collateral, delay strictly
+dominates default. Consequently, conforming behavior is the
+unique strictly dominant action in the stage game. This dom-
+inance extends to the infinite-horizon setting under public
+monitoring, yielding a PPE for all discount factors.
+V. BUYER INCENTIVE AND EQUILIBRIUM ANALYSIS
+This section analyzes buyer behavior under the protocol’s
+credit allocation rules. The analysis differs from the merchant
+case in Section IV. While merchant compliance is enforced by
+strict stage-game dominance that holds for all discount factors,
+the buyer protocol operates in an under-collateralized regime
+designed for capital efficiency. To support high-frequency
+transactions, the system permits credit expansion, allowing
+the buyer’s outstanding payment obligation vi,t to exceed the
+posted collateral.
+In this regime, timely repayment is not a stage-game dom-
+inant strategy. The one-shot gain from default can exceed the
+recoverable collateral, so static penalties alone are insufficient
+to deter deviation. Buyer incentives therefore rely on the loss
+of future credit access and the associated foregone trade utility,
+which disciplines current behavior. We model the interaction
+as an infinitely repeated game with public monitoring and
+apply the One-Shot Deviation Principle to characterize IC and
+equilibrium existence under credit expansion.
+1) Stage-Game Utility Functions: We define the buyer’s
+stage-game utility over a settlement epoch. The actions Pay-
+OnTime, LatePay, and Default are denoted by aconf, alate,
+and adef.
+• aconf (Conform): The buyer settles the full payment
+obligation within the settlement window.
+• alate (Delay): The buyer delays payment within the cure
+period, retaining control over the payment principal while
+incurring late-payment penalties.
+• adef (Default): The buyer fails to repay by the end of the
+cure period, resulting in collateral confiscation and loss
+of future credit access under Assumption 5.
+Let T denote the set of transactions settled in the current
+epoch, indexed by k. For buyer i, let wk denote the service
+value and vk the payment amount of transaction k. The term
+ω denotes the buyer’s monetary conversion factor that maps
+changes in credit capacity into monetary-equivalent utility.
+Accordingly, credit-limit rewards and penalties enter the stage
+utility through multiplication by ω. The buyer’s utility ui(a)
+is given by:
+
+ui(a) =
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+X
+k∈T
+(wk −vk) + RT R
+i
++ RSB
+i
+−Cstake
+i
++ ω · RCB
+i
+,
+if a = aconf;
+X
+k∈T
+ wk −vk + Ψi,k −P LB
+i,k
+
++ RSB
+i
+−Cfin
+i
+−Cstake
+i
+−ω · P CB
+i
+,
+if a = alate;
+X
+k∈T
+(wk + Ψi,k) −P DB
+i
+−Cstake
+i
+−ω · CLi,
+if a = adef.
+(9)
+Ψi,k denotes an upper bound on the buyer’s short-term benefit
+from retaining control over the payment principal vk during
+the delay period. P LB
+i,k
+denotes the late-payment penalty as-
+sociated with transaction k, while P DB
+i
+= SB
+i
+denotes the
+default penalty given by full confiscation of the buyer’s staked
+collateral SB
+i . Cstake
+i
+represents the opportunity cost of staking,
+and Cfin
+i
+denotes the financing cost incurred under delayed
+settlement. RT R
+i
+denotes a protocol-defined transaction-rebate
+reward, granted upon timely repayment and included as an
+auxiliary incentive instrument, and RSB
+i
+denotes the stake-
+interest reward earned within the epoch. RCB
+i
+denotes the
+credit-limit reward given by the increase in credit capacity
+under timely settlement, and P CB
+i
+the credit-limit penalty
+given by the contraction in credit capacity under deviation.
+CLi denotes the buyer’s credit limit at the beginning of the
+epoch.
+2) Stage-Game Incentive Compatibility: We first analyze
+incentives to deter strategic delay. The following result es-
+tablishes a sufficient condition under which timely repayment
+strictly dominates delayed repayment within a single epoch.
+Proposition 3 (Dominance of Timely Repayment). For any
+buyer i, if the late-payment penalty satisfies P LB
+i,k > Ψi,k for
+all k ∈T , then aconf strictly dominates alate at the stage-
+game level.
+Proof. From Eq. 9, the utility gap ui(aconf) −ui(alate)
+cancels common terms and reduces to P
+k∈T (P LB
+i,k −Ψi,k)
+plus weakly non-negative terms, including RT R
+i
+, Cfin
+i , and
+ω(RCB
+i
++ P CB
+i
+). Under P LB
+i,k
+> Ψi,k for all k ∈T , this
+gap is strictly positive, so aconf ≻alate in the stage game. A
+complete proof is provided in Appendix B.
+This condition eliminates strategic delay but does not pre-
+clude default under credit expansion. We therefore turn to
+repeated-game incentives.
+3) Repeated-Game Incentives and Default Deterrence: We
+impose the following protocol-level assumptions governing
+settlement timing, credit exposure, and default handling.
+Assumption 3 (Explicit Settlement Timeline). Repayment
+obligations are strictly bound by the epoch boundary tdue and
+a fixed cure period ∆Tcure, beyond which any outstanding
+obligation is treated as default.
+Assumption 4 (Bounded Aggregate Exposure). For any buyer
+i and any epoch, the aggregate outstanding debt, defined as the
+sum of unpaid transaction values within the epoch, satisfies
+vi,t ≤vmax < ∞.
+Assumption 5 (Algorithmic Default Enforcement). If buyer i
+fails to repay vi,t by tdue + ∆Tcure, the protocol confiscates
+collateral SB
+i
+and maps the default event into a loss of
+future credit access. This loss may be implemented through
+account suspension, credential revocation, restitution require-
+ments, trust reset, or conservative credit rebuilding for re-
+entering identities. In the analytical model, this continuation-
+value loss is represented by setting the buyer’s post-default
+credit continuation value to zero. Thus, the assumption char-
+acterizes a frictional re-entry regime rather than requiring that
+permissionless blockchain addresses be physically permanent.
+We now characterize equilibrium existence under credit
+expansion.
+Theorem 3 (Conforming PPE with Credit Expansion). Con-
+sider the infinitely repeated game with discount factor δ ∈
+(0, 1) and bounded credit exposure vi,t ≤vmax, which bounds
+the buyer’s maximum one-shot deviation payoff. There exists
+a threshold
+δ =
+vmax −SB
+i
+vmax −SB
+i + ¯ui
+(10)
+such that for all δ ≥δ, a PPE exists in which the buyer
+conforms in every epoch.
+Proof. The equilibrium construction and incentive verification
+follow from the OSDP. A complete proof is provided in

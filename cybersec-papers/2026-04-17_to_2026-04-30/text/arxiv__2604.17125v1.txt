@@ -1,0 +1,846 @@
+CASCADE: A Cascaded Hybrid Defense Architecture for Prompt
+Injection Detection in MCP-Based Systems
+I. Abasıkeleş-Turguta,∗, E. Gümüşb
+aDepartment of Computer Engineering, Faculty of Engineering and Natural Sciences, Iskenderun Technical University, Hatay, Türkiye
+bDepartment of Computer Engineering, Institute of Graduate Studies, Iskenderun Technical University, Hatay, Türkiye
+A R T I C L E I N F O
+Keywords:
+Model Context Protocol
+LLM Security
+Layered Defense
+Tool Poisoning
+Prompt Injection
+A B S T R A C T
+Model Context Protocol (MCP) is a rapidly adopted standard for defining and invoking external tools
+in LLM applications. The multi-layered architecture of MCP introduces new attack surfaces such
+as tool poisoning, in addition to traditional prompt injection. Existing defense systems suffer from
+limitations including high false positive rates, API dependency, or white-box access requirements.
+In this study, we propose CASCADE, a three-tiered cascaded defense architecture for MCP-based
+systems: (i) Layer 1 performs fast pre-filtering using regex, phrase weighting, and entropy analysis; (ii)
+Layer 2 conducts semantic analysis via BGE embedding with an Ollama Llama3 fallback mechanism;
+(iii) Layer 3 applies pattern-based output filtering. Evaluation on a dataset of 5,000 samples yielded
+95.85% precision, 6.06% false positive rate, 61.05% recall, and 74.59% F1-score. Analysis across
+31 attack types categorized into 6 tiers revealed high detection rates for data exfiltration (91.5%)
+and prompt injection (84.2%), while semantic attack (52.5%) and tool poisoning (59.9%) categories
+showed potential for improvement. A key advantage of CASCADE over existing solutions is its fully
+local operation, requiring no external API calls.
+1. Introduction
+1.1. Motivation
+Large language models (LLMs) are utilized across a
+broad spectrum of applications, from digital assistants to
+AI-powered journalism, owing to their ability to generate
+human-like text. In recent years, autonomous AI agents
+capable of interacting with various tools and data sources
+have attracted increasing attention. This progress accelerated
+in 2023 with OpenAI’s introduction of function calling,
+enabling language models to invoke external APIs in a struc-
+tured manner. This advancement allowed LLMs to retrieve
+real-time data, perform computations, and interact with ex-
+ternal systems. In late 2024, Anthropic released the Model
+Context Protocol (MCP), a universal standard for defining,
+discovering, and invoking external tools in AI applications
+[1]. MCP has been rapidly adopted, with over eight million
+weekly SDK downloads and more than 1,899 open-source
+servers [2].
+Unlike traditional software, LLMs cannot syntactically
+distinguish between instructions and data; they process ev-
+erything as natural language text, creating a fundamental
+ambiguity that attackers exploit [3]. OWASP has classified
+prompt injection as LLM01:2025, identifying it as the most
+critical security vulnerability for large language model ap-
+plications; this reflects the consensus that the vulnerability
+represents a fundamental architectural flaw rather than an
+implementation error [3]. Despite its rapid adoption, the
+MCP ecosystem remains in its early stages, with critical
+areas such as security, tool discoverability, and remote de-
+ployment lacking comprehensive solutions [1]. One of the
+∗Corresponding author
+ipek.abasikeles@iste.edu.tr (I. Abasıkeleş-Turgut);
+edipgumus.lee25@iste.edu.tr (E. Gümüş)
+ORCID(s): 0000-0002-5068-969X (I. Abasıkeleş-Turgut)
+Figure 1: Traditional LLM Architecture
+most serious threats to MCP-based systems is tool poison-
+ing, classified by OWASP as MCP03:2025 [4].
+1.2. Problem Statement
+Figure 1 illustrates the architecture of a traditional LLM
+system. In such systems, the user directly sends a prompt
+to the language model, which generates a response. In this
+simple architecture, the attack surface is limited to user
+input only. In contrast, MCP-based systems, as shown in
+Figure 2, exhibit a significantly more complex architecture.
+User input is first transmitted to the MCP Host (i.e., the
+LLM); it is then routed through the MCP Client protocol
+layer to the appropriate MCP Server, where the relevant tools
+are invoked. Tool outputs return via the same path and are
+presented to the user as a response.
+This multi-layered architecture creates additional attack
+surfaces for adversaries beyond the prompt injection vulner-
+abilities present in traditional LLMs. One such attack is tool
+poisoning, where adversaries embed malicious instructions
+within tool descriptions or metadata, causing the model
+to invoke specific tools or exhibit unexpected behaviors.
+OWASP has classified this attack as MCP03:2025, with a
+DREAD risk score of 46.5/50 (Critical) [5]. This category
+encompasses sub-techniques including rug pulls (malicious
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 1 of 8
+arXiv:2604.17125v1 [cs.CR] 18 Apr 2026
+
+CASCADE
+Figure 2: MCP-based System
+updates to trusted tools), schema poisoning (corruption of
+interface definitions), and tool shadowing (introduction of
+fake or duplicate tools) [4]. Studies have demonstrated attack
+success rates of up to 72.8% across 20 different LLM agents
+[6]. Additionally, indirect injection attacks, where malicious
+instructions are hidden within tool outputs, can be processed
+by the model and cause harm indirectly [3]. Furthermore,
+adversaries can exfiltrate sensitive user data through tool
+invocations (data exfiltration) [7].
+Although defense systems for MCP have begun to emerge
+in the literature over the past year, they exhibit significant
+limitations including impractically high false positive rates
+[8], API dependency [5], and white-box access requirements
+[9]
+1.3. Contributions
+The main contributions of this study can be summarized
+under three categories:
+1.3.1. Architectural Contributions
+• CASCADE (Cascaded Analysis for Secure Con-
+tent And Detection Engine): A three-tiered defense
+architecture is proposed for MCP-based systems: (i)
+Layer 1 performs fast pre-filtering using regex, phrase
+weighting, and entropy analysis; (ii) Layer 2 conducts
+semantic analysis via BGE embedding with a Llama3
+fallback mechanism; (iii) Layer 3 applies pattern-
+based output filtering.
+• Embedding-First, LLM-Fallback Strategy: Unlike
+existing systems, Layer 2 first performs fast embedding-
+based analysis, with the LLM invoked only when
+necessary.
+• Fully Local Operation: Through the use of BGE
+embedding and Ollama Llama3, the system operates
+entirely locally, eliminating the need to transmit sen-
+sitive data to external APIs.
+• Three-Decision Output Mechanism: Instead of bi-
+nary (block/allow) decisions, the system provides
+three-tiered output (ALLOW/REVIEW/BLOCK), en-
+abling human intervention for ambiguous cases.
+1.3.2. Experimental Contributions
+• Multi-Source Real-World Derived Dataset: A dataset
+of 5,000 samples (1,521 benign, 3,479 malicious) was
+compiled from multiple sources including GitHub Ad-
+versarial, VulnerableMCP, and OWASP API Security.
+• Low False Positive Rate: With 6.06% FPR and
+95.85% precision, the system offers a practically
+usable balance compared to existing approaches.
+1.3.3. Analytical Contributions
+• Attack Type-Based Performance Analysis: A de-
+tailed analysis was conducted across 31 attack types
+categorized into 6 tiers, revealing the system’s strengths
+and weaknesses.
+. Moreover, the majority of existing studies have been eval-
+uated using synthetic datasets, leaving their real-world per-
+formance unverified.
+In this context, the following research questions have
+been formulated:
+• RQ1: How effective is a hybrid defense architecture
+that cascades regex, embedding, and LLM compo-
+nents in detecting prompt injection and tool poisoning
+attacks in MCP-based systems?
+• RQ2: How does the proposed system perform across
+different attack categories (semantic attack, tool poi-
+soning, data exfiltration, prompt injection) and attack
+types?
+• RQ3: Can a fully local system provide privacy-
+preserving security compared to API-based solutions?
+2. Related Works
+Prompt injection attacks, defined as malicious messages
+used by adversaries to override original instructions [10],
+represent one of the most dangerous threats against LLMs
+[11]. Consequently, numerous studies on prompt injection
+have been conducted in the literature [12, 13, 14, 15]. Lee
+and Tiwari [12] introduced the concept of prompt infection,
+where injection propagates from LLM to LLM in multi-
+agent systems. Shi et al. [13] developed optimization-based
+attacks targeting LLM-as-a-judge systems. Debenedetti et
+al. [14] presented AgentDojo, a dynamic evaluation envi-
+ronment for testing prompt injection attacks and defenses.
+Suo [15] proposed a signed-prompt approach as an attack
+prevention mechanism for LLM-integrated applications.
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 2 of 8
+
+CASCADE
+MCP, a standardized protocol for connecting LLMs to
+external tools, introduces new attack surfaces beyond prompt
+injection. Hou et al. [1] conducted a detailed theoretical anal-
+ysis of the MCP ecosystem, presenting a taxonomy contain-
+ing 16 distinct threat scenarios. Zong et al. [16] introduced
+MCP-SafetyBench, a security-focused benchmark with a
+taxonomy of 20 MCP attack types, along with tasks re-
+quiring multi-turn, cross-server coordination. Maloyan and
+Namiot [17] identified three fundamental protocol-level vul-
+nerabilities in their security analysis of MCP; through tests
+on 847 attack scenarios across 5 MCP servers, they reported
+that MCP is 23-41% more susceptible to attacks compared to
+non-MCP integrations, depending on architectural choices.
+Research indicates that tool poisoning is one of the most
+prevalent and dangerous client-side vulnerabilities in MCP
+systems. For instance, study [3] demonstrated that MCP in-
+troduces new vulnerability types such as tool poisoning and
+credential theft, showing that 5 documents prepared through
+RAG poisoning could manipulate AI responses by up to
+90%. Additionally, Hasan et al. [2] analyzed 1,899 open-
+source MCP servers, finding that 7.2% contained general
+security vulnerabilities and 5.5% contained MCP-specific
+tool poisoning. Huang et al. [5] conducted comprehensive
+threat modeling of MCP applications using the STRIDE
+and DREAD frameworks, identifying 57 distinct threats
+across five core components. In tests of seven major MCP
+clients (Claude Desktop, Cursor, Cline, Continue, Gemini
+CLI, Claude Code, Langflow) against four different tool
+poisoning attacks, tool poisoning received a DREAD score
+of 46.5/50 (Critical).
+Some literature studies on MCP are attack-focused, with
+defense mechanisms being either limited or absent. For
+example, Radosevich and Halloran [18] demonstrated that
+MCP servers are vulnerable to attacks including malicious
+code execution, remote access control, and credential theft,
+and introduced McpSafetyScanner as a proactive auditing
+tool. Wang et al. [6] created the MCPTox benchmark, de-
+veloping 1,312 malicious test cases across 45 real MCP
+servers and 353 tools; they reported attack success rates of
+up to 72.8% across 20 LLM agents. Li et al. [19] presented
+MCP-ITP (Implicit Tool Poisoning), an attack framework
+where LLM behavior is influenced solely through metadata
+manipulation without invoking malicious tools, achieving an
+attack success rate of 84.2%. The LOG-TO-LEAK attack
+[7], which causes exfiltration of sensitive information such
+as user queries and tool responses by invoking a malicious
+logging tool, achieved high success rates in tests across
+five real-world MCP servers and four different LLM agents
+(GPT-4o, GPT-5, Claude-Sonnet-4, GPT-OSS-120b) with-
+out degrading task quality.
+In addition to attack scenarios developed for MCP, some
+studies have focused on defense system design. A compari-
+son of MCP defense systems is presented in Table 1. Study
+[20] first conducted attacks including directory traversal,
+SQL injection, credential extraction, and resource exhaus-
+tion on 15 MCP servers, reporting that 87% of systems
+exhibited critical vulnerabilities and 34% allowed system
+compromise. Subsequently, the proposed defense system
+was reported to mitigate attacks with 94% effectiveness.
+While this study is successful against traditional vulnerabil-
+ities, it overlooks semantic-level prompt injection attacks.
+Zhou et al. [21] introduced MCPShield, a plugin security
+cognition layer providing three-phase protection through-
+out the tool invocation lifecycle. The first phase is pre-
+invocation, involving Security Cognitive Probing with meta-
+data driven mock calls. The subsequent execution phase
+performs isolated environment execution and kernel trace
+logging. The final post-invocation phase conducts behavioral
+drift analysis. In tests across 76 malicious MCP servers
+and 6 different LLM backbones, the average protection rate
+of undefended agents against attacks was 10.05%, which
+increased to 95.30% with MCPShield. However, due to the
+absence of a regex-based fast pre-filtering layer, LLM costs
+are incurred even for simple attacks. Additionally, general-
+ization performance has not been tested with data obtained
+from real-world MCP servers.
+MCP Guardian [22], a middleware system comprising
+authentication, rate limiting, regex WAF, and logging com-
+ponents, operates with a latency overhead of 3–4ms (10–
+15%). However, as it lacks semantic-level analysis, it cannot
+detect sophisticated attacks employing encoding and obfus-
+cation techniques.
+MINDGUARD [9], a white-box defense system, an-
+alyzes the LLM’s internal attention patterns to compute
+Decision Dependency Graph (DDG) and Total Attention
+Energy (TAE) metrics. It demonstrates over 97.6% attribu-
+tion precision and over 98.6% detection AP while operating
+with zero token overhead. However, this approach requires
+internal model access and cannot be applied to black-box
+API-based systems.
+Jamshidi et al. [8] proposed a layered defense framework
+incorporating RSA-based manifest signing, LLM-on-LLM
+vetting, and heuristic guardrails. Testing was conducted on
+GPT-4, DeepSeek, and Llama-3.5 using 8 different prompt-
+ing strategies across more than 1,800 data samples. GPT-
+4 exhibited balanced performance with a 71% block rate,
+while DeepSeek achieved 97% resistance against shadowing
+attacks but incurred latency costs of up to 16.97 seconds. The
+proposed system’s false positive rate of 91–97% renders it
+impractical for real-world deployment.
+MCP-Guard [23] proposed a three-stage framework
+comprising fast regex-based filtering, semantic analysis, and
+LLM verification. Stage 1 achieved latency under 2ms, while
+Stage 2 reached 96.01% accuracy. The MCP-AttackBench
+dataset containing 70,448 samples (GPT-4 augmented) was
+created, with reported F1-score of 95.4% and average latency
+of 455.9ms. This work represents the closest architectural
+similarity to CASCADE. However, significant differences
+exist: (i) while MCP-Guard utilizes API-based models, the
+proposed system operates entirely locally; (ii) while MCP-
+Guard was tested exclusively on synthetic data, this study
+employs a dataset derived from multiple real-world sources;
+(iii) while MCP-Guard invokes the LLM for every request,
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 3 of 8
+
+CASCADE
+Table 1
+Comparison of MCP Defense Systems
+System
+Architecture
+Dataset
+FPR
+Local
+Semantic
+Context Injection [20]
+Pattern-based
+15 MCP servers
+–
+✓
+×
+MCPShield [21]
+3-phase cognition
+76 malicious servers
+–
+×
+✓
+MCP Guardian [22]
+Regex WAF
+–
+–
+✓
+×
+MINDGUARD [9]
+White-box attention
+–
+Low
+×
+✓
+Jamshidi et al. [8]
+RSA + LLM-on-LLM
+1,800 (synthetic)
+91–97%
+×
+✓
+MCP-Guard [23]
+Regex + Emb. + LLM
+70,448 (synthetic)
+–
+×
+✓
+CASCADE
+Regex + BGE + Llama3
+5,000 (real-world)
+6.06%
+✓
+✓
+Table 2
+Research Gaps and CASCADE Contributions
+Research Gap
+CASCADE Contribution
+High FPR (91–97%) [8]
+6.06% FPR, 95.85% precision
+API dependency [23]
+Fully local (BGE + Ollama)
+White-box requirement [9]
+Black-box compatible
+Single-layer approaches
+3-tier hybrid architecture (L1+L2+L3)
+Synthetic data usage
+5,000 samples derived from multiple real-world sources
+Lack of attack type analysis
+Detailed analysis across 31 types and 6 tiers
+the proposed system employs an embedding-first strategy
+where the LLM serves only as a fallback mechanism.
+2.1. Research Gap
+Upon examination of the existing literature, while vari-
+ous defense mechanisms have been proposed in the field of
+MCP security, significant shortcomings are evident:
+1. High False Positive Rates: The system proposed
+by Jamshidi et al. [8] exhibits an FPR of 91–97%,
+rendering it impractical for real-world deployment.
+2. API Dependency: Systems such as MCP-Guard [23]
+depend on external APIs, making them unsuitable for
+applications with privacy concerns.
+3. White-box Requirements: High-performance sys-
+tems like MINDGUARD [9] require internal model
+access and cannot be applied to black-box API-based
+LLMs.
+4. Single-Layer Approaches: Most existing systems
+operate either purely rule-based or purely LLM-based,
+failing to leverage the advantages of hybrid approaches.
+5. Synthetic Dataset Usage: Studies by MCP-Guard
+(70,448 samples) and Jamshidi et al. (1,800 samples)
+were tested entirely on synthetic data, leaving real-
+world performance unverified.
+6. Lack of Attack Type-Based Analysis: Existing stud-
+ies report general metrics without providing detailed
+analysis of which attack types they succeed or fail
+against.
+The contributions presented to address these gaps are
+summarized in Table 2.
+3. CASCADE Architecture
+The CASCADE architecture is illustrated in Figure 3. In
+the current implementation, Layer 1 produces binary deci-
+sions (L1_BLOCK/ALLOWED), with non-blocked inputs
+being forwarded to Layer 2. The three-class classification
+capability (BLOCK/SUSPICIOUS/SAFE) will be activated
+in future versions through threshold optimization. The sys-
+tem protects MCP-based systems against prompt injection
+and tool poisoning attacks by passing user input through a
+three-tiered security filter.
+3.1. L1: Pre-Filter Layer
+The first layer serves as a fast and low-cost pre-filtering
+mechanism. Input text first undergoes a preprocessing stage:
+Unicode NFKD normalization, homoglyph conversion (e.g.,
+Cyrillic to Latin, leet speak with 30 different character map-
+pings), and obfuscation decoding (base64, ROT13, percent-
+encoding, octal, HTML entities, hex, and Unicode escape)
+are applied to neutralize encoding-based evasion attempts.
+Following preprocessing, four distinct analysis views
+are generated for each input: original text, normalized text,
+squashed text (with repeated characters compressed), and
+lowercase text. All detection patterns are executed across
+these four views.
+Layer 1 employs over 100 regex patterns across seven
+categories. The pattern categories and their distributions are
+presented in Table 3.
+The injection mode detection mechanism determines
+whether the input is direct, indirect, hybrid, or safe (none).
+This detection relies on three contextual signal groups: (i)
+control intent terms (ignore, override, bypass, etc.), (ii) sen-
+sitive context terms (api_key, token, password, etc.), and (iii)
+governance context terms (instructions, policy, developer,
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 4 of 8
+
+CASCADE
+Figure 3: The CASCADE architecture
+etc.). To reduce false positives, weak signals are suppressed
+when benign workflow patterns (debug, fix, explain, etc.) are
+detected.
+The risk score is calculated on a 0–100 scale, with base
+scores defined for each category (e.g., prompt_injection:
+90, tool_abuse: 85, data_exfiltration: 84). Inputs with a risk
+score exceeding 50 or with a detected injection mode are
+blocked with L1_BLOCK.
+3.2. L2: Semantic Judge Layer
+The second layer performs semantic analysis on suspi-
+cious inputs received from L1. First, the input is vectorized
+using the BGE embedding model (SentenceTransformer),
+and a similarity score is computed against known attack
+Table 3
+Attack Categories and Example Patterns
+Category
+N
+Examples
+Direct Injection
+19
+“ignore instructions”
+High-Risk Indirect
+17
+“follow its footer”
+Low-Risk Indirect
+5
+“summarize this email”
+Prompt Leakage
+14
+“system prompt”
+Tool Abuse
+11
+“exec()”, “/etc/passwd”
+Data Exfiltration
+11
+“reveal api_key”
+Jailbreak
+15
+“developer mode”
+Semantic Signals
+43+ “replace prior rules”
+Table 4
+Dataset Source Distribution
+Source
+Count
+Ratio (%)
+Real Dataset (Base + Oversampling)
+4,914
+98.28
+GitHub Adversarial
+19
+0.38
+VulnerableMCP
+50
+1.00
+OWASP API Security
+10
+0.20
+Promptfoo/PyRIT
+1
+0.02
+Other
+6
+0.12
+Total
+5,000
+100.00
+patterns. When embedding fails or produces ambiguous
+results, the Llama3 model running on Ollama is invoked as
+a fallback mechanism. Layer 2 can produce three distinct
+decisions: high-risk inputs are blocked with L2_BLOCK,
+ambiguous inputs are marked as L2_REVIEW and placed
+in a review queue for human inspection, and inputs deemed
+safe are forwarded to the MCP Host.
+3.3. L3: Output Filter Layer
+The third layer inspects responses generated by the MCP
+Host. This layer employs keyword detection to identify
+sensitive terms, secret pattern matching to detect API keys
+and credentials, and base64 entropy analysis to detect en-
+crypted data exfiltration attempts. When a risk is detected,
+the response is blocked with L3_BLOCK; otherwise, it is
+delivered to the user as ALLOWED.
+4. Experimental Evaluation
+4.1. Dataset
+A comprehensive dataset comprising 5,000 samples was
+constructed for evaluating the proposed system. The dataset
+was compiled from multiple sources to reflect real-world
+scenarios. The source distribution of the dataset is presented
+in Table 4, and the category distribution is presented in
+Table 5.
+The dataset comprises 30.42% (1,521) benign samples
+and 69.58% (3,479) samples from various attack categories.
+The most prevalent attack type is semantic attack at 35.60%,
+followed by tool poisoning at 22.33%.
+4.2. Experimental Environment
+Experiments were conducted in the hardware and soft-
+ware environment specified in Table ??. All layers were
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 5 of 8
+
+CASCADE
+Table 5
+Dataset Category Distribution
+Category
+Count
+Ratio (%)
+Semantic Attack
+1,780
+35.60
+Benign
+1,521
+30.42
+Tool Poisoning
+1,117
+22.33
+Data Exfiltration
+424
+8.48
+Prompt Injection
+158
+3.16
+Tool Shadowing
+2
+0.03
+Total
+5,000
+100.00
+Table 6
+Experimental Environment
+Component
+Description
+Device
+MacBook Pro
+Processor
+Apple M3 Max (14 cores: 10P + 4E)
+RAM
+36 GB
+OS
+macOS Tahoe 26.3.1
+Python
+3.14.3 (min: ≥3.13)
+L1
+Regex, phrase weighting, entropy
+L2 Embedding
+BGE-base (SentenceTransformer)
+L2 Fallback
+Ollama + Llama3 (8B, Q4_0, 4.7 GB)
+Context
+8,192 tokens
+L3
+Python pattern matching
+Table 7
+System Parameters and Threshold Values
+Parameter
+Value
+𝐿1 risk threshold
+> 50 (BLOCK)
+𝐿1 regex patterns
+100+ (7 categories)
+𝐿1 obfuscation
+7 methods
+𝐿1 analysis views
+4
+𝐿2 embedding
+BGE-small-en-v1.5 (384-dim)
+𝐿2 block threshold
+≥0.54
+𝐿2 review threshold
+[0.37, 0.54)
+𝐿2 LLM fallback
+Llama3 8B (temp=0)
+𝐿3 secret patterns
+5 (OpenAI, AWS, etc.)
+𝐿3 entropy threshold
+> 4.5
+executed entirely locally without the use of external APIs,
+thereby preserving user data privacy.
+The system configuration parameters are presented in
+Table 7.
+4.3. Results and Discussion
+To evaluate the performance of CASCADE, the fol-
+lowing metrics were employed: accuracy (Eq. 1), precision
+(Eq. 2), recall (Eq. 3), F1-score (Eq. 4), specificity (Eq. 5),
+false positive rate (FPR) (Eq. 6), and false negative rate
+(FNR) (Eq. 7). In the equations, TP denotes true positive,
+FP denotes false positive, TN denotes true negative, and FN
+denotes false negative.
+Accuracy =
+𝑇𝑃+ 𝑇𝑁
+𝑇𝑃+ 𝑇𝑁+ 𝐹𝑃+ 𝐹𝑁
+(1)
+Table 8
+Overall Performance Metrics
+Metric
+Value
+Accuracy
+71.06%
+Precision
+95.85%
+Recall
+61.05%
+F1-score
+0.7459
+Specificity
+93.94%
+FPR
+6.06%
+FNR
+38.95%
+Table 9
+Confusion Matrix
+Predicted
+Malicious
+Benign
+Actual
+Malicious
+2,124 (TP)
+1,355 (FN)
+Benign
+92 (FP)
+1,429 (TN)
+Precision =
+𝑇𝑃
+𝑇𝑃+ 𝐹𝑃
+(2)
+Recall =
+𝑇𝑃
+𝑇𝑃+ 𝐹𝑁
+(3)
+F1-score = 2 × Precision × Recall
+Precision + Recall
+(4)
+Specificity =
+𝑇𝑁
+𝑇𝑁+ 𝐹𝑃
+(5)
+FPR =
+𝐹𝑃
+𝑇𝑁+ 𝐹𝑃
+(6)
+FNR =
+𝐹𝑁
+𝑇𝑃+ 𝐹𝑁
+(7)
+Table 8 presents the overall performance metrics, and
+Table 9 shows the confusion matrix. The proposed system
+demonstrates high precision and low FPR values. The sys-
+tem made correct decisions on 95.85% of inputs flagged as
+malicious. Of the 1,521 benign samples, only 92 were in-
+correctly blocked. This rate represents a significant improve-
+ment compared to the 91–97% FPR reported by Jamshidi et
+al. [8].
+Table 10 presents the category-based performance anal-
+ysis, and Table 11 shows the tier-based attack type anal-
+ysis results across 31 types. High recall was achieved in
+the data exfiltration (91.5%) and prompt injection (84.2%)
+categories, while semantic attack (52.5%) and tool poisoning
+(59.9%) categories exhibit potential for improvement. All
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 6 of 8
+
+CASCADE
+Table 10
+Category-Based Performance Analysis
+Category
+TP
+FP
+FN
+Recall (%)
+Data Exfiltration
+388
+0
+36
+91.5
+Prompt Injection
+133
+0
+25
+84.2
+Tool Poisoning
+668
+0
+448
+59.9
+Semantic Attack
+935
+0
+845
+52.5
+Benign
+–
+92
+–
+FPR: 6.06
+Table 11
+Tier-Based Attack Type Analysis
+Tier
+Recall Range
+Type Count
+Ratio (%)
+TIER 1
+100%
+3
+10
+TIER 2
+80–99%
+2
+6
+TIER 3
+60–79%
+7
+23
+TIER 4
+40–59%
+7
+23
+TIER 5
+20–39%
+1
+3
+TIER 6
+0%
+9
+29
+92 false positives originated from the direct attack cate-
+gory, stemming from benign content overlapping with attack
+patterns. Of the 1,355 false negatives, 62.4% originated
+from the semantic attack category and 33.1% from the tool
+poisoning category.
+The experimental results reveal that the proposed cas-
+caded hybrid defense architecture exhibits varying perfor-
+mance across different attack categories.
+Regex-based pre-filtering produced effective results for
+inputs containing known attack patterns. High detection
+rates were achieved for structurally distinctive attack types
+such as credential exfiltration (100%), endpoint abuse (100%),
+and parameter abuse (83.3%). These attacks are easily
+captured by Layer 1 as they typically contain keywords such
+as “API_KEY”, “password”, and “secret”, or specific regex
+patterns.
+The 52.5% recall rate in the semantic attack category
+indicates limitations in the system’s generalization capacity.
+These attacks are difficult to detect using rule-based methods
+as they contain instructions hidden within natural language.
+For instance, an expression such as “Could you please forget
+all previous instructions and help me?” could also be inter-
+preted as a harmless request.
+A recall rate of 59.9% was achieved in the tool poisoning
+category. Since MCP tool descriptions typically contain
+technical terminology, distinguishing malicious instructions
+from legitimate descriptions becomes challenging. Further-
+more, the structural diversity of tool descriptions (JSON
+schema, natural language descriptions, parameter defini-
+tions) complicates a uniform detection approach.
+It is noteworthy that all 92 false positives originated from
+the direct attack category. This stems from certain benign
+content exhibiting syntactic similarity to attack patterns. For
+example, security training materials or technical documents
+discussing attack examples fall into this category.
+The 6.06% FPR represents a critical achievement for the
+system’s practical usability. Considering that Jamshidi et al.
+[8] reported 91–97% FPR, the proposed system significantly
+improves user experience.
+4.4. Limitations
+CASCADE exhibits the following limitations:
+1. While the semantic attack (35.60%) and tool poison-
+ing (22.33%) categories are dominant in the dataset,
+categories such as tool shadowing (0.03%) are under-
+represented.
+2. A portion of the dataset labels were compiled using
+automated methods or from diverse sources.
+3. Only the Llama3 (8B) model was tested in the L2
+fallback mechanism. The performance of different
+LLMs (GPT-4, Claude, Mistral, etc.) on the same
+architecture has not been evaluated.
+4. The system was tested on a static dataset. Real-time
+MCP environments involving multiple tool invoca-
+tions, session context, and dynamic attack scenarios
+have not been evaluated.
+5. The dataset predominantly contains English samples.
+The system’s performance in multilingual attack sce-
+narios remains unknown.
+6. Zero detection rates were achieved for 9 of 31 attack
+types (29%). Edge case scenarios such as authoriza-
+tion bypass and privilege escalation cannot be ad-
+dressed by the current architecture.
+5. Conclusion
+In this study, CASCADE, a three-tiered cascaded de-
+fense architecture for detecting prompt injection and tool
+poisoning attacks in MCP-based systems, was proposed.
+The system performs regex-based fast pre-filtering at Layer
+1, semantic analysis using BGE embedding with Llama3
+fallback at Layer 2, and output pattern inspection at Layer
+3.
+The following conclusions were reached in the context
+of the research questions: For RQ1, the hybrid architecture
+achieved a practically usable balance with 95.85% precision
+and 6.06% FPR. For RQ2, the system demonstrated high
+performance in the data exfiltration (91.5%) and prompt
+injection (84.2%) categories, while potential for improve-
+ment was identified in the semantic attack (52.5%) and tool
+poisoning (59.9%) categories. For RQ3, through the use of
+BGE embedding and Ollama Llama3, the system operates
+entirely locally, thereby preserving user data privacy.
+In future work, integration of ML-based semantic anal-
+ysis is planned to improve the low recall in the semantic at-
+tack category. Additionally, the development of tool-specific
+mechanisms for tool poisoning detection and comparative
+evaluation of different LLMs (GPT-4, Mistral, Claude) are
+targeted.
+İ. Abasıkeleş-Turgut and E. Gümüş: Preprint
+Page 7 of 8
+
+CASCADE
+Declaration of Generative AI and AI-Assisted
+Technologies in the Manuscript Preparation
+Process
+During the preparation of this work, the authors used
+ChatGPT and Claude in order to assist with literature review
+synthesis, code analysis documentation, and manuscript
+editing. After using these tools, the authors reviewed and
+edited the content as needed and take full responsibility for
+the content of the published article.

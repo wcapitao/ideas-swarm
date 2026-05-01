@@ -1,0 +1,1011 @@
+PrivSTRUCT: Untangling Data Purpose
+Compliance of Privacy Policies in Google Play
+Store
+Bhanuka Silva1[0009−0000−6558−6514], Anirban Mahanti1[0009−0003−9030−9916],
+Aruna Seneviratne2[0000−0001−6894−7987], and Suranga
+Senevirante1[0000−0002−5485−5595]
+1 The University of Sydney, Australia
+{bpin9254,anirban.mahanti,suranga.seneviratne}@sydney.edu.au
+2 University of New South Wales, Australia
+a.seneviratne@unsw.edu.au
+Abstract. Existing research typically treats privacy policies as flat, uni-
+form text, extracting information without regard for the document’s log-
+ical hierarchy. Disregard for structural cues of section headings designed
+to guide the reader, often leads automated methods to entangle dis-
+tinct data practices, particularly when linking sensitive data items to
+their specific purposes. To address this, we introduce PrivSTRUCT, a
+novel and systematic encoder and decoder combined framework that to
+untangle complex privacy disclosures. Benchmarking against the state-
+of-the-art tool PoliGrapher reveals that PrivSTRUCT robustly extracts
+more than x2 the number of data item and purpose excerpts while re-
+taining developer-defined structural cues. By applying PrivSTRUCT to
+a large-scale dataset of 3,756 Android apps, we uncover a critical trans-
+parency gap: the probability of developers overstating a data purpose is
+20.4% higher for first-party collection and 9.7% higher for third-party
+sharing when they rely on globally defined purposes rather than specific,
+locally scoped disclosures. Alarmingly, we find that sensitive third-party
+data flows such as sharing financial data for analytics are frequently di-
+luted and entangled into generic or unrelated categories, highlighting a
+persistent failure in the current purpose disclosure landscape.
+Keywords: Privacy Policies · Privacy Compliance · Google Play Store
+· Language Models · Direct Preference Optimisation
+1
+Introduction
+Privacy policies are to inform users about data collection and usage practices,
+yet they are notoriously complex and lengthy, often leading individuals to skip
+reading them altogether [17, 3, 22]. Regulations such as the EU General Data
+Protection Regulation (GDPR), the California Consumer Privacy Act (CCPA),
+and the Australian Privacy Principles (APPs) have sought to improve trans-
+parency. However, these efforts have paradoxically increased policy intricacy,
+arXiv:2604.22157v1 [cs.CR] 24 Apr 2026
+
+2
+Silva B. et al.
+What information do we collect?
+Personal Information
+Non-Personal Information
+When do we collect information?
+What do we use your information for?
+Personal Information
+Non-Personal Information
+We may use Non-Personal Information for any purpose as below:
+   personalize user experience,
+   improve our Mobile Apps or its services,
+   improve user service and respond to queries and emails of our users,
+   run and operate our Mobile Apps or its Services.
+... Information You Give Us. This includes:
+the personal data you provide when you report a problem ...
+the personal data you provide when you correspond with us by email.
+... may include the information about your devices and technical
+information such as the versions of phone model and other similar
+information.
+We may use the personal information you provided to answering your
+inquiry or responding to a communication from you.
+...
+Main
+Sub
+Sub
+Sub
+Sub
+Main
+Main
+First
+First
+First
+How- Used?
+How- Used?
+How- Used?
+What?
+What?
+What?
+First
+Other
+First
+First
+First
+Other Personal 
+Device ID
+Other Personal 
+Developer Communication
+Personalisation
+App Analytics
+App Analytics
+App Functionality
+Other Personal 
+Device ID
+First Party Collection / Use
+What Data Items?
+For What Purposes?
+/ How Used?
+Locally defined purpose
+Globally defined purposes
+4K Wallpapers - Auto Changer
+Developer: HD Pro Walls
+10M+ downloads, 189k reviews (4.6⛤)
+This app may share these data types with third parties
+Location, App activity and 2 others
+This app may collect these data types
+Location and Device or other IDs
+Data is encrypted in transit
+Data can’t be deleted
+Location
+Approximate location
+Device or other IDs
+Device or other IDs
+Analytics, Advertising or marketing, Fraud prevention,
+security and compliance
+App functionality, Analytics, Advertising or marketing
+!
+!
+Fig. 1. Left: Privacy policy portion of ‘HD Pro Walls’ developer related to first party
+collection details. Right: The data safety declaration of the developer’s app called ‘4K
+Wallpapers - Auto Changer’, with nearly 10M+ downloads, yet contradicting with the
+policy itself based on data practices. Extracted on December, 2025
+making them even less accessible [10, 16]. In the mobile app ecosystem, where
+users increasingly rely on applications for daily tasks, this issue is amplified.
+App marketplaces like the Google Play Store require developers to provide sum-
+marised data practices through Android data safety labels [1], which outline
+collected or shared data items and their purposes in a more straightforward
+manner. However, these self-declared labels must align with the legally binding
+full privacy policy document in order to avoid misleading users and ensure com-
+pliance [20]. Yet, as we demonstrate in this work, such alignments are frequently
+undermined by structural ambiguities in the policies themselves.
+Empirical observations reveal that many policies separate descriptions of
+data items (e.g., “name” or “email address”) from their purposes (e.g., “app an-
+alytics” or “personalisation”), often across distinct sections. This isolation can
+prompt users to make blanket consents, assuming broad applicability without
+clear linkages, potentially leading to unfair data processing. Figure 1 depicts
+“locally-defined” purposes where specific data like personal information is ex-
+plicitly linked to developer communication and “globally-defined” purposes where
+ambiguous text forces readers to guess and map disconnected data items like de-
+vice IDs to the purposes such as app analytics, functionality and personalisation
+defined in later sections of the privacy policy. This figure also depicts how as-
+signing meaningful labels to the main and sub section headings can structurally
+link disjoint elements. In this example, data items related to first-party collection
+/ use are globally mapped with homogeneous data purpose declarations based
+on these labels. In the right is the data safety declaration of the most popular
+app by this developer with nearly 10M+ downloads, which alarmingly indicates
+that they collect approximate location from end-users for analytics, advertising,
+fraud prevention security and compliance but this is not defined at all in the
+
+PrivSTRUCT
+3
+privacy policy, indicating a major contradiction when regulatory frameworks re-
+quire consistency across both forms of disclosure. Additionally, use of device IDs
+for advertising or marketing is also not disclosed in policy as well.
+Existing natural language processing (NLP) approaches often exacerbate this
+issue by either analysing policies as flat sequences of text, or disregarding the
+hierarchical cues (such as section headings) that developers use to scope these
+claims, or by not considering the data purposes altogether. Consequently, these
+methods risk extracting undistinguished relationships that misrepresent the true
+granularity of the developer’s disclosure. To this end, we propose PrivSTRUCT
+(Privacy policy Structural Tagging for Robust Understanding and Compliance
+Tracing), a novel framework that resolves policy ambiguity by systematically
+leveraging the developer-intended structural hierarchy. PrivSTRUCT utilises
+a hybrid architecture combining decoder-based high-level structural extraction
+with encoder-based classification for granular semantic analysis. This allows us
+to not only map the logical flow of a policy but to specifically categorise section
+headings by intent, distinguishing between segments that define what data is col-
+lected, why it is processed, why it is shared, etc. By reconstructing these depen-
+dency links, PrivSTRUCT can accurately differentiate between locally defined
+purposes (tied to specific data items) and globally defined mandates, enabling a
+far more precise audit of Play Store Data Safety Labels than previously possible.
+More specifically, our contributions include:
+– PrivSTRUCT, a novel systematic framework that combines the natural lan-
+guage understanding (NLU) capabilities of decoder-based LLMs with the
+classification-efficiency of encoder-based models to analyse privacy policies.
+It leverages structural cues to untangle the relationships between data items
+and purposes. We introduce a Direct Preference Optimisation (DPO) pipeline
+to fine-tune smaller, open-source models (Llama-3.1) for structural extrac-
+tion, achieving performance comparable to proprietary state-of-the-art mod-
+els while significantly reducing computational overhead.
+– We benchmark PrivSTRUCT against PoliGraph, a state-of-the-art NLP tool
+for privacy policy analysis. Our evaluation on a diverse test set reveals that
+in average PoliGraph only identifies 52.1% and 89.1% less number of unique
+data items and data purposes compared to our method.
+– We conduct a large-scale empirical analysis of 3,756 privacy policies and their
+corresponding Google Play Data Safety labels 3. We characterise the land-
+scape of “Purpose Compliance” and “Purpose Dilution”, revealing that the
+probability of developers overstating purposes is 20.4% higher for first-party
+collection and 9.7% higher for third-party sharing as they increasingly rely
+on globally defined purposes. Alarmingly, we find that critical third-party
+data flows such as sharing financial data for analytics are frequently diluted
+into generic or unrelated categories within the policy text, undermining the
+transparency goals of modern app marketplaces.
+3 Dataset is available via https://github.com/NSS-USYD/PrivCORPUS/
+
+4
+Silva B. et al.
+2
+Related Work
+Prior efforts to demystify privacy policies relied on traditional NLP for summari-
+sation and decision support [13, 23, 24, 14, 32, 18]. These methods were eventu-
+ally superseded by encoder-based transformers and related architectures [2, 27].
+More recently, the landscape has shifted toward generative approaches, which
+are increasingly demonstrating remarkable efficacy in zero- and few-shot policy
+understanding [29, 21, 26, 8].
+Extracting structured information from policy text via semantic analysis is
+crucial for tasks such as consistency checking. PolicyLint [4] introduced linguistic
+analysis to extract (data type, entity) tuples from individual sentences, enabling
+the detection of internal contradictions. Building on this, PurPliance [7] ex-
+tended the tuple structure to identify processing purpose clauses, allowing for
+comparisons against actual app behaviour. Similarly, PolicyChecker [5] lever-
+aged semantic analysis roles to audit the consistency between policy disclosures
+and app code. However, these approaches rely on isolated sentence-level analy-
+sis; they cannot resolve dependencies across multiple sections of a policy, often
+resulting in extracted tuples that are disconnected or ambiguous. Alternative
+frameworks like PolicyComp [31] attempt to bypass these extraction challenges
+by benchmarking policies against those of similar ‘counterpart’ apps, but this
+merely identifies statistical outliers and does not resolve the fundamental inabil-
+ity of current models to handle complex, cross-section dependencies
+Recent work PoliGraph [9] moves beyond linear text analysis by modelling
+privacy policies as knowledge graphs. In this architecture, data types and entities
+function as nodes, connected by two primary edge relations: SUBSUME, which
+maps generic terms to specific definitions, and COLLECT, which links entities
+to the data they acquire. PoliGraph identifies 40% more collection statements
+than prior state-of-the-art while achieving 97% precision, however, ‘purposes’
+of such collections are treated merely as a secondary attribute attached to the
+COLLECT edge. This dependency presents a significant limitation: purposes in
+complex policy text are frequently ambiguous or syntactically detached from
+explicit collection verbs. As a result, purposes are not always well-defined solely
+by the existence of a link between an entity and a data type. This structural
+rigidity often leads to missed or misattributed purposes, underscoring the need
+for more robust identification methods. PrivPRISM [25] is a LLM decoder and
+encoder combined framework specifically designed to extract data items and pur-
+poses for compliance auditing. Despite its efficiency for robust data extraction,
+it does not explicitly infer non-trivial relationships between data items and pur-
+poses. PrivPRISM introduces section heading extraction as an integral part of
+the framework but do not deep dive into intentions of the headings. To address
+these limitations, the PrivSTRUCT framework introduced in this paper lever-
+ages previously ignored developer-disclosed intentions within section headings.
+By modelling this high-level policy flow, PrivSTRUCT establishes robust links
+between disconnected subsections, enabling the precise mapping of otherwise
+ambiguous, globally-defined purposes.
+
+PrivSTRUCT
+5
+Privacy
+Policy Text
+(sanitised)
+Heading Extraction
+Preference Optimised
+Llama3.1-8B-Instruct
+Heading List and Heading-Tags
+Heading
+Contents
+Data Practice Labels
+Data Intention Labels
+Data Item Extraction
+Data Purpose Extraction
+Data Item Labels
+Data Purpose Labels
+Llama3.1-8B-Instruct
+F.T. PrivBERT models
+First Party Collection
+What?
+How-Used?
+Device ID
+Other Personal
+Analytics
+Dev. Communi.
+Functionality
+Global purpose
+mapping
+Well-defined
+purposes
+1
+2
+Fig. 2. PrivSTRUCT framework
+3
+PrivSTRUCT Framework
+This section first details the privacy policy dataset, followed by a breakdown
+of each module within the PrivSTRUCT framework (the complete pipeline is
+illustrated in Figure 2). Finally, we introduce the metrics used to characterise
+data purpose compliance and purpose dilution.
+3.1
+Dataset
+We analyse a corpus of 3,756 unique privacy policies associated with 6,540 of
+the most downloaded apps on the Google Play Store, crawled during the first
+half of 2024. By restricting our analysis to policies with a sanitised text file size
+< 50KB, we capture 97% of the initially observed top policies while exclud-
+ing statistical outliers (the corpus average is 18.3KB). Focusing on top-ranked
+applications aligns with the findings of Khandelwal et al. [15], who note that de-
+velopers of high-visibility apps typically provide more robust declarations due to
+heightened public scrutiny and available resources. Notably, this dataset reveals
+a widespread pattern of policy reuse; major developers frequently govern multi-
+ple high-traffic apps under a single, unified text. To ensure accurate compliance
+attribution, we map each unique privacy policy strictly to the developer’s most
+downloaded application.
+Categorically, the dataset is dominated by tools (20.2%), photography (8.5%),
+and entertainment (8.4%). The high proportion of utility apps makes this corpus
+particularly relevant for our study, as these apps frequently necessitate broad An-
+droid system permissions that are functionally justified yet vaguely articulated in
+generic policy texts. Personal data sensitive categories like finance (3.3%) and
+medical (0.6%) represent a much smaller fraction, reflecting their specialised,
+rather than general-purpose, user base.
+To systematically develop the PrivSTRUCT framework, we extracted a rep-
+resentative subset of 750 policies (DSdev). To mitigate potential bias toward
+the length, we applied a stratified sampling technique, guaranteeing a uniform
+distribution by selecting exactly 150 policies from each 10KB length increment.
+This subset was subsequently divided into 675 policies for training (DStrain) and
+75 for testing (DStest). Following the finalisation of the PrivSTRUCT model,
+we executed our at-scale empirical compliance analysis across the entire 3,756
+policy corpus.
+
+6
+Silva B. et al.
+Text chunking based on \n characters
+chunk length ≤ 512 tokens
+f"<{tag}>{heading}</{tag}>\n"
+GPT-5 Reasoning heading list
+Llama 3.1 8B Ins. heading list
+Llama headings != GPT headings?
+#Llama headings != 0?
+Random Augmentation
+First sentence as a {heading}
+Yes
+Chosen: GPT
+Rejected: Llama
+No
+No
+Yes
+Fig. 3. Synthesising of the DPO dataset
+3.2
+Heading extraction
+Modern HTML based privacy policies frequently rely on complex CSS and
+JavaScript rather than a semantic Document Object Model (DOM) tree, there-
+fore, developers rarely use standard HTML heading tags (e.g., <h1> through
+<h6>) [6, 14, 25]. Using standard HTML parsers then inevitably reduce the doc-
+ument to a flat text output, stripping away implicit hierarchical cues. To recover
+this lost structure, we feed the flattened text file into a LLM tasked with identi-
+fying and reconstructing the heading hierarchy. To determine the most efficient
+approach for at-scale extraction, we compare the proprietary GPT-5 reasoning
+(400k context window) via API against the open-weight Llama-3.1-8B-Instruct
+(128k context window), evaluating the latter for its potential cost and inference-
+time advantages in local deployments. Across DSdev, we prompt both models to
+generate a structural flow from the flat text, explicitly annotating each identified
+heading with either a <main> or <sub> tag to indicate its hierarchical level (c.f.
+Figure 3).
+While both models performed similarly on the majority of policies, empir-
+ical evaluations revealed three consistent failure modes for the Llama model:
+(1) defaulting to uniform heading levels (all main or all sub), (2) misclassifying
+entire paragraph sentences as headings, and (3) dropping existing headings en-
+tirely. To address this without the extensive overhead of traditional supervised
+fine-tuning, we employed Direct Preference Optimisation (DPO) [19] to align
+the Llama model with GPT-5’s extraction quality. As depicted in Figure 3, we
+curated a DPO dataset from DStrain by chunking them into 512-token segments
+and isolating the instances where Llama’s baseline extraction mismatched GPT-
+5’s output (71.4% of 8,418). To explicitly penalise Llama’s tendency to extract
+full sentences (failure mode 2), among the missed-heading instances (28.9%) we
+augmented 50% of them by supplying the segment’s first non-heading sentence as
+a target rejected output. We use DStest to evaluate the DPO training, specifically
+tuning the deviation penalty hyper-parameter, β, to optimise heading extraction
+quality. To quantify this quality, we measure the "fitment" of headings across
+the policy by calculating the median and inter-quartile range (IQR) of the text
+length between identified headings. This distribution effectively flags structural
+errors; for instance, a lower quartile approaching zero indicates the model is likely
+misidentifying consecutive list items as sub-headings. We also track the average
+number of headings identified per policy to ensure comprehensive extraction,
+with detailed results discussed in Section 4.2.
+
+PrivSTRUCT
+7
+3.3
+Decoder based data item and purpose extraction
+Literature highlights that embedding based models are not effective in seman-
+tic text excerpt search due to the vector space noise [12]. Comparatively it is
+straightforward for decoder models as a natural language understanding (NLU)
+task [11, 25] to extract which segments represent data items and data purposes
+for a given text chunk with 512 tokens at most. Given the nature of this task,
+we directly use Llama3.1 8B instruct and represents outputs in a JSON format;
+[{‘data′ : ‘data excerpt′, ‘purpose′ : ‘purpose excerpt′}, ...]
+and we emphasise that we allow data or purpose keys to contain empty strings if
+necessary. If we observe any empty purpose for a given data, we later on try to
+map them globally with a suitable purpose discussed elsewhere, which is a key
+novelty in this work.
+To link globally-defined purposes, we create a link between isolated pur-
+poses (i.e. no locally defined data item) listed under a data intention = Why?
+or How Used? and isolated data items (i.e. no locally defined data purpose)
+listed under a data intention = What?. An example can be observed in orange
+colour dashed lines in Figure 2. If we observe isolated data items or purposes not
+belonging to above mentioned data intentions, we still link them but as weak
+global (floating) relationships. Note that the above mentioned two linkages
+are pre-conditioned on data practice category and we do not match first party
+collection data items with third party sharing data purposes (or vice versa).
+3.4
+Encoder based classifiers
+Following the information extraction phase, we employ four fine-tuned PrivBERT
+models to classify the extracted text into their respective categories. PrivBERT
+is a privacy policy pre-trained RoBERTa based embedding model (c.f. Sub Sec-
+tion 4.1). The fine-tuning of these modules for the downstream task of label
+prediction was based on synthetic labels generated via GPT5 prompting for in-
+formation extracted from the 750 privacy policies. This is similar to LLM boot-
+strapped training of encoders discussed in [25]. We demonstrate the fine-tuning
+performance in Table 1.
+The classifiers for Data Item and Data Purpose operate on a straightforward
+paradigm: they map each input text excerpt to a single class label using batched
+inferencing. While the Data Practice and Data Intent classifiers could follow this
+same approach, we hypothesise that encoder-based models benefit significantly
+from additional structural context. To test this, we evaluate an input schema that
+includes the section heading list within the prompt itself. Specifically, we for-
+mat the input as “[CLS] target_heading [SEP] context_headings [SEP]”.
+Due to PrivBERT’s 512-token input limit, we include only a subset of adjacent
+headings (a ‘neighbourhood’) rather than the full list. We evaluate the impact of
+this context-aware approach in Sub Section 4.3. A complete list of classification
+labels given below.
+
+8
+Silva B. et al.
+– Data Practices: First Party Collection/Use (c0), Third Party Sharing (c1), User Choice/Control
+(c2), User Access, Edit and Deletion (c3), Introductory/Generic (c4), Policy Change (c5), Data
+Security (c6), International and Specific Audience (c7), Practice Not Covered (c8), Data Re-
+tention (c9), Privacy Contact Information (c10), and Do Not Track (c11).
+– Data Intentions: What (i0), Why (i1), How-Collected (i2), How-Used (i3), When (i4), Other
+(i5).
+– Data Items (D): Name (d0), Email (d1), User account (d2), Address (d3), Phone (d4),
+Race/Ethnicity (d5), Political/Religious (d6), Gender (d7), Financial (d8), Location (d9), Search
+and Browsing history (d10), SMS/ Messages/ Call log (d11), Photos/Videos (d12), Audio/Music
+(d13), Health/Fitness (d14), Contacts (d15), Calendar (d16), App performance/ App Activity
+(d17), Device identifier (d18), Files/Documents (d19), Other Personal (d20), Generic information
+(d21) and Negatives (d22).
+– Data Purposes (P ): App Analytics (p0), Developer communication (p1), Fraud prevention
+/ security and compliance (p2), Advertising or marketing (p3), Personalisation (p4), Account
+management (p5), App functionality (p6), and Other (p7).
+3.5
+Metrics for Data Purpose Compliance
+In this subsection, compliance indicates whether a given data item and its pur-
+pose is disclosed in the data safety (DS) declarations and also correctly reflected
+and described in the corresponding privacy policy (PP) text. More formally, for
+a given {PP, DS} pair, we could observe the purpose compliance by comparing
+the presence of each individual purpose for and when a given data item is agreed
+as collected or shared among the pair. To establish a generalised landscape of
+data purpose compliance (for all pairs of PP and DS instances), we define the
+probability of observing a given purpose (p[i]) being well-disclosed for a given
+data item (d[j]) as PW D(i, j) if and only if locally-defined.
+PW D(i, j) = P(p[i] ∈(PP ∩DS) | d[j] ∈(PP ∩DS))
+POS(i, j) represents the probability when a purpose p[i] that is locally de-
+fined in the privacy policy is not observed in data safety, and we consider this
+as the probability of purpose over-statement. Similarly PUS(i, j) which is the
+probability of purpose under-statement defines that a purpose is mentioned in
+the data safety but not in the privacy policy. (Note that the condition of purpose
+non-existence or PNE(i, j) is not explicitly mentioned due to less significance but
+can be obtained by 1 −PW D(i, j) −POS(i, j) −PUS(i, j)).
+POS(i, j) = P(p[i] ∈(PP \ DS) | d[j] ∈(PP ∩DS))
+PUS(i, j) = P(p[i] ∈(DS \ PP) | d[j] ∈(PP ∩DS))
+Note: Probabilities are computed per data item d[j] of a given data practice
+classification type. In the main context of the chapter, we are mostly interested
+about data practices of PPs related with first party collection (c0) and third
+party sharing (c1) which can be directly compared and contrasted against DS
+declarations regarding compliance.
+As we have discussed before, developers are inclined to not locally define data
+item and data purpose relationships, and rather they tend to disclose via global
+definitions. I.e. data items may be in bulk declared in one section related to
+collection practices with relevant purposes declared elsewhere and vice versa for
+sharing practices. As PrivSTRUCT is capable of extracting such relationships, it
+is important to evaluate the compliance when taken these into consideration as
+
+PrivSTRUCT
+9
+well. The delta contribution we receive when these globally-defined data-item
+and purpose pairs are considered to the original PX is denoted as ∆. For example,
+based on locally and globally defined data items and purposes, probability of
+well-disclosed purposes being observed will be PW D + ∆PW D.
+For us to globally match such purposes, it is expected that the developers
+disclose data items inside a heading related to “WHAT" data intention (e.g.
+What information do we collect from you?) and disclose the data purposes inside
+a heading related to “WHY" data intention (e.g. Why do we collect information
+from you?). However, developers could still disclose floating data items and data
+purposes in other sections where the true intent is not clear. In this scenarios,
+when the data practice category is strictly clear (i.e. collection or sharing), we
+weakly global match such data items and data purposes and the additional
+contribution we receive from this mapping to the compliance is indicated by ∆′.
+3.6
+Metrics for Data Purpose Dilution
+Data Purpose Dilution refers to a phenomenon where the purpose for collecting
+or sharing a specific data item, as declared in the DS declaration, does not
+directly align with the purpose stated in the PP. Instead, the purpose in one
+document (e.g., DS) is “diluted” or spread across a diverse set of other purposes
+in the other document (e.g., PP) for the same data item, or vice versa. This
+misalignment creates ambiguity and reduces clarity for end-users about why
+their data is being processed.
+To calculate the data purpose dilution matrix (DM) we deploy the logic
+given by the following equation where we identify the disagreements between
+the purposes of DS and PP for a given data item j and dilute them across other
+purposes with disagreements. We use a 8x7 matrix as the ‘other’ purpose is non
+existent for DS declaration for which it always follow p[7] ∈DS = 0,
+DM(x, y) = (p[x] ∈PP \ DS) ∧(p[y] ∈DS \ PP)
+We normalise each dilution matrix for a given data type for the summation of
+all cells to be one for a given DS and PP pair. For observing the general landscape
+of data dilution, we add all dilution matrices (per data item) and normalise
+again. (Note: DM is different from the confusion matrix in traditional multi-class
+classification problems, as there are no set ground truth and prediction values
+for the problem we are discussing.) This metric helps us to identify which data
+purposes for a given data item are consistently not-disclosed by the developers
+while disclosing one or more unrelated data purposes.
+4
+Benchmarking PrivSTRUCT
+To validate the efficacy of the PrivSTRUCT framework, we conduct a series
+of benchmarking analysis starting with confirming the availability of structural
+cues. Next the capabilities of DPO-trained models against state-of-the-art LLM
+
+10
+Silva B. et al.
+Heading's Content
+Text-Encoded
+Heading's Content
+Text-Encoded
+Heading's Content
+Text-Encoded
+Introductory / Generic
+First Party Collection
+Third Party Sharing
+What?
+Why? / How Used?
+How Gathered?
+Other
+0
+100
+50
+25
+75
+Relative Length of Policy (%)
+Frequency of occurence
+Data Intentions
+(Heading's content
+based only)
+Heading's Content
+Text-Encoded
+Heading's Content
+Text-Encoded
+Data Control Related
+Demographic Related
+700
+600
+500
+400
+300
+200
+100
+0
+Data Practices
+Aggregated
+Data Practices
+Fig. 4. Analysing 750 privacy policies based on semantic (text encoder) classification
+versus structural (heading-content basis) labels
+baselines and next, the classification performance of encoder-based modules un-
+der varying context settings. Finally we compare PrivSTRUCT with PoliGra-
+pher, a state-of-the-art knowledge graph based NLP tool for extracting privacy
+policy information.
+4.1
+Confirming the availability of structural cues via headings
+Meaningful label assignment via privacy policy paragraph classification is widely
+addressed in literature, particularly, OPP-115 foundational dataset introduced
+by Wilson et al. [30] in which legal experts annotated 23k segments belonging to
+115 online privacy policies has become popular and widely adapted as in [23, 28,
+14, 27, 26]. PrivBERT, a RoBERTa based encoder model that is pre-trained on
+millions of privacy policies and fine-tuned on OPP-115 excels in this classification
+task [27, 26]. Selection of the labels c0 to c11 in this work overlaps with this line
+of prior work.
+However, we rarely see a privacy policy written as a continuous block of text
+that require individual paragraphs to be classified, rather, developers use section
+headings to direct end-users to specific parts of the policy. In this benchmarking
+experiment, we evaluate whether (a) section heading based (no paragraph context
+given) labels align with (b) paragraph based (no section headings given) embedding
+model generated labels. As there are no existing embedding models trained for
+(a), we employ the GPT-5 reasoning model over DSdev to extract all the headings
+from privacy policy text files and to assign each heading with two levels of labels:
+data practice tags (i.e. c0 to c11) and data intention tags (i.e. i0 to i5). For (b)
+we directly use the most confident label provided by the fine-tuned PrivBERT
+classifier.
+In the results depicted in Figure 4, x-axis represents the relative position
+within the privacy policy, normalised on a scale of 0.0 (start of the document)
+to 1.0 (end of the document). Comparing the distribution of labels derived from
+
+PrivSTRUCT
+11
+Table 1. Macro average classification results of the four classifiers
+Classifier
+Feed
+#Labels #Train #Test Pr
+Re
+F1
+1. Data Practice single
+12
+21k
+2795 0.86 0.86 0.86
+multiple
+12
+21k
+2795 0.96 0.96 0.96
+2. Data Intention single
+6
+21k
+2795 0.85 0.85 0.85
+multiple
+6
+21k
+2795 0.87 0.87 0.87
+3. Data Items
+N/A
+23
+74k
+8271 0.87 0.83 0.85
+4. Data Purpose N/A
+8
+51k
+6320 0.93 0.92 0.93
+text-encoding versus those derived purely from headings, a near-identical dis-
+tributions across both methods are observed. This result highlights a common
+distributional pattern across privacy policies. The initial 10% of the policy length
+is typically introductory or generic. Next, nearly 40% of the document length is
+dedicated to First Party Collection. In this segment, we observed a relative agree-
+ment of 98.65% between the heading-based and text-embedding based methods.
+The subsequent 25% of the document predominantly details Third Party Shar-
+ing, with a method agreement of 91.65%. Data Control practices (an aggregation
+of user choice, access / edit / deletion, retention, and security) and Demographic
+explanations (e.g., target regions like EU or US) are predominantly located in
+the final quartile. Proven the hypothesis on alignment is valid, finally, the GPT-5
+based data-intention-tags reveal that sections specific to “why” data is collected
+or “how” it is used are structurally distinct from sections describing “what” data
+is collected. This confirms that developers implicitly structure policies with sep-
+arated intents, a cue that can be leveraged for more granular analysis, an im-
+portant feature not utilised before in literature.
+4.2
+DPO for heading extraction
+Based on the experiments outlined in Section 3.2, a hyperparameter selection ex-
+periment yielded β = 0.4 as the optimal value where the DPO trained Llama3.1
+model provided highest quality of outputs related to heading structure extrac-
+tion. We refer the readers to Appendix A.1 for detailed results on this hyperpa-
+rameter selection and further explanations. A manual study over DStest further
+confirmed preference for DPO-Llama3.1 model improved to 42.7%, a perfor-
+mance that is highly competitive with respect to the proprietary GPT-5 (50.7%)
+and baseline Llama3.1 (6.6%). It confirms that we can reliably substitute a lo-
+cally hosted decoder model for heading extraction with no API costs and much
+faster inference times (c.f. Appendix Figure 9 - d). This preference optimised
+model was then used for generating empirical results for full dataset.
+4.3
+Encoder based classifiers
+Text classification using encoder models is well-established and proven efficient
+for privacy policy analysis [27, 26]. Table 1 presents the macro-average scores
+
+12
+Silva B. et al.
+0
+20
+Policy Index
+10
+30
+50
+40
+60
+70
+50
+100
+150
+200
+0
+250
+Unique Identifications
+PrivSTRUCT - data items
+PrivSTRUCT - purposes
+PoliGRAPH - data items
+PoliGRAPH - purposes
+0-10
+10-20
+20-30
+30-40
+40-50
+Policy size in KB
+Fig. 5. Comparison with PoliGraph
+for the four classifiers utilised in PrivSTRUCT. The column #Train indicates
+how many samples we used to fine tune each model and we followed LLM boot-
+strapped training, where the training labels are generated via GPT5 models.
+This stage allows us to use efficient encoder models (∼500M parameters in to-
+tal) for the label generation task without relying on locally hosted much larger
+Llama3.1 models or API based generative models, still providing comparable
+performance.
+We specifically highlight the ablation studies for the data practice and data
+intention classifiers (rows 1 and 2 in Table 1). Here, ‘feed’ denotes whether the
+model received only the target heading (single) or the target heading accom-
+panied by its surrounding neighbourhood of headings (multiple). The multiple
+setting enables the model’s self-attention mechanism to leverage the structural
+context of the document better. While increasing the MAX_LENGTH param-
+eter to accommodate this context increases computational cost, it yields signifi-
+cant gains: we observed a substantial 10 percentage point improvement in
+F1 score for data practice classification (e.g., distinguishing first party collection
+from third party sharing). However, the improvement for developer intent clas-
+sification was marginal, showing only a 2 percentage point increase indicating
+the isolated headings still contain sufficient information to classify based on data
+practice intention.
+4.4
+PrivSTRUCT versus PoliGraph
+To benchmark our framework, we employ the open-source PoliGrapher NLP tool
+[9] to parse the 75 privacy policies in our test dataset (DStest), comparing its
+extraction of data items and purposes against PrivSTRUCT. Figure 5 illustrates
+the comparative yield of unique item and purpose identifications.
+Notably, the PoliGrapher tool failed to parse 6 of the 75 policies (8%, all
+exceeding 25KB in size). While PrivSTRUCT successfully processed the entire
+dataset, we restrict the following comparative analysis strictly to the 69 policies
+successfully processed by both frameworks to ensure an equitable baseline and
+meaningful improvement metrics. In terms of data items, PrivSTRUCT identifies
+an average of 79.6 unique mentions per policy (accounting for multiple items em-
+
+PrivSTRUCT
+13
+Section Heading Label:
+Data Items :
+Data Practice
+Data Intent
+collect*
+collect*
+n/a
+n/a
+Data Purposes:
+Must be locally
+defined. 
+Therefore data
+intent is
+irrelevant
+Section Heading Label:
+Data Items :
+Data Practice
+Data Intent
+collect*
+collect*
+What
+Why/How-Used
+Data Purposes:
+Globally
+Defined
+Mapping
+Required
+Section Heading Label:
+Data Items :
+Data Practice
+Data Intent
+collect*
+collect*
+Other
+Other
+Data Purposes:
+Data items
+and purposes
+not linked by
+developer
+* When calculating purpose compliance related to "Data Collection". For the "Data Sharing" compliance metrics, * should be "share"
+Fig. 6. Locally-defined, globally-defined or un-defined/floating purposes
+bedded within single sentence excerpts), whereas PoliGrapher averages only 38.1
+(a 52.1% reduction). The disparity is even more pronounced for data purposes:
+PrivSTRUCT extracts an average of 92.8 unique purpose statements per policy,
+compared to PoliGrapher’s 10.1 (an 89.1% reduction). Furthermore, upon map-
+ping these extracted excerpts to standardised purpose categories, PrivSTRUCT
+identifies an average of 2.9 additional distinct purpose categories per policy,
+demonstrating a significantly richer information yield.
+5
+Results
+For discussing the results of the large scale analysis of 3,756 privacy policy doc-
+uments, we follow the metrics defined in Sub-sections 3.5 and 3.6. We critically
+evaluate purpose compliance landscape based on each of the privacy policy (PP)
+and the data safety (DS) declaration of the most popular app representing the
+privacy policy. Given that both forms of disclosures (PP and DS) are developer-
+self declared, our expectation as well as with any end-user is to observe an
+explanatory text in the PP regarding the data purposes declared in DS. This
+is also enforced by regulatory frameworks and app market operator mandates
+under required consistency. We observed that, despite the availability of 22 data
+item categories, majority of them were very sparse; for example, we did not
+or rarely observed any mention of d[5]-race/ethnicity and d[6]-political/religious
+categories. For the rest of this section, we discuss the purpose compliance with
+respect to eight high-frequent data item categories.
+Figure 6 summarises how developers define data purposes compared to the
+data items in their disclosures. PX represents locally-defined purpose statements
+where it is irrelevant to specifically consider developer data intentions. They
+could be related to either first party collection or third party sharing based on the
+data practice classification label. ∆represents globally-defined purposes where
+an intention based mapping is required to link ‘what’ data items are disclosed
+and ‘why’ these data items are used. ∆′ represents floating data purposes that
+are observed elsewhere in data intention classifications, yet still belonging to the
+same data practice category.
+5.1
+Well-and not so well-disclosed Purposes
+As shown in Figure 7, we can observe that having a well-disclosed purpose for a
+given data item is not uniform (i.e., due to hot spots if we go through column-
+wise in the row PW D for each data item). Name, email, and user account have
+
+14
+Silva B. et al.
+1.0
+0.0
+0.2
+0.4
+0.6
+0.8
++0.05
+-0.05
+0.0
++0.10
+-0.10
+0  1  2  3  4  5  6  7
+Data Collection
+Name
+Email
+User Account
+Financial
+Location
+App Perfor. &
+Activity
+Device IDs
+Generic
+Information
+0-App Analytics  1-Dev.Communication  2-Fraud prevent/Security/Compliance  3-Advertising/Marketing  
+4-Personalisation  5-Account Management  6-App Functionality  7-Other
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+Data Sharing
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+0  1  2  3  4  5  6  7
+Fig. 7. Results for Purpose Compliance
+Table 2. Average probability of occurrence for purpose well-disclosure(WD), under-
+statement(US) and over-statement(OS) for eight frequently used data item categories.
+User
+App Device Gen- Avg.
+Name Email Acct. Finc. Loc. Acct.
+IDs
+-eric
+PX
+∆
+∆′
+PW D 0.111 0.154 0.159 0.122 0.143 0.144 0.135 0.187 0.144 +0.017 +0.026 (+18.0%)
+collect PUS
+0.214 0.230 0.278 0.253 0.196 0.143 0.165 0.137 0.202 -0.016
+-0.026 (-12.9%)
+POS
+0.222 0.204 0.190 0.199 0.214 0.264 0.244 0.347 0.235 +0.028 +0.048 (+20.4%)
+PW D 0.073 0.099 0.055 0.063 0.097 0.080 0.099 0.131 0.087 +0.001
++0.006 (+6.9%)
+share
+PUS
+0.219 0.250 0.301 0.199 0.198 0.123 0.172 0.253 0.214 -0.001
+-0.009 (-4.2%)
+POS
+0.172 0.188 0.172 0.202 0.125 0.188 0.154 0.288 0.186 +0.003
++0.018 (+9.7%)
+a higher probability of being well-disclosed when collected for account manage-
+ment. Similarly, financial information is likely well-disclosed for fraud preven-
+tion/security and compliance and location, app performance, and app activity,
+device identifiers for app analytics. All data items have a higher probability of
+being well-disclosed for app functionality. When location and device identifier
+are shared with third parties for advertising, it is likely to be well-disclosed.
+Table 2 quantitatively discuss the results based on each data when averaged
+across all data purpose categories. The probability of observing well-disclosed
+and locally-defined purposes among the selected data items remains low at
+14.4% for when collected and only 8.7% when shared. Comparatively the purpose
+over-statement within the policy text remains quite high, approximately with
+twice the probability. Note that the three probability values in each column
+do not add up to 1 as we do not show purpose non-existence (which simply
+dictates that a data item and data purpose are unlikely to be linked via developer
+disclosures) here.
+Both in the figure and in table, we show the change to the original proba-
+bilities as soon as we include globally-defined purposes as ∆. In the figure,
+blue shades represent the increase of the respective probabilities with red shades
+representing decreases. In the results, we also depict unlinked/floating data
+purpose compliance which are easy to be missed by end-users as the section
+headings do not properly disclose the developer intention with such data prac-
+
+PrivSTRUCT
+15
+0   1   2   3   4   5   6
+Name
+Email
+User Account
+Financial
+Location
+App Perfor. & Activity
+Device IDs
+Generic Information
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+0   1   2   3   4   5   6
+ 0 
+ 1 
+ 2 
+ 3 
+ 4 
+ 5 
+ 6 
+ 7
+ 0 
+ 1 
+ 2 
+ 3 
+ 4 
+ 5 
+ 6 
+ 7
+0-App Analytics  1-Dev.Communication  2-Fraud prevent/Security/Compliance  3-Advertising/Marketing  4-Personalisation  5-Account Management  6-App Functionality  7-Other
+DS
+PP
+Data Collect
+Data Share
+0.0
+1.0
+0.5
+0.75
+0.25
+Fig. 8. Results for Purpose Dilution
+tices. We denote these contributions via ∆′. As we identify more and more data-
+item linkages that are globally mapped, well-disclosures and over-statements
+tend to go higher while reducing the under-statements. More specifically, aver-
+age PW D|collect improves by 18.0% and average PW D|share does not increase as
+much; only by 6.9%. This indicates that developers are less likely to emphasise
+on data they share with third parties, and rather tend to explain their collection
+usages. This is more apparent with nearly 40% of a privacy policy is used for
+describing collection details and only 25% for sharing details in average. Qual-
+itatively we observed that policies tend to disclose redirections (e.g. ‘Refer to
+the third-party website’s privacy policy for ...’) instead of clearly indicating pur-
+poses. This raises a critical question for end-user privacy whether is it realistic
+for someone to read all such policies when many apps use third party services for
+analytics and advertising. The highest probability of understatement is observed
+with user account data being shared with third-parties.
+5.2
+Purpose Dilution
+Figure 8 represents the asymmetric purpose dilution matrices for the selected
+data items. As the data safety does not contain other category, it is omitted from
+the x-axis of all matrices. However, ambiguous PP purposes could still be diluted
+across DS declarations. A significant purpose dilution can be characterised by
+horizontal or vertical lines that stand out in these matrices and hot spots are
+created when they intersect.
+A primary observation is that Financial, location, app performance/activity,
+device identifier data collected or shared for app analytics is often diluted across
+other privacy policy purposes. A qualitative explanation is majority of privacy
+policies are not optimised based on app based services, rather they are optimised
+with online-services and traditional privacy policy architectures in mind. We
+argue that privacy policies representing mobile apps should require modifications
+or sections specifically mentioning mobile app based data practices. We also
+observe that device identifier data collected or shared for advertising is diluted
+as personalisation, fraud prevention, security or compliance, or other purposes
+in the privacy policy. User email when shared for advertising and developer
+
+16
+Silva B. et al.
+communication is considerably diluted as account management which is a serious
+privacy concern for end-users. Financial details when shared for analytics are
+more easier to be misinterpreted as shared for fraud prevention and security and
+compliance purposes. Our tailored compliance metrics allow this finer grained
+evaluation and simply observing the hot spots in the figure, we could deduce
+that purpose dilution is more prominent among the data items that are shared
+with third parties. This again reinforces the discussion in Sub Section 5.1 that
+more clearer explanations are required about third party data sharing within the
+privacy policies themselves.
+6
+Conclusion
+We presented PrivSTRUCT, a structure-aware framework designed to uncover
+the complex dependencies between data items and purposes in mobile app pri-
+vacy policies. By moving beyond traditional flat-text analysis, we demonstrated
+that leveraging the hierarchical structure; specifically through the extraction and
+classification of section headings is essential for accurate interpretation, resolv-
+ing a major limitation in prior work. Our methodological contributions include a
+hybrid architecture that pairs efficient encoder-based classifiers with a decoder-
+based information extractors. We showed that this approach not only enables
+cost-effective, locally hosted inference but also significantly outperforms exist-
+ing state-of-the-art tools like PoliGraph, in average identifying at least twice (or
+greater) as many data item or purpose excerpts in our benchmark comparisons.
+By leveraging robust extraction of data practices, items, and purposes from
+privacy policies, we characterise the disclosure landscape of popular apps in the
+Google Play Store. We uncover the relationships between globally defined pur-
+poses and specific data items. Our analysis reveals that, compared to relying
+solely on locally defined purposes, the probability of developers overstating pur-
+poses is 20.4% higher for first-party collection and 9.7% higher for third-party
+sharing. We attribute this to developers relying on ‘global’ purpose definitions
+that are difficult for end-users to parse at a glance. Alarmingly, this encourages
+blanket consenting, as the probability of adequate purpose disclosure remains
+critically low.
+Most critically, our analysis of “Purpose Dilution” highlights that third-party
+data sharing remains the most opaque aspect of the ecosystem. We observed
+that highly sensitive data flows, such as the sharing of financial information or
+device identifiers for advertising, are frequently diluted into unrelated categories
+like “Fraud Prevention” or generic “Other” clauses within the policy text. This
+misalignment suggests that despite the introduction of simplified Data Safety
+labels, the underlying legal documents remain a barrier to true transparency.

@@ -1,0 +1,976 @@
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy
+Optimizations
+ZIHAN LIU, Zhejiang University, China
+YIZHEN WANG, Zhejiang University, China
+RUI WANG, Zhejiang University, China
+XIU TANG, Zhejiang University, China
+SAI WU, Zhejiang University, China
+Fine-tuning unlocks large language models (LLMs) for specialized applications, but its high computational cost often puts it out of
+reach for resource-constrained organizations. While cloud platforms could provide the needed resources, data privacy concerns make
+sharing sensitive information with third parties risky. A promising solution is split learning for LLM fine-tuning, which divides the
+model between clients and a server, allowing collaborative and secure training through exchanged intermediate data, thus enabling
+resource-constrained participants to adapt LLMs safely. In light of this, a growing body of literature has emerged to advance this
+paradigm, introducing varied model methods, system optimizations, and privacy defense-attack techniques for split learning. To bring
+clarity and direction to the field, a comprehensive survey is needed to classify, compare, and critique these diverse approaches. This
+paper fills the gap by presenting the first extensive survey dedicated to split learning for LLM fine-tuning. We propose a unified,
+fine-grained training pipeline to pinpoint key operational components and conduct a systematic review of state-of-the-art work across
+three core dimensions: model-level optimization, system-level efficiency, and privacy preservation. Through this structured taxonomy,
+we establish a foundation for advancing scalable, robust, and secure collaborative LLM adaptation.
+CCS Concepts: • General and reference →Surveys and overviews; • Computing methodologies →Distributed computing
+methodologies; Natural language processing; • Security and privacy →Privacy protections.
+Additional Key Words and Phrases: Large Language Models Fine-Tuning, Split Learning, Split Federated Learning, Collaborative
+Training, Privacy-Preserving Mechanisms, System Optimization
+ACM Reference Format:
+Zihan Liu, Yizhen Wang, Rui Wang, Xiu Tang, and Sai Wu. 2018. A Survey on Split Learning for LLM Fine-Tuning: Models, Systems,
+and Privacy Optimizations. In Proceedings of Make sure to enter the correct conference title from your rights confirmation email (Conference
+acronym ’XX). ACM, New York, NY, USA, 35 pages. https://doi.org/XXXXXXX.XXXXXXX
+1
+Introduction
+Large Language Models (LLMs) such as GPT [8, 115], Qwen [154], and DeepSeek [84] have demonstrated exceptional
+capabilities in general-purpose tasks. To adapt these models to specific domains, fine-tuning has emerged as the
+mainstream paradigm, effectively transitioning them from generalists to specialized domain experts. However, with
+Authors’ Contact Information: Zihan Liu, Zhejiang University, Ningbo, China, zihanliu24@zju.edu.cn; Yizhen Wang, Zhejiang University, Ningbo, China,
+wyzwalker@zju.edu.cn; Rui Wang (corresponding author), Zhejiang University, Ningbo, China, rwang21@zju.edu.cn; Xiu Tang, Zhejiang University,
+Ningbo, China, tangxiu@zju.edu.cn; Sai Wu, Zhejiang University, Ningbo, China, wusai@zju.edu.cn.
+Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not
+made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components
+of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on
+servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+© 2018 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+Manuscript submitted to ACM
+Manuscript submitted to ACM
+1
+arXiv:2604.24468v1 [cs.CR] 27 Apr 2026
+
+2
+Liu et al.
+the increasing scale of model parameters and the gradual depletion of high-quality public datasets, fine-tuning on
+private data faces the dual challenges of severe resource constraints and privacy leakage risks. Modern LLMs typically
+comprise tens to hundreds of billions of parameters [100], rendering full fine-tuning prohibitively expensive for small
+and medium-sized enterprises (SMEs) with limited computational budgets. Although Parameter-Efficient Fine-Tuning
+(PEFT) techniques mitigate these costs by updating only a small subset of parameters, the substantial GPU memory
+requirements for loading and serving large models remain a significant barrier. Furthermore, fine-tuning on proprietary
+data raises privacy concerns regarding data outsourcing: enterprises are often hesitant to upload sensitive data to
+third-party cloud servers due to risks of direct exposure and potential breaches.
+To address these key bottlenecks, split learning (SL) [42, 134] has emerged as a promising distributed learning
+paradigm. In SL, the model is partitioned between clients and a central server: clients retain and execute only a small
+portion of the model (typically the front-end and/or back-end model layers), while the computationally intensive middle
+layers are offloaded to the server. Training proceeds via the exchange of intermediate representations (smashed data) and
+gradients rather than raw data, thereby significantly reducing local computational and storage burdens while preserving
+data privacy. Recently, combining SL with LLM fine-tuning has attracted growing research attention [12, 76, 81, 91]. By
+applying this split-based paradigm to large language models, resource-constrained clients can participate in fine-tuning
+billion-parameter models while maintaining only a small fraction of parameters locally. This approach enables small and
+medium-sized enterprises and research institutions to collaboratively train or fine-tune private large models without
+exposing sensitive data to external parties, effectively addressing both resource and privacy challenges simultaneously.
+Integrating split learning with LLM fine-tuning (split-based LLM-FT) has enormous potential and has spurred
+a wealth of research across three complementary directions. First, a substantial line of work targets model-level
+optimization challenges in multi-client federated scenarios, addressing convergence degradation caused by biased
+intermediate features due to data heterogeneity (Non-IID), server-client update imbalance arising from increased
+server-side batch sizes when aggregating smashed data, and catastrophic forgetting during sequential training or
+partial client participation. Second, another research stream focuses on system-level efficiency improvements, tackling
+severe communication bottlenecks from frequent transmission of massive intermediate activations and gradients,
+resource utilization imbalances caused by server-client coordination overhead, and the straggler effect induced by
+heterogeneous client computing power and network bandwidth. Third, a growing body of literature investigates privacy
+and security concerns, encompassing both attack methodologies that exploit semantically rich gradients and smashed
+data to reconstruct private information, as well as the distributed framework’s exposed model manipulation interfaces
+to inject malicious behaviors, and their corresponding defense strategies.
+Several surveys on split learning have already been published, as summarized in Table 1. For instance, [52] cate-
+gorizes SL paradigms into model-only segmentation, weight-based aggregation, and intermediate data aggregation
+methods, evaluating their performance under IID and non-IID scenarios. [78] surveys resource-efficient frameworks
+and optimization strategies for alleviating computational and communication bottlenecks caused by stragglers. [62, 120]
+summarize attack and defense approaches in split learning, while [41] evaluates perturbation-based and learning-based
+defenses against data reconstruction and label inference attacks and their impact on downstream performance.
+However, despite these foundational efforts, existing surveys suffer from three critical gaps in the context of LLM
+adaptation. First, current surveys primarily focus on traditional, small-scale models, overlooking the distinct challenges
+of integrating split learning with LLMs. From a model perspective, they assess optimization strategies in conventional
+tasks without verifying their efficacy for LLM fine-tuning. At the system level, they neglect the unique architectural
+demands, massive parameter scales, and performance constraints of LLMs. Regarding privacy, they overlook the
+Manuscript submitted to ACM
+
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+3
+Table 1. Comparison of related surveys and research works of split learning.
+Paper
+Year
+Focus Areas
+Unified Training
+Pipeline
+Component-Level
+Bottleneck
+LLM
+Model Performance
+System Optimization
+Privacy
+[24]
+2022
+✓
+✓
+✓
+[78]
+2024
+✓
+[53]
+2025
+✓
+✓
+[117]
+2025
+✓
+✓
+[52]
+2025
+✓
+✓
+[56]
+2025
+✓
+✓
+✓
+[120]
+2025
+✓
+[41]
+2025
+✓
+✓
+[62]
+2025
+✓
+Ours
+-
+✓
+✓
+✓
+✓
+✓
+✓
+exacerbated vulnerabilities of auto-regressive LLMs, where training labels act as shifted input sequences, making label
+leakage mathematically equivalent to exposing raw proprietary text. Second, previous surveys treat split learning
+paradigms as macro-level architectures without establishing a unified framework for split-based LLM fine-tuning.
+They lack an explicit, component-level decomposition of the computational and communication steps involved in
+split-based LLM fine-tuning, leaving the training pipeline ambiguous. Third, current surveys do not systematically
+map multidimensional challenges and existing solutions to the specific execution stages of LLM adaptation. Without a
+unified training pipeline, there is no structured way to anchor inefficiencies, model degradations, privacy threats, and
+their corresponding countermeasures to precise operational components. This omission hinders the development of a
+comprehensive taxonomy needed to guide component-level design and future research directions.
+To bridge this critical gap, this paper presents the first comprehensive review focused exclusively on the intersection
+of split learning and LLM fine-tuning. Our primary contributions are threefold:
+• A unified split-based LLM-FT pipeline: Diverging from previous coarse classifications, we abstract and decompose
+existing methods into a unified, highly granular training pipeline. This structural breakdown enables precise
+analysis of component-level bottlenecks and future optimization trajectories.
+• multi-dimensional bottleneck analysis: We map critical vulnerabilities directly to specific execution steps,
+systematically exposing the root causes of convergence degradation, system inefficiencies, and privacy threats in
+split-based LLM-FT.
+• component-anchored literature taxonomy: By mapping multidimensional challenges and state-of-the-art opti-
+mization methods directly onto our unified pipeline, we deliver a comprehensive taxonomy. This framework
+explicitly anchors system inefficiencies, model degradations, and privacy countermeasures to specific execution
+steps, systematically guiding future research.
+The rest of the article is structured as follows and the structure is in Figure 1. Section 2 provides a comprehensive
+overview of split-based LLM-FT, detailing model partitioning strategies, overarching frameworks, and our proposed
+unified pipeline components. Section 3 systematically analyzes strategies for model-level optimization and performance
+enhancement. Section 4 explores current methodologies for system-level optimization. Section 5 delves into the privacy
+and security landscape, categorizing prominent attack vectors and their corresponding defense mechanisms within
+split-based architectures. Finally, Section 6 concludes this survey.
+Manuscript submitted to ACM
+
+4
+Liu et al.
+Split-based
+LLM-FT
+        Introduction
+§
+        Overview of Split-based LLM-FT
+§
+        System-Level Optimizations
+§
+        Model-Level Optimizations
+§
+        Privacy and Security
+§
+        Conclusion
+§
+           Model Partitioning Strategies
+§
+           Split-based LLM-FT Framework Variants 
+§
+           Split-based Pipeline Components 
+§
+           Overcoming Catastrophic Forgetting
+§
+           Mitigating Data Heterogeneity (Non-IID)
+§
+           Bridging Server-Client Update Imbalance 
+§
+           Split Point Selection
+§
+           Computation scheduling and memory managing
+§
+              Parameter-efficient fine-tuning (PEFT)
+§
+§
+           Communication Overhead Reduction
+§
+              Activation and gradient compression
+§
+              Communication frequency reduction
+§
+           Model Aggregation Strategies
+§
+           Server-Client Collaborative Optimization
+§
+              Gradient aggregation. 
+§
+              Asynchronous training strategies
+§
+           Global Joint Optimization
+§
+           Attacks on Split-based LLM-FT
+§
+           Defenses on Split-based LLM-FT
+§
+              Smashed data inversion attacks
+§
+              Gradient-based label reconstruction attacks
+§
+              Bidirectional reconstruction attacks 
+§
+              Membership inference attacks
+§
+              Property inference attacks
+§
+              Data poisoning attacks
+§
+              Backdoor attacks 
+§
+              Perturbation-based defenses 
+§
+              Learning-based defenses
+§
+              Detection-based defenses 
+§
+              Decoupling personalization and generalization
+              Smashed data aggregation and scheduling
+§
+§
+              Client clustering and pairing
+§
+              Smashed data mixup
+§
+              Learning rate scaling
+§
+              Knowledge retention.
+§
+Server-side memory management and
+computation scheduling
+              Parallel training strategies
+§
+           Mapping Pipeline Components to Core Bottlenecks
+§
+Fig. 1. Survey framework: from a unified training pipeline to a multidimensional taxonomy of system, model, and privacy.
+2
+Overview of Split-based LLM-FT: Model Partition, Framework Variants, and Pipeline Components
+2.1
+Model Partitioning Strategies
+Figure 2 illustrates two primary model partitioning paradigms: Vanilla SL and U-shaped SL.
+Two-part split (Vanilla SL) [42, 59, 134] partitions the model into two parts (head model-trunk model), deploying
+the majority of model layers on a remote server while retaining a small portion locally. During each forward pass,
+the client transmits forward intermediate activations and labels to the server. The server then computes the loss and
+performs backpropagation, returning gradients to the client. The client then performs local backpropagation. This
+strategy focuses on reducing computational and storage burdens on the client.
+Three-part split (U-shaped SL) [11, 45, 95] divides the model into three parts (Head Model-Trunk Model-Tail Model),
+keeping loss calculation and labels locally. This architecture inherently enhances privacy by preventing direct label
+exposure. This protection is particularly critical in LLM supervised fine-tuning (SFT); because SFT employs teacher
+forcing, where labels are merely left-shifted input sequences that encode the complete raw text, localizing the loss
+computation is imperative to thwart server-side data reconstruction. However, compared to Vanilla SL, U-shaped SL
+strictly doubles the communication volume within a single forward-backward pass, as intermediate activations and
+gradients must traverse the network twice.
+Manuscript submitted to ACM
+
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+5
+Head Model
+Tail Model
+Trunk model
+Client 
+Gradient G2
+Smd Data A2
+Gradient G1
+Smd Data Az
+Server
+Model
+Partitioning
+Head
+Model
+Trunk
+Model
+(a) Vanilla SL
+Private
+Data X
+Head
+Model
+Gradient G1
+Trunk
+Model
+Loss L
+Pred  
+Forward
+Backward
+Client 
+Server
+(b) U-shaped SL
+Label Y
+Smd Data A1
+Label Y
+Label Y
+Loss L
+Pred
+Private
+Data X
+Model
+Partitioning
+Head
+Model
+Trunk
+Model
+Tail
+Model
+Fig. 2. Two distinct model partitioning strategies.
+2.2
+Split-based LLM-FT Framework Variants
+Based on different training strategies, the split learning paradigm can be categorized into several training frameworks,
+as illustrated in Figure 3. Although these architectural variants were initially designed for conventional split learning
+tasks, their coordination mechanisms can be seamlessly adapted to collaborative LLM fine-tuning scenarios.
+Sequential split learning (Sequential SL) [42, 134]. Sequential SL is the earliest proposed Split Learning framework,
+in which clients train sequentially with the server. After completing their local training, each client transfers its updated
+local model to the next client in a predefined order. In this manner, clients take turns training on their respective data
+partitions, forming a serialized training workflow.
+Parallel split learning (PSL) [57, 83]. To address the inefficiency of Sequential SL, where most clients remain idle
+while waiting for their turn, PSL enables clients to train in parallel. The server aggregates the smashed data uploaded
+by all clients to update the server-side model and simultaneously returns either personalized or globally aggregated
+gradients to each client. Clients then update their local models using the received gradients. This strategy effectively
+improves computational efficiency and reduces idle time among clients.
+Split federated learning (SFL) [37, 59]. In SFL, all clients train their local parts of the model in parallel and update
+them based on their computed gradients. After a certain number of training rounds, each client sends its local model
+to a central federated server, which aggregates the models to form a global client model and then redistributes it.
+Unlike PSL, SFL introduces periodic global aggregation of client models, providing stronger global consistency but with
+additional synchronization overhead. Specifically, SFL encompasses two server-side update variants: SFL-V1 updates the
+global trunk model by aggregating gradients from all clients via FedAvg, whereas SFL-V2 processes client activations
+sequentially in random order, executing immediate server model updates without global aggregation.
+Group-based split federated learning (GSFL) [73, 89, 144, 171]. To address the efficiency bottlenecks and data
+heterogeneity inherent in standard SFL, GSFL restructures the flat client-server topology into a clustered architecture.
+From a system perspective, clients with similar computational and network capabilities are grouped to mitigate the
+straggler effect and reduce synchronization delays. From a data perspective, clients with similar data distributions are
+clustered to counteract non-IID challenges, thereby alleviating client drift and preventing model divergence.
+Other framework variants. Based on the concept of split learning, several other novel frameworks have been proposed.
+RingSFL [122] achieves load balancing and effectively mitigates the bottleneck effect by constructing clients into a ring
+topology and adaptively distributing model layers based on each client’s computational capabilities. HSFL [29, 80, 169]
+employs a hierarchical multi-server architecture (cloud–edge–device) to overcome the memory and communication
+bottlenecks of conventional single-layer split learning systems under large-scale user participation. PairingFL [158] lets
+paired clients train collaboratively, performing most updates within pairs to reduce server communication overhead.
+CLICOOPER [21] introduces a serverless, multi-client SL framework for partially trusted environments, where a
+data-owning client delegates sequential model training to a chain of compute-contributing nodes.
+Manuscript submitted to ACM
+
+6
+Liu et al.
+Client-side
+Model
+Main Server
+Client 2
+Smashed
+Data
+Grads
+Client 1
+Client n
+(a) Sequential SL
+Client 2
+Parallel
+traning
+Client 1
+Client n
+Parallel
+traning
+Parallel
+traning
+(b) Parallel SL (PSL)
+…
+…
+w/o
+interaction
+Client 2
+Client 1
+Client n
+…
+Main Server
+Main Server
+Fed Server
+Global
+Aggregation
+Client 2
+Client 1
+Main Server
+Client n
+Client n-1
+Cluster 1
+Cluster m
+(c) Split Federated Learning (SFL)
+(d) Group-based SFL (GSFL)
+Fig. 3. Split-based LLM-FT framework variants, categorized by training coordination and aggregation mechanisms.
+2.3
+Split-based Pipeline Components
+Head Model
+Tail Model
+Trunk model
+Client 0
+Gradient G2
+Smd Data A2
+Gradient G1
+Smd Data Az
+Server
+Label Y
+Loss L
+Pred
+Private
+Data X
+Step 1: Model Partitioning
+Trunk
+Model
+Head
+Model
+Step6: Tail FP & BP
+Step 2&10: Head FP & BP
+Step 4&8: Server
+Computation
+Fed Server
+Step 11: Federated Aggregation
+FedAvg
+Tail 0
+Head 0
+Tail n
+Head n
+=
+…
+…
+Global
+Tail
+Global
+Head
+Client 1
+Client n
+Tail
+Model
+Step 5&7: Act. &
+Grad. Trans.
+Step 3&9: Act. &
+Grad. Trans.
+Forward
+Backward
+Fig. 4. Unified split-based LLM-FT pipeline.
+In the split-based LLM-FT framework,
+model training relies on the coordinated
+operation of multiple critical components.
+Optimization efforts in this domain pri-
+marily focus on improving one or more
+of these components to enhance overall
+efficiency, performance, and privacy. This
+section first introduces a unified pipeline,
+as illustrated in Figure 4, which outlines
+the complete training workflow. Subse-
+quently, we present a detailed analysis of
+the key components within this pipeline, providing a foundation for later discussions on component-level optimization
+strategies. In this unified pipeline, steps 1–4 and 9–10 constitute the core workflow shared by all split-based LLM-FT
+frameworks. To clearly delineate framework-specific operations, we append a dagger (†) to steps 5–8 to denote proce-
+dures exclusive to the three-part split (u-shaped SL) architecture, and a hash symbol (#) to step 11 to indicate the global
+synchronization mechanism uniquely required by split federated learning (SFL) paradigms.
+Step 1: model partition. The complete LLM is typically partitioned at the granularity of embedding layers or individual
+transformer blocks. Depending on the architecture, it is divided into either two components (head model and trunk
+model for vanilla SL) or three components (head model, trunk model, and tail model for u-shaped SL). These components
+are then deployed across the client and server sides according to the adopted split strategy.
+Step 2: local head model forward propagation. The client performs forward propagation on the local head model
+using its local dataset, generating head model’s output intermediate activations.
+Step 3: intermediate activation transmission (client to server). The client transmits the intermediate activations
+produced by the head model to the server over the network.
+Step 4: server-side processing. Upon receiving the intermediate activations, the server continues the forward
+propagation through the trunk model. In vanilla SL, the server directly computes the loss using transmitted labels
+and initiates backpropagation. Conversely, in u-shaped SL, the server suspends the process after the forward pass,
+awaiting gradients from the client. In both scenarios, the server ultimately computes the gradients corresponding to the
+intermediate activations output by the head model.
+Manuscript submitted to ACM
+
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+7
+Step 5†: intermediate activation transmission (server to client). Because the server in a u-shaped SL architecture
+cannot directly access the original labels to compute the loss, it must transmit the intermediate activations produced by
+the trunk model back to the client for further processing.
+Step 6†: local tail model forward and backward propagation. After receiving the intermediate activations from
+the server, the client performs forward propagation through its local tail model, computes the loss using local labels,
+and executes backpropagation to obtain the gradients with respect to the trunk model’s output activations.
+Step 7†: intermediate gradient transmission (client to server). The client transmits the gradients of the trunk
+model’s output activations to the server over the network.
+Step 8†: server-side trunk model backward propagation. Upon receiving the gradients from the client, the server
+continues the backward propagation through the trunk model to compute the gradients corresponding to the head
+model’s output activations.
+Step 9: intermediate gradient transmission (server to client). The server sends the gradients of the head model’s
+output activations back to the client.
+Step 10: local head model backward propagation. After receiving the gradients of the head model’s output
+activations, the client performs backward propagation on the local head model to update its parameters.
+Step 11#: federated aggregation (for SFL-based frameworks). After several local training rounds, each client
+uploads its local model parameters to the federated server for global aggregation. The federated server aggregates these
+local models into a global model and redistributes it to all participating clients for the next training round.
+2.4
+Mapping Pipeline Components to Core Bottlenecks
+While the unified pipeline (steps 1–11) establishes a functional paradigm for split-based LLM-FT, mapping its sequen-
+tial execution onto a distributed, heterogeneous, and potentially untrusted environment exposes critical vulnerabilities
+during actual deployment. By analyzing each step, we identified bottlenecks across three distinct dimensions, which
+also dictate the taxonomy of our subsequent sections:
+• Model-level bottlenecks. In multi-client scenarios, executing local forward and backward passes (steps 2, 6, 10)
+on highly skewed, Non-IID datasets generates biased smashed data. When aggregated at the server or during
+global synchronization (step 11), this heterogeneity, coupled with server-client update imbalances, severely
+degrades model convergence and generalization. Furthermore, in sequential training or scenarios with partial
+client participation, the model is prone to catastrophic forgetting, inadvertently overwriting previously learned
+representations while optimizing for the distinct data distributions of current participants. Section 3 explores
+advanced strategies to rectify these performance degradations.
+• System-level bottlenecks. At the initiation of the pipeline (step 1), the selection of the split point dictates the
+local memory footprint and profoundly impacts training latency and energy consumption due to client-server
+computational disparities. Subsequently, the reliance on continuous, bidirectional transmission of massive inter-
+mediate activations (steps 3, 5) and gradients (steps 7, 9) induces severe communication overhead. Furthermore,
+the central server (step 4) easily becomes a computational bottleneck when coordinating heterogeneous clients.
+Finally, frameworks that necessitate periodic global model aggregation (step 11) introduce rigid synchronization
+barriers. Under system heterogeneity, this leads to the straggler problem, where high-capacity clients experi-
+ence significant training delays waiting for the slowest devices. Section 4 systematically reviews system-level
+optimizations designed to alleviate these structural inefficiencies.
+Manuscript submitted to ACM
+
+8
+Liu et al.
+• Privacy and security vulnerabilities. Although the pipeline inherently avoids the direct exchange of raw
+inputs and labels, the transmitted intermediate representations remain highly vulnerable. Specifically, a malicious
+server can exploit the intercepted smashed data (steps 3, 5) to launch smashed data inversion attacks, and it can
+utilize the backpropagated gradients (steps 7, 9) to execute gradient-based label reconstruction. Furthermore,
+because the server maintains control over a substantial segment of the model architecture and training process
+(step 4), it can actively manipulate the training process to initiate data poisoning and backdoor attacks. To
+counter these vulnerabilities, Section 5 details the prevailing threat landscape and systematically summarizes the
+corresponding privacy-preserving defense mechanisms.
+3
+Model-Level Optimization and Performance Enhancement
+Model-level optimizations are pivotal for ensuring the effectiveness of Split-based LLM Fine-tuning, particularly in
+terms of convergence, accuracy, and robustness. Theoretically, in a standard single-client, single-server architecture,
+the complete training process of split learning is mathematically equivalent to centralized training, yielding nearly
+identical model performance. However, when scaled to collaborative fine-tuning scenarios involving multiple clients,
+this equivalence is fundamentally compromised. Specifically, three primary challenges emerge that undermine model
+performance:
+• Challenge 1: data heterogeneity (non-IID). The private data of each client often exhibits divergent distribu-
+tions. The intermediate features generated from these non-IID datasets can bias the convergence trajectory of
+the server-side model, degrading global model accuracy.
+• Challenge 2: server-client update imbalance. The server-side model processes aggregated smashed data
+from multiple clients, effectively learning from a ”larger batch” than any single client. This causes the server to
+update faster than client-side models, leading to desynchronized convergence.
+• Challenge 3: catastrophic forgetting. In sequential training or scenarios with partial client participation, the
+model tends to inadvertently overwrite representations learned from previous clients while optimizing for the
+distinct data distributions of current participants.
+This section reviews recent methodologies designed to address these challenges through personalization, feature
+distribution alignment, and advanced optimization strategies. A comprehensive summary of these model-level optimiza-
+tion strategies is presented in Table 2. Although several foundational methods lack empirical validation on native LLM
+tasks, we have theoretically evaluated their algorithmic compatibility. Based on their core mechanisms, we project their
+suitable LLM applications and categorize them into Natural Language Understanding (NLU) and Generation (NLG), as
+detailed in the Applicabiliy column.
+3.1
+Mitigating Data Heterogeneity (Non-IID)
+The inherent statistical divergence among client datasets poses a severe threat to the convergence and generalization
+of the global model. To address the feature shifts induced by non-independent and identically distributed (Non-IID)
+data, recent literature predominantly explores three main strategies: decoupling personalization and generalization via
+architectural design, smashed data aggregation and scheduling, and client clustering and pairing.
+3.1.1
+Decoupling personalization and generalization via architectural design. In scenarios where client data exhibits
+non-IID characteristics, client-side models are updated exclusively on skewed local datasets. Consequently, the generated
+Manuscript submitted to ACM
+
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+9
+Table 2. Summary of model-level optimization and performance enhancement methods in split-based Learning. LLM Exp. indicates
+whether the original paper empirically evaluated the method on LLM datasets (✓). Applicability represents our theoretical assessment
+of the method’s viable scope in the LLM era, categorized into Natural Language Understanding (NLU) and Generation (NLG) tasks.
+Target Challenge
+Approach
+Method
+Year LLM Exp. Applicability
+Key Innovation / Contribution
+Challenge 1:
+Data Heterogeneity
+Personalization
+& Generalization
+SplitGP [44]
+2023
+-
+NLU+G
+Dual-task loss for personalization/generalization; 𝜆-based aggregation.
+PFSL [136]
+2023
+-
+NLU+G
+Two-stage training with Work Fairness Constraint for load balancing.
+DualFed [180]
+2024
+-
+NLU+G
+Dual-feature representation with separate encoders for global/local tasks.
+FSMKD [93]
+2024
+-
+NLU+G
+Two-body structure with Mutual Knowledge Distillation (soft labels).
+ESL [11]
+2024
+-
+NLU+G
+Two-stage training targeting non-IID data optimization.
+SplitLPF [13]
+2024
+-
+NLU+G
+Contribution-based fair aggregation for U-shaped structures.
+FlexP-SFL [163]
+2025
+✓
+NLU+G
+KL divergence regularization to align intermediate representations.
+Smashed Data
+Aggregation and
+Scheduling
+MiniBatch-SFL [54]
+2023
+-
+NLU+G
+Centralized gradient averaging of smashed data to remove client drift.
+MergeSFL [72]
+2024
+-
+NLU
+Feature merging for non-IID; Joint optimization with genetic algorithms.
+SCALA [156]
+2024
+-
+NLU
+Concatenated activations with Logit Adjustment for long-tail data.
+S2FL [153]
+2024
+-
+NLU
+Re-grouping server-side features by label to simulate IID batches.
+Hourglass [46]
+2025
+-
+NLU+G
+LSH-based ”dissimilar priority” scheduling for asynchronous processing.
+Ampere [173]
+2025
+-
+NLU+G
+Unified activation merging to reduce heterogeneity.
+Client Clustering
+and Pairing
+CSFL [151]
+2024
+-
+NLU
+Clustering clients based on label distribution similarity and adaptively
+applying global or personalized aggregation.
+ParallelSFL [73]
+2024
+✓
+NLU
+Clustering clients to ensure the assembled data distribution within groups
+closely approximates the global IID.
+PairingFL [158]
+2025
+-
+NLU
+Selecting clients with dissimilar and diverse data distributions to maximize
+marginal gain for each training round.
+GSFL [89]
+2025
+-
+NLU+G
+Grouping devices with similar data distributions measured via cosine simi-
+larity on encrypted intermediate features.
+Challenge 2:
+Update Imbalance
+Learning Rate
+Scaling
+SGLR [106]
+2022
+-
+NLU+G
+Server learning rate acceleration based on client count power scaling.
+musfl [69]
+2022
+-
+NLU+G
+Coordinated Local-Global Learning Rate Compensation.
+Smashed Data
+Mixup
+LocFedMix-SL [104] 2022
+-
+NLU
+Smashed data mixing and mutual information regularization.
+Mix2SFL [103]
+2024
+-
+NLU
+Two-way manifold mixup on paired smashed data.
+GAS [155]
+2025
+-
+NLU
+Generative Gaussian distribution for virtual activation sampling.
+SMixSL [130]
+2025
+-
+NLU
+Cutout, CutMix, and Mixup applied to smashed features.
+Challenge 3:
+Catastrophic Forgetting
+Knowledge
+Retention
+MultiSFL [148]
+2025
+-
+NLU+G
+Helper clients extract and replay missing knowledge.
+SLwF [30]
+2025
+-
+NLU+G
+Review/Distinguish/Decelerate modules for continual learning.
+intermediate features often lack representativeness for global classes (or fail to capture meaningful information for out-of-
+distribution categories). This feature shift not only impedes the effective generalization of the server-side model but also
+renders a simple globally aggregated model insufficient for adapting to the personalized distributions of individual clients.
+Consequently, recent methods [11, 13, 44, 93, 136, 163, 180] focus on reconciling the conflict between personalization
+and generalization in SFL scenarios. SplitGP [44] decouples the model into a client-side component dedicated to strong
+personalization and a server-side component focused on strong generalization. By jointly optimizing both components
+via a multi-exit objective function and a hybrid aggregation strategy, the framework achieves robustness to both local
+and out-of-distribution data while significantly reducing inference latency. Similarly, DualFed [180] addresses this
+dilemma by exploiting the hierarchical nature of deep representations to decouple generalization from personalization.
+Instead of structurally splitting the model across devices, it inserts a personalized projection network between the
+shared encoder and the classifier. This architecture yields dual representations: pre-projection features, which retain
+generalized information to support a global classifier, and post-projection features, which are mapped to a personalized
+space for local adaptation. To prevent the optimization of local tasks from compromising the generalized features, it
+employs a stage-wise training strategy that alternates between updating the personalized main branch and the global
+classifier. SFML [147] maintains a dedicated privacy model and the split segments (head and tail) of a public model
+locally on each client, and leverages a mutual learning module to enable bidirectional knowledge transfer between the
+two models, perfectly balancing lightweight computation, personalization, and global generalization.
+3.1.2
+Smashed data aggregation and scheduling. Beyond balancing personalization and generalization, another effective
+paradigm for mitigating client-side data heterogeneity is the direct regulation of intermediate activations. By merging
+or scheduling the smashed data uploaded by different clients, the server can smooth out the statistical variance between
+Manuscript submitted to ACM
+
+10
+Liu et al.
+batches. This ensures that the server-side model observes a more representative and balanced global distribution during
+training, preventing it from overfitting to any single client’s skewed domain.
+Smashed data aggregation. Some methods [54, 72, 153, 156, 173] use Feature Merging to make the server-side feature
+batches approximate the IID distribution of feature batches. MergeSFL [72] addresses statistical heterogeneity by
+constructing a mixed feature sequence that approximates an IID distribution. specifically, the server dynamically selects
+workers under bandwidth constraints to minimize the KL divergence of the combined data. By merging features from
+these selected workers, the framework rectifies the top model’s update direction, significantly enhancing final accuracy.
+SCALA [156] simulates centralized training to mitigate local label skew by concatenating client-side activations at the
+server. Furthermore, it addresses the global long-tail distribution caused by partial participation through logit-adjusted
+loss functions, thereby effectively improving SFL performance on Non-IID data. However, applying these strategies to
+native LLMs introduces severe memory bottlenecks. Given the massive size of LLM activations, concatenating smashed
+data from multiple clients rapidly exhausts server GPU capacity, triggering catastrophic out-of-memory failures.
+Smashed data scheduling. Taking a data-content-centric approach, Hourglass [46] introduces a ”Dissimilar Priority
+Scheduling” (DPS) mechanism. It utilizes Locality-Sensitive Hashing (LSH) to efficiently identify intermediate features
+that differ significantly from those currently being processed. By prioritizing these ”dissimilar” features during server-
+side training, Hourglass maximizes the information gain of each update step, thereby accelerating convergence even
+under severe data heterogeneity.
+3.1.3
+Client clustering and pairing. Smashed data aggregation and scheduling alleviate data heterogeneity after the
+server receives the intermediate features, while client clustering and pairing preemptively reorganize the collaborative
+structure based on statistical characteristics, thereby making the training data within a group approximate an IID
+
+
+[…middle truncated for length…]
+
+r LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+25
+corresponding labels and backpropagating the gradients, IBAS [146] effectively guides the client model to embed a
+backdoor while preserving the performance of the main task. In scenarios where the server does not possess ground
+truth labels, executing server-side attacks becomes significantly more challenging Yu et al. [160] leveraged a shadow
+model trained on domain-consistent data to pre-simulate backdoor injection. By employing a GAN-based discriminator,
+they forced the alignment of the client’s feature space with that of the shadow model, thereby endowing the client
+with indirect backdoor extraction capabilities. Additionally, an auxiliary model maximizes the separability of backdoor
+features to prevent them from being diluted during training. However, to mitigate the dependency on large-scale public
+datasets and improve main task alignment, SFI [162] further deconstructs the attack into three distinct stages (Steal,
+Finetune, and Implant). This staged design allows the model to first learn the feature space before injecting the backdoor,
+exerting finer control over the attack process. This approach ensures stability and effectiveness, thereby improving
+the attack’s accuracy in complex scenarios. Dullahan [113] is a stealthy post-training attack strategy designed for the
+without-label-sharing architecture, diverging from previous methods by refraining from manipulating intermediate
+parameters (e.g., gradients) during the collaborative training phase. To overcome the lack of label access, the method
+constructs a surrogate model to approximate the client’s feature output and employs K-means clustering to identify a
+"target embedding anchor" as a substitute for the inaccessible target label. The backdoor is subsequently injected by
+fine-tuning the server network to map selected trigger embeddings to this anchor, thereby achieving high stealthiness
+against gradient-based detection mechanisms.
+5.2
+Defenses on Split-based LLM-FT
+To mitigate the security and privacy risks inherent in the collaborative training process, research has increasingly
+focused on developing robust defense mechanisms for Split-based LLM-FT. The primary objective of these strategies is
+to obfuscate or protect the sensitive features embedded within intermediate representations and gradients, thereby
+preventing adversaries from successfully executing inversion or inference attacks. However, designing effective defenses
+requires navigating a complex trade-off between the level of privacy protection, system execution efficiency, and the final
+model performance. This subsection categorizes the prevailing defense strategies into three primary paradigms based
+on their underlying protection mechanisms: perturbation-based, learning-based, and cryptographic-based defenses.
+5.2.1
+Perturbation-based defenses. Perturbation-based defenses involve introducing controlled randomness into the
+training pipeline to obfuscate sensitive information while maintaining as much model utility as possible. These methods
+are frequently grounded in the principles of Differential Privacy (DP) [25], providing a quantifiable and mathematically
+rigorous trade-off between privacy protection and fine-tuning accuracy. In the context of Split-based LLM-FT, these
+strategies can be broadly categorized based on the granularity of noise injection: token-level perturbation, which
+operates on the discrete input sequence, and representation-level perturbation, which injects noise into continuous
+vectors such as embeddings, activations, and gradients.
+Token-level perturbation (discrete perturbation). Token-level Perturbation targets the discrete input space of LLMs
+by substituting sensitive tokens within the input sequence with generic or alternative replacements. By perturbing the
+sequence while preserving essential semantic structures, this strategy mitigates the risk of private text reconstruction
+from the earliest stage of the training pipeline. Embedding d𝜒-Privacy (d𝜒P) [10] injects Laplacian noise into embedding
+outputs and maps the perturbed results to their nearest valid neighbors in the embedding space to preserve semantic
+coherence while providing privacy protection. To mitigate utility degradation from uniform noise, SAP∗[123] employs
+Contributing-Token-Identification (CTI) to identify task-critical tokens and adaptively allocate privacy budgets by
+Manuscript submitted to ACM
+
+26
+Liu et al.
+reducing perturbations on important tokens, thereby achieving a superior privacy-utility trade-off. SanText∗[164]
+generates natural, high-utility text satisfying local differential privacy by using probability sampling based on word
+embedding Euclidean distances to replace original tokens with semantically similar substitutes. However, SanText uses
+the entire vocabulary as its sampling candidate set, which can easily introduce semantically irrelevant interference
+and lead to redundant privacy costs when privacy budgets are tight. In contrast, CusText∗[15] effectively eliminates
+irrelevant terms by allocating a smaller, semantically highly relevant customized output set to each token, significantly
+improving the utility of anonymized data while reducing privacy overhead. Furthermore, Rantext∗[132] introduces a
+random adjacency list mechanism that leverages the Laplace distribution to dynamically determine the list size for
+each token, thereby increasing the difficulty for adversaries to reconstruct the raw tokens. Cape∗[141] integrates a
+hybrid utility function combining Euclidean token distances with client-side contextual logits and employs a bucketized
+sampling mechanism to mitigate the large-vocabulary long-tail phenomenon, effectively suppressing low-utility
+candidate probabilities to enhance semantic coherence and quality while ensuring differential privacy.
+Representation-level perturbation (continuous noise injection). This approach involves injecting continuous
+noise such as Gaussian or Laplacian noise into high-dimensional intermediate values including embedding vectors,
+smashed data (activations), and backpropagated gradients.
+(1) Forward Propagation with DP Noise. [23, 55, 97, 107, 111, 139] This strategy injects noise into intermediate values
+including embedding vectors and smashed data during forward propagation before they are transmitted from the client
+to the server. Pan et al. [107] mitigate information leakage by injecting Laplacian noise into embedding vectors. To
+overcome the utility degradation inherent in traditional perturbation mechanisms, SnD∗[97] implements 𝑑𝜒-privacy
+while deploying a pre-trained denoising module on the client side. This architecture enables localized correction of
+the perturbed inference results, thereby maximizing the preservation of model utility. DP-forward ∗[23] schemes
+incorporate noise into activation values. These privacy-preserving techniques are designed to prevent adversaries from
+inferring original inputs from perturbed smashed data, thereby ensuring robust privacy protection throughout the
+forward propagation process. To address the utility degradation caused by uniform token perturbation in DP-forward,
+Wang et al.∗[139] propose SLDP-FT. This framework selectively injects noise only into identified sensitive tokens.
+Furthermore, it dynamically calibrates the noise scale across hidden layers using a privacy forward weight, achieving a
+superior privacy-utility trade-off.
+(2) Backward propagation with DP noise. [114, 143, 157, 157] This strategy injects noise during the backward pass to
+protect sensitive information within transmitted gradients. It involves adding Gaussian or Laplacian noise to model
+gradients, cut layer gradients, and labels to effectively mitigate the risk of label reconstruction attacks. Gawron et al. [38]
+evaluated the robustness of DP-SGD-based client defense in split learning by applying gradient clipping and Gaussian
+noise to client-side model to suppress FSHA reconstruction accuracy and delay privacy leakage. GradPerturb [157]
+provides provable differential privacy by injecting directional noise at the final hidden layer along the vector difference
+between the true and alternative label gradients. This targeted approach ensures rigorous privacy guarantees while
+maintaining high model utility. Marvell [65] mitigates label leakage by strategically perturbing cut-layer gradients,
+employing an optimized noise structure that minimizes the symmetric KL divergence between class-conditional gradient
+distributions. Several research [114, 143] efforts secure the backward pass through the clipping of cut layer gradients
+and the subsequent injection of DP noise. By adding Laplace or Gaussian noise to these clipped gradients, these methods
+effectively thwart label inference attacks while theoretically maintaining the convergence of model training. To further
+refine this approach, ProjPert [32] formulates noise injection as a mathematical projection problem under privacy
+constraints, computing the optimal noise to minimize utility loss measured by Wasserstein distance. Label DP [114, 157]
+Manuscript submitted to ACM
+
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+27
+is implemented using a randomized response algorithm that randomly flips labels during training based on a specific
+probability, thereby preventing an attacker from perfectly reconstructing users’ private labels. Building upon this, PSLF
+introduces a Flipped Multi-Label Generation mechanism and two separate top sub-models, training one on flipped
+multi-labels to thwart label leakage and the other on true binary labels to boost prediction accuracy.
+5.2.2
+Learning-based defenses. Learning-based defenses integrate privacy constraints directly into the optimization
+process via auxiliary training objectives or specialized loss functions. Unlike perturbation-based approaches that
+treat noise injection as a post-processing step, these strategies optimize internal representations or gradients to
+proactively minimize the leakage of sensitive information. NoPeek∗[124, 135] reduces the risk of sensitive data leakage
+by incorporating distance correlation as a regularization term in the loss function to minimize the statistical dependency
+and achieve decorrelation between raw input and smashed data. Building upon the core objective of dependency
+minimization, Zou et al. [183] introduced a Mutual Information Regularization [140] term during training to effectively
+resist data reconstruction attacks and backdoor attacks by limiting the mutual information between private raw
+data and intermediate outputs while maintaining model utility. Eguard∗[90] utilizes a projection network to migrate
+original embeddings into a secured space. It decouples the sensitive correlation between raw text and vectors through
+mutual information optimization, while a functionality preservation module ensures downstream task performance
+remains highly consistent with the original embeddings. TextObfuscator∗[179] identifies task-related prototypes
+through clustering and utilizes clustering and distance losses to group functionally similar representations while
+maintaining inter-prototype separation. By applying random perturbations within these clusters, it renders word
+vectors indistinguishable to protect privacy while preserving their original task functionality. ResSFL [64] mitigates
+model inversion attacks by pre-training a resistant feature extractor via attacker-aware training and bottleneck layers,
+which is then transferred to initialize client models, maintaining high accuracy while reducing computational overhead
+and avoiding early-epoch vulnerabilities. DualGuard∗[91] introduces a bidirectional defense for split-based LLM fine-
+tuning that uses local warm-up and global retention to transform the parameter space. By increasing the dissimilarity
+between client-side and pre-trained models, it successfully defends against both forward activation-based and backward
+gradient-based reconstruction attacks while preserving model utility.
+5.2.3
+Detection-based defenses. Detection-based defenses focus on monitoring the training process to identify and
+respond to malicious activities in real-time.
+Gradient attribute monitoring. This category of defense aims to prevent a malicious server from providing forged
+gradients to hijack the client’s feature space to reconstruct original inputs. A representative approach is SplitGuard [26],
+which detects training-hijacking attacks by leveraging the distinctively larger gradient angles produced when clients
+intermittently process "fake batches" with randomized labels. By analyzing these gradient discrepancies, SplitGuard
+enables clients to identify hijacked models and halt training before significant privacy leakage occurs. However,
+SplitGuard is vulnerable to the SplitSpy attack [33], where a malicious server leverages a shadow model to identify
+fake samples and generate deceptive gradients. To address this, Fu et al. proposed Gradients Scrutinizer [33], a passive
+monitoring mechanism that distinguishes honest training from hijacking by analyzing intrinsic gradient attributes:
+set gap, fitting Error, and overlapping ratio. This approach is robust against evasion and preserves model accuracy by
+avoiding the need for active sample injection. SplitOut [28] uses the Local Outlier Factor (LOF) algorithm to monitor
+server-returned gradients in real-time, identifying malicious training-hijacking as outliers to intercept and terminate
+the attack at an early stage.
+Manuscript submitted to ACM
+
+28
+Liu et al.
+Model parameter monitoring. This strategy is designed to identify and prevent malicious clients from conducting
+backdoor attacks, where attackers attempt to implant hidden triggers into the model’s parameters during the collabora-
+tive training process. SafeSplit [118] determines whether a client has initiated an attack by monitoring the parameter
+updates of the server-side backbone before and after each client’s training. Specifically, it utilizes the Discrete Cosine
+Transform (DCT) to monitor abnormal fluctuations of model parameters in the frequency domain as static analysis.
+For dynamic analysis, it introduces a rotational distance metric to capture directional mutations and angular velocity
+anomalies of the update trajectory in multi-dimensional space. If a client is discovered to be non-benign, the server
+determines that the training process is non-smooth and malicious. Subsequently, it activates a rollback mechanism.
+5.2.4
+Split Unlearning. Machine unlearning [7] is essential for removing private or harmful data from trained models.
+However, the deep client-server coupling in traditional SL hinders efficient unlearning. To address this, SPLITWIPER [58]
+introduces a novel "one-way-one-off" propagation scheme. Clients freeze their weights after lightweight local pre-
+training and transmit intermediate outputs to the server only once. This decouples the network, satisfying the "Isolated"
+requirement of the SISA unlearning framework. Consequently, unlearning requests only require the target client to
+retrain, leaving others unaffected and enabling independent unlearning in multi-client SL architectures.
+5.2.5
+Other Defenses. Homomorphic encryption. Homomorphic Encryption (HE) ensures zero privacy leakage by
+executing computations entirely on ciphertexts. Although HE has been actively explored in standard Split Learning
+SL [60, 70, 109] and LLM inference [16, 49, 92], its prohibitive computational and communication overheads currently
+preclude its practical application in split-based LLM fine-tuning.
+Protocol modifications. Several studies preserve privacy by modifying the SL protocol. 3-Tier SL [1] introduces a
+"Three-Tier Split Learning" architecture, adding an "Aggregator" as an intermediary between clients and the central
+server. Clients send only their activations to the aggregator, which averages them before forwarding them to the server,
+successfully preventing direct raw data leakage. However, this inevitably compromises model performance. P-SL [112]
+is designed to prevent colluding malicious clients and servers from using shared local weights to reconstruct victims’
+private data via model inversion attacks. Consequently, P-SL fundamentally prohibits local weight sharing among
+clients, resulting in a unique local model for each client (similar to parallel split learning). Yet, because its primary
+focus is preventing client-server collusion, it overlooks the risk of a malicious server directly executing smashed data
+inversion attacks using methods like those mentioned above (Section subsubsection 5.1.1).
+6
+Conclusion
+This survey provides a comprehensive review of recent advancements in integrating Split Learning with LLM Fine-Tuning
+(Split-based LLM-FT) , systematically exploring model-level optimizations, system-level performance enhancements,
+and privacy-preserving mechanisms. These components are abstracted into a cohesive, highly granular unified training
+pipeline : system-level optimizations, such as communication reduction and server scheduling, resolve critical bottlenecks
+and resource imbalances to ensure scalable execution ; model-level strategies tackle data heterogeneity, server-client
+update imbalances, and catastrophic forgetting to guarantee robust convergence and global accuracy ; and advanced
+privacy and security defenses safeguard sensitive intermediate representations against a diverse landscape of inversion,
+inference, and manipulation attacks. By systematically addressing these fundamental challenges across efficiency,
+performance, and security , this survey offers valuable insights for researchers and practitioners , paving the way for
+accessible, resource-efficient, and secure collaborative AI solutions that unlock the full potential of customized LLMs.
+Manuscript submitted to ACM
+
+A Survey on Split Learning for LLM Fine-Tuning: Models, Systems, and Privacy Optimizations
+29

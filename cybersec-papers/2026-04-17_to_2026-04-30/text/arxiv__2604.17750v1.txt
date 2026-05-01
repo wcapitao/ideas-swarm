@@ -1,0 +1,553 @@
+SDLLMFuzz: Dynamic–Static LLM-Assisted
+Greybox Fuzzing for Structured Input Programs
+Yihao Zou1
+Tianming Zheng2
+Futai Zou2
+Yue Wu2
+1SJTU-Paris Elite Institute of Technology, Shanghai Jiao Tong University
+2School of Computer Science, Shanghai Jiao Tong University
+zyh231467@sjtu.edu.cn, zhengtianming@sjtu.edu.cn,
+zoufutai@sjtu.edu.cn, wuyue@sjtu.edu.cn
+Abstract
+Fuzzing has become a widely adopted technique for vulnerability discovery, yet it re-
+mains ineﬀective for structured-input programs due to strict syntactic constraints and lim-
+ited semantic awareness. Traditional greybox fuzzers rely on mutation-based strategies and
+coarse-grained coverage feedback, which often fail to generate valid inputs and explore deep
+execution paths. Recent advances in large language models (LLMs) have shown promise in
+improving input generation, but existing approaches primarily focus on seed generation and
+largely overlook the eﬀective use of runtime feedback.
+In this paper, we propose SDLLMFuzz, a dynamic–static LLM-assisted greybox fuzzing
+framework for structured-input programs. Our approach integrates LLM-based structure-
+aware seed generation with static crash analysis, forming a uniﬁed feedback loop that it-
+eratively reﬁnes test inputs. Speciﬁcally, we leverage LLMs to generate syntactically valid
+and semantically diverse inputs, while extracting rich semantic information from crash ar-
+tifacts (e.g., core dumps and execution traces) to guide subsequent input generation. This
+dynamic–static feedback mechanism enables more eﬃcient exploration of complex program
+behaviors.
+We evaluate SDLLMFuzz on the Magma benchmark across multiple structured-input
+programs, including libxml2, libpng, and libsndﬁle. Experimental results show that SDLLM-
+Fuzz signiﬁcantly outperforms traditional greybox fuzzers and LLM-assisted baselines in
+terms of bug discovery and time-to-bug. These results demonstrate that combining seman-
+tic input generation with feedback-driven reﬁnement is an eﬀective direction for improving
+fuzzing performance on structured-input programs.
+Keywords: Fuzz Testing; Large Language Models; Greybox Fuzzing; Structured Inputs; Crash
+Analysis; Feedback-driven Testing
+1
+Introduction
+As software systems continue to grow in scale and complexity, security issues have become in-
+creasingly prominent. In recent years, a large number of vulnerabilities have been discovered in
+low-level parsing libraries, protocol processing modules, and multimedia processing components,
+with structured data parsing libraries such as libxml2, libpng, and libsndﬁle being representa-
+tive examples. These programs are typically required to process inputs with strict syntactic
+constraints (e.g., XML, PNG, and audio ﬁle formats), and their internal logic is often highly
+complex with large state spaces, making them particularly susceptible to vulnerabilities caused
+by improper handling of edge cases.
+Fuzzing has emerged as an eﬀective software security testing technique [2,16], which auto-
+matically generates a large number of test inputs and monitors abnormal program behaviors.
+1
+arXiv:2604.17750v1 [cs.CR] 20 Apr 2026
+
+It has been widely applied in vulnerability discovery. Modern fuzzing techniques can be cate-
+gorized into black-box, white-box, and greybox fuzzing [4,11,18]. However, traditional fuzzing
+approaches primarily rely on random mutations or simple heuristic strategies, which exhibit
+signiﬁcant limitations when dealing with structured inputs. Speciﬁcally, randomly generated
+test cases often fail to satisfy syntactic constraints, leading to early rejection during parsing and
+thus preventing deep exploration of the programs core logic.
+To address these challenges, prior work has proposed grammar-based fuzzing and model-
+based input generation techniques. Nevertheless, such approaches typically depend on manually
+crafted grammar rules or complex program analysis procedures, which limit their generality and
+scalability. Meanwhile, Large Language Models (LLMs) have demonstrated strong capabilities
+in code understanding, structured generation, and semantic reasoning, making them promising
+candidates for automated software testing. In particular, for structured data generation tasks,
+LLMs can produce high-quality inputs that conform to syntactic constraints based on contextual
+information, thereby providing more eﬀective initial seeds for fuzzing.
+In addition, traditional fuzzing methods usually rely on coverage feedback or crash signals for
+guidance, while lacking the ability to analyze the root causes of crashes. In practice, core dump
+ﬁles generated during fuzzing contain rich program state information, including call stacks,
+register values, and memory access patterns. If such information can be automatically analyzed
+and fed back into the input generation process, it has the potential to further improve testing
+eﬃciency and vulnerability discovery capability.
+Motivated by the above observations, an important research problem is how to eﬀectively
+combine the semantic understanding capabilities of LLMs with the dynamic exploration strengths
+of fuzzing, in order to construct an eﬃcient vulnerability discovery framework for structured
+inputs.
+1.1
+Background
+Fuzzing has become a widely adopted technique for vulnerability detection in software systems,
+including operating systems, network protocols, and multimedia processing libraries. Its eﬀec-
+tiveness largely depends on the quality of generated test inputs. Traditional fuzzing approaches
+typically fall into two categories: grammar-based generation and mutation-based strategies.
+Grammar-based methods rely on manually constructed input speciﬁcations, which require sig-
+niﬁcant domain expertise and are often incomplete, limiting their scalability. Mutation-based
+approaches, in contrast, generate new inputs by modifying existing seeds, but they frequently
+produce invalid test cases, especially when dealing with structured inputs, leading to low eﬃ-
+ciency.
+Structured-input programs, such as XML parsers, compilers, and protocol implementations,
+present additional challenges due to strict syntactic and semantic constraints.
+Inputs must
+satisfy complex hierarchical structures and cross-ﬁeld dependencies, making the input space
+highly sparse. As a result, randomly generated or mutated inputs are often rejected during
+early parsing stages, preventing the exploration of deeper program logic. Even grammar-based
+approaches struggle to balance input validity and diversity, limiting their eﬀectiveness in dis-
+covering complex vulnerabilities.
+To address these limitations, prior work has introduced machine learning techniques into
+fuzzing workﬂows [12, 17, 21]. By modeling input distributions from existing datasets, these
+approaches treat program inputs as sequences and leverage neural networks such as RNNs and
+LSTMs [6, 15] to generate test cases. This paradigm, inspired by natural language process-
+ing, improves input validity and reduces reliance on manual grammar construction. However,
+sequence-based models often fail to capture complex structural and semantic relationships, re-
+sulting in limited diversity and insuﬃcient coverage of deep execution paths.
+More recently, LLMs have demonstrated strong capabilities in both text and code gener-
+ation [7, 8, 20].
+Based on the Transformer architecture, LLMs can generate structured and
+2
+
+context-aware outputs through prompt-based interaction, without requiring explicit grammar
+deﬁnitions. In particular, their ability to perform both generative and inﬁlling tasks makes
+them well-suited for structured-input generation, as they can produce syntactically valid inputs
+and modify existing ones in a context-aware manner.
+Despite these advances, existing LLM-assisted fuzzing approaches primarily focus on improv-
+ing input generation and often overlook the eﬀective use of runtime feedback. In particular,
+valuable information such as crash artifacts and execution traces is rarely incorporated into the
+input generation process. This limits the ability of fuzzers to iteratively reﬁne test cases and
+explore deeper program behaviors, leaving signiﬁcant room for improvement.
+1.2
+Challenges
+Despite the widespread adoption of fuzzing, applying it eﬀectively to structured-input programs
+remains challenging [14, 24].
+Based on the limitations of traditional fuzzing techniques, we
+identify four key challenges.
+First, limited automation in input generation hinders scalability. Traditional generation-
+based approaches rely heavily on manually constructed grammars and expert knowledge, which
+are often incomplete and diﬃcult to generalize. Mutation-based methods, on the other hand,
+produce a large number of test cases through random or heuristic modiﬁcations, but only a
+small fraction of them are eﬀective in triggering abnormal behaviors. This limitation stems
+from the lack of semantic understanding of the target program, resulting in low-quality test
+inputs.
+Second, diﬃculty in handling structured inputs signiﬁcantly reduces fuzzing eﬀective-
+ness. Structured inputs must satisfy strict syntactic and semantic constraints, making the input
+space highly sparse. Random mutations often break input structure, leading to early rejection
+during parsing. Even grammar-based approaches face challenges in balancing input validity and
+abnormality, where overly strict constraints limit diversity, while excessive randomness reduces
+eﬀectiveness.
+Third, ineﬃcient exploration of deep execution paths restricts vulnerability discovery.
+Existing fuzzers rely on coverage-based feedback to guide input mutation, but such feedback
+is coarse-grained and often insuﬃcient to explore complex program logic. As a result, fuzzers
+tend to get stuck in local optima and fail to trigger deeper or more complex execution paths.
+Finally, underutilization of runtime feedback limits further performance improvements.
+Although fuzzers can detect crashes and collect execution traces, this information is rarely
+leveraged to guide subsequent input generation. In particular, semantic insights contained in
+crash artifacts are not eﬀectively exploited, resulting in a lack of informed feedback for reﬁning
+test cases.
+These challenges indicate that existing approaches, which rely primarily on grammar model-
+ing or random mutation, are insuﬃcient for structured-input fuzzing. A more eﬀective solution
+requires integrating semantic understanding with feedback-driven input generation.
+1.3
+Our Proposed Method SDLLMFuzz
+To address the above challenges, we propose SDLLMFuzz, a dynamic–static LLM-assisted
+fuzzing framework for structured-input programs. The key idea is to combine semantic input
+generation with feedback-driven reﬁnement in a uniﬁed loop.
+First, we leverage large language models to generate structure-aware test seeds. By
+incorporating input format descriptions and example data into prompts, the model can produce
+inputs that satisfy syntactic constraints while maintaining diversity. This improves the validity
+of generated test cases and enables deeper program exploration.
+Second, we introduce a static crash feedback mechanism that extracts semantic infor-
+mation from crash artifacts. Instead of treating crashes merely as failure signals, we analyze core
+3
+
+dumps and execution traces to identify potential root causes and encode them into structured
+feedback.
+Finally, we integrate these components into a dynamic–static feedback loop. Generated
+seeds are executed by a greybox fuzzer, and the resulting execution feedback is used to guide
+subsequent input generation through the language model. This iterative process enables the
+fuzzer to progressively reﬁne inputs and explore new execution paths.
+By combining semantic generation and feedback-aware reﬁnement, our approach aims to
+overcome the limitations of traditional fuzzing and improve both bug discovery and time-to-
+bug in structured-input programs.
+1.4
+Contributions
+• We propose a dynamic–static LLM-assisted fuzzing framework for structured-input pro-
+grams.
+• We design a crash-feedback mechanism that transforms static crash analysis results into
+semantic guidance for seed reﬁnement.
+• We evaluate the proposed method on structured-input benchmarks and show improvements
+in bug discovery and time-to-bug.
+2
+Background and Motivation
+2.1
+Fuzzing and Greybox Fuzzing
+Fuzzing is an automated software testing technique that aims to uncover vulnerabilities by
+feeding programs with large volumes of randomly or semi-randomly generated inputs. Since
+its introduction by Miller et al. [16], fuzzing has been widely used in vulnerability detection
+across operating systems, network protocols, and multimedia processing software. Compared to
+traditional testing methods, fuzzing provides high scalability and broad input coverage, making
+it particularly eﬀective in discovering memory corruption vulnerabilities [2].
+Modern fuzzing techniques can be broadly categorized into black-box, white-box, and grey-
+box fuzzing [4,11,18]. Black-box fuzzing treats the target program as an opaque entity without
+internal knowledge, while white-box fuzzing leverages program analysis techniques such as sym-
+bolic execution to systematically explore execution paths. Greybox fuzzing strikes a balance
+between these two approaches by employing lightweight instrumentation to collect execution
+feedback and guide input mutation.
+Among these paradigms, greybox fuzzing has demonstrated superior performance in prac-
+tice.
+Tools such as AFL++ utilize coverage feedback to prioritize inputs that explore new
+execution paths, thereby improving testing eﬃciency and eﬀectiveness [3,10,19]. By combining
+scalability with feedback-driven exploration, greybox fuzzing has become the dominant approach
+in modern vulnerability discovery.
+2.2
+Challenges in Structured-Input Fuzzing
+Despite its success, fuzzing faces signiﬁcant challenges when applied to structured-input pro-
+grams such as XML parsers, compilers, and protocol implementations. These programs require
+inputs to satisfy strict syntactic and semantic constraints, resulting in a highly sparse and con-
+strained input space [14, 24]. Consequently, randomly generated or mutated inputs are often
+rejected during early parsing stages, preventing deeper exploration of program logic.
+Mutation-based fuzzing methods, although eﬀective for unstructured inputs, lack awareness
+of input structure and semantics. As a result, a large proportion of generated test cases are
+invalid or redundant, leading to low testing eﬃciency. Grammar-based approaches attempt to
+4
+
+address this issue by incorporating input speciﬁcations, but they rely heavily on manually crafted
+grammars, which are costly to construct and diﬃcult to generalize across diﬀerent applications.
+Furthermore, existing fuzzers primarily rely on coverage-based feedback, which is often
+coarse-grained and insuﬃcient for guiding exploration toward complex program behaviors. This
+limitation makes it diﬃcult for fuzzers to escape local optima and discover vulnerabilities located
+in deep execution paths.
+2.3
+Learning-Based Fuzzing Approaches
+To overcome the limitations of traditional fuzzing, prior work has explored the integration of
+machine learning techniques into fuzzing workﬂows. These approaches model input distribu-
+tions from existing datasets and treat program inputs as sequences, enabling the use of neural
+networks such as RNNs and LSTMs for test case generation [6,12,15].
+Inspired by advances in natural language processing, learning-based fuzzing methods aim
+to capture statistical patterns in input data and generate syntactically valid test cases. For
+example, Learn&Fuzz [12] leverages probabilistic models to guide grammar-based fuzzing, while
+subsequent work employs deep learning architectures to improve input diversity and quality.
+Despite these improvements, sequence-based models often struggle to capture complex hi-
+erarchical structures and semantic dependencies inherent in structured inputs.
+As a result,
+generated test cases may lack diversity or fail to trigger deeper execution paths. Moreover,
+these approaches typically rely solely on input data and do not eﬀectively utilize runtime feed-
+back, limiting their ability to iteratively reﬁne test cases.
+2.4
+Large Language Models for Input Generation
+Recent advances in large language models (LLMs) have demonstrated remarkable capabilities
+in both text and code generation. Based on the Transformer architecture, LLMs can gener-
+ate structured and context-aware outputs through prompt-based interaction, without requiring
+explicit grammar deﬁnitions.
+In the context of fuzzing, LLMs provide a promising solution for structured-input generation.
+By incorporating input format descriptions and example data into prompts, LLMs can produce
+syntactically valid and semantically meaningful test cases. In addition, their ability to perform
+both generative and inﬁlling tasks enables ﬂexible input generation and mutation in a context-
+aware manner.
+Recent studies have explored the application of LLMs in fuzzing. TitanFuzz [7] demon-
+strates that LLMs can directly generate valid test programs for deep learning libraries, while
+FuzzGPT [8] further improves bug-triggering input generation through prompt engineering and
+ﬁne-tuning. Fuzz4All [20] extends this paradigm by introducing a universal LLM-based fuzzing
+framework for diverse input domains. These approaches highlight the potential of LLMs in
+improving input quality and expanding fuzzing coverage.
+2.5
+Limitations of Existing Approaches
+Despite these advances, existing fuzzing approaches still exhibit several limitations. First, tra-
+ditional fuzzers rely heavily on coverage-based feedback, which is insuﬃcient for capturing
+semantic diﬀerences between inputs. Second, runtime information such as crash artifacts and
+execution traces is typically underutilized. Most approaches treat crashes merely as indicators
+of vulnerabilities, rather than as sources of actionable feedback for guiding subsequent input
+generation.
+Similarly, current LLM-assisted fuzzing methods mainly focus on improving input generation
+but fail to incorporate runtime feedback into the fuzzing loop. Without leveraging execution-
+5
+
+level information, these approaches are unable to eﬀectively reﬁne test inputs or guide explo-
+ration toward deeper program behaviors.
+2.6
+Motivation
+The above limitations motivate the need for a more eﬀective fuzzing framework for structured-
+input programs.
+An ideal solution should (1) generate structure-aware inputs with strong
+semantic understanding, and (2) leverage runtime feedback to iteratively reﬁne test cases.
+Large language models provide powerful capabilities in semantic modeling and structured
+generation, while runtime artifacts such as crash reports contain valuable insights into program
+behavior. Combining these two aspects oﬀers a promising direction for improving both input
+quality and exploration eﬃciency.
+In this work, we aim to bridge this gap by integrating LLM-based input generation with
+feedback-driven reﬁnement, enabling more eﬀective vulnerability discovery in structured-input
+programs.
+3
+SDLLMFuzz Design
+3.1
+Overview
+We propose SDLLMFuzz, a dynamic–static LLM-assisted fuzzing framework for structured-
+input programs. The core idea is to integrate LLM-based structured input generation with
+crash-aware feedback analysis, forming a closed-loop fuzzing workﬂow.
+As shown in Figure 1, the system consists of four main components: (1) an LLM-guided
+seed generator, (2) a greybox fuzzing engine, (3) a static crash analyzer, and (4) a feedback
+encoder. These components interact in an iterative loop of generationexecutionanalysisfeedback,
+enabling continuous reﬁnement of test inputs.
+3.2
+LLM-Guided Structured Seed Generation
+To address the limitations of random mutation in structured-input fuzzing, we leverage large
+language models to generate structure-aware test seeds.
+The LLM takes as input (1) format documentation, (2) initial seed corpus, and optionally
+(3) execution feedback. Based on this context, it generates new inputs that satisfy syntactic
+constraints while introducing semantic variations.
+Unlike traditional byte-level mutations, our approach enforces structure-preserving con-
+straints, including preserving syntax keywords, maintaining hierarchical relationships, and re-
+specting cross-ﬁeld dependencies.
+3.3
+Greybox Fuzzing Execution
+The generated seeds are fed into a greybox fuzzing engine (e.g., AFL++), which performs high-
+throughput execution and mutation. During execution, the fuzzer collects coverage feedback,
+execution traces, and crash-triggering inputs.
+3.4
+Static Crash Analysis
+When a crash is detected, the system performs static analysis on the corresponding core dump
+to extract semantic information about the failure. Using debugging tools such as GDB, we
+extract crash location, call stack, exception type, and memory access patterns.
+6
+
+Format Docs
+Initial Seeds
+LLM-Guided
+Seed Generator
+Greybox Fuzzer
+(AFL++)
+Crash Inputs
+Core Dump
+Coverage
+Feedback
+Static Analyzer
+(GDB)
+Crash Feedback
+Encoder
+Figure 1: Overview of the SDLLMFuzz framework.
+3.5
+Crash Feedback Encoding
+To enable the LLM to utilize crash information, we transform low-level debugging outputs into
+structured semantic descriptions. This encoding bridges the gap between execution data and
+LLM reasoning.
+3.6
+Dynamic–Static Feedback Loop
+The key component of SDLLMFuzz is the integration of dynamic execution and static analysis
+into a uniﬁed feedback loop. The encoded crash feedback is appended to the LLM prompt,
+guiding subsequent seed generation toward deeper execution paths.
+3.7
+Coverage-Aware Seed Selection
+To improve eﬃciency, we introduce a coverage-aware seed selection mechanism:
+Score(seed) = α · ∆Edge + β · ∆Block
+3.8
+Crash Deduplication
+To avoid redundant reporting, crashes are grouped based on structural similarity:
+CrashV ector = (RIP, Signal, TopFunction, StackHash)
+7
+
+4
+Experimental Setup
+4.1
+Benchmark and Targets
+We evaluate SDLLMFuzz on the Magma benchmark, a widely used platform for fuzzing eval-
+uation. Unlike traditional evaluation methods that rely solely on crash signals, Magma injects
+real-world vulnerabilities into open-source programs and provides precise triggering conditions
+(canaries). This enables accurate measurement of true bug discovery instead of mere coverage
+improvement.
+The benchmark includes representative structured-input programs such as libxml2, libpng,
+libsndﬁle, openssl, and sqlite3, covering various vulnerability types including buﬀer overﬂows,
+null pointer dereferences, and logic errors. :contentReference[oaicite:0]index=0
+4.2
+Baselines
+We compare SDLLMFuzz with the following methods:
+• AFL++: standard greybox fuzzing baseline
+• LLM Seed + AFL++: LLM-based seed generation without feedback loop
+• SDLLMFuzz: our full dynamic–static feedback framework
+All methods are evaluated under identical hardware conditions and time budgets, with
+multiple runs to reduce randomness.
+4.3
+Metrics
+We adopt three metrics:
+• Bug Coverage: number of triggered real vulnerabilities
+• Time-to-Bug: time to ﬁrst trigger each bug
+• Edge Coverage: explored control-ﬂow edges
+4.4
+Environment
+All experiments are conducted on Ubuntu 22.04 (VMware) with 4 CPU cores and 16GB mem-
+ory. AFL++ is used as the fuzzing engine, and all targets are built using Magma’s Docker
+environment to ensure reproducibility.
+5
+Evaluation
+5.1
+Bug Discovery Performance
+Figure 2 shows the distribution of discovered bugs within 24 hours. SDLLMFuzz consistently
+outperforms all baselines, achieving higher median and average bug counts with lower variance,
+indicating strong eﬀectiveness and stability.
+Figure 3 further demonstrates that this advantage persists under longer time budgets.
+SDLLMFuzz continues to discover more vulnerabilities while maintaining stable performance
+across repeated runs.
+Across structured-input targets such as libxml2, libpng, and libsndﬁle, SDLLMFuzz shows sig-
+niﬁcant improvements, highlighting the eﬀectiveness of structure-aware generation and feedback-
+driven reﬁnement.
+8
+
+Figure 2: Bug discovery results within 24 hours.
+Figure 3: Bug discovery results within 48 hours.
+5.2
+Time-to-Bug Analysis
+Figure 4 shows that SDLLMFuzz triggers most vulnerabilities faster than baseline methods,
+especially for structured-input programs. Darker colors indicate shorter discovery time.
+Figure 5 further conﬁrms that SDLLMFuzz achieves faster convergence, reducing the time
+required to discover vulnerabilities.
+5.3
+Eﬀect of Time Budget
+Comparing Figures 2 and 3, all methods improve with longer execution time, but the improve-
+ment is limited (typically 5%–10%).
+SDLLMFuzz not only achieves the highest bug count at 24 hours but also maintains its
+advantage at 48 hours, indicating strong scalability and sustained exploration capability. In
+contrast, traditional fuzzers tend to plateau due to limited exploration strategies.
+5.4
+Ablation Study
+We evaluate the contribution of each component through ablation.
+Removing LLM-based seed generation leads to the largest performance drop, indicating its
+critical role in generating valid structured inputs.
+Removing static crash feedback also degrades performance, showing that feedback-guided
+reﬁnement improves exploration eﬃciency.
+Mutation optimization has a smaller but noticeable impact, suggesting it further enhances
+eﬃciency.
+Overall, all components contribute positively, with LLM seed generation being the most
+signiﬁcant factor.
+9
+
+Figure 4: Time-to-Bug heatmap
+6
+Discussion
+6.1
+Why SDLLMFuzz Works
+The eﬀectiveness of SDLLMFuzz stems from the combination of semantic-aware input gener-
+ation and feedback-driven reﬁnement. Traditional fuzzing relies on random or heuristic mu-
+tations, which are often ineﬀective for structured-input programs due to strict syntax and
+semantic constraints. By leveraging LLMs, SDLLMFuzz generates structure-aware inputs that
+signiﬁcantly improve input validity and enable deeper program exploration.
+Furthermore, the integration of static crash analysis provides additional semantic guidance
+that is absent in conventional fuzzing. Instead of treating crashes merely as failure signals,
+SDLLMFuzz extracts meaningful information from crash artifacts and feeds it back into the
+input generation process. This dynamic–static feedback loop allows the system to progressively
+reﬁne test inputs and escape local optima, leading to improved bug discovery performance.
+6.2
+Applicability and Generalization
+Although SDLLMFuzz is primarily designed for structured-input programs, its underlying de-
+sign is general and can be extended to other domains.
+Any program that processes semi-
+structured or constraint-heavy inputs, such as conﬁguration ﬁles, scripting languages, or proto-
+col messages, can potentially beneﬁt from LLM-guided input generation.
+In addition, the framework is not tied to a speciﬁc LLM architecture or fuzzing engine. It
+can be integrated with diﬀerent models or fuzzers, making it ﬂexible and adaptable to various
+10
+
+Figure 5: Time-to-Bug curves
+Figure 6: Bug discovery in ablation study.
+testing environments.
+6.3
+Limitations
+Despite its eﬀectiveness, SDLLMFuzz has several limitations.
+First, the performance of the framework depends on the quality of LLM-generated inputs.
+Poor prompt design or insuﬃcient context may lead to suboptimal seed generation, aﬀecting
+overall performance.
+Second, incorporating LLMs and static analysis introduces additional computational over-
+head. Compared to traditional fuzzing, which is highly eﬃcient, SDLLMFuzz may incur higher
+runtime costs due to model inference and crash analysis.
+Third, the current approach focuses primarily on input-level guidance and does not explicitly
+model program state or execution semantics beyond crash information.
+This may limit its
+eﬀectiveness for programs with complex stateful behaviors.
+6.4
+Threats to Validity
+Internal Validity. Experimental results may be inﬂuenced by randomness in fuzzing. To
+mitigate this, we perform multiple runs and report averaged results. However, some variance
+11
+
+Figure 7: Time-to-Bug in ablation study.
+may still remain.
+External Validity. The evaluation is conducted on the Magma benchmark, which, al-
+though widely used, may not fully represent all real-world software systems. The generalizability
+of the results to other domains requires further validation.
+Construct Validity. We primarily use bug coverage and time-to-bug as evaluation met-
+rics. While these are standard in fuzzing research, they may not capture all aspects of testing
+eﬀectiveness, such as exploitability or root-cause diversity.
+Model Validity. The behavior of LLMs may vary depending on model selection, prompt
+design, and sampling strategies.
+Diﬀerent conﬁgurations may lead to diﬀerent performance
+outcomes, which introduces uncertainty in reproducibility.
+7
+Related Work
+7.1
+Fuzzing Techniques
+Fuzzing is a widely used automated testing technique for vulnerability discovery. Early work
+by Miller et al. [16] demonstrated that randomly generated inputs can eﬀectively expose soft-
+ware faults. Subsequent studies categorized fuzzing into black-box, white-box, and greybox
+approaches [4,11,18].
+Black-box fuzzing achieves high eﬃciency but lacks guidance for deep exploration, while
+white-box fuzzing leverages symbolic execution to systematically explore program paths at
+the cost of high overhead.
+Greybox fuzzing strikes a balance by incorporating lightweight
+12
+
+instrumentation and coverage feedback to guide input mutation, achieving both scalability and
+eﬀectiveness.
+Modern greybox fuzzers, such as AFL++, have become the dominant paradigm in practice
+by prioritizing inputs that increase coverage [3, 10, 19]. These approaches have demonstrated
+strong performance in discovering memory corruption vulnerabilities.
+7.2
+Fuzzing for Structured Inputs
+Handling structured inputs remains a fundamental challenge for fuzzing. Programs such as
+parsers, compilers, and protocol implementations require inputs that satisfy strict syntactic and
+semantic constraints, resulting in a sparse valid input space [14, 24]. Mutation-based fuzzers
+often generate invalid inputs that are rejected during early parsing stages, limiting exploration
+depth.
+Grammar-based fuzzing addresses this issue by generating inputs according to predeﬁned
+speciﬁcations [10]. Advanced techniques such as NAUTILUS [1] combine grammar awareness
+with search strategies to explore deeper program states. Hybrid approaches like Superion [19]
+integrate grammar-aware mutation into greybox fuzzing.
+Directed fuzzing techniques further aim to explore speciﬁc program regions or trigger tar-
+geted vulnerabilities [3,5]. However, these approaches still rely on mutation strategies that lack
+semantic understanding of input structures.
+7.3
+Learning-Based Fuzzing
+To improve input generation, prior work has explored machine learning techniques for fuzzing.
+Learn&Fuzz [12] introduced probabilistic models to guide grammar-based input generation.
+Subsequent approaches leverage deep learning models such as RNNs and Seq2Seq architectures
+to learn input distributions and generate structured test cases [6,15].
+Other works apply machine learning to protocol fuzzing and structured input generation [9,
+13, 23]. While these methods improve syntactic validity, they often fail to capture complex
+hierarchical structures and semantic dependencies. Moreover, they typically rely solely on input
+data and do not eﬀectively utilize runtime feedback.
+7.4
+LLM-Assisted Fuzzing
+Recent advances in large language models (LLMs) have introduced new opportunities for fuzzing.
+Due to their strong capabilities in code understanding and structured generation, LLMs can
+produce high-quality inputs that satisfy syntactic constraints.
+TitanFuzz [7] demonstrates that LLMs can directly generate valid test programs for fuzzing
+deep learning libraries. FuzzGPT [8] further improves input generation through prompt engi-
+neering and ﬁne-tuning, while Fuzz4All [20] extends LLM-based fuzzing to diverse domains via
+a universal framework.
+More recently, LLAMAFuzz [22] integrates LLMs into greybox fuzzing by enhancing the
+mutation stage with semantic-aware input generation. This approach improves coverage for
+structured inputs by leveraging LLMs to guide mutation strategies within the fuzzing loop.
+Despite these advances, existing LLM-based fuzzing approaches primarily focus on improving
+input generation or mutation. They generally do not fully exploit runtime feedback, such as
+crash information and execution traces, to guide iterative reﬁnement of test inputs.
+8
+Conclusion
+In this paper, we present SDLLMFuzz, a dynamic–static LLM-assisted fuzzing framework for
+structured-input programs. By integrating LLM-based structured seed generation with crash-
+13
+
+aware feedback analysis, the proposed approach forms a closed-loop fuzzing process that im-
+proves both input quality and exploration eﬃciency.
+Through extensive evaluation on the Magma benchmark, we demonstrate that SDLLMFuzz
+signiﬁcantly outperforms traditional greybox fuzzers and LLM-assisted baselines in terms of bug
+discovery and time-to-bug. The results show that combining semantic input generation with
+feedback-driven reﬁnement is eﬀective for overcoming the limitations of conventional fuzzing in
+structured-input scenarios.
+Future work includes improving the eﬃciency of LLM integration, exploring more advanced
+feedback mechanisms beyond crash analysis, and extending the framework to additional domains
+such as protocol fuzzing and stateful systems.
+Overall, this work highlights the potential of combining large language models with fuzzing
+techniques and provides a promising direction for next-generation automated vulnerability dis-
+covery.

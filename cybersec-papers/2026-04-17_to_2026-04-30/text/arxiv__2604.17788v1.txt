@@ -1,0 +1,1166 @@
+SoK: Analysis of Privacy Risks and Mitigation in Online
+Propaganda Detection through the PROMPT Framework
+Dhiman Goswami
+George Mason University
+Fairfax, Virginia, United States of America
+dgoswam@gmu.edu
+Al Nahian Bin Emran
+George Mason University
+Fairfax, Virginia, United States of America
+abinemra@gmu.edu
+Md Hasan Ullah Sadi
+George Mason University
+Fairfax, Virginia, United States of America
+msadi@gmu.edu
+Sanchari Das
+George Mason University
+Fairfax, Virginia, United States of America
+sdas35@gmu.edu
+Abstract
+Online propaganda detection pipelines expose measurable privacy
+risks at multiple stages including data collection, feature extrac-
+tion, and model inference. We conduct a structured analysis of
+162 peer-reviewed studies and formalize the problem using the
+Propaganda Risk Online Mitigation and Privacy-preserving Tactics
+(PROMPT) framework. PROMPT models risks 𝑅and mitigation
+strategies 𝑆through a mapping M : 𝑅→𝑆guided by a utility
+function 𝛼· PrivacyGain(𝑠𝑗) −𝛽· PerfLoss(𝑠𝑗) −𝛾· Cost(𝑠𝑗), with
+tunable (𝛼, 𝛽,𝛾) enabling stakeholders to balance privacy, accuracy,
+and deployment costs. To assess practical adoption, we introduce a
+compliance score that quantifies the alignment of existing meth-
+ods with GDPR, CCPA etc. requirements. Our evaluation shows
+that many widely used pipelines remain non-compliant, particu-
+larly in metadata handling and user-level aggregation. We further
+present empirical fine-tuning experiments on transformer-based en-
+coders and decoders under synthetic perturbation, demonstrating
+a monotonic privacy–utility trade-off: with 𝑞= 0.05 performance
+decreased by 1–2% F1, while at 𝑞= 0.20 the reduction reached
+13–14%. These results establish quantitative baselines for privacy
+costs in propaganda detection. Our contributions include a formal
+risk-to-defense mapping, a compliance-oriented auditing metric,
+and experimental evidence of privacy–performance trade-offs, pro-
+viding a technical foundation for building regulation-compliant
+and privacy-aware detection systems.
+CCS Concepts
+• Human-centered computing →Usability testing; • Security
+and privacy →Privacy protections.
+Keywords
+Propaganda Detection, privacy, anonymization, Privacy Preserving
+NLP
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+ASIA CCS ’26, Bangalore, India
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 979-8-4007-2356-8/26/06
+https://doi.org/10.1145/3779208.3807832
+ACM Reference Format:
+Dhiman Goswami, Al Nahian Bin Emran, Md Hasan Ullah Sadi, and San-
+chari Das. 2026. SoK: Analysis of Privacy Risks and Mitigation in On-
+line Propaganda Detection through the PROMPT Framework. In ACM
+Asia Conference on Computer and Communications Security (ASIA CCS
+’26), June 1–5, 2026, Bangalore, India. ACM, New York, NY, USA, 18 pages.
+https://doi.org/10.1145/3779208.3807832
+1
+Introduction
+In the digital age, individuals increasingly rely on platforms such
+as Meta (formerly Facebook), X (formerly Twitter), YouTube, and
+major news outlets like BBC, CNN, and Sky News to share and
+consume information [126]. While these platforms enable global
+connectivity and real-time access to news, they also act as fertile
+grounds for the rapid spread of propaganda. Manzoor et al. define
+propaganda as “a deliberate, conscious, malicious, and cunning effort
+by a group, organization, or individual to control and influence public
+beliefs and actions through selected truth, mass communication, and
+personal contact” [107]. Prior studies further show that propaganda
+spreads faster and more widely than factual information on social
+media [130, 168, 169, 178, 197].
+The vast scale of user-generated content and its rapid circulation
+make effective detection increasingly challenging [77, 97]. Propa-
+ganda transcends linguistic and platform boundaries [127, 160],
+while human cognitive biases and engagement-driven algorithms
+exacerbate its reach [111, 113]. To address these challenges, re-
+searchers employ machine learning (ML) models such as BERT,
+RoBERTa, and GPT-based architectures to detect common tech-
+niques including framing, persuasion, and disinformation [95, 133].
+Progress has been enabled by curated datasets capturing political,
+military, and commercial disinformation [69], such as AG-News,
+ArAIEval, the DARPA Twitter Bot Challenge, and Kaggle’s fake
+news dataset. Multilingual corpora like EUvsDisinfo highlight state-
+sponsored campaigns, e.g., pro-Kremlin narratives [100]. Yet, de-
+spite their utility, such resources raise serious privacy concerns [47],
+as large-scale data collection introduces risks of surveillance, re-
+identification, and misuse [156, 161]. Detection techniques that
+exploit behavioral or biometric signals may further infringe on in-
+dividual rights [156]. While privacy-preserving approaches such as
+DP, anonymization, and secure multi-party computation have been
+explored [103, 162], most studies prioritize accuracy, leaving privacy
+and compliance under-addressed [3, 91, 110, 134, 158, 162, 181].
+arXiv:2604.17788v1 [cs.CR] 20 Apr 2026
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Goswami et al.
+To examine this gap, we analyze 162 peer-reviewed studies span-
+ning datasets, ML methodologies, and privacy-preserving tech-
+nologies. Building on this analysis, we propose the Propaganda
+Risk Online Mitigation and Privacy-preserving Tactics (PROMPT)
+framework, which maps privacy threats (e.g., metadata leakage,
+behavioral inference) to mitigation strategies (e.g., DP, federated
+learning, secure multi-party computation) and integrates regula-
+tory principles and best practices to guide the design of performant,
+privacy-preserving, and compliant detection systems. Our study is
+structured around the following research questions:
+• RQ1: What privacy risks arise during data collection, model train-
+ing, and deployment in propaganda detection?
+• RQ2: How well do current propaganda detection methods incor-
+porate privacy-preserving techniques, and how effectively do they
+mitigate risks across different data modalities, platforms, and lan-
+guages?
+• RQ3: What privacy-preserving methods can be integrated into pro-
+paganda detection systems to protect user data while maintaining
+detection performance?
+Our work offers the following key contributions:
+• Here we report on the first SoK on the intersection of propaganda
+detection and privacy, based on a systematic analysis of 𝑁= 162
+peer-reviewed studies covering datasets, detection methods, and
+privacy-preserving techniques. Let 𝐹= {𝑑,𝑚, 𝑝} denote features
+for datasets (𝑑), methods (𝑚), and privacy techniques (𝑝). The
+adoption ratio is defined as
+𝐶𝑥≜|𝑃𝑥|
+𝑁,
+𝑥∈{𝑑,𝑚, 𝑝},
+providing a reproducible baseline to compare uptake across areas
+(e.g., metadata use, privacy-technique adoption).
+• We develop the PROMPT framework as a mapping M : 𝑅→
+𝑆, from risk categories 𝑅= {𝑟1, . . . ,𝑟𝑘} (e.g., re-identification,
+metadata leakage) to mitigation strategies 𝑆= {𝑠1, . . . ,𝑠ℓ} (e.g.,
+DP, SMPC, FL). Defense selection is posed as utility optimization:
+𝑠∗(𝑟𝑖) ∈arg max
+𝑠𝑗∈𝑆
+h
+𝛼PrivacyGain(𝑠𝑗) −𝛽PerfLoss(𝑠𝑗)
+i
+,
+with tunable (𝛼, 𝛽) reflecting deployment priorities.
+• For 𝑀evaluated pipelines, we define the compliance score
+CompScore ≜1
+𝑀
+𝑀
+∑︁
+𝑖=1
+1[Compliant(Method𝑖)] ,
+and compile a best-practice dictionary B linking regulatory clauses
+(e.g., GDPR data minimization, PbD) to technical controls (e.g.,
+DP noise calibration, 𝑘-anonymity, metadata filtering), offering
+actionable guidance.
+• We empirically observe a monotonic privacy–utility trade-off
+with increasing perturbation rate𝑞, i.e., 𝐹1(𝑞) ≤𝐹1(0) and 𝐹1(𝑞2) ≤
+𝐹1(𝑞1) for 𝑞2 ≥𝑞1 in our setup.
+2
+Background
+In this section, we outline foundational concepts and techniques
+for propaganda detection on online platforms, emphasizing pri-
+vacy risks when ML and Deep Learning (DL) models process user-
+generated content through data collection, model design, and NLP-
+based computation.
+Propaganda has been categorized into techniques such as what-
+aboutism, straw man, red herring, bandwagon, reductio ad Hitlerum,
+exaggeration or minimization, thought-terminating cliché, causal
+oversimplification, appeal to fear or prejudice, black-and-white
+fallacy, name-calling or labeling, appeal to authority, loaded lan-
+guage, flag-waving, repetition, slogans, and doubt [33, 41, 177, 186].
+These categories underpin computational approaches, which are
+benchmarked at span, sentence, and document levels.
+Early studies relied on traditional ML models such as Logistic
+Regression, SVM, Naïve Bayes, Decision Trees, and TF-IDF clas-
+sifiers. Li et al. [102] applied a TF-IDF Logistic Regression with
+linguistic features to reduce identifiable data use, while Aggarwal
+and Sadana [4] employed SVM with oversampling. Da San Mar-
+tino et al. [41] integrated n-grams with LSTM and RoBERTa for
+multi-label detection, and infrastructure-level features were also
+leveraged to identify disinformation websites [81].
+Transformers advanced detection further. Kaczyński and Przy-
+była [87] proposed a BERT-based multi-task framework with credi-
+bility assessment, while Li et al. [104] fused RoBERTa and ResNet-
+50 for multimodal meme detection, raising privacy concerns in
+image-text fusion. Fadel et al. [52] showed BERT and USE en-
+sembles outperform traditional ML, and Fouad and Weeds [54]
+applied AraBERT with augmentation for Arabic propaganda, em-
+phasizing risks in under-resourced contexts. Broader surveys high-
+light methodological and ethical challenges in misinformation re-
+search [205].
+Other DL architectures also contributed. Blaschke et al. [26]
+combined Bi-LSTM with BERT embeddings for token-level detec-
+tion while minimizing metadata use. Gupta et al. [65] proposed
+a CNN-LSTM hybrid with segmentation and entity recognition
+to mitigate stylistic profiling. Gundapu and Mamidi [62] explored
+multimodal meme detection with CNN-LSTM, while Alhabashi et
+al. [14] extended this with ResNet-50 and MARBERT for Arabic
+memes, stressing re-identification risks. Patil et al. [131] applied
+RNN-based sequence learning with BERT embeddings to news
+propaganda. User studies further reveal that misinformation warn-
+ings on video-sharing platforms may not always alter perceptions,
+complicating trust in detection systems [64].
+Recently, LLMs such as GPT-3.5, GPT-4, XLM-RoBERTa, and mT5
+have been explored. Szwoch et al. [180] reported GPT-4’s inconsis-
+tencies and false positives, while Hamilton et al. [67] introduced
+GPT-assisted annotation for scalable, privacy-preserving labeling.
+Bagdasaryan et al. [20] warned of “propaganda-as-a-service”via
+trigger phrases, and Morio et al. [121] showed ensembles of XLNet,
+RoBERTa, and GPT-2 improve precision while reducing privacy
+exposure. Aldabbas et al. [13] introduced MultiProp, a cross-lingual
+LLM framework leveraging augmentation and meta-learning.
+Despite these advances, significant privacy risks remain, includ-
+ing re-identification, metadata exposure, and profiling, particularly
+in cross-lingual and multimodal contexts involving large-scale user
+data and sensitive annotations.
+3
+Method
+We follow the Preferred Reporting Items for Systematic Reviews and
+Meta-Analyses (PRISMA) guidelines [112] for conducting evidence-
+based literature review. Figure 1 provides the overview of our study.
+
+SoK: Analysis of Privacy Risks and Mitigation in Online Propaganda Detection through the PROMPT Framework
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Identification
+Screening
+Eligibility
+Selected
+Database Searching -
+DBLP, ACM, IEEE,
+Springer, Elsevier
+( 290 )
+Screened Records
+( 457 )
+Additional Search -
+Google Scholar
+( 167 )
+Studies Included in
+the Survey
+( 162 )
+Full-Text Article
+Excluded (not directly
+relevant)
+( 9 )
+Full-Text Accessed for
+Eligibility
+( 171 )
+Excluded Records
+(Title Screening,
+Duplicate Removal)
+( 286 )
+Figure 1: PRISMA Diagram: Stepwise Literature Collection,
+Filtering, and Selection Process.
+3.1
+Paper Identification
+We systematically searched high-impact academic databases, includ-
+ing DBLP, ACM Digital Library, IEEE Xplore, Springer, and Elsevier,
+alongside top NLP, privacy, and HCI conferences (𝐴∗and 𝐴venues
+in CORE ranking 1). To ensure comprehensive coverage, we also
+retrieved relevant works from Google Scholar.
+3.2
+Paper Screening
+We designed structured queries to identify studies at the intersec-
+tion of propaganda detection and privacy concerns. The primary
+keywords included: propaganda, online propaganda, propaganda
+privacy, propaganda mitigation, with platform-specific terms such
+as propaganda in social media, propaganda in news media. To cap-
+ture privacy-preserving approaches, we included terms such as dif-
+ferential privacy, federated learning, anonymization in propaganda
+detection. Despite rigorous filtering, potential biases in keyword
+and venue selection may have led to the exclusion of some studies.
+We included papers published until January 2025. The final dataset
+provides a comprehensive analysis of privacy risks and mitigation
+strategies in propaganda detection.
+3.3
+Paper Selection
+We retrieved 457 research papers and applied a multi-stage filtering
+process aligned with best practices in systematic literature reviews.
+Title and Abstract Screening: First, we removed duplicates
+and irrelevant studies, retaining 286 unique paper. We then con-
+ducted manual abstract screening for relevance, excluding papers
+that lacked discussions on privacy risks, mitigation techniques, or
+ethical considerations. Three independent researchers conducted
+the screening and conducted a thematic analysis to obtain an inter-
+annotator agreement of 0.86 and a Cohen’s Kappa score of 0.72. In
+this phase we excluded 115 papers, leaving 171 for full-text review.
+Full-Text Review and Final Selection: We assessed method-
+ological rigor, empirical validation, and contributions to privacy-
+aware propaganda detection. Studies focusing on DP, federated
+learning, anonymization, and adversarial robustness were priori-
+tized. Papers lacking substantial discussions on privacy, empirical
+1https://portal.core.edu.au/conf-ranks/
+analysis, or clear methodologies were excluded. Full-text screening
+involved three researchers, with a fourth researcher resolving dis-
+putes in ambiguous cases. In this phase we excluded nine papers,
+resulting in a final dataset of 162 papers.
+4
+PROMPT Framework
+We propose the PROMPT framework that provides a structured
+methodology for analyzing propaganda detection systems under
+privacy, security, and compliance constraints. It integrates six core
+components: Propaganda Types and Techniques, Propaganda Anal-
+ysis, Propaganda Privacy and Security Concerns, Propaganda Miti-
+gation, Regulatory Compliance, and Ethical Considerations. Unlike
+prior descriptive taxonomies, PROMPT formalizes the connection
+between propaganda techniques, computational risks, and privacy-
+preserving defenses. It draws on and extends prior work: the Cross-
+Cultural Privacy Framework [190] that informs PROMPT’s treat-
+ment of legal and cultural constraints, NLP-PRISM [60] that de-
+scribes privacy vulnerabilities with framework integration of differ-
+ent tasks related to social media, the OVERRIDE framework [143]
+that motivates its data handling mechanisms, and PRAF [157] that
+reinforces the integration of regulatory compliance and ethical over-
+sight. Together, these elements define a comprehensive methodol-
+ogy that links detection pipelines to measurable privacy risks and
+mitigation strategies. Figure 2 illustrates the PROMPT architecture,
+and we detail its components below.
+Propaganda Types and Techniques:
+We categorize propa-
+ganda into political, religious, social, economic, cultural, and public
+health domains each defined by recurring rhetorical and linguistic
+strategies [109]. Let 𝑇= {𝑡1,𝑡2, . . . ,𝑡𝑘} denote the set of techniques
+(e.g., name-calling, repetition, flag-waving). For each domain 𝐷𝑗,
+we define a coverage score, Coverage(𝐷𝑗) =
+|𝑇𝐷𝑗|
+|𝑇| , where 𝑇𝐷𝑗⊆𝑇
+is the set of techniques observed in that domain and |𝑇| is the num-
+ber of total number of domains defined by [42]. This formulation
+enables quantitative comparison across domains, providing mea-
+surable features that can be embedded into detection models. For
+example, political propaganda exhibits high technique diversity
+(|𝑇𝐷𝑗| large), while public health propaganda relies more heavily
+on a smaller subset such as exaggeration or fear appeals. Within
+PROMPT, these techniques serve as the input layer of the frame-
+work, linking observed strategies to privacy and security risks 𝑅,
+which are later mapped to mitigation strategies 𝑆via the PROMPT
+risk-to-defense function M : 𝑅→𝑆. By grounding qualitative
+categories in formal representations, the framework allows repro-
+ducible benchmarking and facilitates the design of machine learn-
+ing pipelines that explicitly consider adversarial robustness and
+privacy-aware constraints.
+Propaganda Analysis: Propaganda analysis in PROMPT is
+modeled as a multi-stage pipeline where each stage exposes distinct
+computational and privacy risks. Let P = {𝑝1, 𝑝2, . . . , 𝑝𝑛} denote
+the set of propaganda instances. The pipeline can be expressed as
+𝑝𝑖
+C
+−−→𝑥𝑖
+S
+−−→𝑦𝑖
+A
+−−−→𝑧𝑖
+D
+−−−→𝑜𝑖,
+where C is data collection and preprocessing, S is storage and secu-
+rity, A is analysis and computational modeling, and D is distribu-
+tion and networking. Each stage is associated with measurable risks
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Goswami et al.
+Political
+Name calling or
+labeling, Repetition, Appeal
+to fear/prejudice, Causal
+oversimplification, Black-and-
+white fallacy,
+dictatorship, Whataboutism,
+straw man, red
+herring, Bandwagon, reductio
+ad hitlerum
+Religious
+Loaded language, Appeal to
+authority, Thought-
+terminating cliché, Black-and-
+white fallacy,
+dictatorship, Repetition
+Public Health
+Exaggeration or
+minimization, Doubt, Appeal
+to fear/prejudice, Appeal to
+authority, Repetition
+Social
+Name calling or
+labeling, Flag-
+waving, Slogans, 
+Whataboutism, straw man,
+red herring, Bandwagon
+Economic
+Exaggeration or
+minimization, Doubt, Appeal
+to authority, Causal
+oversimplification, Slogans
+Cultural
+Loaded language, Flag-
+waving, Slogans, Thought-
+terminating cliché
+Data Collection
+and Preprocessing
+Data Storage and
+Security
+Data Analysis and
+Computational
+Risk
+Propaganda
+Types &
+Techniques
+Propaganda
+Analysis
+Propaganda
+Privacy &
+Security
+Concerns
+Propaganda
+Mitigation
+Annotation, Surveillance, Facial
+Recognition, Consent, Anonymity, LLM
+Annotation, Translated Data, User
+Generated Content, Cross Lingual
+Transfer Learning, Data Augmentation
+Data Security, Re-
+identification, Metadata Privacy
+Risk, Multimodal Data Privacy
+Misclassification, Algorithmic
+Bias, Misuse, False Information, LLM
+Privacy Violation, Image Processing
+Privacy Risk, Label
+Overprediction, Irrelevant Span
+Detection, Random
+Truncation, Undefined Content, Threat
+Differential Privacy, Federated
+Learning, Synthetic Data
+Generation, Homomorphic Encryption,
+Human-in-the-loop, PBD
+SMPC, Blockchain-Based Storage, K-
+Anonymity and L-Diversity, Metadata
+Privacy Filters,  PETs
+PPML, Adversarial Machine Learning
+Defenses, XAI, Privacy-Preserving
+Image Processing, PETs, PbD
+Regulatory
+Compliance
+EU AI Act,
+IEEE AI
+Ethics,
+Basel III,
+FSB AI
+Guidelines
+ISO 27001,
+NIST, 
+PCI DSS,
+GDPR,
+HIPPA, 
+FedRAMP 
+GDPR,
+CCPA,
+PIPL, PDPA,
+HIPAA
+Informed Consent &
+Transparency, Bias &
+Discrimination, Surveillance
+& Privacy, Data Ownership
+& Control, Cross-Border
+Data Ethics
+Encryption & Data
+Protection, Government &
+Corporate Surveillance
+Risks, Data Breach
+Accountability, Right to Be
+Forgotten
+Algorithmic Fairness & Bias,
+Automated Decision-Making
+Risks, Data Manipulation &
+Misinformation, Commercial
+Exploitation of User Data
+Ethical
+Considerations
+Propaganda Risk Online Mitigation and Privacy-preserving Tactics (PROMPT)
+Data Distribution
+and Network Risk
+Social Media Manipulation, SEO,
+Clickbait, Information Warfare,
+Deepfake,Centrality Attack,
+Community Clustering, Bridge Node
+Exploitation, Sybil Attack
+Fact Checking Integration, Block-
+Chain Based Verification, AI-based
+Content Moderation, Graph Anomaly
+Detection
+CISA, FARA,
+Honest Ads Act,
+DSA, GDPR,
+UNESCO
+Digital Platform
+Governance
+Censorship, Surveillance,
+Transparency in Social
+Engineering, Responsible
+AI
+Figure 2: PROMPT Framework Highlighting Privacy Risks and Mitigation Strategies
+𝑅= {𝑟𝐶,𝑟𝑆,𝑟𝐴,𝑟𝐷} and potential mitigations 𝑆= {𝑠𝐶,𝑠𝑆,𝑠𝐴,𝑠𝐷} pro-
+posed by us and defined later in the framework.
+Data Collection and Preprocessing (C) involves acquiring multi-
+modal propaganda artifacts (text, images, video) and transforming
+them into feature representations 𝑥𝑖. Risks include surveillance,
+lack of consent, and re-identification. Data Storage and Security
+(S) ensures persistence and access control for feature sets 𝑥𝑖→𝑦𝑖,
+where threats include metadata leakage, multimodal correlation
+attacks, and unauthorized retrieval. Data Analysis and Computa-
+tional Risk (A) applies machine learning classifiers 𝑓𝜃(𝑦𝑖) = 𝑧𝑖,
+with vulnerabilities including algorithmic bias, adversarial manip-
+ulation, and misclassification. Data Distribution and Network Risk
+(D) models how propaganda outputs 𝑧𝑖spread across networks
+to yield observable influence 𝑜𝑖, with threats such as Sybil attacks,
+community clustering, and coordinated information warfare.
+This structured representation transforms analysis from a de-
+scriptive sequence into a formal pipeline with explicit risk points,
+allowing integration with PROMPT’s mapping M : 𝑅→𝑆to
+evaluate and select mitigations for each stage.
+Propaganda Privacy Evaluation:
+Privacy and security chal-
+lenges in propaganda detection can be represented as attack sur-
+faces that expose user data and model integrity. We define a risk
+vector ®𝑅= ⟨𝑟ident,𝑟meta,𝑟bias,𝑟net⟩, where each component denotes
+identity leakage, metadata exposure, algorithmic bias, and network
+manipulation based on the four core steps (C, S, A, D) . The overall
+magnitude of vulnerability can be approximated as the 𝐿2 norm
+∥®𝑅∥2 =
+√︃
+𝑟2
+ident + 𝑟2
+meta + 𝑟2
+bias + 𝑟2
+net.
+Identity and Consent Risks occur when annotation, LLM trans-
+lation, or cross-lingual transfer enable re-identification of indi-
+viduals without proper consent [173]. These risks are measurable
+by record-linkage accuracy against anonymized datasets. Meta-
+data Risks emerge from insecure storage or multimodal correla-
+tion [120]. They can be quantified using the mutual information
+𝐼(𝑀;𝑈) between metadata 𝑀and user identity𝑈. Algorithmic Risks
+involve misclassification, adversarial perturbations, and censorship
+errors [95]. Bias can be evaluated with fairness gaps such as
+ΔEO = |𝑃( ˆ𝑦= 1 | 𝑦= 1,𝑔= 0) −𝑃( ˆ𝑦= 1 | 𝑦= 1,𝑔= 1)| ,
+where 𝑔is a sensitive attribute and the fairness gap is the absolute
+value of the difference between the probability of classification with
+and without sensitive content exposure. Network Risks stem from
+Sybil attacks, deepfakes, and coordinated campaigns [24]. Their
+severity can be modeled by an amplification ratio
+𝐴= Reachpropaganda
+Reachbaseline
+,
+
+SoK: Analysis of Privacy Risks and Mitigation in Online Propaganda Detection through the PROMPT Framework
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+which measures the inflation of dissemination relative to organic
+spread through network. By associating each risk with a measur-
+able quantity such as linkage accuracy, mutual information, fairness
+gaps, or amplification ratios, PROMPT provides a foundation for
+auditing vulnerabilities with quantitative metrics instead of quali-
+tative descriptions.
+Propaganda Mitigation:
+PROMPT models mitigation as a
+multi-objective optimization problem that balances privacy, ac-
+curacy, and system cost. Let 𝑅= {𝑟1, . . . ,𝑟𝑘} denote risks and
+𝑆= {𝑠1, . . . ,𝑠ℓ} available defenses such as DP, federated learn-
+ing, SMPC, or adversarial ML defenses. For each pairing (𝑟𝑖,𝑠𝑗) we
+define a mitigation utility:
+𝑈(𝑟𝑖,𝑠𝑗) = 𝛼· PrivacyGain(𝑠𝑗) −𝛽· PerfLoss(𝑠𝑗) −𝛾· Cost(𝑠𝑗),
+where 𝛼, 𝛽,𝛾are deployment-specific weights. Optimal mitigation
+is obtained as
+𝑠∗(𝑟𝑖) = arg max
+𝑠𝑗∈𝑆𝑈(𝑟𝑖,𝑠𝑗).
+This abstraction covers a wide spectrum of techniques. For exam-
+ple, DP increases PrivacyGain but induces higher PerfLoss, while
+blockchain-based verification introduces computational Cost. In-
+tegration of fact-checking, explainable AI, and human-in-the-loop
+review can be treated as constraints that improve contextual reli-
+ability rather than raw utility. By formalizing mitigations as opti-
+mization over 𝑈(𝑟𝑖,𝑠𝑗), PROMPT provides a structured approach
+to selecting defenses that align with both security requirements
+and system-level trade-offs.
+Regulatory Compliance:
+PROMPT incorporates compliance
+as a measurable score that evaluates how detection pipelines adhere
+to legal and industry standards. Let L = {ℓ1, . . . , ℓ𝑚} be relevant
+obligations (e.g., GDPR consent, CCPA opt-out, ISO 27001 security
+control). For a given method 𝑓, compliance is defined as
+CompScore(𝑓) = 1
+𝑚
+𝑚
+∑︁
+𝑗=1
+1[𝑓satisfies ℓ𝑗],
+where 1 is the indicator function. This allows comparison of pipelines
+by their degree of alignment with privacy laws, security standards,
+and AI governance frameworks. Beyond static measurement, com-
+pliance can be treated as a constraint in system design, requir-
+ing that selected defenses 𝑆maximize utility 𝑈(𝑟𝑖,𝑠𝑗) subject to
+CompScore(𝑓) ≥𝜏, where 𝜏is a regulatory threshold. For our
+analysis, we experimentally find and set to 0.319. This formula-
+tion elevates regulatory texts such as GDPR, CCPA, and the EU AI
+Act from descriptive guidelines into quantitative constraints that
+directly shape technical system choices.
+Ethical Considerations:
+We operationalize fairness as the
+proportion of safeguards relative to total ethical factors (safeguards
++ risks). Formally, let
+𝐹=
+|safeguards|
+|safeguards| + |risks|,
+𝐵=
+|risks|
+|safeguards| + |risks| .
+An ethically sound system minimizes 𝐵while ensuring 𝐹≥𝜏
+where 𝜏is an empirical fairness threshold inferred from the
+corpus (see Table 5). In practice, this framing corresponds to enforc-
+ing informed consent during data collection, limiting surveillance,
+preserving user ownership of generated content [78], and imple-
+menting encryption and audit protocols at the storage level [25].
+At the model level, bias mitigation and explainability methods
+reduce discriminatory outcomes [37], while at the distribution
+level, safeguards include transparency reporting, countermeasures
+against censorship, and responsible governance of automated mod-
+eration [165].
+4.1
+Threat Model
+In PROMPT we assume adversaries A characterized as follows:
+Adversary Types: (i) Platform providers with full access to raw
+user data and model pipelines, (ii) external observers or third parties
+with black-box or API-level access, and (iii) insiders or malicious
+communities with partial access to data, annotations, or system
+outputs.
+Capabilities: Adversaries may leverage data access, model query-
+ing, training data manipulation, and auxiliary information such as
+public profiles, external datasets, or cross-platform signals.
+Attack Surface: Data collection, storage, analysis, and distribu-
+tion stages of the pipeline.
+Privacy Violations: Membership inference, re-identification,
+attribute inference and user profiling, metadata leakage, poisoned
+training data, adversarial examples, deepfakes, and coordinated
+network attacks.
+Each threat 𝑎𝑖∈A is assigned likelihood 𝑃(𝑎𝑖) and impact 𝐼(𝑎𝑖).
+The expected system risk is Í
+𝑖𝑃(𝑎𝑖) · 𝐼(𝑎𝑖).
+Mitigation integrates technical defenses such as DP, FL, HE,
+privacy-preserving ML, blockchain verification, and fact check-
+ing, combined with compliance obligations under GDPR, CCPA,
+PIPL, and the EU AI Act. This approach reduces both technical and
+regulatory exposure.
+4.2
+Framework Integration
+PROMPT integrates six layers into a pipeline: types and techniques,
+analysis, privacy and security concerns, mitigation, compliance, and
+ethics, as illustrated in Figure 2. Let X denote the propaganda inputs,
+®𝑅the quantified risk vector, and 𝑆the set of candidate defenses.
+The framework defines a mapping M : ®𝑅→𝑆that selects defenses
+to minimize risk while satisfying compliance and fairness. Each
+component of ®𝑅corresponds to measurable vulnerabilities - re-
+identification risk, metadata leakage, algorithmic bias, and network
+manipulation, which are explicitly linked to defenses such as DP,
+secure multiparty computation, or adversarially robust learning.
+This integration is not only conceptual (Figure 2) but also computa-
+tional, where mitigation is expressed as an optimization problem
+balancing privacy gain, accuracy loss, and deployment cost. We
+operationalize this process in Algorithm 1, which details the steped
+procedure for estimating risks, filtering feasible defenses, scoring
+candidates by marginal utility, and iteratively updating the system
+until residual risks fall below tolerance.
+We now operationalize PROMPT’s formal definitions on the
+collected corpus of 162 studies. Specifically, the normalized risk
+components 𝑟ident,𝑟meta,𝑟bias,𝑟net and the utility function 𝑈(𝑠𝑗) =
+𝛼· PrivacyGain(𝑠𝑗) −𝛽· PerfLoss(𝑠𝑗) −𝛾· Cost(𝑠𝑗) are instantiated
+with empirical evidence from our thematic coding and compliance
+analysis. This grounding enables direct comparison between the
+theoretical guarantees of PROMPT and the observed fairness, bias,
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Goswami et al.
+and performance trade-offs in transformer-based propaganda detec-
+tion. We now turn to the Results section to quantify these outcomes.
+5
+Results
+5.1
+Propaganda Types and Techniques
+Table 1: Evaluation of Propaganda Types and Corresponding
+Technique Coverage
+Propaganda Types
+Propaganda Technique (𝐶𝑜𝑣𝑒𝑟𝑎𝑔𝑒(D𝑗))
+Political
+0.788
+Religious
+0.286
+Social
+0.429
+Economic
+0.286
+Cultural
+0.286
+Public health
+0.357
+Propaganda detection involves analyzing types and techniques
+across political, religious, public health, social, economic, and cul-
+tural domains (Appendix Table 9). This representation facilitates
+quantitative comparison of coverage and diversity across domains.
+With the analysis of PROMPT framework, we find propaganda
+technique coverage across domains D𝑗(Table 1) using the formula
+from the Section 4. Political propaganda exhibits the highest tech-
+nique coverage at 0.788, indicating greater methodological attention
+in detection pipelines. In contrast, religious, economic, and cultural
+propaganda each reflect relatively limited coverage (0.286), high-
+lighting underexplored dimensions. Social propaganda (0.429) and
+public health propaganda (0.357) show moderate coverage, suggest-
+ing emerging but still incomplete methodological support.
+As highlighted by Da San Martino et al. [41] and Stefan-Yurii [177],
+political propaganda employs strategies such as name-calling, rep-
+etition, black-and-white fallacy, and whataboutism to manipulate
+public opinion. Moreover, it includes state-sponsored efforts, elec-
+toral influence, and military-driven campaigns to sway public opin-
+ion or consolidate power [89, 136]. Similarly, religious propaganda,
+as discussed by Ahmad et al. [8], uses appeals to authority, loaded
+language, and thought-terminating clich’es to influence belief. In
+the context of public health, Polonijo et al. [135] emphasize how ex-
+aggeration, minimization, and appeals to fear shape crisis narratives.
+Meanwhile, social propaganda, as described by Gundapu et al. [62],
+often utilizes flag-waving, slogans, and straw man arguments to
+polarize communities. Moreover, it involves persuasion-based tech-
+niques, false narratives, framing, bias-driven messaging, and mul-
+tilingual campaigns designed to influence public sentiment and
+behavior [67, 129]. Additionally, economic and cultural propaganda,
+as noted by Muthukumar et al. [122], relies on causal oversimpli-
+fications, slogans, and appeals to identity-based biases. Moreover,
+cultural propaganda includes regional and multi-modal approaches
+such as Arabic memes and disinformation campaigns, which use
+both text and images to spread ideological messages [1, 212]. Fi-
+nally, cross-domain techniques in propaganda detection and anal-
+ysis include multilabel, multiview, and levels of analysis - such
+as span, sentence, and fragment-level - often employing computa-
+tional models to identify and track the spread of propaganda across
+platforms [33, 186].
+Beyond conventional strategies, modern propaganda techniques
+have evolved to exploit digital platforms. As highlighted by Hangloo
+et al., social media manipulation, SEO strategies, and clickbait mech-
+anisms are now commonly used to amplify misleading narratives.
+Furthermore, the increasing prevalence of deepfake content and
+information warfare tactics exacerbates the challenge of identifying
+propaganda [68]. Given the growing complexity of these techniques,
+it is imperative to develop computational detection strategies that
+can adapt to domain-specific propaganda characteristics.
+5.2
+Propaganda Analysis & Evaluation
+Propaganda analysis covers a comprehensive examination of how
+persuasive content is created, distributed, and detected in differ-
+ent contexts. This sub-section explores the linguistic and regional
+variations in this research, the digital platforms where misleading
+narratives proliferate, and the datasets that enable systematic study.
+It also reviews benchmark competitions that drive innovation and
+compares the computational methodologies-from traditional ma-
+chine learning to cutting-edge transformer-based and multimodal
+approaches-used to identify and mitigate propaganda related con-
+tent. By integrating these, we aim to provide a cohesive framework
+for understanding challenges and advancements in propaganda
+detection and analysis. The studies spanned across 23 languages,
+18 online platforms, mapping key sources of propaganda. More-
+over, 41 datasets were created, 5 benchmark competitions were
+organized and 79 computational methodologies were found in
+the literature.
+The necessity of a systematic propaganda privacy evaluation
+is clear, as only 5% of surveyed studies explicitly address privacy
+concerns in detection pipelines [41, 89, 123, 173, 174, 179]. The
+PROMPT framework operationalizes this evaluation across four
+critical stages : Data Collection and Preprocessing, Storage and
+Security, Analysis and Computational Risk, and Distribution and
+Network Risk highlighting where vulnerabilities emerge and how
+they accumulate. We used the formula from Section 4 and shown
+the results in Table 2.
+Data Collection and Preprocessing: Data collection for pro-
+paganda detection, involving textual and multimedia content from
+social media and news, raises concerns about surveillance, consent,
+and anonymity. Solopova et al. present surveillance risks from au-
+tomated monitoring [173], while Kellner et al. highlight consent
+issues from collecting user data without approval [89]. Benzmüller
+et al. emphasize anonymity risks in multilingual analysis [174]. An-
+notation practices may introduce systemic bias, as shown in Syed
+et al.’s analysis [179], while Da San Martino et al. report risks from
+annotation workflows themselves [41]. LLM-assisted annotation
+raises further concerns, with Nabhani et al. cautioning that tools
+like GPT-4 may inadvertently expose sensitive content [123].
+Linguistic diversity shapes privacy risks during collection: in
+Europe, propaganda detection spans English [41], French [123],
+German, Dutch [58], Italian, Spanish, Polish, Greek, Russian, Geor-
+gian [101], Romanian [173], Bulgarian, North Macedonian [106],
+Czech [76], Lithuanian [149], Serbian, and Ukrainian [177]. Con-
+flicts such as the Russian–Ukrainian war accelerated multilingual
+annotation and transfer learning with human-in-the-loop checks.
+
+SoK: Analysis of Privacy Risks and Mitigation in Online Propaganda Detection through the PROMPT Framework
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Table 2: Evaluation of Risk Factors of Propaganda Detection.
+Risk Factors
+𝑟ident
+𝑟meta
+𝑟bias
+𝑟net
+∥®𝑅∥2
+Cross-Lingual Transfer Learning Risk, Multimodal Data Privacy Violation, Community Clustering Exploitation, Image Processing
+Privacy Risk, User-Generated Content Risk, Social Media Manipulation, Irrelevant Span Detection
+0.241
+-
+-
+-
+0.241
+Image Processing Privacy Risk, User-Generated Content Risk, Bridge Node Exploitation, Metadata Privacy Risk
+-
+0.138
+-
+-
+0.138
+LLM Privacy Violation, Data Security Breach, Label Overprediction, Information Warfare, Facial Recognition, Random Truncation,
+Threat Generation, Undefined Content, False Information, Centrality Attack, Misclassification, Misuse
+-
+-
+0.414
+-
+0.414
+Re-identification, Consent Violation, Algorithmic Bias, SEO Manipulation, Deepfake Attacks, Surveillance, Sybil Attack, Clickbait
+-
+-
+-
+0.345
+0.345
+Normalized Cumulative Risk
+0.606
+In North America, research focuses on English [41], with prepro-
+cessing aimed at normalization, metadata tagging, and robust-
+ness. In South America, Spanish corpora [101] emphasize fact-
+checking and sentiment alignment. Asia and the Middle East intro-
+duce further challenges, with Arabic [186], Hebrew, Hindi [123],
+Urdu [8], Chinese [213], and code-mixed Hinglish/Tenglish [62].
+Low-resource African languages rely on transfer learning and
+crowdsourcing [123].
+Online platforms compound risks at this stage: Twitter [186],
+Facebook [104], Instagram, Pinterest [212], YouTube [62], What-
+sApp [62], Telegram [174], Skype [51], Al Jazeera, BBC Arabic, CNN
+Arabic [154], Reddit [30], the dark web [99], Taobao [207], Sina-
+Weibo [203], and LinkedIn all introduce vulnerabilities. Datasets
+also contribute to privacy risks: BABE [175], PTC [109], Check-
+That [58], PROPANEWS [82], AG-News [8], TweetSpin [193], DIP-
+ROMATS [116], ArPro [71], ARATWEET [115], Ar-DAD [145], H-
+Prop-News [31], Memotion [62], and the Meme Propaganda Tech-
+niques Corpus [35].
+Competitions such as SemEval [109], WANLP [12], IberLEF [118,
+119], NLP4IF [41], and ArAIEval [72, 73] illustrate annotation chal-
+lenges but often lack transparency and consent. Among 29 privacy
+risks (|P| = 29), we found 7 concerns related to this specific step
+(C = 7), yielding a component 𝑟ident = 0.241.
+Data Storage and Security: Once collected, propaganda data
+presents long-term storage risks. Moral et al. highlight threats
+from storing diplomatic tweets [118], Modzelewski et al. show
+re-identification risks [116], and Moreno et al. document metadata-
+related exposures [120]. Mittal et al. stress that multimodal storage
+may disclose cultural and personal traits [115], while Semantha
+et
+
+[…middle truncated for length…]
+
+or
+work highlights how political propaganda leverages rhetorical tac-
+tics such as name-calling and repetition [41], extends to under-
+studied languages and platforms with resources like DIPROMATS
+and H-Prop-News [116], and raises concerns about surveillance and
+re-identification [173]. Privacy-preserving methods including dif-
+ferential privacy and federated learning have been advocated [162],
+alongside compliance with GDPR and ISO 27001 [195] and safe-
+guards for fairness and transparency [9]. By situating our analysis
+within the PROMPT framework, we address these challenges and
+demonstrate how privacy and ethics can be embedded in propa-
+ganda detection, guiding the evaluation framework used to answer
+our research questions.
+Answer to RQ1: Propaganda detection in online platforms poses
+significant privacy risks due to its reliance on large-scale user-
+generated content. These systems collect, store, process vast amounts
+of data, including text, images, and user interactions, which often
+contain PII, metadata, and behavioral patterns [124]. As a result,
+users become vulnerable to tracking, profiling, and re-identification,
+even when anonymization techniques are applied. Advanced infer-
+ence methods can still expose anonymized data, leading to unau-
+thorized surveillance and data exploitation [174]. Furthermore, ma-
+chine learning models trained on user data are susceptible to model
+inversion attacks, where adversaries can reconstruct original inputs,
+potentially revealing sensitive information [116].
+Algorithmic profiling presents additional concerns, as it may
+categorize users based on ideological stances, leading to discrimina-
+tion, censorship, or unintended biases in content moderation [95].
+Inadequate encryption and weak access controls further exacer-
+bate privacy threats, increasing the likelihood of data breaches.
+Moreover, the diversity of global legal frameworks complicates
+regulatory compliance, creating inconsistencies in data protection
+enforcement across jurisdictions [51]. Beyond technical risks, eth-
+ical concerns arise, particularly in politically sensitive contexts.
+Automated propaganda detection mechanisms could be misused to
+suppress dissenting voices or disproportionately target marginal-
+ized groups, undermining freedom of expression and democratic
+discourse [72]. We have found 0.606 normalized cumulative privacy
+risk factor across all the steps.
+Answer to RQ2: Various techniques assess and mitigate privacy
+risks in propaganda detection; however, each has significant limita-
+tions. In particular, privacy risk assessment often involves differen-
+tial privacy, federated learning, and adversarial testing to evaluate
+data exposure and model vulnerabilities. For instance, DP measures
+leakage risk by adding noise to training data, which helps reduce
+exposure. Nevertheless, this approach degrades model accuracy,
+making it a less optimal solution in certain contexts [56]. Simi-
+larly, federated learning minimizes centralized data collection by
+decentralizing training, thereby reducing direct access to sensitive
+data. Yet, it remains vulnerable to gradient inversion attacks, which
+can reconstruct sensitive information from model updates [118].In
+addition to these methods, traditional anonymization techniques,
+such as entity removal and content masking, assess privacy by
+identifying sensitive text. However, these techniques often fail to
+prevent re-identification, especially when attackers utilize auxil-
+iary data. Furthermore, they tend to reduce detection accuracy,
+thereby limiting their overall effectiveness [128]. Likewise, adver-
+sarial testing is used to evaluate how models handle manipulated
+inputs; yet, it struggles to keep up with evolving attack strategies,
+making it an imperfect solution [154]. Beyond text-based methods,
+network-based assessments are employed to detect manipulation
+patterns, such as Sybil and centrality attacks. While these tech-
+niques enhance detection capabilities, metadata exposure remains
+a significant concern [11, 95].
+Additionally, multimodal detection, which integrates text, audio,
+and visual data, improves accuracy; however, it also introduces
+privacy risks through metadata cross-referencing, potentially ex-
+posing user-sensitive information [39, 204]. Finally, large language
+models (LLMs) pose further challenges in assessing privacy risks
+due to their black-box nature, making their security vulnerabilities
+harder to evaluate. Although these techniques help mitigate pri-
+vacy risks to some extent, they require trade-offs between privacy
+protection and propaganda detection effectiveness. We observe a
+privacy–utility trade-off (0.049–0.155) under synthetic perturba-
+tion (𝑞), with up to a 7% performance drop in privacy-preserved
+transformer finetuning.
+
+SoK: Analysis of Privacy Risks and Mitigation in Online Propaganda Detection through the PROMPT Framework
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Answer to RQ3: Privacy-preserving strategies play a crucial role
+in enhancing the security and integrity of propaganda detection
+models. One effective approach is applying differential privacy at
+the feature extraction stage, which perturbs high-risk features while
+maintaining detection performance [212]. Additionally, secure fed-
+erated learning, when combined with SMPC and homomorphic
+encryption, ensures that model updates remain protected from in-
+ference attacks [98]. Moreover, privacy-preserving techniques such
+as tokenization-based de-identification, adversarial text sanitization
+help mask sensitive details while preserving linguistic coherence,
+making them valuable for mitigating privacy risks [123]. To further
+enhance transparency and accountability, XAI methods, including
+SHAP and LIME, facilitate risk assessment and bias detection, thus
+improving trust in the detection models [54]. At the same time,
+strengthening adversarial robustness through gradient masking
+and perturbation defenses fortifies models against manipulation
+attempts, ensuring their reliability in adversarial settings [41].
+Furthermore, automated privacy audits play a key role in com-
+plying with regulations such as GDPR [57] and CCPA [98], helping
+organizations align with legal requirements. In politically sensi-
+tive contexts, integrating Human-in-the-Loop (HITL) mechanisms
+offers an additional layer of oversight, reducing risks associated
+with automated decision-making [212]. Finally, the PROMPT frame-
+work serves as a robust solution for online propaganda analysis.
+Through its six-step propaganda analysis, PROMPT provides a com-
+prehensive approach, reinforcing privacy-preserving measures and
+improving security and ethical integrity. By PROMPT analysis, we
+have found a lack of 0.306 in compliance score and 0.125 in fair-
+ness threshold which states that existing regulatory compliance
+and ethical aspect should be more agile for privacy and security
+preservation in this domain.
+7
+Implications
+Grounding our synthesis of 162 studies in the PROMPT framework,
+we identify system-level implications for deploying privacy-aware
+and regulation-aligned propaganda detection. Current pipelines ex-
+hibit a normalized privacy risk of ∥®𝑅∥2 = 0.606 (Tables 4, 5), limited
+adoption of privacy-enhancing technologies, and measurable com-
+pliance and fairness deficits. These observations demonstrate that
+existing systems inherit structural weaknesses across all pipeline
+stages rather than isolated failures at individual modules. As a re-
+sult, end-to-end redesign is necessary to align detection practices
+with emerging regulatory, ethical, and technical expectations.
+7.1
+Data Collection and Preprocessing (C)
+Data acquisition continues to drive the highest concentration of pri-
+vacy exposure, particularly in multilingual and multimodal environ-
+ments where inference pathways expand rapidly. Re-identification,
+covert profiling, and consent violations occur when pipelines aggre-
+gate sensitive linguistic cues or cross-reference behavioral metadata.
+Automated entity redaction, provenance tracking, data minimiza-
+tion, and dataset nutrition labels reduce downstream exposure and
+establish transparent, auditable data lineage [40]. Federated cura-
+tion and differential privacy adapters replace centralized retention
+in high-sensitivity contexts, thereby reducing attack surface and
+limiting the blast radius of potential breaches [48]. Large language
+model-based annotation workflows require formal leakage anal-
+ysis because prompts, intermediate reasoning traces, and labels
+frequently encode identifiable information [74]. Treating annota-
+tion as a controlled computational activity rather than an informal
+step promotes reproducibility, meets regulatory expectations for
+traceability, and reduces the likelihood of unintentional data leaks.
+7.2
+Storage and Security (S)
+Metadata correlation, multimodal linkability, and unrestricted re-
+distribution increase long-term privacy risk even when primary
+content appears sanitized. Encryption at rest, granular access con-
+trol, and retention limits form a defensible baseline, while metadata
+minimization and controlled hashing restrict inference channels
+that enable re-identification [201]. Machine-readable usage policies,
+audit logs, and Data Protection Impact Assessments elevate pipeline
+transparency and equip external auditors with verifiable evidence
+of compliance. Integrating compliance scoring into development
+and release workflows, with automatic blocking when scores fall
+below the threshold ˆ𝜏𝑐, enforces regulatory alignment and prevents
+the deployment of systems that violate GDPR, CCPA, or the EU
+AI Act. These mechanisms transform compliance from a post hoc
+audit activity into a continuous, measurable design constraint.
+7.3
+Analysis and Modeling (A)
+Model development remains disproportionately centered on accu-
+racy, leaving privacy, robustness, and fairness underexamined. This
+imbalance produces pipelines that perform well under benchmark
+conditions but introduce substantial risk during real-world deploy-
+ment. Reporting protocols that pair accuracy with robustness under
+perturbation, cross-group fairness gaps, and explicit privacy–utility
+trade-offs provide a multidimensional view of system behavior and
+reveal risks that single-metric evaluation conceals [170]. Privacy-
+preserving training techniques such as DP-SGD, federated opti-
+mization, encrypted inference, and privacy-preserving multimodal
+joins enhance protection in high-risk domains [140]. Explainabil-
+ity techniques supply structured evidence for debugging, model
+validation, and regulatory assessment, enabling investigators to
+trace harmful outputs and identify structural biases. Mapping each
+component of ®𝑅to a mitigation strategy in 𝑀: 𝑅→𝑆embeds
+principled defense selection into the development cycle, replacing
+ad hoc adjustments with systematic risk reasoning.
+7.4
+Distribution and Networks (D)
+Propagation networks amplify both privacy risk and societal harm,
+especially when platforms rely on graph-based features to detect
+coordinated behavior. These features expose relational patterns
+that enable adversarial inference and user correlation. Noise in-
+jection into graph embeddings, subgraph sampling, and private
+anomaly detection maintain sensitivity to coordinated manipu-
+lation while reducing the exposure of relational structure [152].
+Transparency reporting, user-notification channels, and structured
+appeal pathways strengthen procedural accountability and reduce
+false-positive harms during moderation. Ensuring that deployment
+occurs only when fairness and compliance conditions satisfy 𝐹≥ˆ𝜏
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Goswami et al.
+prevents the release of models that disproportionately affect vulner-
+able communities or fail to satisfy jurisdictional regulatory thresh-
+olds. These controls operationalize fairness and compliance as mea-
+surable gates rather than aspirational ideals.
+7.5
+Operational Usage of PROMPT
+The PROMPT framework functions as an operational playbook that
+unifies risk quantification, mitigation selection, and compliance
+evaluation into a single iterative cycle. It establishes a structured
+procedure in which practitioners identify dominant risks, map them
+to feasible defenses, and refine the pipeline until residual risk falls
+within organizational tolerance. This cycle parallels mature security
+engineering workflows by linking qualitative threat modeling with
+quantitative measures that guide decision-making at each stage
+of system development. Operational use of PROMPT begins with
+estimating the risk vector ®𝑅and identifying components that ex-
+ceed acceptable thresholds. The mapping 𝑀: 𝑅→𝑆then selects
+mitigation strategies that reduce risk while respecting performance
+and cost constraints. As updates are incorporated, practitioners
+track (∥®𝑅∥2, CompScore, 𝐹) across successive releases to evaluate
+how technical changes influence privacy exposure, regulatory align-
+ment, and fairness guarantees. Documenting marginal utility effects
+𝑈(𝑟𝑖,𝑠𝑗) provides an auditable record that links each intervention
+to measurable reductions in risk, creating transparent justification
+for design choices [164].
+This structure elevates privacy, fairness, and compliance from
+aspirational goals to operational metrics embedded directly into de-
+velopment and governance pipelines. Rather than applying controls
+after deployment, teams integrate them throughout the lifecycle,
+from dataset design to distribution. The result is a reproducible
+process that exposes trade-offs early, supports independent verifi-
+cation, and strengthens organizational accountability. By enforcing
+continuous monitoring and transparent reporting, the PROMPT
+playbook enables propaganda detection systems to function as
+measurable, trustworthy, and regulation-aligned socio-technical
+infrastructures that maintain resilience under evolving adversarial
+and policy pressures [16].
+7.6
+State Power and Information Asymmetry
+Beyond system-level considerations, propaganda detection operates
+within broader geopolitical and institutional power asymmetries.
+State actors and large platforms possess disproportionate access to
+data, computational resources, and regulatory influence, enabling
+large-scale monitoring, narrative shaping, and cross-border infor-
+mation control. While privacy-preserving mechanisms in PROMPT
+reduce risks such as re-identification, membership inference, and
+user profiling, they may also limit transparency and accountability
+when applied in high-stakes moderation or governance contexts.
+This creates an inherent trade-off between protecting individual
+privacy and enabling oversight of powerful actors engaged in co-
+ordinated information operations. In this setting, the deployment
+of privacy-aware propaganda detection must be carefully balanced
+to avoid reinforcing existing asymmetries. Mechanisms such as
+auditable pipelines, transparency reporting, and independent eval-
+uation become critical to ensure that privacy protections do not ob-
+scure harmful large-scale manipulation. Situating PROMPT within
+these dynamics highlights the need for governance frameworks
+that jointly address privacy, accountability, and the geopolitical
+implications of controlling information flows.
+8
+Limitations and Future Work
+In this study, we surveyed a broad spectrum of privacy-preserving
+techniques and highlighted their role in propaganda detection, but
+we did not evaluate their effectiveness in operational deployments.
+We focused our corpus on top-tier conferences and journals, which
+allowed us to capture state-of-the-art research while inevitably leav-
+ing out some relevant work from other venues and industry reports.
+In future work, we will expand our dataset to cover non-English
+and under-represented sources, with particular attention to low-
+resource contexts. We also plan to conduct empirical experiments
+that measure the integration costs and performance trade-offs of
+privacy-enhancing technologies when deployed at scale.
+9
+Conclusion
+Online propaganda poses risks that demand detection pipelines
+which are accurate, privacy-preserving, and regulation-compliant,
+yet advances in ML and DL, while improving detection accuracy,
+introduce new vulnerabilities such as metadata exposure, adver-
+sarial inference, compliance gaps. In this work, we present the
+first systematic evaluation of privacy, fairness, and compliance in
+propaganda detection, analyzing 162 peer-reviewed publications
+through the PROMPT framework, which we developed. Our analy-
+sis showed that 81% of systems rely on sensitive user data while
+only 18% adopt privacy-preserving technologies, yielding a nor-
+malized corpus risk of ∥®𝑅∥2 = 0.606. We further demonstrated that
+fairness coverage consistently falls short of the required threshold
+and that compliance deficits of 0.306 leave current pipelines ethi-
+cally and legally fragile. Empirical experiments established concrete
+baselines for the privacy–utility trade-off, with privacy constraints
+causing up to 22% performance degradation. Finally, our thematic
+mapping exposed uneven attention to propaganda techniques and
+a lack of controls and measurements in multilingual and multi-
+modal settings.By operationalizing risk vectors, compliance scores,
+and fairness thresholds, we turned ethical and legal considerations
+into quantifiable requirements, establishing a rigorous basis for
+evaluating and improving propaganda detection systems.
+Ethical Considerations
+This SoK use only publicly available datasets and examples, without
+collecting new social media data, interacting with users, or pro-
+cessing personally identifiable information. Given the sensitivity of
+propaganda tied to political, cultural, religious, and demographic
+identities, we avoid deanonymization, real-world adversarial at-
+tacks, and any design of manipulation or disinformation systems;
+all attack vectors (e.g., re-identification, metadata leakage, adver-
+sarial misinformation) are discussed conceptually.

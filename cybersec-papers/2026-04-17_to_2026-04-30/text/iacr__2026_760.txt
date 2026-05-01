@@ -1,0 +1,964 @@
+A Simple Batched Threshold Encryption Scheme
+Guru-Vamsi Policharla
+Commonware, Inc.
+1
+Introduction
+In this note, we construct a simple batched threshold encryption scheme that satisfies censorship resistance,
+does not suffer from epoch restrictions, and has quasi-linear decryption complexity in the batch size with a
+CPA ciphertext size of |G1| + |GT |. Using standard techniques in the random oracle model, one can handle
+arbitrary length messages with a ciphertext size of |G1| + |msg|. CCA security can be obtained by appending
+a simulation-extractable NIZK proof of well-formedness of the ciphertext, which increases the ciphertext size
+by 2|F|. We prove security under the Decisional Bilinear q-Power Diffie-Hellman Assumption [BGW05] in
+asymmetric pairing groups, assuming the NIZK is zero-knowledge and straight-line simulation-extractable.
+These improvements come at the cost of an interactive setup phase (involving secure multiplications) and
+secret keys that grow linearly with the batch size. See Table 1 for a detailed comparison. For a discussion
+on the relevance of this primitive to encrypted mempools and MEV, we refer the reader to [CGPP24] and
+follow-up works (Section 4). We direct the reader to Section 5 for an overview of the construction.
+2
+Preliminaries
+We use [n] to denote the set {1, 2, . . . , n}. The security parameter is denoted by λ ∈N. A function f : N →N
+is said to be polynomial if there exists a constant c such that f(n) ≤nc for all n ∈N, and we write poly(·)
+to denote such a function. A function f : N →[0, 1] is said to be negligible if for every c ∈N, there exists
+N ∈N such that for all n > N, f(n) < n−c, and we write negl(·) to denote such a function. A probability
+is noticeable if it is not negligible, and overwhelming if it is equal to 1 −negl(λ) for some negligible function
+negl(λ). For a set S, we write s ←S to indicate that s is sampled uniformly at random from S. An algorithm
+A is PPT (probabilistic polynomial-time) if its running time is bounded by some polynomial in the size of its
+input.
+Bilinear groups. Let GrpGen(1λ) output a description (G1, G2, GT , p, g1, g2, ◦) where G1, G2, GT are groups
+of prime order p, g1, g2 are generators of G1, G2 respectively, and ◦: G1 × G2 →GT is an efficiently
+computable bilinear map satisfying (i) bilinearity: [x]1◦[y]2 = [xy]T for all x, y ∈Zp, and (ii) non-degeneracy:
+g1◦g2 ̸= 1GT . We write gT := g1◦g2 and, for b ∈{1, 2, T}, [x]b := x·gb. We work in the Type-III (asymmetric)
+setting: no efficiently computable isomorphism between G1 and G2 is assumed.
+Non-interactive Zero-Knowledge proofs. Let L be an NP-language and R the corresponding NP-relation.
+A Simulation Extractable-NIZK for R consists of the following algorithms:
+• Setup(1λ) →(crs, td): Takes as input a security parameter, and outputs a common reference string crs and
+trapdoor td.
+• Prove(crs, x, w) →π: Takes as input crs and any pair (x, w) ∈R and outputs a proof π for the statement
+x ∈L.
+• Verify(crs, x, π) →b: Takes as input crs, statement x and proof π and outputs a bit b indicating whether
+verification has passed or failed.
+1
+
+• SimProve(crs, td, x) →π: Takes as input crs, trapdoor td and statement x and outputs a simulated proof π.
+We will drop the crs term wherever implicit. A SE-NIZK satisfies the following properties:
+• Perfect Completeness. An SE-NIZK satisfies perfect completeness if for any (x, w) ∈R, we have
+Pr
+
+(crs, td) ←Setup(1λ)
+π ←Prove(crs, x, w) : Verify(x, π) = 1
+
+= 1.
+• Proof of knowledge (and soundness). For every PPT adversary A, there is a PPT extractor Ext such that
+Pr
+
+
+(crs, td) ←Setup(1λ)
+(x, π) ←A(crs)
+w ←Ext(crs, x, π)
+: Verify(x, π) = 1
+(x, w) /∈R
+
+≤negl(λ).
+• Computational Zero-knowledge. There exists an algorithm SimProve such that for all PPT adversaries
+A:
+
+Pr
+
+
+(crs, td) ←Setup(1λ)
+(x, w) ←A(crs)
+π ←Prove(crs, x, w)
+: (x, w) ∈R
+A(π) = 1
+
+−Pr
+
+
+(crs, td) ←Setup(1λ)
+(x, w) ←A(crs)
+π ←SimProve(crs, td, x)
+: (x, w) ∈R
+A(π) = 1
+
+
+
+≤negl(λ).
+• Simulation-Extractability. For every PPT adversary A, there exists a PPT extractor Ext such that
+Pr
+
+
+(crs, td) ←Setup(1λ)
+(x, π) ←ASimProve(crs,td,·)(crs)
+w ←Ext(crs, x, π)
+:
+Verify(x, π) = 1
+∧(x, w) /∈R
+∧(x, π) /∈Q
+
+≤negl(λ).
+where A has oracle access to SimProve(crs, td, ·), and Q is the list of statement-proof pairs returned by
+that oracle.
+We will also demand that the proof is straight-line extractable. This means that the extractor can, on input
+a valid proof and (potentially) the list of random-oracle queries made by the adversary (prover), extract a
+witness with overwhelming probability without rewinding the prover. When the SE-NIZK is instantiated in
+the random-oracle model, the crs may be taken as empty and extraction uses the adversary’s random-oracle
+queries.
+3
+Definitions
+We recall the definitions of batched threshold encryption.
+Definition 1 (Batched Threshold Encryption). A batched threshold encryption (BTE) scheme instantiated
+with N ∈N parties, a threshold of t ∈[N], maximum batch size of B ∈N, and message space of M consists of
+the following algorithms:
+• Setup(1λ, 1B, 1N, 1t) →(ek, sk1, . . . , skN, dk): The setup algorithm takes the security parameter λ, the
+maximum batch size B, the number of parties N, and the threshold t, and outputs a public encryption key
+ek, a public decryption key dk, and N secret keys (sk1, . . . , skN).
+• Enc(ek, m) →ct: The encryption algorithm takes the encryption key ek and a message m ∈M, and
+outputs a ciphertext ct.
+2
+
+• PartialDec(skj, {cti}i∈[B]) →pdj: The (deterministic) partial-decryption algorithm takes a secret key skj
+for a party j ∈[N] and B ciphertexts, and outputs a partial decryption share pdj or ⊥.
+• Verify(dk, j, pdj, {cti}i∈[B]) →{0, 1}: The (deterministic) verification algorithm takes the decryption key
+dk, a party index j ∈[N], a claimed partial decryption share pdj, and B ciphertexts, and outputs 1 iff pdj
+is a valid share for party j on that batch.
+• Combine(dk, T ⊆[N], {pdj}j∈T ) →pd: The (deterministic) combiner algorithm takes the decryption
+key dk, a subset T ⊆[N], and the partial decryption shares of these |T| parties, and outputs a partial
+decryption pd or ⊥.
+• Dec(dk, pd, {cti}i∈[B]) →{mi}i∈[B]: The (deterministic) decryption algorithm takes the decryption key
+dk, a partial decryption pd and B ciphertexts, and outputs the corresponding messages, where each mi ∈
+M ∪{⊥}.
+Let BTE = (Setup, Enc, PartialDec, Verify, Combine, Dec) be a BTE scheme.
+Definition 2 (Correctness of BTE). We say BTE is correct if for all λ, B, N, t ∈N with t ≤N, all T ⊆[N]
+such that |T| ≥t, and {mi}i∈[B] ∈MB,
+Pr
+
+
+Verify(dk, j, pdj, {cti}i∈[B]) = 1 ∀j ∈T
+∧Dec(dk, pd, {cti}i∈[B]) = {mi}i∈[B]
+
+(ek, {skj}j∈[N], dk) ←Setup(1λ, 1B, 1N, 1t)
+cti ←Enc(ek, mi) ∀i ∈[B]
+pdj ←PartialDec(skj, {cti}i∈[B]) ∀j ∈T
+pd ←Combine(dk, T, {pdj}j∈T )
+
+= 1.
+Definition 3 (B-IND-CCA Security of BTE). BTE is B-IND-CCA-secure if all non-uniform PPT adversaries A
+have negligible advantage in the following game:
+• The challenger runs (ek, sk1, . . . , skN, dk) ←Setup(1λ, 1B, 1N, 1t) and sends ek and dk to A. It then
+receives a subset S ⊆[N] of size t −1 from A and responds with {skj}j∈S.
+• Pre-challenge queries: The adversary may issue an arbitrary number of queries for computing par-
+tial decryption shares: A sends a list {cti}i∈[B] of B ciphertexts, and the challenger computes pdj :=
+PartialDec(skj, {cti}i∈[B]) for j ∈[N] \ S, and sends them to A.
+• Challenge round: A sends two messages m0, m1 ∈M. The challenger samples b ←$ {0, 1}, computes
+ct∗←Enc(ek, mb), and sends ct∗to A.
+• Post-challenge queries: The adversary can again issue an arbitrary number of queries for computing
+partial decryption shares. If A sends a list {cti}i∈[B] such that ct∗∈{cti}i∈[B], then the challenger returns
+⊥for that query.
+• Output: A outputs a bit b′ ∈{0, 1}.
+The adversary’s advantage is
+Advind-cca
+BTE,A(λ, B, N, t) :=
+Pr[b′ = b] −1
+2
+ .
+Robustness.
+A BTE scheme must be robust against malicious decryption servers or clients that submit
+malformed ciphertexts or decryption queries. Informally, we require the following two properties:
+• Consistency: It should be computationally infeasible for an adversary to produce two different sets
+of partial decryptions for the same batch of ciphertexts such that both sets verify yet Combine yields
+conflicting plaintexts.
+• Rogue Ciphertext Security: It should be computationally infeasible for an adversary to craft a mal-
+formed ciphertext that causes decryption of an honest party’s ciphertext in the same batch to fail.
+3
+
+Definition 4 (Rogue Ciphertext Security). BTE is rogue ciphertext secure if all non-uniform PPT adversaries
+A have a negligible probability of winning the following game:
+• The challenger runs (ek, sk1, . . . , skN, dk) ←Setup(1λ, 1B, 1N, 1t) and sends everything to A.
+• A outputs a message m ∈M.
+• The challenger computes ct ←Enc(ek, m).
+• A outputs B ciphertexts {cti}i∈[B], a subset S ⊆[N] with |S| = t, and partial decryption shares {pdj}j∈S.
+• The adversary wins the game if:
+– there exists i∗∈[B] such that ct = cti∗,
+– Verify(dk, ℓ, pdℓ, {cti}i∈[B]) = 1 for all ℓ∈S,
+– pd ←Combine(dk, S, {pdj}j∈S) succeeds and (m′
+1, . . . , m′
+B) ←Dec(dk, pd, {cti}i∈[B]),
+– m′
+i∗= ⊥or m′
+i∗̸= m.
+Definition 5 (Consistency of BTE). BTE is consistent if all non-uniform PPT adversaries A have a negligible
+probability of winning the following game:
+• The challenger runs (ek, sk1, . . . , skN, dk) ←Setup(1λ, 1B, 1N, 1t) and sends everything to A.
+• A outputs B ciphertexts {cti}i∈[B], two subsets S1, S2 ⊆[N] with |S1| = |S2| = t, and partial decryptions
+{pd1
+j}j∈S1 and {pd2
+j}j∈S2.
+• For each b ∈{1, 2}, define
+pd(b) ←Combine(dk, Sb, {pdb
+j}j∈Sb)
+and
+{m(b)
+i }i∈[B] ←Dec(dk, pd(b), {cti}i∈[B]).
+• The adversary wins if:
+– Verify(dk, j, pdb
+j, {cti}i∈[B]) = 1 for all b ∈{1, 2} and all j ∈Sb,
+– pd(1) ̸= ⊥and pd(2) ̸= ⊥,
+– {m(1)
+i }i∈[B] ̸= {m(2)
+i }i∈[B].
+4
+Related Work
+Batched Threshold Encryption (BTE) was introduced in [CGPP24]. While the initial work required an inter-
+active setup protocol for each batch of ciphertexts decrypted, subsequent work [CGPW25, AFP25, SAS24,
+BFOQ25] removed this but came with additional caveats. [CGPW25, AFP25, SAS24] showed how to build
+a BTE scheme with a one-time setup but ciphertexts still had to be encrypted to a certain batch number
+(epoch). Failure to be included in the chosen epoch would result in the ciphertext never being decrypted.
+[FPTX25] partially addressed this by increasing the CRS size by a factor of k – which allows a user’s cipher-
+text to be included in any of the k batches but at the end of k batches, the public key must be refreshed.
+Furthermore, censorship resistance comes at the cost of a more expensive O(B log2 B) decryption complexity.
+In a separate line of work, [BFOQ25] removes the epoch restriction but users must still choose a position
+in the batch. This leaves transactions vulnerable to censorship: an attacker can outbid a victim for a conflict-
+ing position and thereby block inclusion of the victim’s transaction. Follow-up work [ABD+25] improved the
+decryption complexity to O(B log B) and also provided improvements over virtualization in the weighted
+setting but still suffered from the same censorship issues.
+4
+
+Finally, [BNRT26] provided a construction based on partial fraction techniques which avoids both the
+epoch restriction and censorship issues. However, this comes at the cost of an interactive setup (involving
+secure inversions) and the size of secret keys held by each party grows with the batch size.
+Also worth noting are two works [BCF+25] and [GWWW25] that build batched threshold encryption
+and batched identity based encryption respectively, with silent setup.
+Our work also requires an interactive setup phase (involving secure multiplications) and secret keys
+held by each party grow with the batch size. It has the shortest ciphertext amongst all known schemes
+|G1| + |GT |, supports quasi-linear decryption complexity O(B log B), and we believe it’s a conceptually
+simpler construction.
+Construction
+|dk|
+|sk|
+Setup
+|ct|
+Dec.
+Epochless
+CR
+Model
+Batch IBE [CGPW25],
+[SAS24], [AFP25]
+O(B)
+O(1)
+DKG
+3[G1] + [GT ]
+O(B log2 B)
+✗
+✓
+GGM
+BEAT-MEV [BFOQ25]
+O(B)
+O(1)
+DKG
+3[G1] + [GT ]
+O(B2)
+✓
+✗
+DBPDH
+TrX [FPTX25]
+O(kB)
+O(1)
+DKG
+2[G1] + [GT ]
+O(B log2 B)
+✓
+✓
+GGM
+[GWWW25]
+O(B)
+O(1)
+DKG
+2[G1] + [GT ]
+O(B2)
+✗
+✓
+GGM
+[ABD+25]
+O(B)
+O(1)
+DKG
+2[G1] + [GT ]
+O(B log B)
+✓
+✗
+q-DBPDH
++ AGM
+[BNRT26]1
+O(BN)
+O(B)
+MPC
+2[G1] + [GT ]
+O(B log B)
+✓
+✓
+q-StatRankDef
+This work
+O(BN)
+O(B)
+MPC
+[G1] + [GT ]
+O(B log B)
+✓
+✓
+q-DBPDH
+Table 1: Comparison of batched encryption systems based on elliptic curves. Here |dk| denotes the total
+size of decryption key (including the CRS), |sk| denotes the secret-key size (per party), and |ct| denotes the
+ciphertext size with the NIZK proof omitted. Setup indicates whether the protocol relies on distributed key
+generation (DKG) or multi-party computation (MPC). Dec indicates the decryption complexity. CR indicates
+censorship resistance, Epochless indicates that the scheme does not suffer from epoch restrictions. Model
+indicates the underlying hardness assumption or idealized model. The parameter B denotes the maximum
+batch size, N denotes the committee size, and in TrX k denotes the number of batches which can be decrypted
+before the public key has to be freshly sampled again.
+5
+Construction
+For simplicity, we first describe the CPA-secure core of the construction for a single server. We then explain
+how to add CCA security via a simulation-extractable NIZK and how to thresholdize the scheme. The full
+construction is described formally in Fig. 1.
+• A trusted party runs the setup protocol and publishes the encryption key together with the punctured
+powers-of-τ values needed for decryption:
+ek :=
+
+τ B+1
+T
+and
+dk :=
+ {hj :=
+
+τ j
+2}j∈[2B]\{B+1}
+
+.
+• Encryption is then just ElGamal-style ciphertext in GT :
+ct :=
+ [k]1 , m +
+
+kτ B+1
+T
+
+.
+• To decrypt a batch {cti}i∈[B], let cti = (cti,1, cti,2) with cti,1 = [ki]1. It is sufficient to publish:
+pd :=
+X
+i∈[B]
+τ i · cti,1 =
+
+X
+i∈[B]
+kiτ i
+
+
+1
+.
+1Although the current version of the paper describes a construction with O(B2) decryption complexity, the authors have privately
+communicated to us that they have a more efficient decryption algorithm with O(B log B) complexity.
+5
+
+• To decrypt the i-th ciphertext, one can compute:
+
+kiτ B+1
+T = pd ◦hB+1−i −
+X
+ℓ∈[B]
+ℓ̸=i
+ctℓ,1 ◦hℓ+B+1−i.
+Subtracting this mask from cti,2 recovers mi.
+• To make the scheme CCA-secure, we augment each ciphertext with a simulation-extractable NIZK proof
+for the relation {k | ct1 = [k]1 ∧ct2}.
+• To thresholdize this scheme, we secret share {τ i}i∈[B] among the N servers. Concretely, let server j
+hold shares {σi
+j}i∈[B] of {τ i}i∈[B] and return the partial decryption
+pdj :=
+X
+i∈[B]
+σi
+j · cti,1.
+To verify these shares publicly, we additionally publish {vi
+j :=
+
+σi
+j
+
+2}(i,j)∈[B]×[N] as part of the trusted
+setup. Then anyone can check a claimed partial decryption by checking whether
+pdj ◦g2 =
+X
+i∈[B]
+cti,1 ◦vi
+j.
+Correctness.
+For Verify: an honest partial decryption satisfies pdj = P
+i∈[B] σi
+j · cti,1, so pdj ◦g2 =
+P
+i∈[B] cti,1 ◦
+
+σi
+j
+
+2 = P
+i∈[B] cti,1 ◦vi
+j, which is exactly the check performed by Verify.
+For Combine: since each σi
+j = fi(j) for a degree-(t −1) polynomial fi with fi(0) = τ i, Lagrange interpo-
+lation gives pd = P
+j∈T λT,j · pdj = P
+j∈T λT,j
+P
+i∈[B] fi(j) · cti,1 = P
+i∈[B] τ i · cti,1, which is the value used
+by Dec.
+Working out the algebra, we see that the decryption algorithm computes:
+pd ◦hB+1−i −
+X
+ℓ∈[B]
+ℓ̸=i
+ctℓ,1 ◦hℓ+B+1−i =
+
+X
+ℓ∈[B]
+kℓτ ℓ
+
+
+1
+◦
+
+τ B+1−i
+2 −
+X
+ℓ∈[B]
+ℓ̸=i
+[kℓ]1 ◦
+
+τ ℓ+B+1−i
+2
+=
+X
+ℓ∈[B]
+
+kℓτ ℓ+B+1−i
+T −
+X
+ℓ∈[B]
+ℓ̸=i
+
+kℓτ ℓ+B+1−i
+T
+=
+
+kiτ i+B+1−i
+T =
+
+kiτ B+1
+T ,
+which is exactly the mask used when encrypting the ith plaintext, since
+cti,2 =
+
+kiτ B+1
+T + mi.
+Therefore
+cti,2 −zi = mi +
+
+kiτ B+1
+T −
+
+kiτ B+1
+T = mi,
+which proves correctness.
+Theorem 1 (Rogue ciphertext security). The construction in Fig. 1 satisfies rogue ciphertext security.
+Proof. Let A be an adversary in the game of Definition 4. Suppose it outputs a batch {cti}i∈[B], a threshold
+set S ⊆[N], and shares {pdj}j∈S such that Verify(dk, j, pdj, {cti}i∈[B]) = 1 for every j ∈S. Fix some j ∈S.
+Since Verify accepts, every ciphertext proof is valid and
+pdj ◦g2 =
+X
+i∈[B]
+cti,1 ◦vi
+j.
+6
+
+Batched Threshold Encryption
+Setup(1λ, 1B, 1N, 1t):
+• (G1, G2, GT , p, g1, g2, ◦) ←GrpGen(1λ)
+• Sample τ ←Zp
+• Run the setup for the chosen NIZK and let crs denote the resulting public parameters, if any.
+• For each i ∈[B], secret-share τ i among N servers with threshold t: server j receives share σi
+j
+• Output:
+ek :=
+h
+τ B+1i
+T , crs
+
+dk :=
+
+{hj :=
+h
+τ ji
+2}j∈[2B]\{B+1}, {vi
+j :=
+h
+σi
+j
+i
+2}(i,j)∈[B]×[N], crs
+
+skj :=
+
+{σi
+j}i∈[B], crs
+
+for each server j ∈[N]
+Enc(ek, m): where m ∈GT
+• Parse ek = (E, crs)
+• Sample k ←Zp and set ct1 := [k]1
+• Set ct2 := m + k · E
+• Prove π ←
+
+k | ct1 = [k]1 ∧ct2
+ 
+• Output ct := (ct1, ct2, π)
+PartialDec(skj, {cti}i∈[B]):
+• Parse skj = ({σi
+j}i∈[B], crs) and {cti = (cti,1, cti,2, πi)}i∈[B]
+• If NIZK.Verify(crs, (cti,1, cti,2), πi) = 0 for some i ∈[B], output ⊥
+• Output pdj := P
+i∈[B] σi
+j · cti,1
+Verify(dk, j, pdj, {cti}i∈[B]):
+• Parse dk to recover {vi
+j}(i,j)∈[B]×[N] and crs, and each cti = (cti,1, cti,2, πi).
+• If NIZK.Verify(crs, (cti,1, cti,2), πi) = 0 for some i ∈[B], output 0.
+Otherwise, output 1 iff
+pdj ◦g2 = P
+i∈[B] cti,1 ◦vi
+j.
+Combine(dk, T, {pdj}j∈T ): where T ⊆[N] and |T| = t
+• Interpolate in the exponent to recover the pre decryption key: pd :=
+hP
+i∈[B] kiτ ii
+1.
+Dec(dk, pd, {cti}i∈[B]):
+• For each i ∈[B], compute the mask zi ∈GT :
+zi := pd ◦hB+1−i −
+X
+ℓ∈[B]
+ℓ̸=i
+ctℓ,1 ◦hℓ+B+1−i
+• For each i ∈[B]: output mi := cti,2 −zi ∈GT .
+Figure 1: BTE scheme for N servers with threshold t, batch size B, and message space M = GT .
+7
+
+Because G1 is cyclic, for each i ∈[B] there exists ki ∈Zp such that cti,1 = [ki]1. Using vi
+j =
+
+σi
+j
+
+2, we get
+X
+i∈[B]
+cti,1 ◦vi
+j =
+X
+i∈[B]
+[ki]1 ◦
+
+σi
+j
+
+2 =
+X
+i∈[B]
+
+kiσi
+j
+
+T =
+ X
+i∈[B]
+σi
+j · cti,1
+
+◦g2.
+By non-degeneracy of the pairing, this implies
+pdj =
+X
+i∈[B]
+σi
+j · cti,1,
+so every accepted share is exactly the honest partial decryption share for server j on this batch.
+Therefore Combine(dk, S, {pdj}j∈S) reconstructs the same aggregate pd that would be obtained from hon-
+est partial decryption shares. Given that the Dec algorithm is deterministic, decrypting the same ciphertext
+batch with the same reconstructed partial decryption yields the same message vector. Moreover, Dec always
+outputs an element of GT (never ⊥), so the case m′
+i∗= ⊥is also excluded. Therefore the adversary can
+never win the game.
+Theorem 2 (Consistency). The construction in Fig. 1 is consistent.
+Proof. Let A be an adversary in the game of Definition 5. Suppose it outputs a batch {cti}i∈[B], two subsets
+S1, S2 ⊆[N] of size t, and shares {pd1
+j}j∈S1 and {pd2
+j}j∈S2 that satisfy the winning conditions. Since Verify
+accepts every submitted share, all ciphertext proofs are valid and, for each b ∈{1, 2} and each j ∈Sb,
+pdb
+j ◦g2 =
+X
+i∈[B]
+cti,1 ◦vi
+j.
+Because G1 is cyclic, for each i ∈[B] there exists a unique ki ∈Zp such that cti,1 = [ki]1. Using vi
+j =
+
+σi
+j
+
+2,
+the same calculation as in the proof of Theorem 1 shows that every accepted share must equal the honest
+partial decryption share:
+pdb
+j =
+X
+i∈[B]
+σi
+j · cti,1.
+By uniqueness of polynomial interpolation, combining either threshold set recovers the same value:
+pd(1) = Combine(dk, S1, {pd1
+j}j∈S1) = pd = Combine(dk, S2, {pd2
+j}j∈S2) = pd(2).
+Since Dec is deterministic, decrypting the same ciphertext batch with the same reconstructed partial decryp-
+tion yields the same message vector. Hence
+{m(1)
+i }i∈[B] = {m(2)
+i }i∈[B],
+contradicting the adversary’s winning condition. Therefore the adversary’s winning probability is 0.
+To prove B-IND-CCA, we introduce the following hardness assumption.
+Definition 6 (Decisional Bilinear q-Power Diffie-Hellman Assumption (q-DBPDH)). Let GrpGen be an asym-
+metric bilinear group generator. The q-DBPDH problem is hard for GrpGen if the following two distributions are
+computationally indistinguishable:
+D0 =
+
+{
+
+τ i
+1}i∈[q], {
+
+τ i
+2}i∈[2q]\{q+1}, [k]1 ,
+
+kτ q+1
+T
+
+,
+D1 =
+
+{
+
+τ i
+1}i∈[q], {
+
+τ i
+2}i∈[2q]\{q+1}, [k]1 , [z]T
+
+,
+where (G1, G2, GT , p, g1, g2, ◦) ←GrpGen(1λ) and τ, k, z ←Zp.
+8
+
+Remark 1. Although we use an indistinguishability based assumption, one can use the weaker search variant
+by modifying the construction to use a hash based key derivation function to first derive a key from the
+
+kτ q+1
+T
+term via a random oracle and use that to mask the message.
+Theorem 3 (B-IND-CCA security). Assume the q-DBPDH assumption (Definition 6) and assume the NIZK used
+in the construction is zero-knowledge and straight-line simulation-extractable. Then the construction in Fig. 1 is
+B-IND-CCA-secure.
+Proof. Let A be an adversary that wins the B-IND-CCA game (Definition 3) with non-negligible probability.
+Consider the following hybrids:
+H1: This is the real game with challenge bit b = 0, so the challenge ciphertext is
+ct∗=
+ [k∗]1 , m0 +
+
+k∗τ B+1
+T , π∗
+,
+where π∗is generated honestly.
+H2: This is identical to H1, except that the proof on the challenge ciphertext is generated with the NIZK sim-
+ulation algorithm. The hybrids H1 and H2 are computationally indistinguishable by the zero-knowledge
+property of the NIZK. At this point, the challenger no longer needs the scalar k∗; it only uses the group
+elements [k∗]1 and
+
+k∗τ B+1
+T .
+H3: This is identical to H2, except that the second ciphertext component is replaced by m0 + U, where
+U ←GT is uniform:
+ct∗= ([k∗]1 , m0 + U, π∗) .
+We show that H2 and H3 are computationally indistinguishable provided the B-DBPDH Assump-
+tion (Definition 6) holds. Suppose there exists an adversary distinguishing this hybrid from the previous
+one. We build a reduction B that wins the indistinguishability game for the q-DBPDH Assumption.
+The reduction is given:
+ {gi}i∈[B], {hj}j∈[2B]\{B+1}, [k]1 , Z
+
+,
+and must decide whether Z =
+
+kτ B+1
+T or uniformly random in GT .
+The reduction computes
+
+τ B+1
+T := gB ◦h1, runs the NIZK setup and publishes the crs and retains the NIZK trapdoor td
+(if applicable). It also sets
+ek := (
+
+τ B+1
+T , crs).
+The public verification keys in dk are defined below. The reduction receives a corruption set S ⊆[N]
+of size t −1 from A.
+For each slot i ∈[B] and each corrupted party u ∈S, the reduction samples a random scalar share
+σi
+u ←Zp and gives {σi
+u}i∈[B] to party u. For each honest party j /∈S and each slot i ∈[B], let fi denote
+the unique degree-(t −1) polynomial with
+fi(0) = τ i
+and
+fi(u) = σi
+u for all u ∈S.
+For corrupted parties, define
+bσi
+u :=
+
+σi
+u
+
+1
+and
+vi
+u :=
+
+σi
+u
+
+2 .
+Although B does not know fi(j) as a scalar for honest parties j /∈S, it can compute the corresponding
+group elements
+bσi
+j := [fi(j)]1
+and
+vi
+j := [fi(j)]2
+by interpolation in the exponent from gi =
+
+τ i
+1, hi =
+
+τ i
+2, and the known values bσi
+u =
+
+σi
+u
+
+1 and
+vi
+u =
+
+σi
+u
+
+2 for u ∈S. The reduction then sets
+dk :=
+ {hj}j∈[2B]\{B+1}, {vi
+j}(i,j)∈[B]×[N], crs
+
+.
+9
+
+To answer a PartialDec query on a batch {ctℓ}ℓ∈[B], B first checks whether the query contains the
+challenge ciphertext ct∗. If so, it returns ⊥for that query, exactly as in the B-IND-CCA game definition.
+Otherwise, B verifies all NIZK proofs. If any proof is invalid, it returns ⊥, exactly as the real scheme
+does. Otherwise, for each ciphertext ctℓ= (ctℓ,1, ctℓ,2, πℓ), straight-line simulation-extractability yields
+a witness kℓsuch that ctℓ,1 = [kℓ]1. For each honest party j /∈S, the reduction returns
+pdj :=
+X
+ℓ∈[B]
+kℓ· bσℓ
+j =
+X
+ℓ∈[B]
+[kℓfℓ(j)]1 ∈G1,
+which is exactly the honest partial decryption share.
+When A outputs its challenge request, B responds with
+ct∗:= (K, m0 + Z, π∗)
+where
+π∗←SimProveNIZK(td, (K, m0 + Z)).
+That is, π∗is a simulated proof for the relation
+{k | K = [k]1 ∧m0 + Z} .
+If Z =
+
+kτ B+1
+T , then this is distributed exactly as the challenge ciphertext in H2; if Z is uniform in
+GT , then m0 + Z is also uniform in GT , so this is distributed exactly as H3. Therefore a distinguisher
+between H2 and H3 yields a distinguisher for the q-DBPDH assumption, leading to contradiction. Hence
+H2 and H3 are computationally indistinguishable.
+Finally, H3 is message-independent: if U is uniform in GT , then both m0 + U and m1 + U are uniform in
+GT as well. Hence replacing m0 + U by m1 + U does not change the distribution of the challenge ciphertext
+in H3. Starting from this identical message-independent hybrid, we can apply the same hybrid transitions
+in reverse with m1 in place of m0, obtaining the real game in which the challenge ciphertext encrypts m1.
+Therefore the real games for challenge bits 0 and 1 are computationally indistinguishable, so the construction
+is B-IND-CCA-secure.
+6
+FFT Accelerated Decryption
+The decryption procedure in Fig. 1 requires O(B2) pairings to decrypt a batch of size B if implemented
+directly. We can reduce this to O(B) pairings and O(B log B) group operations by exploiting the Toeplitz
+structure of the masking terms via FFT-style convolution. The expensive part of decryption is computing the
+family of cross-terms
+Ci :=
+X
+ℓ∈[B]
+ℓ̸=i
+ctℓ,1 ◦hℓ+B+1−i
+for i ∈[B].
+This is a Toeplitz correlation: the G2 index depends only on the difference ℓ−i. That structure lets us
+compute all Ci simultaneously by an FFT-style evaluation/interpolation procedure, rather than recomputing
+each sum independently.
+For simplicity, assume B is a power of two and that Fp contains a primitive 2B-th root of unity ω. We use
+transform length L = 2B. Define the G1-valued sequence
+ai :=
+(
+cti,1
+for i ∈[B],
+0
+otherwise,
+and the G2-valued sequence indexed by shifts d ∈{−(B −1), . . . , B −1},
+bd :=
+(
+hB+1+d
+if d ̸= 0,
+0
+if d = 0,
+10
+
+again padded by zeros to length 2B. Then
+Ci =
+X
+ℓ∈[B]
+aℓ◦bℓ−i,
+where the d = 0 term vanishes because we set b0 = 0.
+Now take the DFTs of these sequences, with coefficients in the source groups:
+bAr :=
+L−1
+X
+i=0
+ωriai ∈G1,
+bBr :=
+L−1
+X
+d=0
+ω−rdbd ∈G2,
+r ∈{0, . . . , 2B −1}.
+By bilinearity,
+bCr := bAr ◦bBr =
+X
+i,d
+ωr(i−d) ai ◦bd
+
+∈GT .
+Applying the inverse DFT in GT recovers
+Ci =
+1
+2B
+2B−1
+X
+r=0
+ω−ri bCr
+for each i ∈[B].
+So all cross-terms can be computed from:
+• one FFT over G1 to form the bAr values,
+• one FFT over G2 to form the bBr values,
+• 2B = O(B) pairings to compute the bCr values,
+• one inverse FFT over GT ,
+• B pairings to compute pd ◦hB+1−i for each i ∈[B].
+The total cost is O(B) pairings and O(B log B) group operations. Once the Ci are available, one can recover
+the messages as
+zi = pd ◦hB+1−i −Ci
+and
+mi = cti,2 −zi
+for all i ∈[B].
+7
+Implementation and Benchmarks
+To evaluate the concrete performance of our scheme, we implemented it in Rust, using arkworks [ac22] for
+implementations of pairing-friendly curves. Our implementation can be found at https://github.com/
+commonwarexyz/simple-bte.
+Setup.
+Experiments were run on an M5 MacBook Pro with 48 GB of RAM in single-threaded mode. We
+use BLS12-381 [BLS03] as our pairing friendly curve. The compressed representation of G1, G2, and GT
+elements is 48, 96, and 576 bytes respectively. Group exponentiations in G1 and G2 take approximately 68
+µs and 193 µs respectively, and a pairing takes approximately 443 µs.
+11
+
+Benchmarks.
+We now discuss microbenchmarks for various algorithms in our scheme.
+• Encryption. Always takes approximately 0.47 ms irrespective of batch size and the number of parties.
+• NIZK Verify. Verifies that a batch of ciphertexts is valid using batch verification of Schnorr proofs
+[APB+04] which can be carried out using O(B) hashes and an MSM of size O(B).
+• PartialDec. Computes the partial decryption share for a given party using an MSM of size O(B).
+• Verify. Verifies a partial decryption share, by computing a multi-pairing of size O(B).
+• Combine. Combines a set of partial decryption shares into a final decryption by computing Lagrange
+coefficients and using an MSM of size O(N).
+• Decryption. Decrypts a batch of ciphertexts using a G1-FFT of size O(B), a GT -FFT of size O(B), and
+O(B) pairings.
+Operation
+B = 8
+B = 32
+B = 128
+B = 512
+B = 2048
+PartialDec (ms)
+0.832
+2.208
+5.963
+18.40
+59.55
+Verify (ms)
+1.508
+4.074
+14.61
+55.87
+222.66
+Combine (ms)
+0.678
+0.678
+0.681
+0.676
+0.677
+Comparison with prior work.
+We compare our batch decryption times against two prior schemes: [ABD+25],
+which achieves O(B log B) decryption but lacks censorship resistance, and TrX [FPTX25], which offers cen-
+sorship resistance but has O(B log2 B) decryption complexity. We do not compare against [BNRT26] as it
+has no public implementation. The [ABD+25] numbers are the core protocol times from their Table 3 (un-
+weighted, NIZK overhead excluded). The [FPTX25] numbers are the sum of Digest, ComputeEvalProofs,
+and Decrypt from their Table 1.
+Batch size B
+Ours
+TrX [FPTX25]
+[ABD+25]
+32
+121.81 ms
+100.7 ms
+301 ms
+128
+593.62 ms
+638.4 ms
+1.4 s
+512
+2.79 s
+5.39 s
+6.6 s
+2048
+12.82 s
+46.2 s
+28.4 s
+8

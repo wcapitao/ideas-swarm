@@ -1,0 +1,1157 @@
+EQuADiSE: Efficient Quantum-safe Adaptive Distributed
+Symmetric-key Encryption
+Sayani Sinha1, Sikhar Patranabis2, and Debdeep Mukhopadhyay1
+1IIT Kharagpur India
+2IBM Research India
+April 23, 2026
+Abstract
+Distributed symmetric-key encryption (DiSE), introduced in CCS’ 18 enables threshold
+versions of traditional (symmetric-key) authenticated encryption. In DiSE, the long-term
+master secret key is secret-shared among multiple parties following a threshold access
+structure, and both encryption and decryption are performed in a distributed manner. An
+adaptively secure DiSE, introduced in INDOCRYPT’ 20 tolerates adaptive corruptions of
+the key-holding parties for arbitrary thresholds, while simultaneously retaining efficient
+encryption and decryption. Unfortunately, all existing instances of adaptively secure DiSE
+are either quantum-broken (due to their inherent-reliance on discrete log-hard groups), or
+incur exponential (in the number of parties) online overheads for encryption/decryption.
+In this paper, we present EQuADiSE – the first practically efficient, adaptively se-
+cure, and plausibly post-quantum construction of DiSE based on the Module Learning
+with Rounding (MLWR) assumption in the Quantum Random Oracle model (QROM).
+EQuADiSE is the first adaptively secure quantum-safe instance of DiSE that incurs lin-
+ear (in the number of parties) encryption/decryption overheads. As a core technical tool
+of independent interest, we introduce an MLWR-based distributed pseudorandom func-
+tion (DPRF) that enjoys adaptive security in the QROM and practically outperforms all
+existing adaptively secure DPRF constructions in terms of online evaluation time.
+We present experimental evaluations demonstrating that EQuADiSE achieves higher
+online throughput than all prior realizations of DiSE, including quantum-broken realizations
+based on discrete log-hard groups.
+1
+
+Contents
+1
+Introduction
+3
+1.1
+Our Contributions
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5
+1.2
+Technical Overview . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6
+2
+Preliminaries
+8
+2.1
+Notations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+8
+2.2
+Some Terminologies and Definitions
+. . . . . . . . . . . . . . . . . . . . . . . .
+9
+2.3
+(t, T)-Threshold Secret Sharing . . . . . . . . . . . . . . . . . . . . . . . . . . .
+10
+2.3.1
+Preprocessing.
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+10
+2.3.2
+Sharing. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+11
+2.3.3
+Reconstruction. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+11
+2.4
+Distributed PRF (DPRF) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+12
+3
+Adaptively Secure Module-LWR based Distributed PRF
+15
+3.1
+Recalling LWR-based DPRF of [35] . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3.2
+Construction of Module-LWR based DPRF
+. . . . . . . . . . . . . . . . . . . .
+16
+3.3
+Adaptive Security of MLWR-based DPRF . . . . . . . . . . . . . . . . . . . . .
+17
+3.3.1
+Proof of Adaptive Security of LWR-based DPRF [35] . . . . . . . . . . .
+18
+3.3.2
+Adaptive Security of MLWR-based DPRF . . . . . . . . . . . . . . . . .
+24
+3.4
+Choice of Parameters for Adaptive DPRF . . . . . . . . . . . . . . . . . . . . .
+25
+4
+EQuADiSE: An Application
+26
+4.1
+DiSE: An Overview [2] . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+26
+4.2
+Instantiations of DPRF
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+27
+5
+Experimental Evaluation
+28
+A Overview of Several Existing DPRFs
+34
+2
+
+1
+Introduction
+Threshold cryptography [20] enables protecting long-term secret keys by secret-sharing such
+keys among multiple parties. Any attacker corrupting upto a threshold number of these parties
+(information-theoretically) fails to recover the secret keys. Threshold cryptography serves as the
+foundation for several advanced cryptographic primitives such as threshold fully-homomorphic
+encryption [10], secure multiparty computation [5], function secret sharing [13], and functional
+encryption [25]. Traditionally, threshold cryptography considers two kinds of corruption models
+– static, where the adversary corrupts a fixed subset of the key-holding parties at the beginning
+of time, and adaptive, where the adversary adaptively chooses which key-holding parties to
+corrupt over time. For many practical applications, security against adaptive corruptions is
+more desirable.
+Distributed Symmetric-Key Encryption.
+The study of threshold authenticated symmetric-
+key encryption was introduced in [2]. The authors of [2] introduced a primitive called distributed
+symmetric-key encryption (DiSE). In DiSE, the master secret key is secret-shared among multiple
+parties following a threshold access structure, and both encryption and decryption are performed
+in a distributed manner. DiSE enables protecting long-term keys in many different applications,
+such as protecting data at rest, authenticating clients on enterprise networks, and securing data
+and payments on IoT devices.
+Informally speaking, the DiSE scheme introduced in [2] (followed by several other optimizations
+of DiSE [17, 1, 21, 28]) uses the following blueprint.
+Consider the classic construction of
+symmetric-key encryption (SKE) from a pseudorandom function (PRF) where the encryption of
+a message m under a secret key k is given by
+Enc(k, m) = (r, Fk(r) ⊕m),
+where Fk is a PRF and r is a randomly sampled PRF input. The core idea of [2] is to distribute
+the encryption/decryption procedure by replacing the PRF Fk by a distributed PRF (DPRF) [30].
+A DPRF allows securely evaluating Fk(·) on any input in a distributed manner, while the secret
+key k is secret-shared across multiple parties following a threshold access structure. There
+exist known constructions of DPRFs from purely symmetric-key assumptions such as any
+PRF [30], as well constructions from number-theoretic assumptions such as the decisional
+Diffie-Hellman (DDH) assumption [30] and lattice-based assumptions such as Learning with
+Errors (LWE) [24], Learning with Rounding (LWR) [35]. Following the blueprint of [2], these
+instantiations of DPRF yields DiSE schemes with varying efficiency properties.
+A DiSE scheme is said to be ideally efficient if: (i) the key storage required by each party is linear
+in the number of key-holding parties, and (ii) the online evaluation time for encryption/decryption
+is linear in the number of key-holding parties. In practice, the second requirement is often more
+important, particularly for applications (such as authenticating clients on enterprise networks)
+where ensuring fast online turnaround time is crucial.
+Adaptive Security.
+A DiSE scheme is said to be adaptively secure if it tolerates adaptive
+corruptions of the key-holding parties for arbitrary thresholds, while simultaneously retaining
+efficient encryption and decryption. Among the known instantiations of DiSE, the one based
+on purely symmetric-key realizations of DPRF is adaptively secure, but is asymptotically
+inefficient since it incurs both exponential key storage and exponential online overheads for
+encryption/decryption. The only efficient yet adaptively secure DiSE scheme is based on an
+3
+
+adaptive DPRF from the DDH assumption [29]. While this construction is ideally efficient
+and plausibly secure against classical attackers, it is broken by known quantum algorithms for
+discrete log [34].
+Post-Quantum Landscape for Adaptive DiSE.
+In this paper, we are interested in building
+practically efficient, adaptively secure, and plausibly post-quantum instances of DiSE. Note
+that such a construction follows immediately from a DPRF satisfying the same set of properties
+simultaneously. Unfortunately, no existing quantum-safe DPRF simultaneously achieves adaptive
+security and the desired notions of efficiency as outlined above. To illustrate this, we summarize
+known instances of plausibly post-quantum DPRFs and their properties below.
+DPRF from any PRF.
+The known construction of DPRF from any PRF [30] is adaptively
+secure, but incurs both exponential key storage and exponential online overheads for en-
+cryption/decryption. This construction essentially captures the schemes which perform an
+MPC (Multi-Party Computation)-based evaluation of any PRF.
+DPRF from Threshold FHE.
+One can build a DPRF in a generic manner from any PRF and a
+threshold FHE scheme, which acts as a universal thresholdizer [10]. Based on known instances of
+threshold FHE [10, 16, 27, 18, 12], such a construction incurs exponential key storage, but linear
+online overheads for encryption/decryption. Unfortunately, all known threshold FHE schemes
+are only statically secure, and hence the resulting DPRF is not adaptively secure. Additionally,
+the universal thresholdization approach requires non black-box evaluation of the PRF under
+the hood of FHE, which renders the resulting DPRF practically inefficient, and unsuitable for
+applications of DiSE.
+DPRF from LWE [24].
+A concrete construction of adaptively secure DPRF from the LWE
+assumption was presented in [24]. This scheme incurs exponential key storage, but linear
+overheads for online evaluation. Unfortunately, this scheme requires a super-polynomial modulus-
+to-noise ratio, and involves a log-depth (in the size of the input) evaluation circuit (aka
+Naor-Reingold [31]) consisting of several matrix multiplications. Hence, this scheme is not
+amenable to practically efficient realizations of DiSE.
+DPRF from LWR.
+Recently, the authors of [35] proposed a practically efficient DPRF construc-
+tion based on LWR and a corresponding instantiation of DiSE, called PQDiSE. PQDiSE incurs
+exponential key storage, but linear online overheads for encryption/decryption. Unfortunately,
+their construction is only proven to be statically secure. While adaptive security may be achieved
+by naïvely guessing the corrupted set a priori, this leads to an exponential blow-up in the online
+overheads for encryption/decryption, thus compromising on efficiency.
+In this paper, we ask the following question:
+Can we design a practically efficient, adaptively secure, and plausibly post-quantum instance of
+DiSE?
+Concretely, we ask if it is possible to design a practically efficient and adaptively secure DPRF
+from lattice-based hardness assumptions, with linear online evaluation overheads, while avoiding
+the requirement of a super-polynomial modulus-to-noise ratio as in [24].
+4
+
+DPRFs
+Key Share
+Size
+Partial
+Evalua-
+tion
+Over-
+heads
+Total
+Evalua-
+tion
+Over-
+heads
+Post-
+Quantum?
+Adap-
+tively
+Secure?
+AES(128)-based
+(combinatorial) [2]
+O(
+ T −1
+t−1
+
+)
+O(
+ T −1
+t−1)
+
+O(
+ T −1
+t−1
+
+)
+No
+Yes (small
+t, T)
+DDH-based [29]
+O(1)
+O(1)
+O(t)
+No
+Yes
+ThFHE-based [10]
+O(
+ T −1
+t−1
+
+)
+O(1)
+O(t)
+Yes
+No
+LWE-based [24]
+O(
+ T −1
+t−1
+
+)
+O(λt)
+O(λt)
+Yes
+Yes
+LWR-based [35]
+O(
+ T −1
+t−1
+
+)
+O(1)
+O(t)
+Yes
+No
+MLWR-based
+(Ours)
+O(
+ T −1
+t−1
+
+)
+O(1)
+O(t)
+Yes
+Yes
+Table 1: Asymptotic comparison of DPRFs for λ-bit inputs (λ being the security parameter). Note
+that for the adaptively secure LWE-based DPRF from [24], the factor of λ in the overheads for partial
+and total evaluation reflects the requirement of O(λ) matrix multiplications for every partial evaluation.
+In comparison, our DPRF requires a constant number of polynomial multiplications for each partial
+evaluation.
+1.1
+Our Contributions
+We answer the above question in the affirmative. Our contributions are as summarized below.
+Adaptive DPRF from Module LWR.
+We introduce an adaptively secure DPRF from the
+Module Learning with Rounding (MLWR) assumption [14, 8, 22] with polynomial modulus-to-
+noise ratio. We prove the adaptive security of our construction in the Quantum Random Oracle
+model (QROM). Our construction supports arbitrary threshold access structures and incurs
+exponential key storage but linear online evaluation overheads, thus matching the asymptotic
+efficiency of the best lattice-based non-adaptive DPRFs. In terms of online evaluation time, our
+construction outperforms all existing adaptively secure DPRF constructions.
+Table 1 compares our proposed DPRF against existing DPRFs for λ-bit inputs (λ being the
+security parameter). Except [24], all prior constructions are either quantum-broken, or lack
+adaptive security, or suffer from inefficient online evaluation. In the case of [24], the factor
+of λ in the evaluation overheads reflects that each partial evaluation requires O(λ) matrix
+multiplications, where the matrix dimensions are similar to the the degree of a polynomial in
+our MLWR-based DPRF. In contrast, our MLWR-based DPRF only requires a constant number
+of polynomial multiplications for each partial evaluation, and is significantly more efficient in
+practice.
+EQuADiSE.
+Our proposed DPRF yields a realization of DiSE, which we call EQuADiSE
+(Efficient and Quantum-safe Adaptive Distributed Symmetric-key Encryption). EQuADiSE is
+the first practically efficient, adaptively secure, and plausibly post-quantum instance of DiSE. In
+particular, EQuADiSE is the first adaptively post-quantum secure instance of DiSE that incurs
+linear (in the number of parties) encryption/decryption overheads.
+5
+
+Experimental Validation.
+In Section 5, we experimentally evaluate the practical efficiency
+of our proposed MLWR-based DPRF and EQuADiSE, and compare these against all of the
+DPRFs and the corresponding realizations of DiSE from Table 1. Our results show that our
+MLWR-based DPRF is faster than all other DPRFs (including the ones based on AES-128 and
+DDH) in terms of online evaluation time, particularly for larger values of (t, T) (where T denotes
+the total number of parties and t denotes the threshold). The naïve distributed construction of
+AES-based DPRF is essentially equivalent to a generic MPC-based technique of evaluating AES
+(which is viewed as a PRF). Thus, our construction is more efficient than a generic MPC-based
+solution of DPRF. These efficiency benefits also translate to EQuADiSE, which achieves higher
+online throughput than all prior realizations of DiSE, and scales smoothly to larger values of
+(t, T). Our implementations of DPRFs and EQuADiSE are available here1.
+1.2
+Technical Overview
+In this section, we present an overview of the techniques underlying our adaptively secure
+MLWR-based DPRF.
+PRF from LWR.
+The starting point for our proposed DPRF is a simple weak PRF F :
+Zn
+q × Zn
+q →Zp for appropriately chosen moduli q and p such that p < q:
+F
+ k ∈Zn
+q , y ∈Zn
+q
+
+= ⌊⟨y, k⟩⌉p,
+where the operator ⌊·⌉p takes as input an element in Zq, and rounds it to the nearest integer in
+Zp (in other words, effectively drops the least significant (log q −log p) bits). The above is, by
+definition, a weak PRF under the LWR assumption, for appropriately chosen q, p. Recall that a
+weak PRF only satisfies pseudorandomness for uniformly sampled inputs. However, one can turn
+the above weak PRF into a full-fledged PRF in a straightforward manner by applying a random
+oracle on the input. While our formal treatment in Section 3 considers the full-fledged random
+oracle-based PRF, we focus on the weak PRF setting in the overview for ease of exposition.
+This setting suffices to provide a flavor of our core techniques.
+Non-Adaptive DPRF from LWR [35].
+In [35], it was shown that the above PRF can
+be extended to a (t, T)-DPRF for arbitrary (reconstruction and privacy) threshold t < T with
+security against static corruptions. Their approach was to secret share the key k among T
+parties using Linear Integer Secret Sharing (LISS) [19] in the setup phase, such that any subset
+of t parties can linearly reconstruct the key. Distributed evaluation of the PRF on an input y is
+achieved by a t-sized subset S of parties as follows: first each party Pi ∈S uses its key share ki
+to compute zi = ⌊⟨y, k⟩⌉q1, where q1 is an additional intermediate modulus such that p < q1 < q.
+Finally, the evaluator obtains the final output as z∗= ⌊f({zi}Pi∈S)⌉p, where f is some linear
+function of the partial evaluations {zi} (see Section 3.1 for a more formal exposition).
+The authors of [35] proved that the above construction is a (weak) DPRF that satisfies both
+consistency and security against static corruptions of up to (t −1) parties for appropriately
+chosen q, q1, p = poly(λ) (λ being the security parameter) assuming the hardness of LWR for
+polynomial modulus-to-modulus ratio [8]. At a high level, their proof strategy crucially uses the
+knowledge of the corrupt set of parties and the corresponding key shares (in the case of static
+corruptions, this is known at setup) to construct a simulator that simulates an honest party’s
+partial evaluation on any uniformly random input.
+1https://github.com/SayaniSinha97/EQuADiSE
+6
+
+Adaptive Security of Above DPRF in ROM.
+Our first contribution is in proving that
+the above DPRF is, in fact, secure against adaptive corruptions of up to (t −1) parties for
+appropriately chosen q, q1, p = poly(λ), while relying on the same assumption of the hardness of
+LWR for polynomial modulus-to-modulus ratio. Note that, in the case of adaptive corruptions,
+the set of corrupt parties is not known from beforehand, and hence, one cannot follow the
+simulation strategy from [35] of using the knowledge of the corrupt parties’ secret shares to
+simulate the honest party’s partial evaluations. In particular, consider a scenario where the
+adversary adaptively corrupts an honest party Pi and learns its secret share. In this case, all
+simulated partial evaluations corresponding to Pi with respect to prior queries must be consistent
+with the revealed secret share once the adversary corrupts Pi. It is not immediately clear how to
+do this since the simulator does not learn Pi’s key share until the adversary chooses to corrupt
+it.
+To address this, we present an alternative proof strategy that relies on the programmability of
+the random oracle. At a high level, we show that the simulator is able to perfectly simulate all
+the responses to the adversary’s queries without knowing any of the actual key shares. This
+effectively implies that no meaningful information about the underlying secret shares is leaked to
+the adversary through the query-response phase in the real world. To achieve this, the simulator
+samples one uniform random matrix A over Zn×m
+q
+, and another uniform random matrix R over
+Zn×n
+q
+. Let H(·) be a random oracle that is expected to return a uniformly random y over Zn
+q
+for any query input x.
+• For each new query input x, the random oracle response H(x) is simulated with (R · A) · s for
+a newly sampled s
+$←−{0, 1}m. The value H(x) = (R · A) · s represents a random subset-sum
+of m columns of (R · A), and due to the leftover hash lemma [32], H(x) is uniformly random
+over Zn
+q for sufficiently large m.
+• The response to the partial evaluation query for input x with respect to an uncompromised
+share kj is simulated without using the knowledge of kj at all. Basically, a uniform random
+k′
+j
+$←−Zn
+q is sampled and the simulated response is ⌊⟨A · s, k′
+j⟩⌉q1. The value s corresponds to
+the input x, as specified during a random oracle query for input x. Since A · s is uniformly
+random over Zn
+q due to the leftover hash lemma [32] and so is k′
+j, the distribution of the
+simulated partial evaluations exactly matches with that of the real ones.
+• At a later point in the game, when it is time to reveal the share kj to the adversary, (i.e., the
+adversary compromises kj), the simulator cheats the adversary by revealing k′′
+j instead of kj.
+Here, k′′
+j is computed as R−1 · k′
+j. It is important to note that,
+⌊⟨H(x), k′′
+j ⟩⌉q1 = ⌊⟨A · s, k′
+j⟩⌉q1,
+which implies that the simulated response to the corruption query (k′′
+j ) remains consistent
+with the previous responses to partial evaluation queries corresponding to kj, from the point
+of view of the adversary.
+Clearly, for a feasible computation of k′′
+j , R must be invertible modulo q. This can be taken
+care of during the setup of the random oracle while sampling a suitable R.
+We discuss the detailed proof of adaptive security in Section 3.3 involving additional techniques.
+Security in the Quantum Random Oracle Model.
+In practice, a random oracle is
+instantiated by a fixed function, typically a cryptographic hash function. Hence, quantum-safe
+7
+
+analyses in the random oracle model should take into consideration adversaries with quantum
+oracle access [9]. However, the LWR-based DPRF in [35] proves security only against adversaries
+with classical access. This notion is weaker, since quantum adversaries can query the oracle in
+superposition, thereby accessing exponentially many inputs per query and potentially extracting
+more information than any polynomial number of classical queries allows. We show that our
+proof of adaptive security for the DPRF construction of [35] holds even in the quantum random
+oracle model (QROM), while facilitating the adversary with negligible amount of additional
+distinguishing advantage.
+Adaptation to Module LWR.
+We present a more practically efficient variant of the above-
+discussed DPRF by switching from the LWR assumption over integer lattices to the Module
+LWR (MLWR) assumption over module lattices. We note that several NIST standards, notably
+ML-KEM1 and ML-DSA2) rely on Module LWE/LWR for better efficiency as compared to their
+LWE/LWR-based counterparts, and we are not aware of any attacks that perform substantially
+better against these assumptions as compared to LWE/LWR.
+Our starting point is the natural adaptation of the LWR-based weak PRF outlined above to the
+setting of MLWR:
+F(K ∈Rd
+q, X ∈Rd
+q) = ⌊X · K⌉p ∈Rp
+where Rq and Rp are appropriately chosen polynomial rings, p is an appropriate rounding
+modulus, and d is the module rank. We then apply the same two-step rounding technique to
+extend this weak PRF into a weak DPRF. To establish the adaptive security of the MLWR-based
+DPRF, we adapt our techniques for proving the adaptive security of the LWR-based DPRF
+with only one key modification, namely, the use of the regularity lemma from [26] instead of the
+leftover hash lemma [32] to accommodate the module lattice framework. We refer to Section 3.3
+for the detailed construction and adaptive proof of security.
+2
+Preliminaries
+2.1
+Notations
+The notation x ←X signifies that x is sampled from the distribution X, whereas x
+$←−X means
+that, x is sampled uniformly at random from the set X. For q, N ∈N, RN,q = Zq[x]/(xN + 1)
+represents a ring of polynomials with coefficients in Zq and degree at most (N −1). Bold upper
+case (e.g., A) variable denotes either a vector of polynomials over RN,q or a matrix in Zq,
+depending upon the context. With two vectors a, b ∈Zn
+q , ⟨a, b⟩= Pn
+i=1 aibi (mod q) represents
+their vector dot product modulo q. With two polynomials A, B ∈RN,q, (A · B) ∈RN,q denotes
+polynomial multiplication modulo (xN + 1). Provided two vectors of polynomials A, B ∈Rd
+N,q,
+A · B denotes Pd
+i=1 AiBi (mod (xN + 1)) ∈RN,q. The cardinality of a set S is denoted by
+|S|. The notation [n] for some n ∈N denotes the set {1, . . . , n}. For any y ∈Zq, the round-off
+operation, denoted by ⌊y⌉p gives the nearest integral value of (y · p
+q ) in Zp; in particular, if (y · p
+q )
+has a fractional part exactly equal to 0.5, we choose to always round it down to ⌊y · p
+q ⌋to avoid
+ambiguity. We can apply the round-off operator to vectors, matrices and polynomials as well to
+denote element-wise/coefficient-wise round-off operation. For security parameter λ, negl(λ) and
+poly(λ) denote a negligible function and a polynomial function of λ respectively.
+1https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf
+2https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf
+8
+
+2.2
+Some Terminologies and Definitions
+Threshold Access Structure. Let P = {P1, . . . , PT } be a set of T parties, and suppose that
+some secret k is distributed among them in form of secret shares. Access structure is a set
+consisting of all “valid” subsets P ⊆P of parties that can recover the secret k by combining
+their key shares together. For any t, T ∈N (t ≤T), a minimal (t, T)-threshold access structure
+over P is defined as a collection of valid subsets of the form At,T = {P ⊆P :
+P
+ = t}, such
+that we have |At,T | =
+ T
+t
+
+as the number of valid subsets.
+Monotone Boolean Formula (MBF). A Boolean formula is monotone if it has a single
+output and it consists of only AND and OR combination of Boolean variables. Note that any
+(t, T)-threshold access structure At,T can be represented by a MBF. The fact that a particular
+collaboration of t parties is able to reconstruct the secret, is captured by Boolean formula of the
+form (x1 ∧. . . ∧xt) and that any such t-collaboration is a way of reconstruction, is captured by
+ORing
+ T
+t
+
+such terms. For e.g., A3,4 is represented by (x1 ∧x2 ∧x3) ∨(x1 ∧x2 ∧x4) ∨(x1 ∧
+x3 ∧x4) ∨(x2 ∧x3 ∧x4).
+Pseudo Random Function (PRF). We recall the formal definition of a pseudorandom
+function (PRF). Let F : K × X →Y be a family of pseudo random functions and F′ = {f ′|f ′ :
+X →Y} be the set of all possible functions with the same domain and range. Let us assume
+that, fk ∈F uses a uniform random secret k
+$←−K and, on input x ∈X, outputs fk(x), using
+both k and x. Then, the advantage of any PPT (Probabilistic Polynomial Time) distinguisher
+D is negligible, i.e.,
+Pr[Dfk(·)(1λ) = 1] −Pr[Df ′(·)(1λ) = 1]
+ < negl(λ),
+where λ is a security parameter. The first probability is taken over uniform choice of k and
+randomness of D, and the second probability is taken over uniform choice of f ′ and randomness
+of D.
+Learning with Rounding (LWR) problem. LWR problem, first introduced in [6], is a
+“derandomized" version of Learning with Errors (LWE) problem [32]. Given a parameter n ∈N,
+two moduli q, p ∈N such that q > p ≥2, the LWR distribution Ls for a secret s ∈Zn
+q is defined
+over Zn
+q × Zp of the form (a, b), where we choose a
+$←−Zn
+q and then calculate b = ⌊⟨a, s⟩⌉p.
+The decision LWR problem is to efficiently distinguish samples of Ls from uniformly random
+sample of Zn
+q × Zp, and it is assumed to be hard for proper choice of n, q and p.
+Module Learning with Rounding (MLWR) problem. This is a variant of LWR problem
+defined on module lattice, which is a structured lattice, however having lesser structure than
+an ideal lattice. Module lattice essentially bridges the gap between unstructured lattice and
+ideal lattice, while preserving the quality of both: hardness of problems defined on unstructured
+lattice and efficient parameter choices of hard problems defined on ideal lattice. LWR problem
+when defined on ideal lattice, is called ring-LWR problem and when defined on module lattice,
+is called module-LWR problem, just similar to its well-studied LWE (Learning with Errors)
+counterpart. Concept of module LWE was first introduced in [14] and its relation to worst-case
+hard problems defined on module lattice was formally analyzed in [23]. Several NIST candidates
+for post-quantum secure cryptosystems [22] rely on the hardness of the MLWR problem. The
+assumption is as follows.
+Let K ∈Rd
+q be the fixed MLWR secret. Then an MLWR sample with secret K is of the form
+(A, B), where A
+$←−Rd
+q and B = ⌊A·K⌉p. Here, A·K denotes Pd
+i=1 Ai ·Ki such that Ai ·Ki is
+9
+
+the polynomial multiplication modulo (xN + 1). The MLWR assumption is that distinguishing
+MLWR sample from a truly random sample of Rd
+q × Rp efficiently is hard for a PPT adversary
+with proper choice of parameters.
+2.3
+(t, T)-Threshold Secret Sharing
+A threshold secret sharing scheme is an essential underlying primitive to build a distributed
+PRF protocol. A (t, T)-threshold secret sharing scheme shares a key k among these T parties in
+such a way that any t or more parties are able to reconstruct it from their respective shares,
+though collaboration of less than t parties does not suffice. We choose to use Benaloh-Leichter
+Linear Integer Secret Sharing Scheme (LISSS) as described in [19]. The secret sharing scheme
+is “linear integer” because key shares can be linearly combined to get the actual secret back
+in a way that the coefficients of the linear combination are integers. These coefficients used
+during the reconstruction of the secret are called recovery coefficients. Though the original
+Benaloh-Leichter LISSS shares a scalar secret, it can naturally be extended to share a secret in
+vector form. As we deal with secrets belonging to Zn
+q in later sections, we describe the LISSS
+scheme in the context of sharing a secret vector k ∈Zn
+q here.
+2.3.1
+Preprocessing.
+Here, we discuss some necessary preprocessing steps for threshold secret sharing.
+Formation of distribution matrix M: Formation of distribution matrix M depends upon
+the MBF, representing a (t, T)-threshold access structure. As any MBF is a combination of
+AND and OR of Boolean variables, we need to focus on the three following cases.
+Each Boolean variable xi corresponds to a singleton matrix with 1 as its only element.
+AND-ing of Mfa and Mfb: Let Mfa with dimension da × ea and Mfb with dimension db × eb
+be the distribution matrices for Boolean formulae fa and fb respectively. Then we form Mfa∧fb
+as follows:
+ca
+ca
+Ca
+0
+0
+cb
+0
+Cb
+Here, ca and cb denote the first column of Mfa and Mfb respectively. Ca and Cb denote the
+rest of the columns of Mfa and Mfb respectively. Mfa∧fb has dimension (da + db) × (ea + eb).
+OR-ing of Mfa and Mfb: Let Mfa with dimension da × ea and Mfb with dimension db × eb be
+the distribution matrices for Boolean formulae fa and fb respectively. Then we form Mfa∨fb as
+follows:
+ca
+Ca
+0
+cb
+0
+Cb
+Here, ca and cb denote the first column of Mfa and Mfb respectively. Ca and Cb denote the rest
+of the columns of Mfa and Mfb respectively. Mfa∨fb has dimension (da + db) × (ea + eb −1).
+It can be easily verified that, the distribution matrix M for (t, T)-threshold secret sharing has
+dimension d × e, where d =
+ T
+t
+
+t and e = (1 +
+ T
+t
+
+(t −1)).
+Formation of share matrix ρ: ρ is a matrix with dimension e × n. Its first row is populated
+from the n elements of the actual secret vector k ∈Zn
+q . The rest of the elements of the matrix
+are filled uniformly randomly from Zq.
+10
+
+2.3.2
+Sharing.
+First we compute the matrix M · ρ that has d =
+ T
+t
+
+t rows. Each of the rows is a unique key
+share. Note that the number of t-sized subset of P is
+ T
+t
+
+and each of the t parties in a t-sized
+subset will hold a keyshare corresponding to that specific group, which justifies d =
+ T
+t
+
+t to be
+the total number of unique keyshares. For ease of explanation, we identify each keyshare with
+the following two attributes: (1) party_id (which party the key share belongs to), (2) group_id
+(which t-sized group the key share is used for). By enumerating over all t-sized subsets and
+tagging them with corresponding enumerating serial numbers, we get group_id’s of all t-sized
+subsets.
+Now sharing of d rows among T parties happens in the following manner: we consider d =
+ T
+t
+
+t
+rows as
+ T
+t
+
+chunks of rows of size t. Now for i ∈[
+ T
+t
+
+], we pick ith such chunk at a time and
+assign each of the t rows to parties belonging to the subset with group_id i. For example, in a
+(3, 5)-threshold secret sharing, subset {P1, P2, P3} has group_id 1, so first three rows of Mρ are
+assigned to P1, P2, P3 respectively. {P1, P2, P4} has group_id 2, so next three rows of M · ρ are
+assigned to P1, P2, P4 respectively and so on.
+2.3.3
+Reconstruction.
+Any t-sized group of parties, with their key shares, should be able to reconstruct k. Given
+P′ = {Pi1, Pi2, . . . , Pit} ⊂P with i1 < · · · < it, each of the t parties will have one key share
+with group_id corresponding to P′. Let us denote these t key shares as {ki1, . . . , kit}. Without
+loss of generality, in any t-sized group, the party with minimum value of party_id is called the
+group_leader. Hence, Pi1 is the group_leader here. In this LISSS the recovery coefficient is 1 for
+the group_leader and -1 for the rest of the (t −1) parties. The key k can be reconstructed as
+k = ki1 −Pt
+j=2 kij. We exploit this reconstruction property in final evaluation of (t, T)-threshold
+PRF.
+A Toy Example.
+We summarize the precise output of the above-mentioned threshold secret
+sharing scheme with the help of a toy example here. We consider modulus q = 8 and dimension
+n = 3.
+Let the secret be k = [2, 1, 6] and we apply (3, 4)-threshold secret sharing on k
+to distribute it among parties {P1, P2, P3, P4}. We deal with the straight-forward MBF for
+(3, 4)-threshold, which is, f = x1x2x3 + x1x2x4 + x1x3x4 + x2x3x4. After performing the
+above-mentioned preprocessing and sharing procedure, the matrix M · ρ will have
+ 4
+3
+
+· 3 = 12
+rows and n = 3 columns. Each row of M · ρ is a secret share and is an element of Z3
+8. If the
+ith literal in the MBF is xj, then party Pj gets the ith row of the matrix as a secret share.
+Effectively, each of the four 3-sized subsets have a (3, 3)-linear integer secret sharing within it.
+A hypothetical value of matrix M · ρ is the following:
+
+
+0
+4
+1
+2
+1
+4
+4
+2
+7
+2
+1
+3
+3
+2
+3
+5
+6
+2
+5
+2
+3
+2
+6
+0
+1
+3
+5
+
+
+11
+
+Let us pick one 3-sized subset {P1, P2, P4} whose group_id is 2. Following the rule of sharing,
+P1, P2, P4 get 4th,5th and 6th row of M · ρ, and we denote them with k2,1, k2,2 and k2,4
+respectively. The two subscripts of each share denote the group_id and party_id respectively.
+P1 is the group_leader of the group {P1, P2, P4}. The secret k is reconstructed as,
+k = k2,1 −k2,2 −k2,4 = ([2, 1, 3] −[3, 2, 3] −[5, 6, 2])
+mod 8 = [2, 1, 6].
+In short, P1 has to store k1,1, k2,1, k3,1 corresponding to subsets {P1, P2, P3}, {P1, P2, P4},
+{P1, P3, P4} respectively, P2 has to store k1,2, k2,2, k4,2 corresponding to subsets {P1, P2, P3},
+{P1, P2, P4}, {P2, P3, P4} respectively, and so on.
+Size of Secret Shares.
+After applying (t, T)-threshold secret sharing on k ∈Zn
+q , each party gets
+ T −1
+t−1
+
+key shares to store. So each party has to store
+ T −1
+t−1
+
+· n · ⌈log2 q⌉bits in total.
+Choice of LISS over Shamir’s secret sharing.
+We use LISS for sharing the PRF secret instead
+of the well known Shamir’s secret sharing [33], since reconstruction of the secret requires only
+{−1, 1}-integer linear combination of the shares in the former case while in the latter case,
+much larger Lagrange coefficients serve as the recovery coefficients. Hence, the rounding error
+from each party gets multiplied by the Lagrange coefficients and it would require even larger
+(practically inefficient) q1
+p ratio in order to eliminate the errors in the final rounding phase.
+2.4
+Distributed PRF (DPRF)
+Distributed PRF supports distributed evaluation of the PRF by multiple parties. The PRF
+secret k always remain distributed in form of secret shares among multiple parties. Following is
+a formal definition of distributed PRF.
+Definition 1 (Distributed Pseudo Random Function (DPRF)). Let P = {Pj : j ∈[T]} be a set
+of T parties. A (t, T)-distributed PRF DPRF with input space X, key space K, and output space
+Y consists of three PPT algorithms as described below.
+DPRF = (DPRF.Setup, DPRF.PartialEval, DPRF.FinalEval).
+DPRF.Setup(1λ, At,T ): On input the security parameter λ and threshold access structure At,T ,
+total number of parties T, and threshold number of parties t, this algorithm generates a key
+k
+$←−K, and then shares it among T parties using some t-out-of-T threshold secret sharing
+scheme. At the end of the secret sharing process, the actual key k is not stored anywhere. Each
+party has to store one or more than one key share(s) depending on the particular threshold secret
+sharing scheme used.
+DPRF.PartialEval(x, Pj, P′): On input a valid subset P′ ⊂P with |P′| = t, an input x ∈X and
+a party Pj ∈P′, the appropriate key share (say, kj) of Pj corresponding to P′ is chosen and a
+partial evaluation fkj(x) is returned. Note that, if |P′| ≥t, we consider any t parties among
+them to get a minimal valid subset and proceed in the same manner.
+DPRF.FinalEval(P′, {fkj(x)}Pj∈P′): On input a valid subset P′ ⊂P with |P′| = t, and all the
+partial evaluations by parties Pj ∈P′, this algorithm combines them to get the final PRF
+evaluation. The actual combination procedure depends upon the reconstruction property of the
+underlying threshold secret sharing scheme.
+12
+
+Correctness and Consistency of Distributed PRF. A (t, T)-distributed PRF with fk(·)
+as its underlying PRF is correct if given an input, its distributed evaluation by any valid subset
+P′ ⊂P outputs the same value as would be obtained by directly evaluating fk(·) on the same
+input except with a negligible probability, i.e.,
+Pr[DPRF.FinalEval(P′, {DPRF.PartialEval(x, Pj, P′)}Pj∈P′) = fk(x)] ≥1 −negl(λ).
+A (t, T)-distributed PRF is consistent if distributed evaluation on a given input by any two
+distinct valid subsets S1, S2 ⊂P with |S1| = |S2| = t outputs the same value except with a
+negligible probability, i.e.,
+Pr[DPRF.FinalEval(S1, {DPRF.PartialEval(x, Pj, S1)}Pj∈S1)
+̸= DPRF.FinalEval(S2, {DPRF.PartialEval(x, Pj′, S2)}Pj′∈S2)]
+ ≤negl(λ).
+Note that the correctness of (t, T)-distributed PRF implies its consistency, but not the other
+way around.
+Static Security of Distributed PRF. Following is the notion of static security of DPRF
+from [30].
+The adversarial model. We assume a PPT adversary that can statically corrupt (i.e., announces
+the set of corrupt parties before the partial evaluation query phase starts) at most (t−1) number
+of parties and each party if corrupted, is honest but curious; i.e., no corrupted party violates
+the protocol of the construction but tries to gather information about unknown secret share in
+all possible probabilistic ways within polynomial time.
+The security notion. Let P = {Pj : j ∈[T]} be the set of T parties and A be a PPT adversary
+as described above. Let bP be a statically corrupted set such that, | bP| = (t −1). Hence, after
+DPRF.Setup(1λ, t, T) is run, A has access to key shares of each Pj ∈bP. We say that DPRF is
+secure if the winning probability of A against a challenger C in the following game is negligible.
+Game
+Partial Evaluation Query: A sends a query input x ∈X to C. In response, C sends to A
+(fk(x), {fkj(x)}Pj∈P\ b
+P), where fkj(x) = DPRF.PartialEval(x, Pj, bP S Pj).
+Challenge Phase: A sends a new challenge query x⋆(different from query phase inputs) to C.
+Now, C chooses a random bit b
+$←−{0, 1}. If b = 0, it sends fk(x⋆) to A, otherwise, it sends some
+y
+$←−Y to A.
+The adversary can raise a polynomial (in security parameter λ) number of partial evaluation
+queries before the challenge phase. After A sees the output corresponding to challenge input
+x⋆, it outputs a distinguishing bit b′. A wins the game, if b = b′. The (t, T)-DPRF is statically
+secure, if Pr[b = b′] ≤negl(λ).
+Adaptive Security of Distributed PRF. Now, we describe the notion of adaptive security
+of distributed PRF in the form of a game between a challenger Ch and an adversary Ad.
+Adversarial model. In case of a (t, T)-distributed DPRF with any t < T, we consider a semi-
+honest PPT adversary which can adaptively corrupt at most (t −1) number of parties among a
+total of T parties
+
+[…middle truncated for length…]
+
+ x⋆, Ch computes the real DPRF evaluation on
+x⋆as f dist
+{kj,r}Pj ∈P′ (x⋆) for all r ∈[2, rep] and checks if all of them are equal. If they are equal, this
+value is referred to as v (used in answering partial evaluation query on x⋆in case of maximum
+corruption), and returned to Ad. Note that Ch’s answer to Ad is necessarily the same as in
+earlier hybrids.
+Lemma 3. Ad can distinguish Hybrid3,1 from Hybrid2 with advantage ϵ2,3.1 for some ϵ2,3.1 =
+negl(λ).
+Proof. We prove the phase-wise indistinguishability between Hybrid3,1 and Hybrid2 in the view
+of Ad.
+• Partial evaluation query. For r ∈[2, rep], the responses are identical to Hybrid2. So, the
+focus is on indistinguishability of hybrids in case of r = 1. We discuss three different
+scenarios in the following:
+– Non-challenge input: Since the responses are of the form ⌊⟨A·si, k′
+j,1⟩⌉q1, where A·si
+is statistically indistinguishable from uniform random over Zn
+q due to leftover hash
+lemma and k′
+j,1 is sampled uniformly at random from Zn
+q , they belong to the same
+distribution as of real partial evaluations which are of the form ⌊⟨H(xi), kj,1⟩⌉q1 =
+⌊⟨R · A · si, kj,1⟩⌉q1 in Hybrid2.
+– Challenge input (when corruption threshold is not reached): Here the responses
+are of the form ⌊⟨A · s⋆, k′′
+j,1⟩⌉q1. Since A · s⋆is statistically indistinguishable from
+uniform random over Zn
+q due to leftover hash lemma and k′′
+j,1 = R−1 · k′
+j,1 is uniform
+random over Zn
+q due to uniform randomness of both R and k′
+j,1, the simulated partial
+evaluation essentially comes from the same distribution as of real partial distribution
+which is of the form ⌊⟨H(x⋆), kj,1⟩⌉q1 = ⌊⟨A · s⋆, kj,1⟩⌉q1 for uniform random kj,1.
+– Challenge input (when corruption threshold is reached): The simulated partial
+evaluation of the form ⌊v · q
+q1 −P
+(P′,Pj)∈L⟨A · s⋆, k′′
+j,1⟩⌉q1 is indistinguishable from
+real partial evaluations ⌊⟨H(x⋆), kj,1⟩⌉q1 by Lemma 1 of [35].
+• Corruption query: For r ∈[2, rep], the responses to corruption queries are identical to
+that in Hybrid2. For r = 1, the responses are simulated without using real shares as
+k′′
+j,1 = R−1 · k′
+j,1, where both R and k′
+j,1 are uniform random over Zn
+q . Thus, they are
+uniform random over Zn
+q , just similar to that of the real shares kj,1 in Hybrid2.
+• Challenge phase: In Hybrid2, Ch computes the DPRF evaluation using real shares of some
+t-sized subset P′ for each of rep different sets of shares, and responds with the result only
+21
+
+if it is same in all rep cases. In Hybrid3,1, Ch computes the DPRF evaluation using real
+shares of some t-sized subset P′ for (rep −1) different sets of shares with r ̸= 1, and then
+behaves identically. It is implied that for r = 1, we assume the DPRF evaluation to be
+same with the real DPRF evaluations, since we simulate the tth partial evaluation on x⋆
+using this value (v), in case of maximal corruption. Thus, Ch’s response to challenge query
+is identical in both the hybrids.
+Together, we conclude that Hybrid3,1 is statistically indistinguishable from Hybrid2, and hence
+Ad has negligible distinguishing advantage, denoted by ϵ2,3.1, while transitioning from Hybrid2
+to Hybrid3,1.
+Next, we have a chain of hybrids represented as Hybrid3,r for r ∈[2, rep]. Broadly, Hybrid3,r+1
+differs from Hybrid3,r for all r ∈[1, rep −1] in the following sense:
+• Partial evaluation query. For each query of the form (xi, Pj, P′), Ch provides Ad with rep
+partial evaluations in both the hybrids, each corresponding to one of rep different sets
+of shares. In both the hybrids, the first r evaluations are simulated without using real
+shares, and the last (rep −r −1) evaluations are computed using real shares. Thus, the
+two hybrids differ only in how Ch responds for (r + 1)th evaluation. In Hybrid3,r it is real,
+whereas in Hybrid3,r+1 it is simulated using the same method as described in Hybrid3,1.
+• Corruption query. Analogously, in Hybrid3,r, Ch sends real share kj,r+1 corresponding to
+(r + 1)th set of shares whereas in Hybrid3,r+1, Ch responds with simulated share k′′
+j,r+1.
+• Challenge phase. The DPRF evaluation on challenge input x⋆is decided based on (rep −r)
+real evaluations in Hybrid3,r, whereas in Hybrid3,r+1 it is based on (rep −r −1) real
+evaluations.
+Now, we describe Hybrid3,rep in the following, where Ch does not make use of any of the real
+shares while responding to Ad’s queries in all the phases, including the challenge phase. This
+hybrid can be thought of lying completely in the simulated world.
+Hybrid3,rep. Here, the random oracle is programmed in exactly the same manner as in Hybrid2
+(and remain unchanged through Hybrid3,r for all r ∈[rep]). We describe all other interactions in
+the following.
+• Partial evaluation query. Ch responds to a partial evaluation query of the form (xi, Pj, P′)
+as,
+
+⌊⟨A · si, k′
+j,1⟩⌉q1, · · · , ⌊⟨A · si, k′
+j,r⟩⌉q1, · · · , ⌊⟨A · si, k′
+j,rep⟩⌉q1
+
+∈Zrep
+q1 ,
+such that each k′
+j,r
+$←−Zn
+q . In case of challenge input x⋆, if the corruption threshold is not
+reached by Ad, the response is,
+
+⌊⟨A · s⋆, k′′
+j,1⟩⌉q1, · · · , ⌊⟨A · s⋆, k′′
+j,r⟩⌉q1, · · · , ⌊⟨A · s⋆, k′′
+j,rep⟩⌉q1
+
+∈Zrep
+q1 ,
+such that k′′
+j,r = R−1 · k′
+j,r holds for already sampled k′
+j,r. However, when the maximal
+corruption threshold is reached for some subset P′, the tth honest partial evaluation on x⋆
+is simulated as µsim,r = ⌊vsim · q
+q1 −P
+(P′,Pj)∈L⟨A · s⋆, k′′
+j,r⟩⌉q1, where vsim is the response
+of Ch in the challenge phase. Thus, the response becomes,
+
+µsim,1, · · · , µsim,r, · · · , µsim,rep
+
+∈Zrep
+q1 .
+22
+
+• Corruption query. In response to any corruption query of the form (P′, Pj), Ch returns
+all rep simulated shares, i.e.,
+
+k′′
+j,1, · · · , k′′
+j,r, · · · , k′′
+j,rep
+
+∈Zn×rep
+q
+.
+• Challenge phase. Ch samples vsim
+$←−Zp and sends it as response to challenge query x⋆.
+Lemma 4. Ad distinguishes Hybrid3,rep from Hybrid2 with advantage (rep −1) · ϵ2,3.1 + ϵ′, where
+ϵ′ = negl(λ).
+Proof. Since the transition from Hybrid3,r to Hybrid3,r+1 for all r ∈[rep −1] is exactly similar
+to the transition from Hybrid2 to Hybrid3,1, and each transition introduces a distinguishing
+advantage of ϵ2,3.1 for Ad, it gives a total distinguishing advantage of (rep −1) · ϵ2,3.1 between
+Hybrid2 and Hybrid3,rep−1 for Ad.
+The transition from Hybrid3,rep−1 to Hybrid3,rep is similar to that of the transition between any
+Hybrid3,r and Hybrid3,r+1, for r ∈[rep −1] with respect to the partial evaluation query phase and
+the corruption query phase. However, in challenge phase the transition is different. Ch replaces
+the real DPRF evaluation with a uniform random value in Zp. Note that by the correctness
+of DPRF, the real DVRF evaluation in Hybrid3,rep−1 is equal to that of base PRF evaluation
+which is f base
+k
+(H(x⋆)) = ⌊⟨H(x⋆), k⟩⌉p, with k being the master secret key. And by the LWR
+assumption, this value is computationally indistinguishable from a uniform random value vsim
+in Hybrid3,rep. We assume Ad’s distinguishing advantage to be ϵ′ for some ϵ′ = negl(λ) while
+transitioning from Hybrid3,rep−1 to Hybrid3,rep.
+Together, we conclude that Ad can distinguish between Hybrid2 and Hybrid3,rep with advantage
+(rep −1) · ϵ2,3.1 + ϵ′.
+Next, we have (rep −1) hybrids represented as Hybrid4,r in decreasing order of r for r ∈[rep −1].
+Each Hybrid4,r is identical to Hybrid3,r for all r ∈[rep−1], except in challenge phase. In Hybrid3,r,
+Ch responds with real DPRF evaluation whereas in Hybrid4,r, Ch responds with a uniform random
+value in Zp. The indistinguishability while transitioning from Hybrid4,r+1 to Hybrid4,r can be
+argued in the similar manner as we do in case of transitioning from Hybrid3,r to Hybrid3,r+1. The
+responses to partial evaluation queries and corruption queries are transitioned from simulated
+to real for one of the rep sets of shares, one at a time for each hybrid transition.
+To summarize, Ad can distinguish Hybrid4,1 from Hybrid3,rep with advantage (rep −1) · ϵ2,3.1.
+Next, for the sake of completeness, we have three more hybrids Hybrid5, Hybrid6, Hybrid7,
+which are identical to Hybrid2, Hybrid1 and Hybrid0, respectively, except the fact that in the
+challenge phase, Ch responds with uniform random values in Zp in the former cases and with
+real DPRF evaluations in the later.
+Note that the interactions between Ch and Ad in the final hybrid Hybrid7 lie in the real world,
+but the response in the challenge phase is a uniform random value. Ad’s views in the first and
+last hybrid (i.e., Hybrid0 and Hybrid7) emulate the notion of pseudorandomness of a DPRF
+under adaptive corruption, as given in Section 2.4. Since for a specific choice of parameters,
+rep = O(1) is a constant, Ad can distinguish Hybrid7 from Hybrid0 with advantage,
+1
+Q + 1
+
+2ϵ0,1 + 2ϵ1,2 + (2 · rep −1) · ϵ2,3.1 + ϵ′
+= negl(λ).
+The multiplicative factor of
+1
+Q+1 is there because Ch’s guess of the challenge input x⋆is correct
+with probability
+1
+Q+1. Thus, we conclude that the LWR-based distributed PRF in [35] is
+adaptively secure in the random oracle model (ROM).
+23
+
+Next, we argue the adaptive security of LWR-based DPRF of [35] in QROM.
+Theorem 4. The construction of LWR-based distributed PRF in [35] is adaptively secure in
+quantum random oracle model (QROM).
+Proof. Though the adaptive proof of security of LWR-based DPRF in [35] in ROM can not
+immediately be imported to QROM settings, where Ad can query the random oracle (RO) in
+superposition, we prove that with slight modification in the proof it is possible to argue adaptive
+security of the DPRF even in QROM.
+Before proceeding further, we emphasize that the concept of lazy sampling in ROM does not
+work in QROM. This is because Ad can query RO in superposition of exponential number of
+inputs with varying amplitudes. So, the RO (i.e., the function H(·)) must be (conceptually)
+initialized with the complete input-output behavior in the beginning of the game. Note that
+only this conceptual shift suffices to prove the static security of LWR-based DPRF in QROM
+in [35]1.
+However that is not the case for the proof of adaptive security, because the proof heavily relies
+on the programmability of the RO. Again, unlike classical ROM, programming the RO output
+at the unqueried inputs is not applicable in QROM, because there is no concept of “unqueried
+input” in QROM due to superpositioned queries, and hence this manipulation can be detected by
+Ad. Note that though there are a total of (2 · rep + 5) hybrids in the proof of adaptive security in
+ROM, the RO description is modified only during transition from Hybrid0 to Hybrid1, Hybrid1 to
+Hybrid2 (and analogously during transition from Hybrid5 to Hybrid6, Hybrid6 to Hybrid7). Since
+RO’s response remains identical throughout all the other hybrids, Ad does not have any extra
+advantage to distinguish between them by exploiting its quantum access to RO. So, we focus on
+two following transitions:
+• Hybrid0 →Hybrid1: Since, (R · A) · si is statistically close to H(xi), these two hybrids are
+indistinguishable in the view of a quantum polynomial time (QPT) adversary.
+• Hybrid1 →Hybrid2: Considering that the RO is initialized in the beginning of the game
+in both hybrids, note that the RO in these two hybrids differ only at a single input,
+namely x⋆. Distinguishing between these two instantiations of RO is equivalent to the
+problem of searching the differing input position (which is x⋆) using polynomial number
+of superpositioned RO queries. Ad does not know x⋆at the time of RO initialization;
+because Ch guesses the challenge input beforehand and aborts the game later if the guess
+is wrong. Then by [7], a QPT adversary has a distinguishing advantage of O( Q′2
+qn ), where
+Q′ = poly(λ) is the total number of RO queries.
+Thus, we conclude that LWR-based DPRF in [35] is adaptively secure in QROM.
+3.3.2
+Adaptive Security of MLWR-based DPRF
+The following theorem formalises the adaptive security of our proposed MLWR-based DPRF.
+Theorem 5. Construction 2 is adaptively secure in the quantum random oracle model if MLWR
+assumption holds.
+1In particular, in the proof of static security of [35] no RO programming is involved and hence the RO’s
+response to Ad’s queries remain necessarily same throughout all the four hybrids, thus providing no extra
+advantage to Ad in distinguishing between those hybrids, even with quantum access to the RO.
+24
+
+Proof. The proof approach closely follows the adaptive security proof, previously outlined for
+the LWR-based DPRF, except with a few differences.
+An alternative of leftover hash lemma in module settings: We use the leftover hash
+lemma [32] as an important tool to simulate the RO in Hybridsim. Analogously, to program the
+random oracle in module setting, we need a mechanism to output a uniform random element of
+Rd
+q. We resort to the following regularity lemma from [26].
+Theorem 6 (Adapted from Theorem 4.1 and Corollary 4.2 of [26]). Let A = [Id| ˜A] ←Rd×ℓ
+q
+,
+such that ˜A
+$←−Rd×(ℓ−d)
+q
+is uniformly random and Id is the identity matrix. Then with probability
+1 −2−Ω(n) over the choice of ˜A, the distribution of A · s ∈Rd
+q, where each element of s ∈Rℓ
+q
+is sampled from a discrete Gaussian distribution of radius r > 2n · q
+d
+ℓ+ 2
+nℓover R, is within
+statistical distance 2−Ω(n) of the uniform distribution over Rd
+q.
+The theorem implies that, A · s ∈Rd
+q can be used to program the output of random oracle if A
+and s come from the above-mentioned distributions. Also, we replace the matrix R of LWR
+setting with a scalar r
+$←−Rq in MLWR setting such that r is invertible modulo (xN + 1). Note
+that with A = [Id| ˜A] ∈Rd×ℓ
+q
+, r · A performs scalar multiplication on each element of A with r,
+and the output is [I′
+d|r · ˜A]. Here, I′
+d is a diagonal matrix with each diagonal element initialized
+to r. From [26], we conclude that r · A preserves the matrix format that is eligible for regularity
+lemma to be applied, i.e., (r · A) · s is uniform random over Rd
+q for suitable distribution of s.
+The rest of the proof essentially proceeds in a similar manner.
+Concluding the proof. Replacing the leftover hash lemma with the regularity lemma from [26]
+and a few obvious changes in dimensions and parameters translate the proof of adaptive security
+of LWR-based DPRF into a proof for Construction 2.
+3.4
+Choice of Parameters for Adaptive DPRF
+We summarize the concrete choice of parameters for both the adaptively secure DPRFs. Notably,
+in the partial evaluation phase of these adaptive DPRFs, the rounding step transitions values
+from modulus q to modulus q1; hence, the error here is of the order of
+q
+q1 . In other words, the
+modulus-to-noise ratio is of the order q
+e =
+q
+q
+q1 = q1. The solution to average-case LWR problem
+with a smaller modulus-to-noise ratio implies a solution to worst-case lattice problem with a
+smaller approximation factor. Hence, the smaller we keep the modulus-to-noise ratio, the harder
+it is to solve the underlying worst-case lattice problem. While choosing concrete parameters for
+practical instantiations, our objective is to ensure that the modulus-to-noise ratio q
+e remains
+sufficiently small to mitigate any known attack strategies. We further elaborate on the concrete
+choice of parameters for both the instantiations of adaptive DPRFs in the following.
+LWR-based Adaptive DPRF. The following parameter set for the LWR-based DPRF, as
+suggested by [35], ensures 128-bit security in static corruption scenarios: n = 512, q = 232,
+q1 = 228, p = 210. By proof of Theorem 3, the exact same parameter set should also provide
+adaptive security. However, in this work, we use a different parameter set, namely, n = 1024, q =
+264, q1 = 238, p = 210, while providing experimental results for adaptively secure LWR-based
+DPRF. Intuitively, the modulus q, the error proportional to
+q
+q1 , and the dimension n together
+correspond to the security of DPRF whereas the ratio q1
+p corresponds to the correctness of
+DPRF. Our concrete choice of parameters provides at least 128 bits of security considering the
+25
+
+attacks listed in lattice estimator 1 [4].
+MLWR-based Adaptive DPRF. We use the following parameter set for MLWR-based DPRF:
+N = 256, d = 4, q = 264, q1 = 238, p = 210 to provide at least 128 bits of security. The reasons
+behind choosing this parameter set for our construction are the following: (i) there are currently
+no known attack on MLWE with these parameters, which are actually comparable to those
+used in Kyber [11] (ii) there are no meaningful attack on MLWR that are better than those
+on MLWE (in the same way as there are no meaningful attack on LWR that are better than
+LWE attacks), and (iii) there are no meaningful attack on RLWE or MLWE that are better
+than LWE attacks [3].
+4
+EQuADiSE: An Application
+We consider Distributed Symmetric-key Encryption (DiSE) as a potential application of dis-
+tributed PRFs. DiSE was first introduced by [2], where DPRF served as a fundamental building
+block, and the security of DiSE was implied by the security of the DPRF. Following the same
+line of work, [29] constructed adaptive DiSE by incorporating an adaptively secure version of
+DDH-based DPRF. More recently, [35] constructed PQDiSE, where the underlying DPRF is
+instantiated with an LWR-based DPRF, and post-quantum security of the DPRF implies post-
+quantum security of PQDiSE. In this work, we introduce EQuADiSE (Efficient Quantum-safe
+Adaptive DiSE), wherein the DPRF has two different instantiations: one is LWR-based adaptive
+DPRF and another is MLWR-based adaptive DPRF (Section 3.2). Our experiment in Section 5
+shows that EQuADiSE, with both the instantiations of adaptive DPRF, performs better than
+PQDiSE (which is not adaptively secure) and adaptive DiSE (which is not quantum-safe).
+We further observe that EQuADiSE, when instantiated with MLWR-based adaptive DPRF,
+outperforms the LWR-based adaptive DPRF instantiation since MLWR-based DPRF is more
+compact than LWR-based DPRF.
+Now, for the sake of completeness, we briefly discuss the original work of DiSE [2]. We then
+mention several instantiations of DPRFs from the literature with their detailed constructions in

@@ -1,0 +1,1210 @@
+New Techniques for Communication-Efficient Secure Comparison
+Protocols
+Koji Nuida1,2
+Satsuya Ohata1,3
+1 Kyushu University, Fukuoka, 819-0395, Japan
+2 AIST, Tokyo, 135-0064, Japan
+3 Byerlis Inc., Tokyo, 170-0013, Japan
+April 24, 2026
+Abstract
+Secure comparison is a fundamental building block frequently employed in various applications of
+secure multiparty computation, such as secure machine learning. Such protocols based on secret sharing
+(SS) typically excel in throughput compared to garbled circuits (GC), but they historically suffer from
+higher (online) round complexity: while GC-based comparison ends in two rounds, the state-of-the-art
+SS-based (plaintext) comparison protocol requires three rounds (Lu et al., USENIX Security 2025). To
+break the barrier, in this paper we propose the first SS-based comparison protocol, built upon “round
+absorption” via multi-fan-in gates, to match the two-round complexity of GC with online bit complexity
+O(n log n) significantly lower than GC-based O(λn). We also propose the second two-round protocol,
+built upon a new optimization technique for multiplication, that addresses the drawback of O(n3) offline
+bit complexity in our first protocol and reduces it to O(n2) at the cost of increasing the online bit
+complexity to also O(n2).
+Furthermore, for the purpose of optimization in bandwidth, we propose the third (not constant-round)
+protocol with asymptotically 6n online bit complexity, which is significantly lower than asymptotically
+8n bits of the state-of-the-art protocol (Couteau, ACNS 2018).
+Our protocol adopts the framework
+based on ternary trees and quaternary integers of CrypTFlow2 (ACM CCS 2020) and its followers, but
+departs from their oblivious-transfer-based computation at each input digit. Instead, we use a Boolean-
+circuit-based approach driven by a new custom-tailored formula for processing quaternary integers and a
+specialized multiplication protocol. The latter technique of “multiplication involving an auxiliary input
+held by a single party” may be of independent interest.
+1
+Introduction
+Secure multiparty computation (MPC) is a cryptographic framework that allows multiple mutually dis-
+trustful parties to jointly compute a function without revealing their private inputs. While MPC spans a
+broad spectrum of research directions, we focus on a fundamental primitive: secure comparison protocols,
+traditionally known as the Millionaires’ Problem [25]. Secure comparison protocols are frequently used in
+practical applications, and their high overhead is well-recognized. For example, a study on secure neural
+networks, CryptGPU [23], reported that operations involving comparison (specifically ReLU and SoftMax)
+accounted for 42–73% of the total execution time (Table 5 in [23]). While numerous studies have focused on
+improving the efficiency of secure comparison protocols (cf. Table 1 below), it continues to be a dominant
+performance bottleneck in practical privacy-preserving applications. In particular, while protocols based on
+secret sharing (SS) are typically recognized for their superior efficiency in terms of both computation and
+communication volume (i.e., the total number of bits transferred), they suffer from higher round complexity
+than approaches based on other cryptographic primitives such as garbled circuits (GC). Specifically, al-
+though the state-of-the-art SS-based plaintext comparison protocol of Lu et al. [14] has achieved a constant
+1
+
+three-round online complexity (as demonstrated in [14], such comparison over plaintexts can be extended to
+secret-shared inputs by sacrificing a single bit of the plaintext space), it is still higher than the GC-based
+two-round complexity. It has been a long-standing open problem to realize SS-based comparison achieving
+the same two-round complexity as GC.
+1.1
+Our Contribution
+We propose the first SS-based comparison protocol with a constant two-round online complexity, solving
+the aforementioned open problem of achieving the same round complexity as GC-based protocols.
+Our
+protocol also maintains the O(n log n) online bit complexity of Lu et al.’s three-round protocol [14], which is
+significantly lower than the GC-based O(λn). A drawback of our protocol is the O(n3) offline bit complexity
+(in comparison to e.g., GC-based O(λn)): to address the issue, we propose the second two-round protocol
+with offline bit complexity O(n2), while it increases the online bit complexity to also O(n2).
+Furthermore, we also propose the third (not constant, approximately (log3 n)-round) protocol with
+asymptotically only 6n-bit online communication. Except for protocols based on function secret sharing
+(FSS) [11, 2], which incur exponential offline costs, the state-of-the-art protocol from the viewpoint of online
+bit complexity (for which both offline and online phases are fully specified1) is the asymptotically 8n-bit
+protocol by Couteau [5]. Our protocol reduces the asymptotic online bit complexity to 75% of Couteau’s
+protocol.
+A summary of these protocols alongside existing works is provided in Table 1. We also compare the
+concrete efficiency of our proposed protocols with the existing protocols by Lu et al. [14] and by Couteau
+[5] for the case of 64-bit inputs, where the parameters are set to λ = 128 and µ = 512 (see Table 1 for the
+meaning of these parameters). See Table 2 for the result.
+1.2
+Technical Overview
+Protocol 1 (Section 4):
+Achieving Two-Round Complexity via “Round Absorption”.
+We
+first give an auxiliary generic construction of a three-round comparison protocol for n-bit inputs x =
+(xn−1 · · · x1x0)2 and y = (xn−1 · · · x1x0)2 using any one-round equality testing protocol for O(log n)-bit
+inputs (having the same three-round complexity as Lu et al.’s protocol [14] but with a different structure)
+as follows, where 1{Cond} := 1 if Cond is true and 1{Cond} := 0 if Cond is false:
+(Round 1) For each, say the i-th input digit, compute an arithmetic share of neq[n−1,i+1] := Pn−1
+j=i+1 1{xj ̸=
+yj} and a Boolean share of lti := 1{xi < yi}.
+(Round 2) For each i, compute a Boolean share of Zi+1 := 1{(xn−1, . . . , xi+1) = (yn−1, . . . , yi+1)} =
+1{neq[n−1,i+1] = 0} by using any one-round equality testing protocol.
+(Round 3) Compute a Boolean share of 1{x < y} = ltn−1 ⊕Ln−2
+i=0 (Zi+1 ∧lti).
+Then we instantiate the internal one-round equality testing protocol as in Section 3.1. In this instantia-
+tion, a share of each Zi+1 is computed in Round 2 by an n0-fan-in AND with n0 = ⌈log2 n⌉. Consequently,
+the AND operation Zi+1 ∧lti in Round 3 can be absorbed into Round 2 using an (n0 + 1)-fan-in AND,
+resulting in a two-round protocol. We emphasize that such a “round absorption” technique is not applicable
+to Lu et al.’s protocol due to its different structure.
+Protocol 2 (Section 5): Balancing Offline/Online Bit Complexity via New Multiplication Tech-
+nique for Trivial Shares.
+In order to address the issue of the higher offline bit complexity in Protocol
+1 due to the use of larger fan-in ANDs, here we instantiate the internal equality testing protocol in our
+1[8] claims an online bit complexity of less than 7n.
+However, the manuscript does not provide a clear breakdown of
+this complexity, and the configuration of the corresponding offline phase is omitted, making it difficult to conduct a fair and
+comprehensive evaluation. Consequently, we have excluded this protocol from Table 1 to ensure a comparison based on fully
+specified protocols. Note that even when taking their protocol into account, our protocol remains more efficient.
+2
+
+Table 1: Comparison with the previous plaintext comparison protocols for n-bit integers; λ denotes the
+security parameter; µ denotes the bit length of a group element satisfying a suitable computational assump-
+tion (e.g., CDH assumption); log∗
+2 represents the iterated logarithm with base 2; (†) under correlated keys
+generation scheme which performs O(2n) times Hash locally; (††) under a trusted third-party dealer; and
+the values (and remarks) for previous protocols are quoted from [14, Table 1].
+Approach
+Protocol
+Offline
+Online
+Communication
+Communication
+# of rounds
+GC-based
+Yao [24, 26]
+2nλ
+2nλ
+2
+HE-based
+GSV [9]
+–
+18µn + 8µ
+9
+FSS-based
+Half-Tree [11]
+(n + 2)λ (†)
+2n
+1
+DCF [2]
+4n(λ + 1) + λ + n (††)
+2n
+1
+OT-based
+Couteau [5]
+6λn
+8n + 2 log2 n
+4 log∗
+2 λ + 5
+CrypTFlow2 [22]
+–
+λn + 14n
+log2 n + 4
+Lu et al. [14]
+≈2nλ log2(2n) + n log2
+2 n
+(2n + 3)(log2 n + 2)
+3
+Generic 2PC
+ABY [6]
+6λn + 17λ + n
+2λn + 20n
+log2 n + 5
+ABY2.0 [21]
+5λn + 17λ + 2n
+λn + 9n
+log2 n + 4
+Ours Πcmp,1 (§ 4)
+≈4n3 + 2µ + λ
+2(n −1) log2 n
+2
++ (µ + λ)(log2 n + log2
+2 n)
++ 6n −4
+Ours Πcmp,2 (§ 5)
+≈3n2 + 2µ + λ
+2n2 −2
+2
++ 2(n + µ + λ) log2 n
+Ours Πcmp,3 (§ 6)
+≈44n + 4µ + 3λ
+3n + 12⌈(n −2)/4⌉
+log3(n/2) + 1
++ (µ + λ) log2 n
+−2 log3(n/2)
+∼6n
+generic construction as in Section 3.2 (instead of Section 3.1). Now each bit Zi+1 is computed as XOR of
+plain ANDs, say Zi+1 = L
+j Xi+1,j ∧Yi+1,j. Consequently, a naive application of the same technique as
+in Protocol 1 already achieves two-round complexity using 3-fan-in ANDs Xi+1,j ∧Yi+1,j ∧lti instead of
+(n0 + 1)-fan-in ANDs.
+For more efficiency improvement, here we observe that the bits Xi+1,j and Yi+1,j are known as plaintexts
+by party P0 and party P1, respectively. Moreover, we have lti = (¬xi) ∧yi, and the bits ¬xi and yi are
+also known as plaintexts by party P0 and party P1, respectively. Then, by arranging the computation as
+Xi+1,j ∧Yi+1,j ∧lti =
+ Xi+1,j ∧(¬xi)
+
+∧
+ Yi+1,j ∧yi
+
+, each of the values in two large parentheses in the
+right-hand side can be locally computed by a single party, therefore the overall computation can be done
+by plain ANDs (instead of 3-fan-in ANDs) for “trivially” shared bits. This removal of larger fan-in ANDs
+reduces the offline bit complexity in contrast to Protocol 1, at the cost of increasing the online bit complexity
+due to the larger number of AND operations.
+Protocol 3 (Section 6): Reducing Online Bit Complexity via Custom-Tailored Formula for
+Quaternary Integers.
+This protocol builds upon the quaternary integer representation introduced by
+CrypTFlow2 [22] and the ternary-tree architecture introduced by Feng et al. [8], with the following two
+properties:
+• Similarly to [8, 12, 22], the inputs x and y are parsed in quaternary (instead of binary) expressions as
+x = (x⌈n/2⌉−1 · · · x1x0)4 and y = (y⌈n/2⌉−1 · · · y1y0)4.
+• Similarly to [8], the partial (shared) results lti = 1{xi < yi} and eqi = 1{xi = yi} are combined by
+using a ternary (instead of binary) tree.
+3
+
+Table 2: Efficiency comparison between our protocols and (selected) existing protocols. The parameters (see
+Table 1) are set to n = 64, λ = 128, and µ = 512.
+Protocol
+Offline
+Online
+Communication
+Communication
+# of rounds
+Lu et al. [14]
+14.3 KiB
+131 B
+3
+Ours Πcmp,1 (§ 4)
+131.4 KiB
+142 B
+2
+Ours Πcmp,2 (§ 5)
+2.7 KiB
+1024 B
+2
+Couteau [5]
+6.0 KiB
+62.5 B
+33
+Ours Πcmp,3 (§ 6)
+1.1 KiB
+47.3 B
+5
+To compute lti and eqi, the protocols of [8, 12, 22] used oblivious transfer (OT), which would incur an
+inevitable lower bound (input number) × (input length) for online bit complexity. To move the dominant
+cost to the offline phase (generating Beaver triples (BTs)), here we adopt a more traditional Boolean circuit-
+based approach. However, a naive construction of a circuit for, say the comparison for quaternary integers
+such as 1{xi < yi} = 1{xi = 0} ∧1{yi ∈{1, 2, 3}} ⊕1{xi = 1} ∧1{yi ∈{2, 3}} ⊕1{xi = 2} ∧1{yi =
+3} will result in too large online overhead due to the many AND operations that are not reusable.
+To
+address this challenge, we develop a custom-tailored Boolean circuit by searching for decompositions of
+truth tables for comparison/equality of quaternary integers involving as many common (reusable) factors as
+possible (Theorem 1). To implement it, we also develop a new correlated AND operation using specialized
+BTs (referred to as ‘IV-AND’ in Section 2.4).
+Then we can compute lti and eqi with only 6-bit online
+communication. We note that an OT-based computation requires 2 · (4 + 1) = 10 bits, and the technique of
+[13] using one-time truth tables (with 2-bit inputs) requires 2 · (2 + 2) = 8 bits. We also note that our new
+correlated AND operation involves an AND operation on share values held by only one party. The fact that
+such a technique is effective in MPC is of independent interest.
+1.3
+Related Work
+Constant-Round Protocols.
+Generally, garbled circuits (GC) [24, 26] provide the baseline for constant
+(two)-round comparison but incur high bandwidth costs O(λn). Constant-round comparison protocols based
+on (fully) homomorphic encryption (HE) are also proposed [9, 19, 4], but they either have higher round com-
+plexity or suffer from large computational and communication overhead. While various SS-based approaches
+have attempted to reduce rounds, they often rely on relaxed models (e.g., the five-round protocol in [16] based
+on the client-aided model [15]) or expensive pre-computation (e.g., the use of multi-fan-in gates [20, 21, 7]
+or function secret sharing (FSS) [11, 2]). Recently, Lu et al. [14] established the state-of-the-art for SS-
+based comparison, achieving three rounds. However, matching the two-round efficiency of GC within the SS
+framework has remained an elusive goal. Our Protocols 1 and 2 directly address this gap.
+Bandwidth-Optimized Protocols.
+Couteau [5] proposed an asymptotically 8n-bit protocol, though with
+logarithmic rounds. More recent works like CrypTFlow2 [22] and Panther [8] leverage tree structures and
+higher-radix representations (e.g., quaternary); however, these methods typically rely on OT for per-digit
+computation, which dictates a lower bound on online communication. In contrast, our Protocol 3 adopts a
+circuit-based approach for the quaternary integers, pushing the online complexity down to asymptotically
+6n bits.
+2
+Preliminaries
+In this paper, let λ denote the security parameter. Let || denote the concatenation of strings. Let ⌈r⌉for
+r ∈R denote the minimum integer k satisfying k ≥r. For any condition Cond, let 1{Cond} := 1 if Cond
+4
+
+Table 3: Functionalities and costs for share conversion.
+Protocol
+Input
+Output
+Online communication
+Main
+Auxiliary
+Rounds
+Bits
+bit2T
+[b]B
+[β]B
+⟨b⟩
+1
+2
+for some
+consistent
+β ∈{0, 1}
+with [β]B
+T2A
+⟨b⟩
+[δb]A
+[b]A
+0
+0
+= ([δb]B
+0 , [δb]B
+1 ; ∆b)
+bit2A
+[b]B
+[β]B, [β]A
+[b]A
+1
+2
+= T2A ◦bit2T
+for some
+β ∈{0, 1}
+is true and 1{Cond} := 0 if Cond is false. For integers n ≥0 and k > 0, let n mod k denote the remainder
+of n modulo k taken from the interval 0 ≤(n mod k) ≤k −1. We write ZN := Z/NZ in short, and write
+[k] := {0, 1, . . . , k −1} for an integer k ≥1. For an integer M ≥2, let (aℓ−1 · · · a1a0)M denote the M-ary
+expression of an integer Pℓ−1
+j=0 ajM j.
+2.1
+Model for MPC
+We deal with secure two-party computation (2PC) protocols between parties P0 and P1 in the preprocessing
+model, consisting of an input-independent offline phase and an input-dependent online phase. The protocols
+in this paper are purely 2PC protocols, unlike the client-aided model [15] where the offline phase is supposed
+to be executed by a trusted client other than the two parties. Our main aim is to reduce the communication
+complexity (the numbers of communication rounds and communication bits) for the online phase, while
+we also require the offline phase to still have polynomial computational/communication complexity (unlike
+FSS-based approaches [11] using exponential offline computation).
+We assume that the two parties are semi-honest, and follow the standard security notion in [10]. In this
+setting, owing to Composition Theorem [10, Theorem 7.3.3], for any protocol Π involving some subprotocol
+Π′, if Π is secure assuming oracle access to the ideal functionality F′ of Π′ (F′-hybrid model), then Π is
+secure provided Π′ is securely implemented. Most of the protocols proposed in this paper can be easily
+proven secure in such a hybrid model.
+2.2
+Secret Sharing
+We use the following three kinds of 2-out-of-2 secret sharing (SS) schemes. Some of these shares can be
+converted into other kinds of shares by using protocols as in [21]; see Table 3 for their functionality and
+complexity (where the ‘T’ stands for “triplets”). We note that the auxiliary inputs [β]B and [β]A for bit2A can
+be generated in the offline phase by a standard technique using oblivious transfer, specifically
+ 2
+1
+
+-OT⌈log2 N⌉
+(see Section 2.3 below for the notation) where the plaintext space for [β]A is ZN. See Appendix A for details.
+2.2.1
+[]B-Sharing
+It is the ordinary additive SS scheme for bits: for a share ([]B-share) [b]B := ([b]B
+0 , [b]B
+1 ) for b ∈{0, 1}, we
+have b = [b]B
+0 ⊕[b]B
+1 . we assume that [b]B
+0 is held by party P0 only and [b]B
+1 is held by party P1 only. Now
+we introduce the following terminology:
+Definition 1. We call a share for b ∈{0, 1} of the form ([b]B
+0 , [b]B
+1 ) = (b, 0) (resp. ([b]B
+0 , [b]B
+1 ) = (0, b)) the
+P0-side (resp. P1-side) trivial []B-share for b.
+5
+
+2.2.2
+[]A-Sharing
+It is the ordinary additive SS scheme for integers in ZN for a suitably chosen integer N: for a share ([]A-
+share) [x]A := ([x]A
+0 , [x]A
+1 ) for x ∈ZN, we have x = [x]A
+0 + [x]A
+1 mod N. We assume that [x]A
+0 is held by
+party P0 only and [x]A
+1 is held by party P1 only.
+2.2.3
+⟨⟩-Sharing ([21])
+For b ∈{0, 1}, we let [δb]B
+0 , [δb]B
+1 , and ∆b be a triplet of bits satisfying the relation [δb]B
+0 ⊕[δb]B
+1 ⊕∆b = b,
+and let [δb]B
+0 be held by party P0 only, [δb]B
+1 be held by party P1 only, and ∆b be held by both parties. We
+write the share for b as ⟨b⟩= ([δb]B
+0 , [δb]B
+1 ; ∆b), and call it a ⟨⟩-share for b. We note that the pair ([δb]B
+0 ,
+[δb]B
+1 ) can be viewed as a []B-share for the bit δb := [δb]B
+0 ⊕[δb]B
+1 . Then for a []B-share [β]B, we say that a
+⟨⟩-share ⟨b⟩is consistent with [β]B if [δb]B
+0 = [β]B
+0 and [δb]B
+1 = [β]B
+1 .
+2.3
+Oblivious Transfer
+A 1-out-of-k oblivious transfer (OT) between a sender and a receiver is a 2PC protocol where the sender
+has input x0, . . . , xk−1, the receiver has input r ∈{0, . . . , k −1}, and after the protocol, the sender obtains
+no information on the receiver’s input and the receiver obtains xr and no other information on the sender’s
+input. In this paper, n parallel executions of 1-out-of-k OTs for ℓ-bit inputs for the sender is denoted by
+ k
+1
+
+-OTn
+ℓ. We sometimes omit the superscript ‘n’ when n = 1. Let FOT denote the ideal functionality for
+OT with suitable parameters.
+Here we suppose that an OT is executed by a standard technique as in [17] based on a vector oblivious
+linear evaluation (VOLE) correlation, which is generated according to [3] where the internal small OTs are
+executed with the method of [18]. Now the number of communication bits for executing a
+ k
+1
+
+-OTℓ(given a
+VOLE correlation) is 2⌈log2 k⌉ℓ+ ⌈log2 k⌉bits, while it spends ⌈log2 k⌉dimensions for a VOLE correlation.
+On the other hand, to generate a VOLE correlation of dimension d, the number of communication bits is
+approximately 2µ + λ + (µ + λ) log2 d bits where µ = µλ denotes the bit length of an element of a group for
+which the CDH assumption holds. See Appendix B for details.
+2.4
+(Modified) Beaver Triples and AND Operations (for []B-Shares)
+We use (plain and modified) AND operations of four types for shared bits: I-AND, II-AND, III-AND, and
+our proposed IV-AND, where the associated (modified) Beaver triples (BTs) are denoted by I-BT, II-BT,
+III-BT, and IV-BT, respectively. The ideal functionality to generate a T-BT uniformly at random is denoted
+by FT-BT. The functionalities and the costs of those (modified) AND operations are given in Table 4. We
+may write a I-AND operation and a II-AND operation simply by using the binary operation symbol ∧.
+A I-AND, i.e., the plain AND for shared bits, can be realized by using the following ordinary BT [1]: [a]B,
+[b]B, and [c]B, where c = a∧b. A II-AND can be realized by using “arithmetic blinding” [20] with a modified
+BT of the form [a]B = (a, 0), [b]B = (0, b), and [c]B, where c = a ∧b. A III-AND can be realized as described
+in [22, Section 3.1.1] with a modified BT of the form [a]B, [b]B, [c]B, [d]B, and [e]B, where d = a ∧b and
+e = a ∧c. These (modified) BTs can be generated by a standard technique using OT as specified in Table
+4: see Appendix C for details.
+As for IV-AND, we use the following modified BT, which can be generated by a standard technique using
+OT as specified in Table 4 (see Appendix C for details):
+[a]B , [b]B , [c]B , [d]B , [e]B , [f]B , where d = a ∧b, e = a ∧c, f = b ∧[b]B
+0 .
+Then IV-AND can be executed as follows:
+1. P0 computes X′
+0 ←[X]B
+0 ⊕[a]B
+0 , Y ′
+0 ←[Y ]B
+0 ⊕[b]B
+0 , and Z′
+0 ←[Z]B
+0 ⊕[c]B
+0 , and sends them to P1. On
+the other hand, P1 computes X′
+1 ←[X]B
+1 ⊕[a]B
+1 , Y ′
+1 ←[Y ]B
+1 ⊕[b]B
+1 , and Z′
+1 ←[Z]B
+1 ⊕[c]B
+1 , and sends
+them to P0.
+6
+
+Table 4: Functionalities and costs of (modified) AND operations.
+Operation
+Input
+Output
+Offline cost
+Online communication
+Rounds
+Bits
+I-AND
+[X]B, [Y ]B
+[X ∧Y ]B
+ 4
+1
+
+-OT1
+1
+4
+(plain AND)
+II-AND
+[X]B = (X, 0),
+[X ∧Y ]B
+ 2
+1
+
+-OT1
+1
+2
+[Y ]B = (0, Y )
+III-AND
+[X]B, [Y ]B, [Z]B
+[X ∧Y ]B,
+ 8
+1
+
+-OT2
+1
+6
+[X ∧Z]B
+IV-AND
+[X]B, [Y ]B, [Z]B
+[X ∧Y ]B,
+ 8
+1
+
+-OT3
+1
+6
+(our
+[X ∧Z]B,
+proposed)
+[Y ∧y0]B
+(y0 := [Y ]B
+0 )
+2. The parties locally compute X′ ←X′
+0 ⊕X′
+1, Y ′ ←Y ′
+0 ⊕Y ′
+1, and Z′ ←Z′
+0 ⊕Z′
+1.
+3. P0 outputs the following, where y0 := [Y ]B
+0 :
+[X ∧Y ]B
+0 ←([X]B
+0 ⊕X′
+1) ∧Y ′ ⊕X′ ∧[b]B
+0 ⊕[d]B
+0 ,
+[X ∧Z]B
+0 ←([X]B
+0 ⊕X′
+1) ∧Z′ ⊕X′ ∧[c]B
+0 ⊕[e]B
+0 ,
+[Y ∧y0]B
+0 ←([Y ]B
+0 ⊕Y ′
+1) ∧Y ′
+0 ⊕Y ′ ∧[b]B
+0 ⊕[f]B
+0 ,
+and P1 outputs the following:
+[X ∧Y ]B
+1 ←[a]B
+1 ∧Y ′ ⊕X′ ∧[b]B
+1 ⊕[d]B
+1 ,
+[X ∧Z]B
+1 ←[a]B
+1 ∧Z′ ⊕X′ ∧[c]B
+1 ⊕[e]B
+1 ,
+[Y ∧y0]B
+1 ←[b]B
+1 ∧Y ′
+0 ⊕[f]B
+1 .
+The correctness can be verified by a straightforward calculation, and the security can be proved in the
+FIV-BT-hybrid model via a standard proof technique (see Appendix D).
+2.5
+(Correlated) Multi-fan-in AND (for ⟨⟩-Shares)
+We use an N-fan-in AND operation for ⟨⟩-shares ⟨X0⟩, ⟨X1⟩, . . . , ⟨XN−1⟩described in [21, Section 3.1.4],
+which outputs a []B-share of the bit X0 ∧X1 ∧· · · ∧XN−1. Its auxiliary input is a so-called Beaver triple
+extension [20], N-BTE in short, which is a collection of []B-shares of the form ([aS]B)∅̸=S⊆[N] with the
+relations aS = V
+i∈S a{i} for each non-empty subset S ⊆[N]. Moreover, it should satisfy that for each
+i = 0, 1, . . . , N −1, ⟨Xi⟩is consistent with [a{i}]B (see Section 2.2 for the terminology). Given such ⟨⟩-
+shares and an N-BTE, the protocol requires no online communication. On the other hand, an N-BTE can be
+generated by a standard technique using OT, specifically
+ 2N
+1
+
+-OT2N−N−1. See Appendix E for details. We
+note that if the main input is a collection of []B-shares, then one-round online communication is required to
+convert the []B-shares to ⟨⟩-shares consistent with a given BTE.
+2.5.1
+New Correlated 3-fan-in AND
+In order to efficiently manipulate multiple 3-fan-in ANDs with partly common inputs, we introduce the
+following correlated 3-fan-in AND: the main input is ⟨⟩-shares ⟨X⟩, ⟨Y ⟩, ⟨Z⟩, and ⟨W⟩, and the protocol
+outputs []B-shares [X ∧Y ∧Z]B and [X ∧Y ∧W]B simultaneously.
+The auxiliary input is two 3-BTE’s
+([aS]B)∅̸=S⊆[3] and ([bS]B)∅̸=S⊆[3] that are correlated in a way that [a{0}]B = [b{0}]B, [a{1}]B = [b{1}]B,
+and [a{0,1}]B = [b{0,1}]B; such correlated 3-BTE’s can be generated by a standard technique using OT,
+7
+
+specifically
+ 16
+1
+
+-OT7 (see Appendix E.1 for details). It should also be satisfied that ⟨X⟩, ⟨Y ⟩, ⟨Z⟩, and
+⟨W⟩are consistent with [a{0}]B, [a{1}]B, [a{2}]B, and [b{2}]B, respectively. The protocol is similar to the
+ordinary 3-fan-in AND where ([aS]B)∅̸=S⊆[3] is used for computing [X ∧Y ∧Z]B and ([bS]B)∅̸=S⊆[3] is used
+for computing [X ∧Y ∧W]B. We note that if the computations of [X ∧Y ∧Z]B and [X ∧Y ∧W]B are
+performed separately, then a given []B-share [X]B should be converted to two individual ⟨⟩-shares ⟨X⟩
+beforehand (and similarly for ⟨Y ⟩), which results in larger online bit complexity.
+3
+Auxiliary One-Round Equality Testing Protocols
+In this section, we give two auxiliary equality testing protocols for plaintexts with one online communication
+round, which will be used in our first and second comparison protocols, respectively. Although the protocols
+here for n0-bit inputs require either an n0-fan-in AND or Θ(2n0)-bit communication, it will not affect the
+polynomial complexity of the main protocols with n-bit inputs because these equality testing protocols are
+used with parameter n0 = O(log n) owing to the fact that the bit length of the sum of all bits in an n-bit
+input is O(log n).
+3.1
+Our First Protocol
+Given P0’s input x = (xn0−1 · · · x1x0)2, P1’s input y = (yn0−1 · · · y1y0)2, and an n0-BTE ([aS]B)∅̸=S⊆[n0], the
+first protocol proceeds as follows:
+1. For i = 0, 1, . . . , n0 −1, P0 sets [eqi]B
+0
+←xi ⊕1; P1 sets [eqi]B
+1
+←yi; and the parties compute
+⟨eqi⟩←bit2T([eqi]B; [a{i}]B).
+2. The parties locally compute an n0-fan-in AND [eq]B ←Vn0−1
+i=0 ⟨eqi⟩by using the BTE ([aS]B)∅̸=S⊆[n0],
+and output [eq]B.
+The correctness follows from the fact that we have eqi = 1{xi = yi} for every i and we have x = y if and
+only if xi = yi for every i. The protocol requires 1 round for the first step (for bit2T) and no communication
+for the second step (cf. Section 2.5), therefore 1 online round in total. The number of online communication
+bits is 2n0 bits, and the number of offline communication bits is 2n0(2n0 −n0 −1) + n0 = O((2n0)2) bits
+(except for the setup of a VOLE correlation) for executing
+ 2n0
+1
+
+-OT2n0−n0−1 in generating the BTE.
+3.2
+Our Second Protocol
+Let the parties’ inputs be x ∈ZN and y ∈ZN for some parameter N. Then the second protocol proceeds as
+follows:
+1. For i = 0, 1, . . . , N −1, P0 sets [E0,i]B
+0 ←1{x = i} and [E1,i]B
+0 ←0; and P1 sets [E0,i]B
+1 ←0 and
+[E1,i]B
+1 ←1{y = i}.
+2. The parties compute [eq]B ←LN−1
+i=0 [E0,i]B ∧[E1,i]B by II-AND (see Section 2.4), and output [eq]B.
+The protocol requires 1 online round (for II-AND in the second step) in total. For the correctness, we first
+note that for each i = 0, 1, . . . , N −1, we have E0,i ∧E1,i = 1 if and only if x = i = y. Therefore, if x ̸= y
+then we have E0,i ∧E1,i = 0 for every i, while if x = y then we have E0,i ∧E1,i = 1 for precisely one i,
+i.e., i = x (= y). Hence we have eq = 1{x = y}, as desired. The number of online communication bits is
+2N = O(2n0) bits for computing N II-ANDs in the second step, and the number of offline communication
+bits is 3N = O(2n0) bits (except for the setup of a VOLE correlation) for executing
+ 2
+1
+
+-OTN
+1 in generating
+N II-BT’s.
+8
+
+4
+Our First Proposed Comparison Protocol Πcmp,1
+4.1
+A Three-Round Generic Construction
+First, we give a three-round comparison protocol using any one-round equality testing protocol as a subpro-
+tocol. Let P0’s input be x = (xn−1 · · · x1x0)2 and P1’s input be y = (yn−1 · · · y1y0)2. Then the protocol is
+described as follows:
+1.
+(a) For i = n −1, . . . , 2, 1, P0 sets [neqi]B
+0 ←xi; P1 sets [neqi]B
+1 ←yi; and the parties compute
+[neqi]A ←bit2A([neqi]B) (Round 1) where the plaintext space for [neqi]A is set to Zn.
+(b) For i = n −1, . . . , 1, 0, P0 sets [¬xi]B
+0 ←xi ⊕1 and [yi]B
+0 ←0; P1 sets [¬xi]B
+1 ←0 and [yi]B
+1 ←yi;
+and the parties compute [lti]B ←[¬xi]B ∧[yi]B (Round 1).
+2.
+(a) For i = n −1, . . . , 2, 1, the parties locally compute [neq[n−1,i]]A ←Pn−1
+j=i [neqj]A.
+(b) Then for i = n−1, . . . , 2, 1, the parties compute a []B-share [Zi]B of the bit Zi := 1{[neq[n−1,i]]A
+0 =
+(n −[neq[n−1,i]]A
+1 ) mod n} by using some one-round equality testing protocol (Round 2).
+3. The parties compute [lt]B ←[ltn−1]B ⊕Ln−2
+i=0 ([Zi+1]B ∧[lti]B) (Round 3) and output [lt]B.
+Correctness.
+First note that neqi = 1{xi ̸= yi} and lti = 1{xi < yi} for every i.
+Then for each
+i = n−1, . . . , 2, 1, we have Zi = 1 (or equivalently, neq[n−1,i] = 0 in Zn) if and only if neqj = 0 (i.e., xj = yj)
+for every j = i, i + 1, . . . , n −1, namely (xn−1, . . . , xi+1, xi) = (yn−1, . . . , yi+1, yi). Now the final step simply
+implements the comparison under the lexicographic ordering. Hence we have lt = 1{x < y}.
+4.2
+Our Proposed Two-Round Protocol
+When instantiating the protocol above with the equality testing protocol in Section 3.1, the second round
+becomes an n0-fan-in AND with n0 := ⌈log2 n⌉to compute each [Zi]B. Now the AND operation [Zi+1]B ∧
+[lti]B in the third round can be absorbed into the former n0-fan-in AND, reducing one communication round.
+This results in a two-round comparison protocol Πcmp,1 as in Protocol 1.
+As for the online communication in Protocol 1, Line 15 where (n −1)n0 bit2Ts (each requiring 2-bit
+communication) are executed in total is dominant. Hence the online bit complexity of Protocol 1 is O(nn0) =
+O(n log n) bits.
+On the other hand, as for the offline communication, generating n −1 (n0 + 1)-BTEs
+(each requiring approximately (2n0+1)2-bit communication) is dominant. Hence the offline bit complexity of
+Protocol 1 is O(n(2n0+1)2) = O(n3) bits. A more precise evaluation as in Table 1 is explained in Appendix
+F.
+5
+Our Second Proposed Comparison Protocol Πcmp,2
+Our second proposed protocol is also based on the construction in Section 4.1, but we use the internal equality
+testing protocol in Section 3.2. In this instantiation, for each i = n −2, . . . , 1, 0, the []B-share [Zi+1]B is
+computed as follows:
+1. For each j = 0, 1, . . . , n −1:
+• P0 sets [eqi+1,0,j]B
+0 ←1{[neq[n−1,i+1]]A
+0 = j}, and P1 sets [eqi+1,0,j]B
+1 ←0.
+• P0 sets [eqi+1,1,j]B
+0 ←0, and P1 sets [eqi+1,1,j]B
+1 ←1{n −[neq[n−1,i+1]]A
+1 mod n = j}.
+2. The parties compute [Zi+1]B ←Ln−1
+j=0 ([eqi+1,0,j]B ∧[eqi+1,1,j]B).
+9
+
+Protocol 1 Our First Two-Round Plaintext Comparison Protocol Πcmp,1
+Input: P0 has input x = (xn−1 · · · x1x0)2, and P1 has input y = (yn−1 · · · y1y0)2
+(Parameter: n0 := ⌈log2 n⌉)
+Output: []B-share [1{x < y}]B of the bit 1{x < y}
+1: for i = n −1, . . . , 2, 1 do
+2:
+Locally set [neqi]B
+0 ←xi and [neqi]B
+1 ←yi
+3:
+Compute [neqi]A ←bit2A([neqi]B) where the plaintext space for [neqi]A is set to Zn
+4: end for
+5: for i = n −1, . . . , 1, 0 do
+6:
+Locally set [¬xi]B
+0 ←xi⊕1, [¬xi]B
+1 ←0, [yi]B
+0 ←0, and [yi]B
+1 ←yi; and compute [lti]B ←[¬xi]B∧[yi]B
+by II-AND (see Section 2.4)
+7: end for
+8: for i = n −1, . . . , 2, 1 do
+9:
+Locally compute [neq[n−1,i]]A ←Pn−1
+j=i [neqj]A
+10:
+P0 parses [neq[n−1,i]]A
+0
+as (νi,0,n0−1 · · · νi,0,1νi,0,0)2, and P1 parses (n −[neq[n−1,i]]A
+1 ) mod n as
+(νi,1,n0−1 · · · νi,1,1νi,1,0)2
+11: end for
+12: for i = n −2, . . . , 1, 0 do
+13:
+Prepare (in the offline phase) an (n0 + 1)-BTE ([ai,S]B)∅̸=S⊆[n0+1] (see Section 2.5)
+14:
+for j = n0 −1, . . . , 1, 0 do
+15:
+Locally set [eqi+1,j]B
+0
+←νi+1,0,j ⊕1 and [eqi+1,j]B
+1
+←νi+1,1,j; and compute ⟨eqi+1,j⟩←
+bit2T([eqi+1,j]B; [ai,{j}]B)
+16:
+end for
+17:
+Compute ⟨lti⟩←bit2T([lti]B; [ai,{n0}]B)
+18: end for
+19: By using (n0 +1)-fan-in AND with the BTE, locally compute [lt]B ←[ltn−1]B ⊕
+n−2
+M
+i=0
+n0−1
+^
+j=0
+⟨eqi+1,j⟩∧⟨lti⟩
+
+20: output [lt]B
+Now we observe (by using the terminology in Definition 1) that [eqi+1,0,j]B is a P0-side trivial []B-share,
+[eqi+1,1,j]B is a P1-side trivial []B-share, and [lti]B is the AND of a P0-side trivial []B-share [¬xi]B and a
+P1-side trivial []B-share [yi]B. Moreover, for two P0-side trivial []B-shares [X]B = (X, 0) and [Y ]B = (Y, 0),
+the []B-share (X ∧Y , 0) can be used as a result of [X]B ∧[Y ]B, which can be obtained locally. The same
+holds for the AND of two P1-side trivial []B-shares. Hence, to compute [Zi+1]B ∧[lti]B, we can first compute
+[eqi+1,0,j]B ∧[¬xi]B and [eqi+1,1,j]B ∧[yi]B locally and then compute their AND by using a (not multi-fan-in)
+II-AND:
+[eqi+1,0,j]B ∧[eqi+1,1,j]B ∧[lti]B = [eqi+1,0,j]B ∧[eqi+1,1,j]B ∧
+
+[¬xi]B ∧[yi]B
+=
+
+[eqi+1,0,j]B ∧[¬xi]B
+∧
+
+[eqi+1,1,j]B ∧[yi]B
+and the two terms in the parentheses in the right-hand side can be locally computed and are again trivial
+[]B-shares. Based on the argument, we obtain our second two-round protocol Πcmp,2 as in Protocol 2.
+As for the online communication in Protocol 2, Line 14 where (n −1)n II-ANDs (each requiring 2-bit
+communication) are executed in total is dominant. Hence the online bit complexity of Protocol 2 is O(n2)
+bits. On the other hand, as for the offline communication, generating (n −1)n II-BTs for the II-ANDs in
+Line 14 (each requiring approximately 3-bit communication) is dominant. Hence the offline bit complexity
+of Protocol 2 is O(n2) bits. A more precise evaluation as in Table 1 is explained in Appendix G.
+10
+
+Protocol 2 Our Second Two-Round Plaintext Comparison Protocol Πcmp,2
+Input: P0 has input x = (xn−1 · · · x1x0)2, and P1 has input y = (yn−1 · · · y1y0)2
+Output: []B-share [1{x < y}]B of the bit 1{x < y}
+1: for i = n −1, . . . , 2, 1 do
+2:
+Locally set [neqi]B
+0 ←xi and [neqi]B
+1 ←yi
+3:
+Compute [neqi]A ←bit2A([neqi]B) where the plaintext space for [neqi]A is set to Zn
+4: end for
+5: for i = n −1, . . . , 2, 1 do
+6:
+Locally compute [neq[n−1,i]]A ←Pn−1
+j=i [neqj]A
+7: end for
+8: for i = n −2, . . . , 1, 0 do
+9:
+for j = 0, 1, . . . , n −1 do
+10:
+P0 sets [εi,0,j]B
+0 ←1{[neq[n−1,i+1]]A
+0 = j} ∧(xi ⊕1), and P1 sets [εi,0,j]B
+1 ←0
+11:
+P0 sets [εi,1,j]B
+0 ←0, and P1 sets [εi,1,j]B
+1 ←1{(n −[neq[n−1,i+1]]A
+1 ) mod n = j} ∧yi
+12:
+end for
+13: end for
+14: By using II-AND, compute [lt]B ←[ltn−1]B ⊕
+n−2
+M
+i=0
+n−1
+M
+j=0
+[εi,0,j]B ∧[εi,1,j]B
+15: output [lt]B
+6
+Our Third Proposed Comparison Protocol Πcmp,3
+Our third proposed protocol is based on a traditional tree-based construction, where the inputs x and y are
+parsed in quaternary (instead of binary) expressions as x = (x⌈n/2⌉−1 · · · x1x0)4 and y = (y⌈n/2⌉−1 · · · y1y0)4,
+and the partial results [lti]B = [1{xi < yi}]B and [eqi]B = [1{xi = yi}]B are combined by using a ternary
+(instead of binary) tree. To compute [lti]B and [eqi]B more efficiently than the previous OT-based protocols
+[8, 12, 22], we develop the following custom-tailored Boolean circuits by searching for decompositions of
+truth tables for comparison/equality of quaternary integers involving as many common (reusable) factors as
+possible. The correctness can be checked for all cases of xi and yi as in Fig. 1.
+Theorem 1. Let xi, yi ∈{0, 1, 2, 3}, and put
+[X]B = ([X]B
+0 , [X]B
+1 ) := (1{xi ∈{0, 2}}, 1{yi ∈{0, 2}}) ,
+[Y ]B = ([Y ]B
+0 , [Y ]B
+1 ) := (1{xi ∈{0, 1}}, 1{yi ∈{0, 1}}) ,
+[Z]B = ([Z]B
+0 , [Z]B
+1 ) := (1{xi = 2}, 1{yi = 1}) .
+Then, by putting
+tmp1 := X ∧Y , tmp2 := X ∧Z , tmp3 := Y ∧[Y ]B
+0 ,
+we have
+1{xi = yi} = tmp1 ⊕1{xi ∈{0, 3}} ⊕1{yi ∈{1, 2}} ,
+1{xi < yi} = tmp2 ⊕tmp3 .
+Hence
+[eq[vi]]B := [tmp1]B ⊕(1{xi ∈{0, 3}}, 1{yi ∈{1, 2}}) ,
+[lt[vi]]B := [tmp2]B ⊕[tmp3]B
+are correct []B-shares of bits 1{xi = yi} and 1{xi < yi}, respectively.
+11
+
+1{𝑥𝑖∈{0,2}}
+1{𝑦𝑖∈{0,2}}
+𝑋
+1{𝑥𝑖∈{0,1}}
+1{𝑦𝑖∈{0,1}}
+𝑌
+✓
+✓
+✓
+✓
+✓✓✓✓
+✓
+✓
+✓✓
+✓
+✓
+1{𝑥𝑖= 2}
+1{𝑦𝑖= 1}
+𝑍
+𝑋
+𝑌
+𝑡𝑚𝑝1
+𝑋
+𝑍
+𝑡𝑚𝑝2
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓✓
+✓
+✓
+✓
+✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+𝑌
+1{𝑥𝑖∈{0,1}}
+𝑡𝑚𝑝3
+𝑡𝑚𝑝2
+𝑡𝑚𝑝3
+1{𝑥𝑖< 𝑦𝑖}
+✓
+✓
+✓✓
+✓✓
+✓✓✓
+✓✓
+✓
+1{𝑥𝑖∈{0,3}}
+1{𝑦𝑖∈{1,2}}
+1{𝑥𝑖= 𝑦𝑖}
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓✓✓✓
+✓✓✓✓
+✓
+✓
+✓
+✓
+𝑡𝑚𝑝1
+✓
+✓
+✓
+✓
+⊕
+=
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓✓✓✓
+✓✓✓✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓✓
+✓✓
+✓✓
+✓✓
+✓✓✓✓
+✓✓✓✓
+✓✓
+✓✓
+✓✓
+✓✓
+⊕
+=
+⊕
+=
+∧
+=
+∧
+=
+∧
+=
+⊕
+⊕
+=
+⊕
+=
+Figure 1: A visualized proof of Theorem 1: for the tables, the cell at the a-th column from the left (0 ≤a ≤3)
+and the b-th row from the bottom (0 ≤b ≤3) represents the bit value for the case (xi, yi) = (a, b), and ‘✓’
+means 1 and the empty cell means 0.
+Protocol 3 Our Third ∼6n-bit Plaintext Comparison Protocol Πcmp,3
+Input: P0 has input x = (xq−1 · · · x1x0)4, and P1 has input y = (yq−1 · · · y1y0)4, where q := ⌈n/2⌉.
+Moreover, the parties have a ternary tree T with q leaves vq−1, . . . , v1, v0 (from left to right) and ⌈log3 q⌉+
+1 levels as described in the text.
+Output: []B-share [1{x < y}]B of the bit 1{x < y}
+1: for i = q −1, . . . , 1, 0 do
+2:
+Compute [lt[vi]]B and [eq[vi]]B (or only [lt[vi]]B, when i = 0) by subprotocol Πsub,1 with inputs i, xi,
+yi, n, and q
+3: end for
+4: for j = ⌈log3 q⌉−1, . . . , 1, 0, and each internal node v of T at the j-th level do
+5:
+Compute [lt[v]]B and [eq[v]]B (or only [lt[v]]B, when v is the rightmost node at the same level) by
+subprotocol Πsub,2 with inputs T, v, and [lt[u]]B and [eq[u]]B (if it exists) for each child node u of v
+6: end for
+7: output [lt[v∗]]B, where v∗is the root of T
+Now we obtain our third proposed protocol as in Protocol 3, where the part of digit-wise compari-
+son/equality using Theorem 1 is given as subprotocol Πsub,1 (Protocol 4) and the internal computation
+(involving comparison by lexicographic ordering) at the part of the tree-shaped aggregation is given as sub-
+protocol Πsub,2 (Protocol 5). Here, let T be a ternary tree with ⌈log3 q⌉+ 1 levels and leaves vq−1, . . . , v1, v0
+from left to right, where q := ⌈n/2⌉. We suppose that the lowest (i.e., ⌈log3 q⌉-th) level consists of leaves vh
+with smaller indices h, and each node at the 0-th to (⌈log3 q⌉−2)-th levels has three child nodes, while at
+the (⌈log3 q⌉−1)-th level, there is at most one node that has precisely two child nodes. See Fig. 2 for an
+example.
+Correctness.
+The correctness of Protocol 3 is verified once we notice that Πsub,1 correctly computes
+lt[vi] = 1{xi < yi} and eq[vi] = 1{xi = yi} (owing to Theorem 1) and Πsub,2 correctly implements the
+comparison by the lexicographic ordering and the equality testing by looking at all digits. See Appendix H
+for details.
+Round/Bit Complexity.
+As for the round complexity, the subprotocol Πsub,1 requires 1 online round in
+any case, and the subprotocol Πsub,2 (called ⌈log3 q⌉times in total) requires 1 online round as well (for bit2Ts
+and AND operations in parallel). Hence Protocol 3 requires ⌈log3 q⌉+ 1 online rounds in total.
+12
+
+Protocol 4 Subprotocol Πsub,1 for Protocol 3
+Input: Index i, integers xi, yi ∈{0, 1, 2, 3}, and parameters n and q
+Output: []B-shares [lt[vi]]B and [eq[vi]]B (or only [lt[vi]]B, when i = 0)
+1: if n is odd and i = q −1 then
+2:
+Locally set [¬xi]B
+0
+←xi ⊕1, [¬xi]B
+1
+←0, [yi]B
+0
+←0, and [yi]B
+1
+←yi; and compute [lt[vi]]B ←
+[¬xi]B ∧[yi]B by II-AND
+3:
+Locally set [eq[vi]]B
+0 ←xi ⊕1 and [eq[vi]]B
+1 ←yi
+4:
+output [lt[vi]]B and [eq[vi]]B
+5: else
+6:
+Locally set
+[X]B
+0 ←1{xi ∈{0, 2}} , [X]B
+1 ←1{yi ∈{0, 2}} ,
+y0 := [Y ]B
+0 ←1{xi ∈{0, 1}} , y1 := [Y ]B
+1 ←1{yi ∈{0, 1}} ,
+[Z]B
+0 ←1{xi = 2} , [Z]B
+1 ←1{yi = 1} .
+7:
+if i > 0 then
+8:
+Compute [tmp1]B = [X ∧Y ]B, [tmp2]B = [X ∧Z]B, and [tmp3]B = [Y ∧y0]B by IV-AND (see
+Section 2.4)
+9:
+P0 computes [eq[vi]]B
+0 ←[tmp1]B
+0 ⊕1{xi ∈{0, 3}}; P1 computes [eq[vi]]B
+1 ←[tmp1]B
+1 ⊕1{yi ∈{1, 2}};
+and the parties locally compute [lt[vi]]B ←[tmp2]B ⊕[tmp3]B
+10:
+output [lt[vi]]B and [eq[vi]]B
+11:
+else
+12:
+Compute [tmp1]B = [X]B ∧[Z]B by I-AND
+13:
+Locally set [y0]B
+0 ←y0, [y0]B
+1 ←0, [y1]B
+0 ←0, and [y1]B
+1 ←y1; and compute [tmp2]B = [y0]B ∧[y1]B
+by II-AND
+14:
+Locally set [lt[vi]]B ←[tmp1]B ⊕[tmp2]B ⊕[y0]B
+15:
+output [lt[vi]]B
+16:
+end if
+17: end if
+As for the online bit complexity, the subprotocol Πsub,1 for each i = 0, 1, . . . , q −1 requires at most 6-bit
+communication, while the subprotocol Πsub,2 for each of the ⌈(q −1)/2⌉∼q/2 internal nodes of the tree T
+requires at most 4 · 2 + 4 = 12-bit communication (for four bit2Ts and one I-AND). Hence the total online
+bit complexity is asymptotically 6 · q + 12 · q/2 = 12q ∼6n bits. On the other hand, as for the offline
+bit complexity, both of the cost for the subprotocol Πsub,1 for each i = 0, 1, . . . , q −1 and the cost for the
+subprotocol Πsub,2 for each of the ⌈(q −1)/2⌉∼q/2 internal nodes of the tree T are constant (independent
+of n), therefore the total offline bit complexity is O(q) = O(n) bits. A more precise evaluation as in Table 1
+is explained in Appendix I.
+7
+Conclusion
+In this work, we presented three novel secure comparison protocols over plaintexts, achieving either a constant
+two-round or online bandwidth of asymptotically 6n bits. While our contributions significantly advance
+the state-of-the-art, two challenging directions remain for future research: (1) further reducing the round
+complexity, and (2) further reducing the online communication complexity. Both tasks appear non-trivial.
+Regarding the first challenge, our two-round constructions (Protocols 1 and 2) fundamentally rely on a
+two-round equality testing framework. Achieving a one-round comparison protocol would likely necessitate
+a one-round equality testing primitive—a feat that surpasses the inherent two-round barrier of GC—or a
+complete departure from the “leftmost differing bit” strategy employed in this work. Regarding the second
+challenge, while exploring different radix representations (e.g., N > 4) or alternative tree structures remains
+13
+
+Protocol 5 Subprotocol Πsub,2 for Protocol 3
+Input: The tree T, a node v, and []B-shares [lt[u]]B and [eq[u]]B (if it exists) for each child node u of v
+Output: []B-shares [lt[v]]B and [eq[v]]B (or only [lt[v]]B, when v is the rightmost node at the same level)
+1: if v is not the rightmost node at the same level then
+2:
+if v has three child nodes, say u2, u1, and u0 from left to right then
+3:
+Prepare (in the offline phase) a correlated 3-BTE ([av,S]B, [bv,S]B)∅̸=S⊆[3] (see Section 2.5.1)
+4:
+Compute ⟨eq[u2]⟩←bit2T([eq[u2]]B; [av,{0}]B), ⟨eq[u1]⟩←bit2T([eq[u1]]B; [av,{1}]B), ⟨lt[u0]⟩←
+bit2T([lt[v0]]B; [av,{2}]B), and ⟨eq[u0]⟩←bit2T([eq[v0]]B; [bv,{2}]B)
+5:
+By using I-AND and correlated 3-fan-in-AND (see Section 2.5.1), compute
+[lt[v]]B ←[lt[u2]]B ⊕[eq[u2]]B ∧[lt[u1]]B ⊕⟨eq[u2]⟩∧⟨eq[u1]⟩∧⟨lt[u0]⟩,
+[eq[v]]B ←⟨eq[u2]⟩∧⟨eq[u1]⟩∧⟨eq[u0]⟩
+6:
+else
+7:
+Let the two child nodes of v be u1 and u0 from left to right
+8:
+By using III-AND, compute [lt[v]]B ←[lt[u1]]B ⊕[eq[u1]]B ∧[lt[u0]]B and [eq[v]]B ←[eq[u1]]B ∧
+[eq[u0]]B
+9:
+end if
+10:
+output [lt[v]]B and [eq[v]]B
+11: else
+12:
+if v has three child nodes, say u2, u1, and u0 from left to right then
+13:
+Prepare (in the offline phase) a 3-BTE ([av,S]B)∅̸=S⊆[3]
+14:
+Compute ⟨eq[u2]⟩←bit2T([eq[u2]]B; [av,{0}]B), ⟨eq[u1]⟩←bit2T([eq[u1]]B; [av,{1}]B), and ⟨lt[u0]⟩←
+bit2T([lt[v0]]B; [av,{2}]B)
+15:
+By using I-AND and 3-fan-in AND, compute
+[lt[v]]B ←[lt[u2]]B ⊕[eq[u2]]B ∧[lt[u1]]B ⊕⟨eq[u2]⟩∧⟨eq[u1]⟩∧⟨lt[u0]⟩
+16:
+else
+17:
+Let the two child nodes of v be u1 and u0 from left to right
+18:
+By using I-AND, compute [lt[v]]B ←[lt[u1]]B ⊕[eq[u1]]B ∧[lt[u0]]B
+19:
+end if
+20:
+output [lt[v]]B
+21: end if
+14
+
+𝑣1 𝑣0
+𝑣2
+𝑣3
+𝑣4
+𝑣5
+𝑣6
+𝑣7
+𝑣8
+𝑣9
+𝑣10
+𝑣11
+𝑣12
+𝑣13
+𝑣14
+𝑣15
+Figure 2: Example of the ternary tree T in Protocol 3, where q = 16.
+a possibility, our 6n-bit protocol (Protocol 3) already incorporates significant optimizations via custom-
+tailored circuit formulas and specialized multiplication gates. Substantial further reductions would likely
+require the development of entirely new encoding techniques or cryptographic primitives to overcome the
+current efficiency plateau.

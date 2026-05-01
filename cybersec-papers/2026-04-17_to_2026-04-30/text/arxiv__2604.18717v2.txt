@@ -1,0 +1,775 @@
+*Correspondence Author: khaled.kirah@eng.asu.edu.eg 
+Ray Iskander: ray@verdictsecurity.com 
+ 
+From Finite Enumeration to Universal Proof: Ring-
+Theoretic Foundations for PQC Hardware Masking 
+Verification 
+Ray Iskander1, Khaled Kirah2,* 
+1Verdict Security 
+2Faculty of Engineering, Ain Shams University, Cairo, Egypt 
+Keywords: Post-Quantum Cryptography, PQC, Formal Verification, Masking, Side-Channel 
+Analysis, Lean 4, Interactive Theorem Proving, NTT, ML-KEM, ML-DSA, FIPS 203, FIPS 
+204 
+Abstract 
+Formal verification of masking in post-quantum cryptographic (PQC) hardware relies on 
+SMT solvers over finite domains. Our prior work established structural dependency analysis 
+at scale [1] and quantified the security margin of partial NTT masking [2]. QANARY, our 
+structural dependency analysis framework, verified 1.17 million cells across 30 modules of 
+the Adams Bridge ML-DSA/ML-KEM accelerator [3, 4], but its core soundness result 
+(Theorem 3.9.1) was machine-checked only at 𝑞= 5 via 225 Boolean wire functions. This 
+left portability to ML-KEM (𝑞= 3,329, FIPS 203 [5]) and ML-DSA (𝑞= 8,380,417, FIPS 
+204 [6]) as an open gap. NIST IR 8547 [7] (March 2025) motivates closing such gaps. We 
+present the first machine-checked universal proof of the 𝑟-free sub-theorem of Theorem 3.9.1: 
+for every 𝑞> 0, every wire function, and every pair of secrets, value-independence implies 
+identical marginal distributions. The proof, in Lean 4 [8] with Mathlib [9], requires five lines 
+versus 225 finite evaluations. It is sorry-free, reducing the trusted base from {Z3 [10], CVC5 
+[11], Python} to the Lean 4 kernel. We provide nine theorems (T1–T6, T1’, T3’) covering 
+reparametrization, bijectivity, overflow bounds, RNG bias, and a universal non-tightness 
+counterexample for all 𝑞≥2. The results establish commutative ring axioms of ℤ/𝑞ℤ as the 
+natural abstraction layer for arithmetic masking verification. 
+1. Introduction 
+The finalization of ML-KEM (FIPS 203) and ML-DSA (FIPS 204) in August 2024 marks the 
+beginning of a large-scale migration to post-quantum cryptography. NIST IR 8547, published 
+in March 2025, establishes the transition timeline and recommends formal methods for 
+validating PQC implementations. For hardware accelerators implementing these standards, 
+masked arithmetic over ℤ𝑞, particularly within Number Theoretic Transform (NTT) 
+butterflies, is the primary defense against power side-channel attacks. 
+This paper is the third in a series addressing PQC hardware security from complementary 
+angles: scalable verification tooling (Paper 1) [1], attack-surface quantification (Paper 2) [2], 
+universal formal foundations (this paper), and probabilistic completeness (forthcoming). Each 
+paper in the series is self-contained; the present paper can be read without prior familiarity 
+with Papers 1–2. Readers seeking the practical motivation for the universal proof, namely, 
+why SMT-verified-at-𝑞= 5 was insufficient, will find it developed in Paper 2. In paper [1], 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+2 
+we introduced QANARY, a structural dependency analysis framework that scaled to 1.17 
+million cells across 30 modules and identified structural vulnerabilities independently 
+confirmed in Ref. [12] (see [1] for details). In paper [2], we demonstrated that partial NTT 
+masking in the Adams Bridge accelerator leaves security margins 25–29 bits smaller than 
+claimed. 
+QANARY’s soundness rests on Theorem 3.9.1: if a wire function is value-independent of the 
+secret, then its marginal distribution is constant, implying zero mutual information with the 
+secret. In [2], this theorem was machine-checked by Z3 and CVC5 at modulus 𝑞= 5 by 
+exhaustively enumerating all 225 Boolean wire functions over ℤ5 × ℤ5. This finite-domain 
+verification, while providing strong evidence, cannot structurally guarantee correctness at the 
+production moduli 𝑞= 3,329 (ML-KEM) or 𝑞= 8,380,417 (ML-DSA). SMT solvers 
+enumerate; they cannot perform structural induction. 
+This paper closes that gap. We contribute: 
+1. A universal Lean 4 proof of the 𝑟-free sub-theorem of Theorem 3.9.1, valid for all 
+𝑞> 0, all wire functions 𝑤: ℤ𝑞× ℤ𝑞→𝛽 (for arbitrary output type 𝛽), and all secrets 
+𝑥, 𝑥′. The proof requires five lines of tactic script (Section 4). By the law of total 
+probability, establishing this 𝑟-free algebraic property is the exact prerequisite for full 
+probabilistic security. 
+2. Universal proofs of six supporting theorems (T2–T6): reparametrization round-
+trips for Boolean and arithmetic masking, reparametrization bijectivity, overflow 
+bounds bridging to bit-vector implementations, RNG bias characterization, and a 
+universal non-tightness counterexample showing that the converse of Theorem 3.9.1 
+fails for every 𝑞≥2 (Section 5). 
+3. A methodological insight: the five-line proof follows from commutative ring axioms 
+alone (sub_add_cancel in Mathlib’s CommRing instance for ℤ/𝑞ℤ). The secret-mask 
+reparametrization is a ring identity, not a computational procedure. This reveals that 
+ring theory, not bit-vector SAT, is the natural abstraction layer for arithmetic masking 
+verification (Section 6). 
+We emphasize that the simplicity of the proof is the point, not a weakness. The Z3/CVC5 
+approach required 225 evaluations not because the property is complex, but because bit-
+vector SAT obscures the algebraic structure that makes it straightforward. The five-line proof 
+is evidence that the SADC framework has a natural algebraic foundation, and that prior 
+finite-domain approaches were working in the wrong formalism. For practitioners, this means 
+that QANARY’s soundness guarantee now covers every NIST PQC parameter set, present 
+and future, without re-verification. 
+The entire proof suite is sorry-free: 1,739 Lean 4 build tasks (as reported by lake build), zero 
+sorry, zero errors, on Lean 4.30.0-rc1 with Mathlib pinned to commit 322515540d7f. The 
+main theorem and supporting lemmas T1’–T4, T5 universal bounds, and T6 are kernel-
+verified; T5’s ML-KEM instance uses native compilation (see Section 5.4). The artifact is 
+publicly available at https://github.com/rayiskander2406/qanary-universal-masking-proofs-
+arXiv-2604.18717 and archived on Zenodo (see Code and Data Availability). 
+Paper organization. Section 2 reviews the QANARY verification hierarchy and the finite-
+domain gap. Section 3 surveys related work on formal masking verification. Section 4 
+presents the main theorem. Section 5 presents the supporting proof suite. Section 6 discusses 
+implications for certification, portability, and tool trust. Section 7 addresses limitations and 
+future work. Section 8 concludes. 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+3 
+2. Background 
+2.1. Arithmetic Masking in NTT Hardware 
+First-order arithmetic masking splits a secret 𝑥∈ℤ𝑞 into two shares 𝑠0, 𝑠1 ∈ℤ𝑞 satisfying 
+𝑠0 + 𝑠1 ≡𝑥 (mod 𝑞). An adversary observing a single wire (the standard probing model [13]) 
+should learn nothing about 𝑥. 
+Definition 1 (Wire Function). A wire function is a map 𝑤: ℤ𝑞× ℤ𝑞→𝛽 where 𝛽 is an 
+arbitrary output type. The inputs are shares (𝑠0, 𝑠1). 
+Definition 2 (Arithmetic Reparametrization). Given secret 𝑥 and mask 𝑠1, the arithmetic 
+reparametrization computes 𝑠0 = 𝑥−𝑠1 in ℤ𝑞. This re-expresses 𝑤(𝑠0, 𝑠1) as 𝑤(𝑥−𝑠1, 𝑠1), 
+a function of (𝑥, 𝑠1). 
+Definition 3 (Value-Independence). A wire function 𝑤 is value-independent of 𝑥 if 
+∀ 𝑠1, 𝑥, 𝑥′ ∈ℤ𝑞:  𝑤(𝑥−𝑠1, 𝑠1) = 𝑤(𝑥′ −𝑠1, 𝑠1). 
+When 𝑠1 is drawn uniformly from ℤ𝑞, value-independence implies that the conditional 
+distribution of 𝑤 given 𝑥 does not depend on 𝑥, yielding 𝐼(𝑥;  𝑤) = 0 . This is the 
+distributional security guarantee that QANARY’s structural dependency analysis (SADC) 
+checks. 
+2.2. The QANARY Verification Hierarchy 
+QANARY organizes verification into four stages of increasing precision: 
+1. D0/D1 queries: for each wire, determine which shares influence its value. A wire 
+depending only on 𝑠0 or only on 𝑠1 is trivially secure. 
+2. Fresh masking (FM): identify wires protected by fresh randomness, which masks the 
+dependence on the secret. 
+3. Boolean SADC: for Boolean-masked domains, check value-independence via the 
+XOR reparametrization. 
+4. Arithmetic SADC: for arithmetic-masked domains (NTT butterflies, Barrett 
+reduction), check value-independence via the modular subtraction reparametrization 
+(Definition 2). 
+Theorem 3.9.1 is the soundness guarantee for stage 4: any wire that SADC labels SECURE 
+(i.e., value-independent) provably leaks no information about the secret. 
+2.3. The Finite-Domain Gap 
+In Paper 2, Theorem 3.9.1 was verified by encoding it in the quantifier-free bit-vector theory 
+(QF_BV) and checking with Z3 and CVC5 at 𝑞= 5. At this modulus, the wire function 
+space 𝑤: ℤ5 × ℤ5 →{0,1} has 225 elements (one Boolean output per input pair). Both solvers 
+confirmed the theorem with zero disagreements across 363 dual-solver checks. 
+This verification is strong evidence but has three structural limitations: 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+4 
+1. No induction. SMT solvers cannot perform structural induction over 𝑞. A proof at 
+𝑞= 5 is logically independent of a proof at 𝑞= 3,329. 
+2. Exponential scaling. At 𝑞= 3,329, the wire space has 233292 = 211,082,241 elements, 
+far beyond feasible enumeration. 
+3. Trusted base. Correctness depends on the absence of bugs in Z3, CVC5, and the 
+Python encoding that generates the SMT-LIB2 queries. 
+Paper 2 explicitly listed this finite-domain ceiling as the one remaining open methodological 
+gap (Section 6, Limitation (ii)). This paper closes it. 
+2.4. Interactive Theorem Proving with Lean 4 
+Lean 4 is a dependently typed programming language and interactive theorem prover (ITP). 
+Mathlib, its mathematical library, provides the type ZMod q: the quotient ring ℤ/𝑞ℤ with a 
+CommRing instance. Arithmetic in ZMod q is modular by construction, there are no bit-
+vector overflow concerns. 
+A Lean 4 proof is kernel-verified: the Lean kernel independently checks every proof term, 
+providing a minimal trusted base. A proof marked sorry-free contains no unverified stubs 
+(sorry or admit). 
+3. Related Work 
+Table 1 summarizes the landscape. We distinguish three axes: the masking domain (Boolean 
+vs. arithmetic), whether the result is universal over parameters, and whether the formalization 
+targets NTT-specific hardware. 
+Table 1. Comparison of formal masking verification approaches. “Universal” means the 
+result holds for all parameter values (modulus, bit-width), not just specific instances. “NTT-
+specific” means the formalization addresses arithmetic operations within NTT butterflies. 
+Tool / Work 
+Venue 
+Proof System 
+Masking 
+Universal 
+NTT-Specific 
+Kernel-
+Verified 
+maskVerif 
+[14] 
+EUROCR
+YPT 2015 
+EasyCrypt 
+Boolean 
+No 
+No 
+Yes 
+(EasyCryp
+t) 
+REBECC
+A [15] 
+EUROCR
+YPT 2018 
+— 
+Boolean 
+No 
+No 
+No 
+SILVER 
+[16] 
+ASIACRY
+PT 2020 
+Isabelle/H
+OL 
+Boolean 
+Partial 
+(circuit, 
+not field)a 
+No 
+Yes 
+(Isabelle) 
+Coco [17] 
+USENIX 
+2021 
+Isabelle/H
+OL 
+Boolean 
+No 
+No 
+Yes 
+(Isabelle) 
+Ref. [18] 
+ACNS 
+2023 
+Isabelle/H
+OL 
+Arithmetic Partial 
+(circuit, 
+not field)a 
+No 
+Yes 
+(Isabelle) 
+QANARY 
+[1] 
+— 
+Z3 / CVC5 Arithmetic Nob 
+Yes 
+No (SMT) 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+5 
+Tool / Work 
+Venue 
+Proof System 
+Masking 
+Universal 
+NTT-Specific 
+Kernel-
+Verified 
+This work — 
+Lean 4 / 
+Mathlib 
+Arithmeti
+c 
+Yes 
+Yes 
+Yes 
+(Lean) 
+aIsabelle/HOL soundness proofs are universal over circuit structure but not over the prime 
+field modulus. 
+bVerified at 𝑞= 5 only. 
+ 
+While powerful underlying ITPs like Isabelle/HOL and EasyCrypt inherently support 
+arbitrary algebraic structures, the formal verification tools built upon them for hardware 
+masking have historically targeted Boolean domains to protect symmetric primitives (AES, 
+Keccak). 
+Boolean masking verification. maskVerif [14] was introduced with EasyCrypt proofs for 
+software implementations, and subsequently formalized Strong Non-Interference (SNI) as a 
+compositional security notion for masked gadgets [19]. REBECCA [15], was developed 
+providing netlist-level verification with glitch awareness. SILVER [16] has ROBDD-based 
+exact verification and Isabelle/HOL soundness proofs. Gigerl et al. extended this line to co-
+verification of masked software on CPUs (Coco [17]) and, most recently, to the formal 
+verification of arithmetic masking in hardware and software [18], the closest prior work to 
+ours, but still circuit-oriented rather than universal over the prime field modulus. These works 
+do not address machine-checked universal algebraic properties of masked arithmetic over 
+arbitrary ℤ𝑞, which is the core operation in NTT-based PQC hardware. 
+Domain-oriented masking and mask conversion. Related hardware primitives include 
+domain-oriented masking (DOM) [20], which provides compact pipelined gadgets with 
+arbitrary protection order, and sound methods for switching between Boolean and arithmetic 
+masking [21]. Our contribution is orthogonal to these: we establish universal algebraic 
+properties of masked arithmetic in the probing model [13], not new gadget constructions or 
+conversion algorithms. 
+Gap. No prior work provides a machine-checked proof of arithmetic masking security that is 
+simultaneously (a) universal over the prime field modulus, (b) specific to NTT hardware 
+operations, and (c) kernel-verified by an ITP. This is the gap we close. 
+4. The Main Theorem 
+Theorem 4.1 (Value-Independence Implies Constant Marginal; Universal). Let 𝑞> 0. 
+Let 𝛽 be any type with decidable equality. Let 𝑤: ℤ𝑞× ℤ𝑞→𝛽 be a wire function. Define the 
+marginal histogram 
+ℎ(𝑥, 𝑣) : = |{𝑠1 ∈ℤ𝑞: 𝑤(𝑥−𝑠1, 𝑠1) = 𝑣}|. 
+If 𝑤 is value-independent (Definition 3), then for all 𝑥, 𝑥′ ∈ℤ𝑞 and all 𝑣∈𝛽: 
+ℎ(𝑥, 𝑣) = ℎ(𝑥′, 𝑣). 
+Theorem 4.1’ (T1’: General Output Type). The same result holds for wire functions with 
+arbitrary output type 𝛽 with decidable equality. The proof is identical: value-independence 
+makes 
+the 
+filter 
+predicate 
+independent 
+of 𝑥 for 
+any 𝛽. 
+In 
+the 
+artifact, 
+value_independence_implies_constant_histogram is stated with {β : Type*} [DecidableEq β], 
+with T1 as the Bool specialization. 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+6 
+Observation 4.2 (Informal). Under value-independence, 𝑃(𝑤= 𝑣∣𝑥) = ℎ(𝑥, 𝑣)/𝑞 is 
+constant in 𝑥, so 𝐼(𝑥;  𝑤) = 0. (This information-theoretic conclusion follows by a standard 
+argument from the constant histogram; it is not formalized in the artifact. See Limitation (ii).) 
+4.1. The Five-Line Proof 
+The following is the complete Lean 4 proof of Theorem 4.1, reproduced verbatim from the 
+artifact: 
+theorem value_independence_implies_constant_histogram 
+ {q : ℕ} [NeZero q] {β : Type*} [DecidableEq β] 
+ (w : WireFunction q β) (hw : ValueIndependent w) 
+ (x x' : ZMod q) (v : β) : 
+ marginalHistogram w x v 
+ = marginalHistogram w x' v := by 
+ unfold marginalHistogram 
+ congr 1 
+ ext s₁ 
+ simp only [mem_filter, mem_univ, true_and] 
+ exact ⟨fun h => by rw [← hw s₁ x x']; exact h, 
+ fun h => by rw [hw s₁ x x']; exact h⟩ 
+4.2. Why Five Lines Suffice 
+The proof proceeds in four logical steps: 
+1. Unfold the definition. The marginal histogram counts elements of a filtered finite set: 
+those 𝑠1 ∈ℤ𝑞 for which 𝑤(𝑥−𝑠1, 𝑠1) = 𝑣. 
+2. Reduce to set equality. Two finite sets with the same elements have the same 
+cardinality (congr 1 reduces the cardinality goal to a set-extensionality goal). 
+3. Pointwise equivalence. For each 𝑠1, the filter predicate 𝑤(𝑥−𝑠1, 𝑠1) = 𝑣 holds if 
+and only if 𝑤(𝑥′ −𝑠1, 𝑠1) = 𝑣. This is immediate from value-independence: 𝑤(𝑥−
+𝑠1, 𝑠1) = 𝑤(𝑥′ −𝑠1, 𝑠1). 
+4. Close the iff. The two directions of the biconditional each follow by a single rewrite 
+using the value-independence hypothesis. 
+The Z3/CVC5 proof at 𝑞= 5 required checking 225 = 33,554,432 Boolean wire functions 
+because SMT solvers must instantiate universal quantifiers. Lean 4’s dependent type theory 
+handles the universal quantification natively: the proof works for any 𝑞, any 𝑤, any 𝛽, 
+simultaneously. 
+The brevity is not an artifact of library complexity absorbing the difficulty. The proof uses 
+only Finset.mem_filter, Finset.mem_univ, and the hypothesis hw. No deep Mathlib theorems 
+are invoked. The result is short because the property is a structural consequence of the 
+definition, value-independence is the statement that the filter predicate does not depend on 𝑥. 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+7 
+5. The Supporting Proof Suite 
+Figure 1 shows the logical dependencies among the theorems. All nine theorems are sorry-
+free. T1, T1’, T2, T3, T3’, T4, T5 universal bounds, and T6 are kernel-verified. T5’s ML-
+KEM instance is verified by native compilation (native_decide); see Section 5.4. Table 2 
+summarizes each theorem’s scope, key proof technique, and the parameter coverage it 
+replaces from Paper 2’s finite-domain baseline. 
+ 
+Figure 1. Proof suite dependency structure. Solid arrows: logical dependency. Dashed 
+arrows: conceptual relationship (T4 bridges to hardware encoding; T5 validates the 
+uniformity assumption). T6 establishes non-tightness of T1. 
+Table 2. Complete proof suite summary. All theorems are sorry-free and kernel-verified in 
+Lean 4.30.0-rc1 with Mathlib 322515540d7f. 
+ID 
+Theorem 
+Domain 
+Key Technique 
+Upgrade from 
+Paper 2 
+T1 
+Value-
+independence 
+implies constant 
+marginal (Bool) 
+All 𝑞> 0 
+congr + ext + 
+rewrite 
+𝑞= 5, 225 
+wires 
+T1’ 
+Value-
+independence 
+implies constant 
+histogram 
+(general 𝛽) 
+All 𝑞> 0 
+Same as T1 
+New 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+8 
+ID 
+Theorem 
+Domain 
+Key Technique 
+Upgrade from 
+Paper 2 
+T2 
+Boolean 
+reparametrizatio
+n round-trip 
+All 𝑘 
+XOR assoc + 
+self-inverse 
+𝑘= 24 
+T3 
+Arithmetic 
+reparametrizatio
+n round-trip 
+All 𝑞> 0 
+sub_add_cancel 
+𝑞
+∈{3329,838041
+T3’ 
+Reparametrizati
+on bijectivity 
+All 𝑞> 0 
+Injective + 
+surjective 
+New 
+T4 
+No-overflow 
+bounds 
+All 𝑞> 0 
+omega 
+3 configurations 
+T5 
+ML-KEM bias 
+ratio 
+𝑞= 3329 
+native_decide 
+Python 
+enumeration 
+T5 (bounds) 
+Universal RNG 
+bias bounds 
+All 𝑞> 0 
+card_le_card_of
+_injOn 
+New 
+T6 
+Non-tightness 
+counterexample 
+All 𝑞≥2 
+card_bij + 
+one_ne_zero 
+𝑞= 5 only 
+Reproduction. 
+Clone 
+the 
+repository. 
+Ensure 
+the 
+lean-toolchain 
+file 
+reads 
+leanprover/lean4:v4.30.0-rc1. Run lake build. Expected output: 1,739 tasks completed, 0 
+errors. All theorem names in this paper correspond to identifiers in QanaryUniversal/*.lean. 
+The lakefile.lean pins Mathlib to commit 322515540d7f; no other dependencies are required. 
+We intend to submit the artifact for venue artifact evaluation. 
+5.1. T2: Boolean Reparametrization Round-Trip 
+Theorem 5.1 (T2). For all 𝑘∈ℕ and all 𝑥, 𝑠1 ∈{0,1}𝑘: (𝑥⊕𝑠1) ⊕𝑠1 = 𝑥. 
+theorem bool_reparam_round_trip 
+ {k : ℕ} (x s₁ : BitVec k) : 
+ boolReparam (boolReparam x s₁) s₁ = x := by 
+ simp [boolReparam, BitVec.xor_assoc, 
+ BitVec.xor_self, BitVec.xor_zero] 
+This upgrades the Paper 2 version from 𝑘= 24 to arbitrary 𝑘. The proof follows from XOR 
+associativity, self-inverse (𝑎⊕𝑎= 0), and identity (𝑎⊕0 = 𝑎). 
+5.2. T3: Arithmetic Reparametrization Round-Trip 
+Theorem 5.2 (T3). For all 𝑞> 0 and all 𝑥, 𝑠1 ∈ℤ𝑞: (𝑥−𝑠1) + 𝑠1 = 𝑥. 
+theorem arith_reparam_round_trip 
+ {q : ℕ} [NeZero q] (x s₁ : ZMod q) : 
+ arithReparam q x s₁ + s₁ = x := by 
+ simp [arithReparam, sub_add_cancel] 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+9 
+This is the key algebraic step. In Paper 2, the analogous result was encoded in QF_BV as 
+URem(URem(𝑥−𝑠1 + 𝑞,  𝑞) + 𝑠1,  𝑞) = 𝑥 with explicit overflow checks, verified only for 
+𝑞∈{3,329,  8,380,417} at bit-width 𝑤= 24. In Lean 4, ℤ𝑞 is the quotient ring ℤ/𝑞ℤ; the 
+identity sub_add_cancel is a CommRing axiom. The overflow concern evaporates, it was an 
+artifact of the bit-vector encoding. 
+Theorem 5.3 (T3’: Bijectivity). For all 𝑞> 0 and each fixed 𝑠1 ∈ℤ𝑞, the map 𝑥↦𝑥−𝑠1 is 
+a bijection on ℤ𝑞. 
+theorem arith_reparam_bijective 
+ {q : ℕ} [NeZero q] (s₁ : ZMod q) : 
+ Function.Bijective 
+ (fun x => arithReparam q x s₁) := by 
+ constructor 
+ · intro x x' h 
+ simp [arithReparam] at h; exact h 
+ · intro s₀ 
+ exact ⟨s₀ + s₁, by simp [arithReparam]⟩ 
+Bijectivity ensures that as 𝑥 varies over ℤ𝑞, so does 𝑠0 = 𝑥−𝑠1, no collisions occur. This is a 
+prerequisite for the marginal-count argument in T1: the histogram sums over a set of size 
+exactly 𝑞. 
+5.3. T4: No-Overflow Bounds 
+Theorem 5.4 (T4). For all 𝑞> 0 and all 𝑥, 𝑠1 < 𝑞 (natural numbers): 1 ≤𝑥+ 𝑞−𝑠1 and 
+𝑥+ 𝑞−𝑠1 < 2𝑞. 
+theorem no_overflow_bounds {q : ℕ} (hq : q > 0) 
+ (x s₁ : ℕ) (hx : x < q) (hs : s₁ < q) : 
+ 1 ≤ x + q - s₁ ∧ x + q - s₁ < 2 * q := by 
+ constructor <;> omega 
+In ℤ𝑞, overflow is impossible by construction. T4 bridges to the bit-vector implementation 
+used in actual hardware and in the Z3 encoding: it guarantees that the intermediate value 𝑥+
+𝑞−𝑠1 (the unsigned representation that avoids underflow) fits within the allocated bit-width. 
+Concrete instances for ML-KEM (2 × 3,329 < 224) and ML-DSA (2 × 8,380,417 < 224) 
+are discharged by decide. 
+5.4. T5: RNG Bias Characterization 
+The security guarantee of T1 assumes that the mask 𝑠1 is drawn uniformly from ℤ𝑞 
+(assumption A2 in Paper 2). In practice, a 𝑘-bit random number generator produces values in 
+{0, … , 2𝑘−1}, reduced modulo 𝑞. When 𝑞∤2𝑘, the result is biased. 
+Theorem 5.5 (T5: ML-KEM Instance). For 12-bit RNG (𝑁= 4096) reduced modulo 𝑞=
+3,329: residue 0 has count 2 and residue 767 has count 1. The bias ratio is exactly 2. 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+10 
+This is verified by native_decide, which compiles the decision procedure to native code and 
+executes it outside the Lean kernel. Unlike decide (which runs inside the kernel), 
+native_decide extends the trusted base to include the native code compiler. The result can 
+alternatively be checked by decide for kernel-only verification at the cost of longer 
+compilation time. We also prove purely kernel-verified universal bounds: 
+Theorem 5.6 (T5: Universal Bounds). For any 𝑁, 𝑞> 0 and residue 𝑟< 𝑞: ⌊𝑁/𝑞⌋≤
+𝑐𝑜𝑢𝑛𝑡(𝑟) ≤⌈𝑁/𝑞⌉. When 𝑞∣𝑁, equality holds: 𝑐𝑜𝑢𝑛𝑡(𝑟) = 𝑁/𝑞. 
+The universal bounds are proved by constructing injections between finite sets (Mathlib’s 
+Finset.card_le_card_of_injOn). 
+5.5. T6: Universal Non-Tightness Counterexample 
+Theorem 3.9.1 is sound but not tight: it is possible for a wire to have a constant marginal 
+distribution 
+yet 
+fail 
+to 
+be 
+value-independent. 
+QANARY 
+labels 
+such 
+wires 
+INSECURE_CONSERVATIVE, the analysis correctly errs on the side of caution. 
+Theorem 5.7 (T6: Universal Non-Tightness). For every 𝑞≥2, there exists a wire function 
+𝑤: ℤ𝑞× ℤ𝑞→{0,1} that has a constant marginal distribution but is not value-independent. 
+The witness is 𝑤(𝑠0, 𝑠1) : = [𝑠0 = 0] (the indicator function of zero on the first share). The 
+proof has two parts: 
+1. Constant marginal. For any 𝑥, 𝑥′, the sets {𝑠1: (𝑥−𝑠1) = 0} and {𝑠1: (𝑥′ −𝑠1) = 0} 
+have the same cardinality because the translation map 𝑠1 ↦𝑠1 + (𝑥′ −𝑥) is a 
+bijection between them (Finset.card_bij). 
+2. Not value-independent. We have 𝑤(0 −0,0) = [0 = 0] = true but 𝑤(1 −0,0) =
+[1 = 0], which is false because 1 ≠0 in ℤ𝑞 when 𝑞≥2. The non-triviality of ℤ𝑞 is 
+established by Mathlib’s one_ne_zero, which requires only 𝑞≥2. 
+The Lean 4 formalization of this counterexample follows: 
+theorem converse_fails_universal 
+ {q : ℕ} [NeZero q] (hq : 2 ≤ q) : 
+ ∃ (w : WireFunction q Bool), 
+ HasConstantMarginal w ∧ ¬ValueIndependent w := by 
+ refine ⟨fun s₀ _ => decide (s₀ = (0 : ZMod q)), ?_, ?_⟩ 
+ · -- HasConstantMarginal: translation bijection 
+ intro x x' v 
+ unfold marginalHistogram arithReparam 
+ apply Finset.card_bij (fun s₁ _ => s₁ + (x' - x)) 
+ · intro s₁ hs₁ 
+ simp only [Finset.mem_filter, Finset.mem_univ, 
+ true_and] at hs₁ ⊢ 
+ have : x' - (s₁ + (x' - x)) = x - s₁ := by ring 
+ rw [this]; exact hs₁ 
+ · intro s₁ _ s₂ _ h; exact add_right_cancel h 
+ · intro t₁ ht₁ 
+ simp only [Finset.mem_filter, Finset.mem_univ, 
+ true_and] at ht₁ 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+11 
+ refine ⟨t₁ + (x - x'), 
+ Finset.mem_filter.mpr 
+ ⟨Finset.mem_univ _, ?_⟩, by ring⟩ 
+ have : x - (t₁ + (x - x')) = x' - t₁ := by ring 
+ rw [this]; exact ht₁ 
+ · -- ¬ValueIndependent: one_ne_zero when q ≥ 2 
+ intro h 
+ haveI : Fact (1 < q) := ⟨by omega⟩ 
+ have h01 := h (0 : ZMod q) (0 : ZMod q) (1 : ZMod q) 
+ simp only [arithReparam, sub_zero] at h01 
+ rw [show decide True = true from rfl, 
+ eq_comm, decide_eq_true_eq] at h01 
+ exact absurd h01 one_ne_zero 
+The key technique for universality is replacing Paper 2’s decide (which works only at 
+concrete 𝑞) with Mathlib’s one_ne_zero (which works for any 𝑞≥2 ). The algebraic 
+structure of ℤ/𝑞ℤ automatically provides non-triviality. 
+Remark (Scope of T6). T6 shows that SADC’s conservatism is inherent, not an 
+implementation artifact. Any value-independence-based analysis will exhibit this gap for 
+every 𝑞≥2. In particular, the 165 INSECURE_CONSERVATIVE verdicts in Paper 2’s 
+ML-KEM Barrett analysis are not artifacts of QANARY’s implementation, Theorem 5.7 
+proves that this gap is unavoidable. The conservative direction is the safe one for a security 
+tool: false positives (labeling a secure wire as potentially insecure) are acceptable; false 
+negatives are not. 
+6. Implications 
+6.1. For FIPS 140-3 Certification 
+FIPS 140-3 [22] certification of cryptographic modules requires evidence that side-channel 
+countermeasures are effective. A universal proof eliminates the need to re-verify for each 
+parameter set: a single kernel-verified proof covers ML-KEM (𝑞= 3,329), ML-DSA (𝑞=
+8,380,417), and any future NIST PQC standard over any prime field. This directly reduces 
+evaluation burden for Cryptographic Module Validation Program (CMVP) testing 
+laboratories. Concretely, the 165 wires labeled INSECURE_CONSERVATIVE in Paper 2’s 
+ML-KEM Barrett reduction analysis carry a soundness guarantee that is now universally 
+verified: if SADC labels a wire secure, the security conclusion holds for 𝑞= 3,329 not 
+merely because we checked it at 𝑞= 5, but because Theorem 4.1 is valid for every positive 
+modulus. 
+6.2. For Design Portability 
+Post-standardization parameter updates, changing 𝑞 in response to cryptanalytic advances, or 
+adopting new lattice-based schemes, do not invalidate the proof. The universal quantification 
+over 𝑞 means that QANARY’s soundness guarantee transfers automatically. 
+6.3. For Tool Trust 
+The shift from “trust Z3 and CVC5 on 225 instances” to “trust the Lean 4 kernel on a 
+universally quantified statement” is qualitatively different for high-assurance applications. 
+For the core soundness theorems (T1–T4, T5 universal bounds, T6), the Lean 4 kernel, a 
+small, formally specified C++ core designed for auditability, is the sole element in the 
+trusted computing base. T5’s ML-KEM instance additionally depends on the native code 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+12 
+compiler. By contrast, Z3 and CVC5 are complex systems (hundreds of thousands of lines 
+each) whose correctness is not formally verified. Table 3 contrasts the two approaches’ scope, 
+trusted base, and proof artifacts. 
+Table 3. Build and verification comparison. 
+Approach 
+Scope 
+Trusted Base 
+Proof Artifact 
+Z3/CVC5 (Paper 2) 
+𝑞= 5, 225 wires 
+Z3, CVC5, Python 
+encoding 
+363 dual-solver 
+queries (Z3+CVC5), 
+0 disagreements 
+Lean 4 (this work) 
+All 𝑞> 0, all 𝑤, all 
+𝛽 
+Lean 4 kernel (T1–
+T4, T5 bounds, T6); 
+native compiler (T5 
+instance) 
+1,739 build tasks, 0 
+sorry 
+6.4. For the Field 
+The five-line proof in Section 4.1 is evidence for a broader claim: ring theory is the natural 
+abstraction layer for arithmetic masking verification. 
+The Z3/CVC5 encoding required bit-vector arithmetic, explicit overflow guards, and URem 
+operations because SMT solvers operate on concrete representations. Lean 4’s ℤq is the 
+quotient ring ℤ/qℤ, where modular arithmetic is definitional. The reparametrization s0 = x −
+s1 is not a computational procedure to be checked for overflow, it is a ring identity. The proof 
+that reparametrization is well-defined (T3) is one call to sub_add_cancel, a CommRing 
+axiom. 
+This observation suggests that other properties of arithmetic masking, composition theorems, 
+higher-order masking, mixed Boolean-arithmetic conversions, may admit similarly concise 
+proofs when formulated in the appropriate algebraic setting. 
+We state one such conjecture precisely. An NTT butterfly stage takes two masked inputs 
+(a, a′) and (b, b′) and produces two masked outputs via c = a + tb (mod q) , d = a −
+tb (mod q) for twiddle factor t. If each stage independently satisfies value-independence 
+(Theorem 4.1), does the composition of log2n stages in a full n-point NTT preserve first-
+order probing security? We conjecture that it does, and that the proof follows from the ring 
+homomorphism structure of NTT stages: each stage is a ℤq-linear map on shares, and the 
+composition of ℤq-linear maps is ℤq-linear. If this conjecture holds, the five-line proof 
+structure of Theorem 4.1 would extend to a machine-checked composition theorem for full 
+NTT pipelines, a result with no precedent in the masking verification literature. 
+7. Limitations and Future Work 
+The two primary limitations below are related: together they constitute the single remaining 
+gap between the formalized result (constant marginal histogram) and a complete machine-
+checked proof of 𝐼(𝑥; 𝑤) = 0 under fresh randomness. Paper 4 will close this gap. 
+(i) 𝑟-free sub-theorem. T1 proves the 𝑟-free version of Theorem 3.9.1: it marginalizes only 
+over the mask 𝑠1, not over fresh randomness 𝑟. The extension to the 𝑟-bearing version 
+follows by the law of total probability: if the 𝑟-free marginal is constant in 𝑥 for every fixed 𝑟, 
+then marginalizing over 𝑟 preserves the property. This bridging argument is a standard one-
+paragraph derivation; we defer its formalization to future work (ProbBridge.lean). 
+Importantly, the Z3/CVC5 proofs in Paper 2 were also 𝑟-free in the same sense, this 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+13 
+limitation is not introduced by the Lean formalization but is inherited from SADC’s structural 
+semantics, which evaluates combinational logic for fixed randomness. 
+(ii) Information-theoretic formalization. Observation 4.2 ( 𝐼(𝑥; 𝑤) = 0 ) follows 
+immediately from the constant histogram, but Mathlib currently lacks definitions of Shannon 
+entropy and mutual information for finite types. We prove the histogram-level statement, 
+which is equivalent. Formalizing 𝐼(𝑥; 𝑤) = 0 directly would require either contributing 
+entropy definitions to Mathlib or developing them within the project. 
+(iii) RC toolchain. The proof suite was developed on Lean 4.30.0-rc1. We intend to migrate 
+to a stable Lean 4 release before venue submission. 
+(iv) Higher-order masking. The current formalization addresses first-order masking (𝑑= 1, 
+two shares). Extension to 𝑑-th order masking (𝑑+ 1 shares) requires a 𝑑-dimensional version 
+of the reparametrization and a corresponding multi-marginal argument. 
+(v) Glitch-extended probing model. The standard probing model assumes the adversary 
+observes one wire per clock cycle. The glitch-extended model (relevant for hardware 
+implementations) allows observation of multiple wires in combinational logic cones. 
+Extending the universal proof to this model is an open problem. 
+8. Conclusion 
+We have presented, to our knowledge, the first machine-checked universal proof that value-
+independence implies distributional security (𝑟-free sub-theorem) for arithmetic masking in 
+NTT-based PQC hardware. The proof, mechanized in Lean 4 with Mathlib, closes the finite-
+domain gap explicitly identified in the QANARY framework: a soundness result that was 
+previously verified only at 𝑞= 5 by exhaustive SMT enumeration now holds for every 
+positive modulus. 
+The proof suite comprises nine theorems across eight IDs (T1, T1’, T2, T3, T3’, T4, T5, T6), 
+all sorry-free: 1,739 build jobs, zero sorry, zero errors. The supporting theorems establish 
+reparametrization correctness, bijectivity, overflow bounds, RNG bias characterization, and a 
+universal counterexample showing that the converse of Theorem 3.9.1 fails for every 𝑞≥2. 
+The result that required 33,554,432 Boolean evaluations in Z3 required five lines in Lean 4. 
+This is not because the problem became easier. It is because we found the language in which 
+the result is natural: the commutative ring axioms of ℤ/𝑞ℤ. 
+Paper 4 in this series will formalize the probabilistic bridge from the 𝑟-free sub-theorem 
+established here to the full 𝑟-bearing distributional security guarantee, completing the formal 
+foundations for QANARY’s verification hierarchy. 
+9. Code and Data Availability 
+The complete Lean 4 proof suite supporting this paper is publicly available at 
+https://github.com/rayiskander2406/qanary-universal-masking-proofs-arXiv-2604.18717 
+under the MIT license, with an archival snapshot of version v1.0.0 deposited on Zenodo at 
+https://doi.org/10.5281/zenodo.19689480. The repository contains the complete sorry-free 
+mechanization of all nine theorems (T1, T1’, T2, T3, T3’, T4, T5, T5 universal bounds, T6) 
+reported in this paper, with lean-toolchain pinned to leanprover/lean4:v4.30.0-rc1 and 
+lakefile.lean pinning Mathlib to commit 322515540d7f. A single lake build invocation 
+regenerates the headline result (1,739 build tasks, 0 sorry, 0 errors) on a clean checkout; no 
+other dependencies are required. We intend to submit the artifact for venue artifact evaluation 
+upon acceptance. 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+14 
+The companion papers in this series are archived at https://doi.org/10.5281/zenodo.19625392 
+(Paper 
+1, 
+structural 
+dependency 
+analysis; 
+reference 
+[1]) 
+and 
+https://doi.org/10.5281/zenodo.19508454 (Paper 2, partial NTT masking security margin 
+analysis; reference [2]). 
+10. References 
+1. R. Iskander and K. Kirah, “Structural Dependency Analysis for Masked NTT 
+Hardware: Scalable Pre-Silicon Verification of Post-Quantum Cryptographic 
+Accelerators,” arXiv:2604.15249, 2026. Archived at 
+https://doi.org/10.5281/zenodo.19625392. (Paper 1 in this series.) 
+2. R. Iskander and K. Kirah, “Partial Number Theoretic Transform Masking in Post-
+Quantum Cryptography (PQC) Hardware: A Security Margin Analysis,” 
+arXiv:2604.03813, 2026. Archived at https://doi.org/10.5281/zenodo.19508454. 
+(Paper 2 in this series.) 
+3. M. Bisheh-Niasar, E. Karabulut, B. Upadhyayula, A. Norris, and L. Pillilli, “Adams 
+Bridge Accelerator: Bridging the Post-Quantum Transition,” IACR ePrint 2026/256, 
+2026. 
+4. CHIPS Alliance, “Adams Bridge: Open-Source Post-Quantum Cryptographic 
+Accelerator,” https://github.com/chipsalliance/adams-bridge, 2024. 
+5. National Institute of Standards and Technology, “Module-Lattice-Based Key-
+Encapsulation Mechanism Standard,” FIPS 203, August 2024. 
+6. National Institute of Standards and Technology, “Module-Lattice-Based Digital 
+Signature Standard,” FIPS 204, August 2024. 
+7. National Institute of Standards and Technology, “Transition to Post-Quantum 
+Cryptography Standards,” NIST IR 8547, March 2025. 
+8. L. de Moura and S. Ullrich, “The Lean 4 Theorem Prover and Programming 
+Language,” https://lean-lang.org, 2021. 
+9. Mathlib Community, “Mathlib4: The Math Library for Lean 4,” 
+https://github.com/leanprover-community/mathlib4, 2024. 
+10. L. de Moura and N. Bjorner, “Z3: An Efficient SMT Solver,” in TACAS, 2008. 
+11. H. Barbosa et al., “cvc5: A Versatile and Industrial-Strength SMT Solver,” in TACAS, 
+2022. 
+12. M. Karabulut and R. Azarderakhsh, “Efficient CPA Attack on Hardware 
+Implementation of ML-DSA in Post-Quantum Root of Trust,” IEEE HOST, 2025. 
+IACR ePrint 2025/009. 
+13. Y. Ishai, A. Sahai, and D. Wagner, “Private Circuits: Securing Hardware against 
+Probing Attacks,” in CRYPTO, 2003. 
+14. G. Barthe, S. Belaid, F. Dupressoir, P.-A. Fouque, B. Gregoire, and P.-Y. Strub, 
+“Verified Proofs of Higher-Order Masking,” in EUROCRYPT, 2015. 
+15. R. Bloem, H. Gross, R. Iusupov, B. Konighofer, S. Mangard, and J. Winter, “Formal 
+Verification of Masked Hardware Implementations in the Presence of Glitches,” in 
+EUROCRYPT, 2018. 
+
+Iskander & Kirah — Ring-Theoretic Foundations for PQC Masking Verification 
+15 
+16. D. Knichel, P. Sasdrich, and A. Moradi, “SILVER – Statistical Independence and 
+Leakage Verification,” in ASIACRYPT, 2020. 
+17. B. Gigerl, V. Hadzic, R. Primas, S. Mangard, and R. Bloem, “Coco: Co-Design and 
+Co-Verification of Masked Software Implementations on CPUs,” in USENIX 
+Security, 2021. 
+18. B. Gigerl, R. Primas, and S. Mangard, “Formal Verification of Arithmetic Masking in 
+Hardware and Software,” in ACNS, 2023. 
+19. G. Barthe, S. Belaid, F. Dupressoir, P.-A. Fouque, B. Gregoire, P.-Y. Strub, and R. 
+Zucchini, “Strong Non-Interference and Type-Directed Higher-Order Masking,” in 
+ACM CCS, 2016. 
+20. H. Gross, S. Mangard, and T. Korak, “Domain-Oriented Masking: Compact Masked 
+Hardware Implementations with Arbitrary Protection Order,” in ACM TIS, 2016. 
+21. L. Goubin, “A Sound Method for Switching between Boolean and Arithmetic 
+Masking,” in CHES, 2001. 
+22. National Institute of Standards and Technology, “Security Requirements for 
+Cryptographic Modules,” FIPS 140-3, 2019.

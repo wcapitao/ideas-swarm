@@ -1,0 +1,1526 @@
+1
+GoAT-X: A Graph of Auditing Thoughts for
+Securing Token Transactions in Cross-Chain
+Contracts
+Zijun Feng, Yuming Feng, Yu Wang, Weizhe Zhang, Senior Member, IEEE Yuhong Nan, Yuang Liu and Zibin
+Zheng, Fellow, IEEE
+Abstract—Cross-chain bridges, the critical infrastructure of
+the multi-chain ecosystem, have become a primary target for
+attackers, resulting in over $2.8 billion in losses due to subtle
+implementation flaws. Existing defenses, such as bytecode-level
+static analysis, are ill-equipped to handle the semantic complexity
+of cross-chain interactions, while LLM-based approaches, which
+can understand source code, struggle with hallucinatory reason-
+ing over complex, multi-contract dependencies.
+In this paper, we propose GoAT-X, a framework that shifts
+automated cross-chain smart contract codebases auditing from
+heuristic pattern matching toward systematic first-principles
+verification. GoAT-X structures the audit process as a Graph
+of Auditing Thoughts, explicitly mirroring how human experts
+decompose, reason about, and validate security logic. By an-
+choring LLM reasoning in statically extracted data flows and
+explicitly linking abstract security properties to concrete code
+implementations, the framework constrains semantic reasoning
+within well-defined structural and state boundaries. Within
+this constrained space, GoAT-X treats missing constraints and
+adversarial bypass paths in cross-chain logic as first-class vul-
+nerability targets and dynamically explores reasoning paths to
+identify exploitable semantic gaps. We evaluate GoAT-X on a
+comprehensive benchmark covering all known cross-chain token
+transaction attacks. GoAT-X achieves 92% recall on fine-grained
+audit points and 95% coverage of vulnerable projects, while
+identifying 117 confirmed risks in the wild with low operational
+cost, establishing a new standard for scalable, logic-driven cross-
+chain security.
+Index Terms—Smart Contract Security, Cross-chain Bridge,
+Graph of Thoughts, Vulnerability Detection, LLM, Static Anal-
+ysis.
+I. INTRODUCTION
+Cross-chain bridges have become essential infrastructure
+driven by the demand for DeFi interoperability [1], [2]. How-
+ever, this essential infrastructure is also highly vulnerable. The
+complexity of bridge design, stemming from differences in
+consensus and data structures across chains, introduces novel
+attack vectors. The typical lock-and-mint mechanism, while
+functional, is a frequent point of failure [3], [4]. As their Total
+Zijun Feng, Yu Wang, and Weizhe Zhang are with the Harbin Institute of
+Technology, Shenzhen 518038, China. Zijun Feng, Yuming Feng, and Weizhe
+Zhang are also with the Peng Cheng Laboratory, Shenzhen 518055, China. (E-
+mail: fengzijun@stu.hit.edu.cn;fengym@pcl.ac.cn;24s151161@stu.hit.edu.cn;
+2021111602@stu.hit.edu.cn; wzzhang@hit.edu.cn).
+Yuhong
+Nan
+and
+Zibin
+Zheng
+are
+with
+Sun
+Yat-sen
+University,
+Guangzhou
+510275,
+China.
+(E-mail:
+nanyh@mail.sysu.edu.cn;
+zhzibin@mail.sysu.edu.cn).
+Yuang Liu is with the Harbin Institute of Technology, Harbin 150001, China.
+(E-mail: 2021111602@stu.hit.edu.cn).
+Weizhe Zhang is the corresponding author.
+Value Locked (TVL) surges, these protocols have become a
+prime target for attackers, accounting for over $2.8 billion in
+losses—nearly 40% of all Web3 thefts to date [5], [6].
+Securing these protocols remains challenging. Manual au-
+diting is unscalable, while automated bytecode analysis suffers
+from a semantic gap regarding cross-chain intent [7], [8].
+Although LLM-based approaches offer semantic reasoning [9],
+they struggle with cross-chain systems due to their single-
+chain focus and inability to model multi-contract interactions
+or generalize to novel architectures [10]–[13]. To the best
+of our knowledge, currently, there is no effective solution
+that supports automated, source-code-level auditing of large-
+scale cross-chain codebases, leaving a critical and unresolved
+security gap.
+Achieving fully automated auditing faces fundamental hur-
+dles due to the intricate and disjointed nature of cross-chain
+execution, where asynchronous events inherently fragment the
+continuous control flow required for precise multi-contract
+modeling. This complexity is further amplified by the sheer
+scale of cross-chain codebases, which necessitates tracking
+subtle state dependencies across massive, heterogeneous con-
+tract networks to verify security properties effectively.
+In this paper, we propose GoAT-X (Graph of Auditing
+Thoughts for X-Chain), a novel framework that shifts cross-
+chain security from heuristic pattern-based detection to sys-
+tematic first-principles verification. This approach establishes
+security by strictly validating the fundamental predicates of
+Integrity, Authenticity, and Safety against code execution.
+GoAT-X orchestrates a five-layer automated pipeline that
+synergizes static analysis, semantic embeddings, and Large
+Language Models (LLMs) within a structured reasoning graph.
+Specifically, the framework emulates the cognitive depth of
+expert auditors by deconstructing the verification task into five
+progressive stages: locating transaction code, mapping param-
+eters, tracing data flows, verifying constraints, and analyzing
+bypass paths.
+Crucially, GoAT-X constrains LLM reasoning within ex-
+plicit structural and state boundaries. Layer 1 and Layer
+3 leverage static analysis and context-aware code slicing
+to extract transaction-specific data flows, ensuring semantic
+inference is grounded in concrete execution logic. Across
+all reasoning stages (Layers 2, 4, and 5), we employ model
+ensembling and a universal self-correction mechanism to rig-
+orously synthesize audit traces while mitigating hallucinations.
+This pipeline is further refined by encoder-based aggregation
+arXiv:2604.24341v1 [cs.CR] 27 Apr 2026
+
+2
+in Layer 4 for deduplication, and retrieval-augmented gener-
+ation (RAG) in Layer 5 to anchor bypass analysis in state
+context and historical exploit knowledge.
+To evaluate GoAT-X, we construct a comprehensive vul-
+nerability benchmark by integrating open-source datasets with
+incident reports from authoritative security platforms. This
+dataset comprises 673 smart contracts across 20 distinct cross-
+chain projects, which we meticulously annotated to establish
+294 fine-grained audit points as ground truth. On this bench-
+mark, GoAT-X demonstrates robust performance: it achieves
+92% recall on audit points, reflecting high semantic coverage
+of security constraints; and successfully achieves 95% cov-
+erage of vulnerable projects in the benchmark, validating its
+practical detection effectiveness.
+Contributions. We summarize the contributions as follows:
+• We propose GoAT-X, a framework that reframes vulner-
+ability detection from pattern-based inspection to con-
+strained, first-principles reasoning. By structuring the
+audit process as a Graph of Auditing Thoughts (GoAT),
+it synergizes static analysis with LLM reasoning to
+systematically explore execution paths while minimizing
+hallucinations.
+• We define a Cross-Chain Token Transaction Verification
+Framework that formalizes security properties into en-
+forceable predicates. This addresses the semantic gap in
+existing tools by providing a rigorous constraint space for
+identifying missing checks and bypass paths.
+• We construct a comprehensive vulnerability benchmark
+by collecting and deeply annotating a wide range of
+representative cross-chain token transaction attacks. We
+then conduct extensive experiments and ablation studies
+to evaluate the performance and effectiveness of GoAT-X.
+II. PRELIMINARY
+Cross-chain Model and Attack Surface. Smart contracts
+underpin cross-chain bridges, enabling asset interoperability
+through a lock-and-mint mechanism. As illustrated in Figure 1,
+the architecture consists of a source chain, a destination chain,
+and off-chain relayers, facilitating the following workflow:
+1) Source Chain Operation: A user initiates a request via
+a Router contract, which triggers the Token contract
+to lock or burn assets and emits a cross-chain event
+containing transaction details.
+2) Off-Chain Verification: Off-chain relayers continuously
+listen to the source chain. Once a cross-chain event is
+captured, they verify it to ensure the legitimacy of the
+transaction.
+3) Destination Chain Execution: Upon receiving valid cre-
+dentials, the destination Router invokes the Token con-
+tract to unlock or mint equivalent assets to the user.
+While this architecture enables interoperability, the dis-
+jointed state space introduces novel attack vectors that tradi-
+tional single-chain security models fail to cover. We categorize
+the cross-chain attack surface into three semantic layers:
+• Integrity Violation (Malformed Data): Attackers may
+initiate transactions with logically invalid parameters
+(e.g., zero amounts or conflicting token addresses) that
+bypass superficial checks on the source chain.
+• Authenticity Violation (Spoofing & Replay): The dis-
+connect between chains allows attackers to forge cross-
+chain messages or replay valid historical messages if
+cryptographic proofs or nonces are not rigorously en-
+forced.
+• Safety Violation (Execution Manipulation): Even with
+valid messages, the execution context can be manipulated.
+Attackers may exploit arbitrary external calls or insuffi-
+cient slippage protection to hijack control flow and drain
+liquidity.
+Fig. 1. Cross-chain Transaction Workflow
+Large Language Models (LLMs) and Division of Thoughts.
+Large Language Models (LLMs) such as GPT [14], Gem-
+ini [15], and Deepseek [16] have demonstrated powerful
+capabilities in code understanding, generation, and logical
+reasoning. They are increasingly being used to solve general
+problems across various tasks. However, during the reasoning
+process, they are still confined to a character-level, left-to-right
+decision-making process [17]. To address these limitations,
+researchers have proposed architectures that explore multiple
+thought processes, such as Tree of Thoughts (ToT) [17] and
+Graph of Thoughts (GoT) [18].
+As illustrated in Figure 2, Tree of Thoughts (ToT) structures
+problem-solving as a search tree, employing branching and
+backtracking to explore intermediate states and avoid local
+optima. Graph of Thoughts (GoT) significantly enhances this
+by transforming the tree into a graph (Figure 2b), introducing
+novel “aggregate” and “refine” operations. These capabilities
+allow previously separate reasoning paths to converge and
+share context, enabling a more efficient and controllable
+exploration of complex reasoning spaces.
+Inspired by the “Division of Thoughts” principle, we apply
+a similar task decomposition strategy to tackle the complex
+challenge of auditing cross-chain smart contract codebases.
+III. GOAT-X OVERVIEW
+Through a comprehensive analysis of existing cross-chain
+vulnerabilities, we observe a unifying security perspective:
+historically observed cross-chain attacks can be attributed
+to missing constraints or bypassable validations associated
+with fundamental cross-chain properties. Specifically, these
+properties encapsulate the inherent attributes of cross-chain
+interactions, such as message payloads, external call targets,
+and price slippage. To defend against varying attack vectors,
+these properties must be governed by rigorous constraints
+spanning three core dimensions: Integrity, Authenticity, and
+Safety. A comprehensive formalization of these properties and
+
+3
+(a) Tree of Thoughts
+(b) Graph of Thoughts
+Fig. 2. A comparison of thought organization structures. (a) Tree of Thoughts,
+which explores different reasoning paths in a branching manner. (b) Graph of
+Thoughts, which allows paths to merge, enabling more complex and efficient
+exploration.
+their corresponding enforceable constraints is detailed later
+in §IV. As illustrated in Figure 3, when the constraint of
+security properties is absent or can be bypassed, adversaries
+are able to carefully craft cross-chain inputs to violate intended
+guarantees and maliciously siphon tokens.
+This perspective provides the factual foundation for our
+first-principle verification approach. Guided by it, we de-
+sign GoAT-X with the objective of systematically identifying
+whether security properties in code are enforced by corre-
+sponding constraints and whether such constraints can be
+bypassed in practice. Building on this, we conduct a detailed
+analysis of the cross-chain execution process and construct
+a comprehensive Cross-Chain Token Transaction Verification
+Framework, within which all subsequent reasoning is explicitly
+constrained.
+Leveraging the event-driven nature of cross-chain logic,
+GoAT-X uses cross-chain events as anchors to precisely local-
+ize and extract the implementation code relevant to each cross-
+chain transaction from large-scale smart contract codebases.
+It then abstracts security properties and their associated data
+flows, and evaluates whether the predicates defined in the
+Verification Framework are correctly enforced along these data
+flows or can be bypassed by adversarial executions.
+Fig. 3. Examples of Missing or Bypassed Security Property Validation
+As illustrated in Figure 4, GoAT-X adopts a five-layer audit
+graph architecture. Each node in the graph corresponds to
+an atomic auditing thought, defined as a structured interme-
+diate reasoning unit generated during the auditing process.
+Such a thought encapsulates cross-chain contract semantics,
+partial security properties, associated data flows, constraint
+implementations, or constraint-bypass inferences. The overall
+architecture is orchestrated by the Verification Framework
+Gateway, which manages the flow of auditing thoughts across
+layers. At each stage, the Gateway normalizes incoming
+thoughts into structured representations through static analysis
+and selectively dispatches them to external LLMs or encoder-
+based components for further reasoning. The resulting outputs
+are then transformed into atomic auditing thoughts and reinte-
+grated into the audit graph, ensuring that all reasoning remains
+aligned with the Verification Framework.
+By progressively connecting these individual auditing
+thoughts within the five-layer Graph of Auditing Thoughts,
+GoAT-X systematically reproduces an expert’s entire rea-
+soning chain, culminating in a comprehensive audit report.
+Implementation details for the Cross-Chain Token Transaction
+Verification Framework and the Graph of Auditing Thoughts
+are provided in §IV and §V, respectively.
+IV. CROSS-CHAIN TOKEN TRANSACTION VERIFICATION
+FRAMEWORK
+We formally define the security properties and correspond-
+ing predicates governing the on-chain lifecycle of cross-chain
+transactions in GoAT-X. These definitions serve as the foun-
+dation for the internal Gateway, which applies the underlying
+principles to systematically guide and constrain the analysis
+across all layers.
+A. Transaction Verification Property Definition
+We define a standardized schema for cross-chain transac-
+tions to ensure comprehensive coverage of the attack surface,
+particularly focusing on externally-controllable parameters and
+historical vulnerability patterns [7], [8], [19].
+First, we define a standardized cross-chain message struc-
+ture M. This structure encapsulates all the core information
+required from the source chain to the destination chain and
+serves as the basis for all subsequent on-chain verification
+logic. The explanation of each field is shown in Table I.
+M = {sc, ss, dc, dr, t, a, n}
+(1)
+TABLE I
+EXPLANATION OF EACH FIELD
+Field
+Explanation
+sc
+Source chain identifier
+ss
+Sender address
+dc
+Destination chain identifier
+dr
+Receiver address
+t
+Token address
+a
+Token amount
+n
+Nonce
+Beyond cross-chain messages, our framework incorporates
+external contract interactions and slippage parameters (the
+actual token output, execution price variation, etc.) into the
+verification scope. This inclusion is necessitated by the preva-
+lence of exploits targeting arbitrary external calls [20] and flash
+
+4
+Fig. 4.
+The GoAT-X Architecture. The system integrates a foundational static analysis layer with a multi-stage Large Language Model (LLM) layer to
+perform comprehensive, end-to-end auditing. The workflow progressively transforms the codebase into a comprehensive Audit Report, composed of structured
+intermediate results from each layer: extracted transaction code (Layer 1), property-parameter mappings (Layer 2), data flow slices (Layer 3), verified predicates
+(Layer 4), and confirmed bypass paths (Layer 5).
+loan attack [21]. Formally, the source-chain property structure
+S is defined as:
+S = {M, sextAddr, sextF unc, slippage}
+(2)
+For the destination chain contract, verification must strictly
+target two primary attack vectors: the incoming cross-chain
+message with its attesting signature, and the external calls
+executing subsequent business logic. Accordingly, we design
+the verification property structure as follows:
+D = {M, dextAddr, dextF unc, signature}
+(3)
+B. Transaction Verification Predicates
+To systematically neutralize the attack surface defined in §II,
+we formalize a set of security predicates grounded in three
+fundamental principles: Integrity, Authenticity, and Safety.
+Rather than generic vulnerability patterns, these predicates
+serve as targeted countermeasures against specific cross-chain
+threats:
+• Integrity: Ensures that each user-initiated cross-chain
+request is complete, unambiguous, and logically well-
+formed, filtering out malformed or invalid inputs.
+• Authenticity:
+Verifies that a request is genuinely au-
+thorized by its claimed originator, is unique, and has not
+been replayed.
+• Safety: Ensures that executing a valid and authentic
+request does not introduce unintended risks, including the
+abuse of the protocol to attack other contracts.
+To realize the security requirements, we define a compre-
+hensive set of formal predicates at critical checkpoints across
+the cross-chain lifecycle. (Table II)
+These predicates collectively form the Verification Frame-
+work, in which Ps represents the source chain predicate logic
+and Pd represents the destination chain predicate logic:
+Integrity Verification:
+P (1)
+s
+(S) :=dr ̸= ZeroAddr ∧a > 0∧
+dc ̸= ChainId()
+(4)
+P (1)
+d
+(D) :=dr ̸= ZeroAddr ∧a > 0∧
+dc = ChainId()
+(5)
+These verification steps formalize parameter sanity checks
+to exclude malformed requests and ensure logical soundness.
+The pNetwork bridge exploit [22] illustrates the consequences
+of missing such validation, where zero-amount transactions
+were accepted.
+Authenticity Verification:
+P (2)
+s
+(S) :=t ∈AddrWhitelist∧
+n = NonceNext(ss)∧
+dc ∈SupportedChains
+(6)
+P (2)
+d
+(D) :=NonceUnsed(sc, n)∧
+sc ∈SupportedChains∧
+V alidProof(M, signature)
+(7)
+Authenticity verification formalizes message authorization
+and temporal uniqueness, ensuring that each request is le-
+gitimately authorized and executed exactly once. Failures in
+this layer, such as the Nomad bridge exploit [23], demonstrate
+how flawed authorization logic can lead to arbitrary message
+execution.
+Safety Verification:
+P (3)
+s
+(S) :=sextAddr ∈AddrWhitelist∧
+sextF unc ∈FuncWhitelist∧
+LockedCorrect(ss, t, a)∧
+MinExecutionBounded(slippage)∧
+ReferencePriceBounded(slippage)
+(8)
+
+5
+TABLE II
+CROSS-CHAIN VERIFICATION PREDICATE DEFINITIONS
+Predicate
+Explanation
+ChainId()
+The chain ID of the current contractr
+ZeroAddr
+Zero address
+SupportedChains
+The set of chains supported by the protocol
+Balance(address, token)
+An address’s token balance
+NonceNext(sender)
+The source chain’s next expected nonce for each sender
+NonceUnused(chain, nonce)
+The nonce on the destination chain has not been used yet
+AddrWhitelist, FuncWhitelist
+Address/Function Whitelist
+V alidProof(M, signature)
+Verify the integrity and correctness of the signature
+AssetMap(chain, token)
+Secure asset registry on the chain
+LockedCorrect(sender, token, amount)
+The balance changes correctly after the source chain contract assets are locked/burnt
+UnlockedCorrect(receiver, token, amount)
+The balance changes correctly after the destination chain assets are unlocked/minted
+MinExecutionBounded(slippage)
+The user’s received amount is bounded by a minimum execution threshold
+ReferencePriceBounded(slippage)
+The execution price deviation is bounded against a protocol-defined or external reference price
+P (3)
+d
+(D) :=dextAddr ∈AddrWhitelist∧
+dextF unc ∈FuncWhitelist∧
+UnLockedCorrect(ss, t′, a)
+(9)
+Safety verification formalizes execution-time constraints to
+prevent unintended side effects, ensuring that legitimate re-
+quests cannot be abused to compromise the ecosystem. Lapses
+in such checks, like the vulnerability in Qbridge that failed
+to validate account locks [24], result in significant financial
+damage.
+The final execution condition is that the source chain
+contract executes successfully if and only if:
+P (1)
+s
+(S) ∧P (2)
+s
+(S) ∧P (3)
+s
+(S)
+(10)
+The destination chain contract execution is successful if and
+only if:
+P (1)
+d
+(D) ∧P (2)
+d
+(D) ∧P (3)
+d
+(D)
+(11)
+Together, these predicates constitute a defense-in-depth ver-
+ification logic that precisely delineates the cross-chain attack
+surface and enables systematic detection of authorization,
+validation, and execution flaws. This logic serves as the
+formal backbone of GoAT-X, supporting sound, extensible,
+and automated cross-chain security analysis.
+V. THE FIVE AUDITING LAYERS OF THE GOAT-X
+We aim to perform a deep, end-to-end analysis of cross-
+chain codebases to ensure that non-bypassable validation
+policies, as prescribed by our Verification Framework, are
+correctly implemented at the code level. To tackle this complex
+task, we emulate an expert’s audit methodology by decon-
+structing the verification task into five manageable sub-tasks,
+each corresponding to a layer in our architecture: locating
+code, identifying parameters, tracing data flows, verifying
+constraints, and analyzing bypasses. Together, these layers
+construct a structured Graph of Auditing Thoughts.
+Different auditing tasks require different analytical capa-
+bilities. We therefore combine two complementary modules:
+static analysis for precise and complete data-flow reasoning,
+and LLM-based analysis for semantic interpretation and ab-
+straction. This hybrid design enables efficient and accurate
+static analysis, complemented by large language models that
+resolve semantic ambiguities beyond the reach of traditional
+techniques.
+Formally, we model our auditing process as a tuple (G, O),
+where G = (S, E) is a graph representing the reasoning pro-
+cess, and O = {G, T , V, R} denotes a set of operations that act
+on this graph. Lowercase symbols (e.g., x, y, z) denote atomic
+auditing thoughts generated during the analysis. Within the
+graph G, each node is a state s ∈S, defined as s = [x, z1...i].
+This state encapsulates the initial input x and the sequence
+of thoughts z1...i generated thus far. E ⊆S × S is a set of
+directed edges, representing the transitions between reasoning
+states. This formalization provides a unifying abstraction for
+integrating static analysis and LLM-driven reasoning within a
+single audit graph.
+Static Analysis (SA) Module: Serving as the core engine
+for Layer 1 and Layer 3, this module leverages external tools
+to construct Abstract Syntax Trees (ASTs) for cross-chain
+contract repositories. Based on the ASTs, it identifies cross-
+chain token transaction code and performs data-flow analysis
+to extract security properties within code snippets. We denote
+the static analysis module as q and define the operation to
+obtain structured thoughts based on the current state s as
+R(q, s). This operation yields a variable-sized set of thoughts
+based on the distinct logical implementations within the code:
+R(q, s) ∼q([z1...ks
+i
+] | s)
+(12)
+where the number of thoughts ks is determined by the
+distinct cross-chain logics identified in the code.
+Large Language Model (LLM) Module: Serving as the core
+engine for Layers 2, 4, and 5, the LLM module adopts a multi-
+stage generate–aggregate–evaluate paradigm to conduct deep
+security analysis. This structured approach improves result
+correctness through cross-validation, enabling reasoning capa-
+bilities that extend beyond single-pass inference. At each layer,
+GoAT-X employs an ensemble of different LLMs queried with
+structured prompts to generate multiple candidate reasoning
+paths. These paths are systematically merged into a unified
+thought, which is then evaluated. The most reliable reasoning
+outcome is selected based on confidence scoring. To improve
+robustness, we incorporate self-correction to suppress hallu-
+cinated inferences and retrieval-augmented generation (RAG)
+
+6
+to ground high-level bypass analysis in a protocol-specific
+context.
+We denote the LLM module parameterized by θ as pθ, and
+define the following core operations:
+1) Thoughts Generation (G):This operation expands the
+reasoning space from a given state s by leveraging
+an ensemble of kG LLMs to generate diverse paral-
+lel thought candidates. Each model produces next-step
+thoughts conditioned on the current state.
+G(pθ, s, kG) ∼pgenerate
+θ
+([z1...kG
+i+1
+]|s)
+(13)
+2) State Aggregation (T ):This operation consolidates a set
+of candidate states S by merging semantically or struc-
+turally equivalent thoughts. It employs encoder-based
+similarity scoring and rule-based matching to prune
+redundant outputs and to merge thoughts corresponding
+to the same security property or constraint into a unified
+thought z′
+i+1:
+T (pθ, S) ∼paggregate
+θ
+(z′
+i+1|S)
+(14)
+3) State Evaluation (V): This operation evaluates candi-
+date property or constraint analyses a within a given
+state and selects the highest-scoring one to form a
+consolidated thought. An LLM-based value function
+pvalue
+θ
+assigns confidence scores v ∈[0, 100] to each
+candidate, and the top-ranked result is retained as the
+output thought.
+V(pθ, s) ∼argmax
+a∈s
+pvalue
+θ
+(v|s, a)
+(15)
+The overall methodology integrating these operations is
+detailed in the pseudocode in Algorithm 1. While the al-
+gorithm generates sets of state nodes St at each layer, the
+edges Et are implicitly defined by the parent-child rela-
+tionships. By formalizing these connections, for instance as
+Et = {(parent(s), s)|s ∈St}, we can then proceed to
+construct the five-layer auditing graph G = (∪5
+t=1St, ∪5
+t=1Et).
+Algorithm 1 Exploration of Auditing Layers
+Require: codebase C, size of the model ensemble kG
+1: S0 ←{[C]}
+2: for t=1,...,5 do
+3:
+St ←∅
+4:
+for s in St−1 do
+5:
+if layer t in LLM module then
+6:
+S′
+t ←{[s, zt]|zt ∈G(pθ, s, kG)}
+7:
+s′ ←[s, T (pθ, S′
+t)]
+8:
+St ←St ∪{[s, V(pθ, s′)]}
+9:
+end if
+10:
+if layer t in SA module then
+11:
+St ←St ∪{[s, zt]|zt ∈R(q, s)}
+12:
+end if
+13:
+end for
+14: end for
+15: return ∪5
+t=1St
+A. Layer 1: Cross-Chain Transaction Code Extraction(SA)
+The primary objective of this layer is to decompose a large
+and complex codebase into a set of foundational auditing
+thoughts, each capturing a self-contained and transaction-
+specific code flow. By constraining the analysis to these critical
+flows, the layer enables fine-grained inspection while effec-
+tively focusing the LLM on the most relevant implementation
+logic.
+To this end, GoAT-X first constructs a directed function call
+graph for the entire codebase using Slither [25] and Surya
+[26], as illustrated in Figure 5. Functions emitting key cross-
+chain events are then identified as anchors. Starting from
+these anchors, a dual Breadth-First Search (BFS) traversal
+is performed to isolate the complete execution logic of each
+cross-chain transaction.
+Fig. 5.
+A partial illustration of the function call graph. Nodes of different
+colors belong to different smart contracts, clearly showing the interactions
+between them.
+Guided by event anchors on both the source and destination
+chains, this dual-traversal strategy precisely localizes the code
+relevant to a cross-chain operation. Each extracted flow is
+treated as a node in the auditing graph and serves as the trusted
+input for all subsequent analysis layers (Algorithm 2).
+Algorithm 2 Extracting Cross-Chain Functions as Nodes
+Require: codebase C, cross-chain event Event
+1: G ←BUILDGRAPH(C)
+▷Using Slither & Surya
+2: E ←FINDFUNCTION(C, Event)
+▷Regex for events
+3: N ←∅
+4: for each function e in E do
+5:
+S ←{e}
+▷Backward BFS
+6:
+S′ ←{e}
+7:
+while S′ is not empty do
+8:
+S′ ←{u | u /∈S, v ∈S, edge(u, v) ∈G}
+9:
+S ←S′ ∪S
+10:
+end while
+11:
+S ←{s|s ∈S, s has "public" or "external"}
+12:
+for s ∈S do:
+▷Forward BFS
+13:
+n ←{s}
+14:
+S′ ←{s}
+15:
+while S′ is not empty do
+16:
+S′ ←{v | u ∈n, v /∈n, edge(u, v) ∈G}
+17:
+n ←S′ ∪n
+18:
+end while
+19:
+Add n to N
+20:
+end for
+21: end for
+22: return N
+B. Layer 2: Property-Parameter Mapping(LLM)
+We formulate this step as an entity recognition task,
+where large language models are leveraged to establish high-
+
+7
+confidence semantic mappings between abstract security prop-
+erties and concrete code parameters. Figure 6 illustrates the
+overall workflow.
+Given an analysis node from Layer 1, the Gateway enriches
+it with relevant security properties and forwards a unified
+code–property context to the Generator. The Generator issues
+a single consolidated prompt to an ensemble of kG LLMs,
+enabling diverse yet complementary property–parameter hy-
+potheses.
+The resulting mappings are aggregated to remove redun-
+dancy and then validated by an Evaluator, which assigns
+confidence scores to each candidate. For each security prop-
+erty, only the highest-scoring mapping is retained, while
+low-confidence mappings and nodes are pruned, preventing
+conflicting semantic bindings and enforcing a deterministic,
+high-precision output.
+Each validated property–parameter mapping is finally en-
+capsulated as a new auditing thought node, forming the output
+of this layer. Prompt templates are provided in Appendix.
+Fig. 6. Workflow of Layer 2
+C. Layer 3: Data Flow Extraction(SA)
+To isolate parameter-specific data flow slices and provide
+high-signal inputs for subsequent LLM reasoning, we design
+a lightweight static data flow analyzer. While LLM-based
+methods [27] can perform sliced dataflow extraction, they typ-
+ically incur prohibitive computational costs and latency while
+remaining prone to hallucinations. Leveraging the extracted
+parameters and the codebase AST constructed in Layer 1,
+the analyzer identifies all parameter-related tainted variables
+T through a three-stage process.
+1) Bidirectional Taint Propagation: Unlike traditional
+unidirectional analysis, we adopt an aggressive infec-
+tion strategy to capture implicit dependencies. For any
+statement σ, let Vσ be the set of all identifiers involved.
+The taint set T is updated as:
+Tnext = T ∪Vσ | Vσ ∩T ̸= ∅
+(16)
+2) Inter-procedural Mapping: To handle cross-contract
+logic, the analyzer maintains a function signature cache
+S : func →{p1, . . . , pn}. Upon encountering a Func-
+tionCall at a call site with arguments {a1, . . . , an}, the
+state is propagated via:
+ai ∈T
+=⇒pi ∈T
+(17)
+Algorithm 3 Context-Aware Code Slicing
+1: Require: AST Map A, Taint Set T
+2: function EXTRACT(node, C, force)
+3:
+is tainted ←CheckTaint(node, T )
+4:
+zlocal ←∅
+5:
+if node.type ∈{If, For, While} then
+6:
+ctx ←Rec(node.condition)
+7:
+C′ ←C ∪{ctx}
+8:
+zsub ←EXTRACT(node.body, C′, is tainted ∨force)
+9:
+if zsub ̸= ∅∨is tainted ∨force then
+10:
+zlocal ←zlocal ∪{(ctx, C)}
+11:
+zlocal ←zlocal ∪zsub
+12:
+end if
+13:
+else if node.type = Block then
+14:
+for each stmt ∈node.statements do
+15:
+zlocal ←zlocal ∪EXTRACT(stmt, C, force)
+16:
+end for
+17:
+else if is tainted ∨force then
+18:
+code ←Rec(node)
+19:
+zlocal ←zlocal ∪{(code, C)}
+20:
+end if
+21:
+return zlocal
+22: end function
+23: Zraw ←∅
+24: for each root ∈A do
+25:
+Zraw ←Zraw ∪EXTRACT(root, ∅, False)
+26: end for
+27: ZSA ←Reformat(Zraw) ▷Refactor into standard code format
+28: return ZSA
+3) Convergence: The module iteratively scans the AST
+until |T | reaches a fixed point.
+After identifying the taint set T , the module applies context-
+aware code slicing to construct a concise data flow represen-
+tation ZSA. To materialize the sliced AST into a form suitable
+for downstream reasoning, We define a recursive operator
+Rec : N →S to map AST nodes to their corresponding
+Solidity code representations. A partial specification is given
+as follows:
+Rec(σ) =
+
+
+
+
+
+name(σ)
+σ ∈Identifier
+Rec(σleft) ⊕op ⊕Rec(σright)
+σ ∈BinaryOp
+Rec(σhead) ∪Rec(σbody)
+σ ∈FuncDef
+(18)
+To preserve path constraints essential for security reasoning,
+the slicer forcibly includes enclosing branch conditions when-
+ever a tainted statement appears within a conditional block,
+even if the condition itself is not directly tainted. This design
+ensures that the resulting slices retain sufficient semantic
+context for constraint verification while significantly reducing
+token complexity. Algorithm 3 presents a simplified Context-
+Aware Code Slicing procedure, which generates parameter-
+specific data flow slices for each target variable. This layer
+deliberately favors conservative static slicing over expressive
+but unstable LLM-based extraction, trading completeness for
+robustness and predictable cost.
+D. Layer 4: Predicate Coverage Check(LLM)
+Leveraging the insight that LLMs reason more effectively
+over natural language than symbolic logic [28], the Gateway
+
+8
+first translates each formal security predicate into a descriptive,
+natural language format.
+The Generator then produces kG
+candidate analyses,
+identifying potential constraint implementations within the
+parameter-specific data flow slice. To avoid redundant reason-
+ing, the Aggregator performs semantic-level pruning across
+these LLM-generated candidates by comparing the semantic
+similarity of their constraint-implementing code snippets.
+Specifically, each snippet is encoded using UniXcoder [29],
+a pretrained model with strong cross-language generalization
+for semantic code representation and clone detection, to obtain
+a contextual embedding v, followed by L2 normalization.
+We quantify the redundancy between candidates A and B
+using cosine similarity, which reduces to a dot product for
+normalized embeddings:
+Similarity(A, B) = vA · vB
+(19)
+Candidates exceeding a similarity threshold kv are pruned,
+retaining only unique semantic logic. This pruning stage serves
+as a low-cost filter, significantly reducing token consumption
+by preventing the expensive Evaluator from processing seman-
+tically equivalent analyses.
+Finally, the remaining candidates are scored for correct-
+ness, and the highest-confidence verified implementation is
+forwarded to the bypass analysis stage. The overall workflow is
+illustrated in Figure 7, with detailed prompt templates provided
+in Appendix.
+Fig. 7. Workflow of Layer 4
+E. Layer 5: Bypass Analysis(LLM)
+Historical incident analysis shows that verification by-
+passes often stem from two overlooked vectors: improper
+configuration of state variables and pre-existing single-chain
+vulnerabilities. To address these challenges, Layer 5 adopts
+an attacker-centric reasoning strategy that augments LLM
+analysis along two complementary dimensions: state-aware
+execution context and experience-driven bypass knowledge.
+The Augmenter incorporates two auxiliary retrieval-augmented
+generation (RAG) modules to systematically guide bypass
+exploration.
+State Context Enhancement. The module enriches the anal-
+ysis with precise state information (Figure 9). Each function
+in the codebase is assigned a stable identifier derived from
+its original source, enabling efficient retrieval of its associated
+state variables and initialized values from the imported con-
+tracts. During analysis, the recovered state context is injected
+Fig. 8. Workflow of Layer 5
+into the prompt, allowing the LLM to reason about bypasses
+that depend on concrete initialization or runtime state, rather
+than code structure alone.
+Bypass Knowledge Retrieval. To further guide attacker-
+style reasoning, this module supplies principle-level bypass
+knowledge distilled from real-world exploits. We curate repre-
+sentative constraint-bypass patterns from established sources,
+including the SWC registry [30] and the 101 DeFi Hacks
+dataset [31]. For efficient similarity-based retrieval, represen-
+tative code snippets are encoded using UniXcoder to obtain
+semantic embeddings, which are indexed in a FAISS vector
+database using inner-product similarity. Instead of exposing
+exploit-specific code, each pattern is abstracted into structured
+metadata that summarizes its underlying bypass principle and
+root cause. During analysis, retrieved bypass principles are
+provided as few-shot references, steering the LLM toward
+historically effective attack strategies while mitigating hallu-
+cinated or implausible reasoning.
+After the Gateway passes the intermediate outputs from
+previous layers, the Augmenter enriches the analysis context
+with state-aware and bypass-oriented information. The aug-
+mented context from both modules instructs the Generator to
+act as an attacker and produce kG independent analyses, each
+proposing a potential bypass path along with a viable Proof
+of Concept (PoC). The Aggregator merges valid outputs and
+removes empty responses. Each remaining bypass candidate is
+then passed to the Evaluator for a rigorous second-level review
+and confidence scoring. Only scenarios exceeding a predefined
+threshold are confirmed as valid vulnerabilities and included
+in the final report. The overall workflow is illustrated in Figure
+8, with detailed prompt templates provided in Appendix.
+F. Implementation
+The GoAT-X architecture is implemented in roughly 7,000
+lines of Python, with the following key specifications.
+Hallucination Mitigation. To mitigate hallucinations in LLM-
+generated outputs, we go beyond ensemble-based aggregation
+and structured prompting by incorporating an explicit self-
+correction mechanism. We introduce a lightweight error detec-
+tion module that validates each output against the Gateway-
+defined verification framework. Outputs are deemed invalid
+if they violate the JSON schema, omit required fields, or
+introduce content unsupported by the input. Detected errors
+are incorporated into a self-correction prompt, which is then
+appended to the original prompt and fed back to the model for
+
+9
+Fig. 9. State Context Enhancement Method
+iterative refinement. Models that fail to produce a valid output
+within a bounded number of attempts are discarded to prevent
+unreliable analyses from propagating downstream.
+Self-Correction Prompt
+[System Error]: The previous generation failed with error:
+{error msg}. Please strictly follow the format requirements,
+ensure the output is valid JSON, and the required fields
+contain valid and correct information.
+Model and its parameter. For our experiments, we select
+a representative ensemble of mainstream closed-source and
+open-source LLMs, including DeepSeek [16], GPT [14], and
+Gemini [15]. All selected models support context windows of
+at least 64k tokens, satisfying our experimental requirements.
+To balance performance, cost, and efficiency, we adopt stable
+and cost-effective variants from each family: DeepSeek-V3.2,
+Gemini-2.5-Flash, and GPT-4o-Mini. We exclude DeepSeek-
+Reasoner due to its excessive deliberation behavior, which
+results i
+
+[…middle truncated for length…]
+
+rojects?
+
+10
+A. RQ1:Semantic Accuracy of GoAT-X Audit Point Identifica-
+tion
+To answer RQ1,we established a rigorous ground truth
+through expert manual annotation across 20 cross-chain
+projects comprising 673 smart contracts, resulting in 294 dis-
+tinct fine-grained audit points. As detailed in our Verification
+Framework, annotations were categorized into three semantic
+layers: (1) Property-Parameter Mapping (mapping properties
+to code variables), (2) Predicate Coverage Check (aligning
+predicates with implementation logic), and (3) Bypass Analy-
+sis (identifying vulnerabilities and rationales).
+Performance was measured via Precision, Recall, and F1-
+score. We recorded a True Positive (TP) only when the model’s
+output semantically aligned with the expert annotation, includ-
+ing the correct prediction of non-existent links (‘None’). A
+False Negative (FN) was logged for any missed annotation,
+and a False Positive (FP) for any reported finding not present
+in the ground truth. Then we calculate the corresponding recall
+= TP/(TP + FN), precision = TP/(TP + FP), F1-score =
+2 ∗recall ∗precision/(recall + precision).
+To demonstrate the effectiveness of our design, we conduct
+a comprehensive ablation study to systematically assess the
+contribution of each major component. In addition to the full
+GoAT-X framework with model ensembling, we evaluate: (1)
+single-model baselines using DeepSeek-V3.2, GPT-4o-Mini,
+and Gemini-2.5-Flash, where model ensembling is disabled
+but the graph-based reasoning framework is retained and
+instantiated via iterative queries to a single model; (2) a chain-
+of-thought variant, CoAT-X, which replaces the graph-based
+reasoning in GoAT-X with a linear chain structure and is
+instantiated with Gemini-2.5-Flash; and (3) a GoAT-X variant
+with the RAG modules in Layer 5 removed. The results of
+these ablation experiments are reported in Table III.
+TABLE III
+AUDITING PERFORMANCE WITH DIFFERENT METHODS
+Method
+#TP
+#FN
+#FP
+Recall
+Precision
+F1-score
+GoAT-X
+270
+24
+25
+0.92
+0.92
+0.92
+GoAT-X(DeepSeek)
+244
+50
+9
+0.83
+0.96
+0.89
+GoAT-X(GPT)
+251
+43
+68
+0.85
+0.79
+0.82
+GoAT-X(Gemini)
+257
+37
+18
+0.87
+0.93
+0.90
+CoAT-X(Gemini)
+247
+47
+15
+0.84
+0.94
+0.89
+GoAT-X w/o RAG
+261
+33
+22
+0.89
+0.92
+0.90
+The experimental results show that GoAT-X accurately
+identifies the vast majority of annotated vulnerability points,
+achieving the best trade-off between precision and coverage
+and thereby validating the effectiveness of the overall archi-
+tecture.
+While single-model variants remain effective under graph-
+based reasoning, they exhibit clear recall–precision biases
+due to model-specific behaviors. Model ensembling mitigates
+these systematic biases and significantly improves overall
+robustness.
+Moreover, graph-based reasoning consistently outperforms
+linear chain reasoning in terms of recall, particularly for com-
+plex bypass logic, while maintaining comparable precision.
+Finally, the RAG module provides critical high-level bypass
+cues that are difficult to infer from code structure alone,
+enabling the system to recover key vulnerability points missed
+in the final analysis layer.
+Answer to RQ1: GoAT-X demonstrates strong se-
+mantic understanding in accurately identifying fine-
+grained audit points. Leveraging model ensembling,
+it achieves 92% coverage of expert-annotated ground-
+truth vulnerability points. Extensive ablation studies
+further validate the effectiveness and necessity of each
+major component in the overall architecture.
+B. RQ2:Effectiveness of Vulnerability Detection
+To answer RQ2, we evaluate GoAT-X’s ability to identify
+the root causes of vulnerabilities within an entire project. Since
+our methodology does not detect vulnerabilities directly, the
+criteria for defining TP, FN, and FP are adapted accordingly.
+A TP is recorded if the missing rules and bypass paths
+reported by GoAT-X, once remediated, would prevent relevant
+vulnerabilities in that project. An FP is recorded if GoAT-X
+reports non-existent issues (e.g., proposes an incorrect missing
+rule or an invalid bypass path). An FN is recorded if GoAT-
+X fails to identify the critical missing rules or bypasses that
+are the root cause of the known vulnerabilities. All generated
+reports were then manually audited by our security experts to
+determine the final results.
+As delineated in Table IV, our evaluation involves a com-
+parative analysis with several state-of-the-art tools. We strictly
+control for experimental variables by configuring GPTScan
+and SmartInv with the same underlying model (Gemini-
+2.5-Flash) and input nodes as GoAT-X. For SmartAxe,
+whose open-source implementation is incomplete, we adopt a
+literature-based comparison; this approach is methodologically
+sound as our evaluation benchmark encompasses the projects
+analyzed in their original work, ensuring a valid and direct
+comparison of detection performance. Notably, PropertyGPT
+is excluded due to its lack of cross-chain semantics and
+specialized training datasets.
+To further assess the necessity of GoAT-X’s layered design
+and iterative reasoning process, we introduce two simplified
+ablation baselines: (1) Direct-Audit, where the LLM performs
+a zero-shot cross-chain audit on the extracted code nodes,
+and (2) Single-Step Analysis, where the LLM attempts to
+synthesize parameter mapping, rule checking, and bypass
+identification in a single pass without iterative refinement.
+The comparative results are summarized in Table V and
+Table VI. Overall, the evaluation demonstrates the limitations
+of existing tools when applied to cross-chain vulnerability
+analysis. As shown in Table V, GoAT-X significantly outper-
+forms all baselines, achieving a Recall of 0.95, a Precision
+of 0.83, and an F1-score of 0.88. In contrast, the LLM-
+based auditors SmartInv and GPTScan perform poorly, with
+F1-scores of 0.24 and 0.26, respectively. GPTScan’s perfect
+Precision is a byproduct of its extremely low Recall (0.15),
+indicating that most critical issues remain undetected.
+
+11
+TABLE IV
+COMPARISON OF BASELINES AND EXPERIMENTAL CONFIGURATIONS.
+Tool
+Type
+X-chain*
+Avail.
+Comparison Strategy
+GoAT-X
+Hybrid
+✓
+✓
+Main Evaluation
+GPTScan [37]
+Hybrid
+×
+✓
+Direct Execution†
+SmartInv [13]
+LLM
+×
+✓
+Direct Execution†
+SmartAxe [7]
+Static
+✓
+×
+Literature-based
+PropertyGPT [12]
+Hybrid
+×
+×
+Excluded (Incompatible)
+*X-chain: Cross-chain Focus; †Executed using Gemini-2.5-Flash.
+While SmartAxe reports competitive results in isolated
+settings, it still underperforms GoAT-X, reflecting the inherent
+difficulty static analysis faces in resolving cross-chain business
+logic and state dependencies. Moreover, unlike low-level alerts
+produced by static analyzers, GoAT-X generates structured
+natural-language reports that improve the interpretability and
+actionability of audit results.
+The baselines further highlight the necessity of GoAT-X’s
+hierarchical decomposition and iterative reasoning strategy.
+Even when provided with the same extracted cross-chain logic,
+both Direct-Audit and Single-Step Analysis fail to achieve
+reliable detection. This confirms that neither coarse-grained
+code extraction nor single-pass reasoning is sufficient; precise
+data-flow slicing and decomposed reasoning are essential for
+effective cross-chain vulnerability detection.
+To understand the boundaries of our framework, we ana-
+lyzed the single False Negative case observed in the Allbridge
+project. The vulnerability in Allbridge stemmed from a flash
+loan attack caused by insufficient slippage protection. Our
+analysis revealed that the project did not use explicit state
+variables for slippage checks; instead, it relied on implicit
+calculations via auxiliary functions (e.g., getY). This implicit
+data flow obscured the semantic link between the calculation
+logic and the concept of “slippage”, preventing the model
+from inferring the necessary constraint. This case highlights
+a persistent challenge in smart contract auditing: resolving
+implicit semantic dependencies. Future work will address this
+by enhancing the framework’s ability to track semantic data
+flows or through targeted fine-tuning on implicit arithmetic
+patterns.
+Answer to RQ2: GoAT-X is highly effective, achiev-
+ing a peak F1-score of 88% and detecting nearly
+all vulnerabilities with a 95% Recall. Comparative
+analysis confirms its state-of-the-art performance, as
+it not only significantly outperforms existing LLM-
+based auditors but also surpasses the specialized static
+analysis tool.
+C. RQ3:Analysis of Runtime Efficiency and Financial Cost
+In RQ3, to evaluate the efficiency and cost-effectiveness
+of GoAT-X, we conducted detailed measurements for the
+detection process of each project. We recorded the runtime
+of each layer within the framework, as well as the number of
+tokens consumed and the corresponding financial cost incurred
+by the LLM Layers. The number of tokens per project is shown
+in Figure 10, the layer-by-layer time consumption is presented
+in Figure 11, and the final average results are summarized in
+VII.
+Fig. 10.
+Input and output token counts for each project, plotted on a
+logarithmic scale. In the legend, (x, y) denotes the number of input tokens
+(x) and output tokens (y), respectively.
+Fig. 11. Runtime of Each Layer in GoAT-X
+These results demonstrate the strong cost-effectiveness of
+our framework when analyzing large and complex cross-chain
+codebases. By leveraging the static analysis layer to precisely
+extract core cross-chain logic and parameter-specific data flow
+slices, the framework substantially reduces the token consump-
+tion required by large language models, thereby lowering both
+financial cost and computational overhead.
+In addition, the encoder-based pruning strategy eliminates,
+on average, 3 branches per project that would otherwise
+require validation by high-cost models, further reducing un-
+necessary LLM invocations. With an average detection time
+of approximately 317 seconds per project, the framework
+achieves high runtime efficiency, making it well-suited for
+deep, automated auditing of complex cross-chain systems.
+
+12
+TABLE V
+THE TABLE SHOWS THE IDENTIFICATION RESULTS FOR EACH CROSS-CHAIN PROJECT WITH KNOWN VULNERABILITIES, WHERE THE SYMBOLS
+REPRESENT THE FRAMEWORK’S OVERALL PERFORMANCE: INDICATES PERFECT DETECTION (TP); G
+#INDICATES AN OVER-REPORT(TP + FP);
+H
+#INDICATES AN UNDER-REPORT(FN); AND #INDICATES A COMPLETE FAILURE(FN + FP).
+Method
+Allbridge
+ChainSwap
+HyperBridge
+LIFI I
+LIFI II
+MeterPassPort
+Multichain I
+Multichain II
+Nerve
+Nomad
+pNetwork
+PolyNetwork
+QBridge
+Qubit
+Ronin
+Rubic
+SocketGateway
+Synapse
+THORChain
+XBridge
+Smartlnv(Gemini)
+#
+#
+#
+G#
+G
+#
+#
+ 
+#
+#
+#
+#
+#
+#
+#
+#
+ 
+ 
+#
+#
+#
+GPTScan(Gemini)
+H#
+H
+#
+H
+#
+ 
+H#
+H#
+H
+#
+H#
+ 
+H
+#
+H
+#
+H
+#
+H
+#
+H#
+H#
+H#
+H#
+ 
+H#
+H#
+Direct-Audit
+#
+H#
+H#
+ 
+G#
+#
+H
+#
+H#
+#
+#
+H#
+#
+G#
+H
+#
+H#
+ 
+G#
+#
+H#
+#
+Single-Step Analysis
+#
+#
+H#
+#
+ 
+H#
+#
+H#
+#
+H#
+ 
+ 
+H#
+H
+#
+H
+#
+H
+#
+G
+#
+G#
+ 
+H#
+GoAT-X
+H#
+ 
+ 
+ 
+ 
+G#
+ 
+ 
+G#
+ 
+ 
+ 
+ 
+ 
+G#
+ 
+ 
+G#
+ 
+ 
+TABLE VI
+PERFORMANCE COMPARISON OF METHODS
+Method
+Recall
+Precision
+F1-score
+SmartInv(Gemini)
+0.25
+0.23
+0.24
+GPTScan(Gemini)
+0.15
+1.00
+0.26
+SmartAxe
+0.90
+0.85
+0.87
+Direct-Audit
+0.25
+0.33
+0.29
+Single-Step Analysis
+0.30
+0.46
+0.36
+GoAT-X
+0.95
+0.83
+0.88
+TABLE VII
+AVERAGE MEASUREMENT PER PROJECT
+Method
+Time
+Input tokens
+Output tokens
+Costs
+GoAT-X
+317.02 s
+62,208
+8,543
+$0.02
+Answer to RQ3: At an average auditing overhead of
+just $0.02 per project, GoAT-X proves to be highly
+cost-effective. Concurrently, its average detection time
+of approximately 317 seconds per project validates its
+efficiency, making it a viable tool for offline security
+analysis.
+D. RQ4:Impact of GoAT-X
+In RQ4, to evaluate GoAT-X’s efficacy in realistic scenarios,
+we constructed a cross-chain wild dataset comprising 1,406
+smart contracts from 12 open-source projects. We applied
+GoAT-X to scan these projects and manually verified the
+reported alerts. As summarized in Table VIII, the tool suc-
+cessfully identified critical security hotspots where constraints
+were either missing or potentially bypassable, demonstrating
+its capability to uncover deep business logic risks in complex
+environments.
+We acknowledge that not all flagged risks correspond to
+immediately exploitable vulnerabilities. In practice, some iden-
+tified issues represent deviations from strict defensive pro-
+gramming, such as relying on implicit compiler-level checks
+(e.g., Solidity 0.8.0+ for overflow) rather than explicit valida-
+tion. However, we argue that maintaining security redundancy
+is crucial for cross-chain protocols, where minor oversights
+can lead to catastrophic losses. GoAT-X operates as a strict
+TABLE VIII
+DETECTION RESULTS ON THE CROSS-CHAIN WILD DATASET
+Category
+#Alerts
+#Confirmed
+#FP
+Precision
+Missing Constraints
+116
+108
+8
+0.93
+Constraint Bypass
+12
+9
+3
+0.75
+Total
+128
+117
+11
+0.91
+auditor, flagging these potential risks to ensure comprehensive
+coverage. Below, we present two representative cases from our
+findings (anonymized for security):
+Case 1: As shown in Figure 12, the transition from withdraw
+to the internal withdrawTo function validates the secret but
+fails to check if the nonce has been consumed. This Missing
+Constraint exposes the protocol to Replay Attacks, where an
+attacker could potentially reuse a valid secret to drain funds
+repeatedly.
+Fig. 12. Instance of Missing Constraint
+Case 2: As illustrated in Figure 13, GoAT-X identifies a
+high-risk data flow in which user-supplied callData is for-
+warded into a low-level call. Although the contract enforces
+a whitelist on the function selector (i.e., the first four bytes
+of the callData), the remaining arguments remain fully user-
+controlled. This design introduces a fragile reliance on down-
+stream validation: if subsequent checks are incomplete or
+improperly implemented, an attacker may manipulate these
+arguments to craft malformed external calls. GoAT-X correctly
+flags this execution path as a critical validation bypass, as such
+manipulation can directly enable unauthorized token transfers
+and result in severe economic losses.
+
+13
+Fig. 13. Instance of Constraint Bypass
+Answer to RQ4: GoAT-X demonstrated high preci-
+sion in the wild dataset. Out of the total alerts, we
+confirmed 108 instances of missing constraints and
+9 valid bypass paths, proving its practical value in
+identifying realistic threats.
+VII. RELATED WORK
+Cross-Chain Vulnerability Detection. Current research on
+securing cross-chain bridges primarily follows two main ap-
+proaches. The first is pre-deployment static analysis, which
+operates at the bytecode level but suffers from a semantic gap,
+where high-level business logic is obscured, making it difficult
+to discern the intent behind key operations [7], [8]. The second
+is post-deployment monitoring, which detects attacks in real-
+time but is inherently reactive rather than preventative due to
+the immutability of smart contracts [3], [19], [34].
+GoAT-X transcends these limitations by operating directly
+at the source-code level. It synergizes the precision of static
+analysis with the semantic understanding of Large Language
+Models, all of which is orchestrated by our formal verification
+framework, to generate a detailed audit report that captures
+high-level business logic.
+Single-Chain Tools. Outside of cross-chain contexts, a variety
+of automated tools have been developed to uncover vulnerabil-
+ities in smart contracts. Symbolic execution frameworks, such
+as Oyente [38], Osiris [39], Mythril [40], and Manticore [41],
+explore all feasible program paths by substituting concrete
+values with symbolic variables. Static analyzers like Slither
+[25] and Surya [26] traverse the contract’s abstract syntax tree
+to identify patterns indicative of bugs, while fuzzers such as
+sFuzz [42] and ContractFuzzer [43] probe runtime behaviors
+and execution traces for anomalous states.
+Although these techniques do not directly address the chal-
+lenges of cross-chain interactions, their core ideas are highly
+relevant. In our method, we leverage the high efficiency and
+precision of static analysis tools in our foundational layers to
+construct detailed function call graphs and extract parameter-
+specific data flows, which provide the essential grounded
+context for our deeper analysis.
+LLM-Driven Security Analysis for Smart Contract. Cur-
+rent research in applying LLMs to this field spans several
+directions, ranging from directly querying the LLM for rapid
+code auditing [10], [11], to enhancing static analysis by using
+the LLM to translate complex contract logic into a more
+analyzable intermediate representation [37], [44], and employs
+fine-tuning and in-context learning to automatically generate
+and refine formal properties for new smart contracts. [12], [13].
+Distinguishing itself from prior art focused on single-chain
+analysis, GoAT-X is the first framework to leverage LLM for
+the automated auditing of cross-chain transaction contracts,
+with a design that is readily extensible to other code security
+domains.
+VIII. CONCLUSION
+This work addresses a critical security gap in the multi-
+chain ecosystem by introducing GoAT-X, a framework that
+brings first-principles verification to cross-chain smart contract
+codebases. Our study shows that effective automation of
+complex audits depends not on scaling LLMs alone, but on
+structuring and constraining their reasoning. GoAT-X achieves
+this by grounding generative analysis in rigorous static slicing
+and a formal verification framework, while leveraging ensem-
+ble reasoning and retrieval-augmented guidance to stabilize
+inference and reduce spurious conclusions. Together, these
+designs transform vulnerability discovery from an ad hoc,
+stochastic process into a systematic and reproducible verifica-
+tion workflow. Our evaluation confirms GoAT-X’s superiority,
+achieving 95% coverage of vulnerable projects and uncover-
+ing 117 confirmed risks in the wild with exceptional cost-
+efficiency. This work establishes a scalable auditing paradigm
+for blockchain security, with promising applicability to broader
+code analysis domains and the sustainable development of the
+DeFi ecosystem.

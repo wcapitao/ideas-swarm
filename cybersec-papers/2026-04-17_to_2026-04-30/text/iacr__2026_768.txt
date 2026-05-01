@@ -1,0 +1,1285 @@
+Towards More Efficient Registration-Based Encryption from LWE
+Toi Tomita1
+1 Yokohama National University, Japan
+tomita-toi-sk@ynu.ac.jp
+Abstract
+Registration-based encryption (RBE) effectively addresses the key escrow problem in identity-based
+encryption. However, existing post-quantum RBE schemes suffer from prohibitive ciphertext sizes in the
+gigabyte range for systems with 210 registered users. This poor scalability is a major obstacle to the large-
+scale implementation of RBE in society. In this work, we propose a framework for constructing efficient
+RBE schemes that can be instantiated from the learning with errors (LWE) assumption. Specifically,
+the ciphertext size remains around 221 MB even as the number of registered users increases. The core
+techniques involve introducing decomposable laconic encryption and integrating it with a refined snap-
+shotting trick. Our work represents an important milestone towards achieving practical post-quantum
+RBEs.
+Contents
+1
+Introduction
+2
+1.1
+Background . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2
+1.2
+Our Contribution . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2
+1.3
+Technical Overview . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3
+1.4
+Related Works
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4
+1.5
+Concurrent Works
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4
+2
+Preliminaries
+4
+2.1
+Registration-Based Encryption
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5
+3
+Decomposable Laconic Encryption
+6
+4
+Efficient RBE from dLE
+8
+4.1
+Construction
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+9
+4.2
+Correctness, Compactness, and Efficiency
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+9
+4.3
+Security . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+12
+5
+Instantiation from Lattice
+13
+5.1
+Preliminaries on Lattices . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+13
+5.2
+Lattice-Based dLE Scheme
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+14
+5.3
+Efficiency and Comparison . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+17
+1
+
+1
+Introduction
+1.1
+Background
+Registration-based encryption (RBE), introduced by Garg et al. [GHMR18], is a novel primitive that bridges
+the gap between traditional public-key encryption (PKE) and identity-based encryption (IBE). The core
+appeal of RBE is its ability to eliminate the key escrow problem inherent in IBE. In an IBE system, a trusted
+key generation center (KGC) possesses a master secret key that can decrypt any message. This vulnerability
+has long hindered the adoption of IBE in privacy-critical environments [BF01, Rog15]. RBE modifies the
+conventional trust model in which users generate their own key pairs locally and then register their public
+keys and their identities with a semi-trusted key curator (KC). The KC maintains a succinct digest (called a
+public parameter) of all registered users, enabling any sender to encrypt messages using only the recipient’s
+identity and the current system parameters. The public parameter is updated each time a user registers.
+Therefore, registered users must obtain the helper decryption key used in the decryption process from the
+KC. Importantly, the RBE definition requires that the number of updates increase logarithmically with the
+number of users. It is not feasible to update all users’ keys each time a new public key is registered, which is
+why this requirement is necessary. Since the initial works [GHMR18, GHM+19], rapid interest in RBEs has
+emerged, and they have advanced on many fronts, including efficiency [CES21, DKL+23, GKMR23, FKdP23],
+security [GV20, CHH+24], and theoretical lower bounds [MQR22, MQ23, HMQS23, DMQ25].
+Despite its theoretical elegance, constructing efficient RBE schemes, especially those secure against quan-
+tum adversaries, has proven exceptionally challenging. Early RBE constructions [GHMR18, GHM+19] re-
+lied on highly theoretical and prohibitively inefficient cryptographic primitives, with estimated ciphertext
+sizes in the terabyte range [CES21], rendering them completely un-deployable. While pairing-based RBE
+schemes [GKMR23, FKdP23] have reached practical efficiency (with ciphertexts under 1 KB), they lack
+post-quantum resistance. On the other hand, existing post-quantum RBE schemes based on the learning
+with errors (LWE) assumption [DKL+23, FKdP23] have ciphertext sizes exceeding gigabytes for systems
+with 210 registered users. This pervasive issue presents a fundamental obstacle to their adoption. Thus, we
+pose the following pressing question, which forms the central motivation of our work:
+Can we construct more efficient post-quantum RBE schemes?
+1.2
+Our Contribution
+In this work, we answer this question in the affirmative. We propose a framework for constructing efficient
+RBE schemes that can be instantiated from the LWE assumption. Specifically, the ciphertext size remains
+around 221 MB even as the number of registered users increases. Compared to existing works [DKL+23,
+FKdP23], our results significantly improve the concrete efficiency of the post-quantum RBE scheme. The
+core techniques are summarized as follows:
+• We introduce decomposable laconic encryption (dLE), a novel primitive inspired by the decomposability
+found in multi-recipient encryption. The key insight of dLE is that a ciphertext can be decomposed into
+two constituent parts. Through this decomposition, our framework achieves remarkable compactness
+and scalability.
+• Moving beyond the traditional approach to construct RBEs, we implement a refined snapshotting
+trick. As a result of this, our ciphertext size scales only by O(hw(N)), a significant improvement over
+O(ℓ· log N) for [DKL+23] and O(log Nmax · log N) for [FKdP23]. Here, hw(N) denotes the Hamming
+weight of the binary representation of N, ℓis the length of the identity, and Nmax is the maximum
+number of registered users.
+We compare our scheme with the state-of-the-art post-quantum RBE schemes in Table 1. This table
+shows that our scheme achieves a significantly smaller ciphertext size and superior scalability compared with
+prior schemes. Furthermore, the limitations inherent in [FKdP23]’s scheme are not present in our scheme.
+Although our ciphertext size is still large at 221 MB, our work represents an important milestone towards
+achieving practical post-quantum RBEs.
+2
+
+Nmax
+Ciphertext size [MB]
+Unbounded
+Adaptive
+N = 210
+N = 220
+N = 230
+users
+compactness
+[DKL+23]
+∞
+4428.38
+8856.76
+13285.14
+✓
+✓
+[FKdP23]
+220
+1523.03
+3046.07
+-
+-
+-
+230
+2211.98
+4423.96
+6635.94
+Ours
+∞
+221.43
+221.45
+221.47
+✓
+✓
+Table 1: A comparison of the concrete ciphertext sizes of LWE-based RBE schemes. Nmax is the maximum
+number of registered users. N is the number of current registered users. “Unbounded users” means the
+maximum number of users is not bounded in advance. “Adaptive compactness” implies that it satisfies the
+standard definition of compactness.
+1.3
+Technical Overview
+Here, we provide an overview of our techniques for obtaining efficient RBEs.
+The Bottleneck of the Previous Approach. Most existing RBE constructions [GHMR18, GHM+19,
+GV20, DKL+23, GKMR23, FKdP23] rely on the powers-of-two approach [HLWW23] or its variant, the
+snapshotting trick [GV20].
+These allow an RBE scheme without update frequency requirements to be
+converted into an RBE scheme with a low update frequency. Especially in the snapshotting trick, the KC
+maintains a logarithmic number of snapshots of the registration state (represented as a digest of the base
+scheme). These snapshots divide the registered user space into disjoint groups of sizes 2j (e.g., 1, 2, 4, . . . , 2λ).
+A snapshot is only replaced or merged when a new registration completes a group of a specific size. This
+ensures that the size of public parameters and the total number of updates per user all scale logarithmically
+with N. However, these approaches increase the ciphertext size by a factor of O(log N) because the encryption
+process must generate a ciphertext for each of the log N active digests of the base scheme. In the post-
+quantum setting (e.g., LWE-based schemes [DKL+23, FKdP23]), the ciphertext size of the base scheme
+already reaches several hundred megabytes. Consequently, even when log N = 10, the resulting overhead
+leads to impractical ciphertext sizes of several gigabytes.
+Our Key Insight: Leveraging Decomposability. To overcome this issue, our framework transitioned
+from a paradigm of simple repetition to one of effective repetition via decomposability. Inspired by recent
+advancements of post-quantum multi-recipient encryption (mPKE) [KKPP20, HKP+21, AHK+23], we in-
+troduce a novel primitive: Decomposable Laconic Encryption (dLE) is a decomposable variant of laconic
+encryption that was introduced in [DKL+23]. It can be considered a form of RBE without requiring an up-
+date frequency. While (d)LE can be converted to RBE using the previous approaches, it incurs multiplicative
+overhead. The key insight of dLE is that a ciphertext can be decomposed into two constituent parts: a rel-
+atively large, digest-independent part (ctind) and a very compact, digest-dependent part (ctdep). This allows
+the encryptor to generate only a single digest-independent part, regardless of the number of active digests.
+The only additional cost associated with an increase in active digests is the compact digest-dependent part.
+To utilize dLE securely as described above, dLE must have a slightly stronger security requirement. That is
+to say, the message is hidden, even given one digest-independent part and multiple digest-dependent parts
+generated by different digests and shared randomness. We call such security multi-digest security. For more
+details, we give the formal definition of dLE in Section 3.
+Fortunately, the LWE-based laconic encryption scheme proposed in [DKL+23] is already decomposable
+since the ciphertext can be decomposed into ctind and ctdep, where Aid is a matrix determined by the identity
+id, y is the digest, r0, . . . , rℓare the LWE secrets, and e and e are the LWE noises. That is, ctdep is only
+one LWE ciphertext and is significantly compact. However, simply applying the security proof in [DKL+23]
+repeatedly to each digest is insufficient to prove the security of a multi-digest. The original proof assumes
+that each ciphertext is generated with independent randomness. In contrast, multi-digest security involves
+multiple ctdep that are strongly correlated with a single ctind through shared randomness r0. Therefore,
+when randomizing ctdep for a specific digest, the simulation must be performed without compromising the
+consistency of ctdep for the other digests or ctind. For more details, we refer the reader to Section 5.
+3
+
+Our Generic Transformation. Rather than a naive application of previous approaches, our RBE con-
+struction employs a refined snapshotting trick tailored to dLE. In our transformation, the public parameter
+pp consists of a set of digests ( ˜
+dig1, . . . , ˜
+dighw(N)), where each digest represents a snapshot of the registra-
+tion state. The number of these snapshots is strictly limited to hw(N). Upon the registration of a new
+user, snapshots are merged in a manner analogous to a binary counter, ensuring that older snapshots are
+only replaced when a new snapshot can cover an equivalent power-of-two number of users. To encrypt a
+message, the encryptor does not generate multiple full ciphertexts. Instead, the encryptor produces a single
+digest-independent part (˜ctind) and then attaches multiple digest-dependent parts (˜ctdep
+i
+) corresponding to
+each active snapshot. The resulting ciphertext is ct = (˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(N)). The size of ct is computed
+as |ct| = | ˜ctind| + hw(N) · | ˜ctdep
+i
+| instead of O(log N) · (|˜ctind| + | ˜ctdep
+i
+|).
+In particular, when instantiated with the above dLE scheme, the ciphertext size only scales with hw(N)
+LWE ciphertexts. The concrete breakdown of the ciphertext size is |˜ctind| = 221.41 MB and | ˜ctdep
+i
+| = 1.86 KB.
+Consequently, while the ciphertext size in previous LWE-based RBE schemes doubled from 210 to 220 users,
+our ciphertext size grows only by a few tens of kilobytes. This remarkable efficiency can be attributed to the
+fact that a substantial portion of the ciphertext is shared across all snapshots. At the same time, the growth
+part is confined to the compact digest-dependent components. The synergy between dLE and snapshotting
+enables the scheme to achieve a more efficient post-quantum RBE, yielding an order-of-magnitude reduction
+in ciphertext size. A more detailed description of our transformation is provided in Section 4. We believe
+that our techniques could be useful for more advanced applications.
+1.4
+Related Works
+In recent years, there has been growing interest in generalizing RBEs to registered fine-grained encryption,
+such as registered attribute-based encryption (RABE) [HLWW23] and registered function-based encryp-
+tion (RFE) [FFM+23]. Most proposals are based on indistinguishability obfuscation [HLWW23, FFM+23,
+DPY24, LWW25] or pairing-based assumptions [HLWW23, FFM+23, ZZGQ23, ZLZ+24, GLWW24, AT24,
+DPY24, BLM+24, ZCHZ24, LWW25, AAH+25]. Very recently, we have had some lattice-based RABE con-
+structions from private/public-coin evasive LWE [FWW23, ZCHZ24], succinct LWE [CHW25, WW25], or
+decomposed LWE [AMR25] assumptions, which are significantly stronger variants of the LWE assumption.
+1.5
+Concurrent Works
+2
+Preliminaries
+Notations. The basic notations used in this paper are summarized here. For n, m ∈N with n ≤m, we write
+[n, m] := {n, . . . , m} and [m] := {1, . . . , m}. For b ∈{0, 1}, we write ¯b := 1 −b. For x ∈{0, 1}n, let hw(x)
+denote its Hamming weight. When x ∈N, hw(x) denotes the Hamming weight of the binary representation
+of x. For x ∈{0, 1}n and 1 ≤ℓ≤n, let x1:ℓdenote the length-ℓprefix of x. We write x ←$ S to denote
+that x is sampled uniformly from a finite set S. We write x ←D to denote that x is sampled from the
+distribution D.
+Throughout this work, we write λ to denote the security parameter. We write poly(λ) to denote a function
+that is O(λc) for some constant c ∈N and negl(λ) to denote a function that is o(λ−c) for all c ∈N. We say that
+two families of distributions D0 := {D0,λ}λ∈N and D1 = {D1,λ}λ∈N are computationally indistinguishable,
+denoted as D0 ≈c D1 if no probabilistic polynomial time (PPT) algorithm can distinguish them with non-
+negligible probability.
+We say that they are statistically indistinguishable, denote as D0 ≈s D1, if the
+statistical distance between D0 and D1 is bounded by negl(λ). We use bold uppercase letters (e.g., M) to
+denote matrices and bold lowercase letters (e.g., v) to denote vectors. For an algorithm A and data x, Ax
+(resp., A[x]) denotes a read (resp., read/write) random access operation performed by A on x.
+4
+
+2.1
+Registration-Based Encryption
+Here, we define registration-based encryption (RBE) [GHMR18].
+Definition 2.1 (Registration-Based Encryption). Let ID = {IDλ}λ∈N be the identity space and M =
+{Mλ}λ∈N be the message space. A registration-based encryption (RBE) scheme with identity space ID and
+message space M is a tuple of PPT algorithms with the following syntax:
+• Setup(1λ) →crs: On input the security parameter λ, the setup algorithm outputs a common reference
+string crs.
+• KGen(crs) →(sk, pk): On input crs, the key-generation algorithm outputs a key pair (sk, pk).
+• Reg[aux](crs, pp, id, pk) →pp′: On input crs, the current public parameter pp, an identity id ∈ID to be
+registered, and a corresponding public key pk, the registration algorithm deterministically outputs the
+updated public parameter pp′ via (read/write) random access to the auxiliary information aux. (The
+system is initialized with public parameters pp and auxiliary information aux set to ⊥.)
+• Enc(crs, pp, id, m) →ct: On input crs, pp, a recipient identity id ∈ID, and a message m ∈M, the
+encryption algorithm outputs a ciphertext ct.
+• Updaux(pp, id) →hsk: On input pp and an identity id ∈ID, the update algorithm deterministically
+outputs a helper decryption key hsk via (read) random access to aux.
+• Dec(sk, hsk, ct) →m ∈M ∪{GetUpd, ⊥}: On input a secret key sk, a helper decryption key hsk, and
+ct, the decryption algorithm outputs either a message m ∈M, or a special symbol in {GetUpd, ⊥}.
+(Here, GetUpd indicates that a key update might be needed for decryption.)
+Definition 2.2 (Correctness, Compactness, and Efficiency). Let Π be an RBE scheme.
+For a security
+parameter λ ∈N and an adversary A, we define the following game CorΠ,A(1λ) between A and a challenger
+Chal:
+• Initialization: Chal sets (pp, aux, hsk, S, id∗, t) := (⊥, ⊥, ⊥, ∅, ⊥, 0) and crs ←Setup(1λ), and sends crs
+to A.
+• Every round A does one of these actions:
+(a) Registering a new (non-target) identity: A sends a new identity id /∈S and a public key pk to Chal,
+which registers and and updates pp := Regaux(crs, pp, id, pk). Chal also updates S := S ∪{id}.
+(b) Registering the target identity: If the target identity id∗is already chosen, then do nothing. Oth-
+erwise, A sends a target identity id∗to Chal. If id∗/∈S then Chal samples an honest key pair
+(sk∗, pk∗) ←KGen(crs) and registers and updates pp := Reg[aux](crs, pp, id, pk∗), S := S ∪{id∗},
+and sends pk∗to A.
+(c) Encrypting to the target identity: If the target identity id∗is not yet chosen, then do nothing.
+Otherwise, Chal sets t := t + 1and receives a message mt from A.
+Chal sends a ciphertext
+ctt ←Enc(crs, pp, id∗, mt) to A.
+(d) Decrypting for target identity: A sends i ∈[t] to Chal, which computes m′
+i := Dec(sk∗, hsk, cti). If
+m′
+i = GetUpd, then Chal computes the helper decryption key hsk := Updaux(pp, id∗) and computes
+m′
+i := Dec(sk∗, hsk, cti). If m′
+j ̸= mj, the game halts with outputs b = 1.
+If A finished making queries and the game has not halted (as a result of a decryption query), then the
+game outputs b = 0.
+Let N = |S|. We say that Π is correct and efficient if for all security parameters λ ∈N and all (possibly
+unbounded) adversaries A making at most a polynomial number of queries, the following properties hold:
+5
+
+• Correctness: It holds that Pr
+
+CorΠ,A(1λ) = 1
+
+= negl(λ).
+• (Adaptive) compactness: It holds that |pp| = poly(λ, log N) and |hsk∗| = poly(λ, log N) (at all
+points in the game).
+• (Weakly) efficiency: Then, in the course of the above game, Chal invokes the update algorithm
+Upd at most O(log N) times, where each invocation runs in poly(λ, log N) time in the RAM model of
+computation.
+Definition 2.3 (Security). Let Π be an RBE scheme. For a security parameter λ ∈N and an adversary A,
+we define the following game SecΠ,A(1λ) between A and a challenger Chal.
+• Initialization: Chal sets (pp, aux, hsk, S, id∗) := (⊥, ⊥, ⊥, ∅, ⊥) and crs ←Setup(1λ), and sends crs to
+A.
+• Every round A does one of these actions:
+(a) Registering a new (non-target) identity: A sends a new identity id /∈S and a public key pk to Chal,
+which registers and and updates pp := Regaux(crs, pp, id, pk). Chal also updates S := S ∪{id}.
+(b) Registering the target identity: If the target identity id∗is already chosen, then do nothing. Oth-
+erwise, A sends a target identity id∗to Chal. If id∗/∈S then Chal samples an honest key pair
+(sk∗, pk∗) ←KGen(crs) and registers and updates pp := Reg[aux](crs, pp, id, pk∗), S := S ∪{id∗},
+and sends pk∗to A.
+• Encrypting for target identity: A sends m0, m1 ∈M. If no target identity id∗is chosen, A sends
+id∗to Chal. Then, Chal samples a random bit b ←$ {0, 1}, generates an encryption to the target identity
+ct∗←Enc(crs, pp, id∗, mb), and sends ct∗to A.
+• A outputs a bit b′ ∈{0, 1}. The game outputs 1 if b = b′ and 0 otherwise.
+We say that Π is secure if for all security parameter λ ∈N and all PPT adversaries A, it holds that
+Pr[SecΠ,A(1λ) = 1] ≤1/2 + negl(λ).
+3
+Decomposable Laconic Encryption
+In this section, we formally introduce decomposable laconic encryption (dLE), which is a generalization of
+the standard laconic encryption in [DKL+23] with modifications described in Theorem 3.2.
+Definition 3.1 (Decomposable Laconic Encryption). Let M = {Mλ}λ∈N be the message space. A de-
+composable laconic encryption (dLE) scheme with message space M is a tuple of PPT algorithms with the
+following syntax:
+• Setup(1λ, 1ℓ) →(crs, dig, st): On input a security parameter λ and an index-length parameter ℓ, the
+setup algorithm outputs a common reference string crs, an initial digest dig, and an initial state
+st. We assume that crs implicitly defines a randomness space R = (Rind, Rdep), where Rind is the
+randomness space for digest-independent encryption and Rdep is the randomness space for digest-
+dependent encryption.
+• KGen(crs) →(sk, pk): On input crs, the key-generation algorithm outputs a key pair (sk, pk).
+• IsValid(crs, pk) →b: On input crs and a public key pk, the key-validation algorithm deterministically
+outputs a bit b ∈{0, 1} indicating whether pk is valid or not.
+• MemUpd[st](crs, dig, id, pk) →dig′: On input crs, the current digest dig, an index id ∈{0, 1}ℓ, and pk,
+the membership update algorithm deterministically outputs the updated digest dig′ via (read/write)
+random access to the state st.
+6
+
+• Enc(crs, dig, id, m; rind, rdep) →ct = (ctind, ctdep): The decomposable encryption algorithm, runs with
+randomness (rind, rdep) ∈Rind × Rdep, splits into the following two algorithms:
+– Encind(crs, id; rind) →ctind: On input crs, id ∈{0, 1}ℓ, and rind ∈Rind, the digest-independent
+encryption algorithm outputs a digest-independent ciphertext ctind.
+– Encdep(crs, dig, id, m; rind, rdep) →ctdep: On input crs, dig, id ∈{0, 1}ℓ, a message m ∈M, and
+(rind, rdep) ∈Rind × Rdep, the digest-dependent encryption algorithm outputs a digest-dependent
+ciphertext ctdep.
+• WGenst(crs, dig, id, pk) →wit: On input crs, dig, id ∈{0, 1}ℓ, and pk, the witness generation algorithm
+deterministically outputs a membership witness wit via (read) random access to st.
+• Dec(sk, wit, ct) →m ∈M ∪{⊥}: On input sk, wit, and ct, the decryption algorithm outputs either a
+message m ∈M or a special symbol ⊥.
+Furthermore, all the above algorithms run in time at most poly(λ, ℓ).
+Remark 3.2 (Differences from standard laconic encryption). Below, we summarize the difference between
+decomposable and standard laconic encryption [DKL+23].
+• The most important modification is decomposability, which allows the encryption algorithm to be
+split into two parts: a digest-independent and a digest-dependent part. We also introduce ciphertext
+compactness (Theorem 3.4) and multi-digest security (Theorem 3.5). Ciphertext compactness requires
+that a digest-dependent ciphertext be sufficiently compact.
+Multi-digest security requires that the
+message is hidden from the challenge ciphertext, which consists of one digest-independent part and
+multiple digest-dependent parts generated by different digests and shared randomness.
+• Inspired by [HLWW23], we make a minor change by adding a key-validation algorithm. The algorithm
+verifies the validity of the public key. We define completeness (Theorem 3.3) to require that public
+keys generated by a key-generation algorithm pass verification by the key-validation algorithm.
+• In the correctness game (Theorem 3.4), we modify the challenge ciphertext to be generated from the
+time-specific digest chosen by the adversary instead of the most recent one.
+We define the completeness requirement of a dLE scheme. Completeness requires that the public key
+generated by KGen be valid.
+Definition 3.3 (Completeness). We say that a dLE scheme Π is complete if for all λ, ℓ∈N, all (crs, dig, st) ←
+Setup(1λ, 1ℓ), and all (sk, pk) ←KGen(crs), it holds that IsValid(crs, pk) = 1.
+We define the correctness and compactness requirements of a dLE scheme. The correctness requirement is
+essentially the same as in [DKL+23], except that the challenge ciphertext is generated from the time-specific
+digest chosen by the adversary instead of the most recent one. The compactness requires that a digest, a
+witness, and a digest-dependent ciphertext are sufficiently compact.
+Definition 3.4 (Correctness and Compactness). Let Π be a dLE scheme. For parameters λ, ℓ∈N and an
+adversary A, we define the following game CorΠ,A(1λ, 1ℓ) between A and a challenger Chal:
+• Setup phase: Chal samples (crs, dig, st) ←Setup(1λ, 1ℓ) and gives them to A. Chal also initializes a
+counter ctr := 0 and an (initially-empty) dictionary mapping indices to key-pair DictH = ∅. Finally, it
+gives (crs, dig, st) to A.
+• Query phase: A can now issue the following queries:
+– Honest query: In this query, A specifies an index id ∈{0, 1}ℓ.
+In response, Chal increments
+ctr := ctr + 1, generates (sk, pk) ←KGen(crs), runs dig := MemUpd[st](crs, dig, id, pk), and replies
+to A with (dig, st, sk, pk). In addition, Chal adds the mapping id 7→(sk, pk) to the dictionary DictH
+and stores (digctr, stctr) := (dig, st).
+7
+
+– Malicious query: In this query, A specifies an index id ∈{0, 1}ℓand a public key pk. In response,
+Chal first checks that IsValid(crs, pk) = 1.
+If the check fails, it outputs ⊥.
+Otherwise, Chal
+increments ctr := ctr + 1 and runs dig := MemUpd[st](crs, dig, id, pk). Then, Chal replies to A with
+(dig, st). In addition, Chal stores (digctr, stctr) := (dig, st).
+• Challenge phase: At some point, A specifies an index id∗∈{0, 1}ℓ, a message m∗∈M, and
+a time index t ∈[ctr].
+Chal outputs b = 1 if id∗/∈DictH.
+Otherwise, Chal computes ct∗=
+(ctind, ctdep) ←Enc(crs, digt, id∗, m∗).
+Then, it retrieves (sk∗, pk∗) ←DictH[id∗], generates wit∗:=
+WGenstt(crs, dig, id∗, pk∗), and computes m := Dec(sk∗, wit∗, ct∗). Finally, Chal outputs b = 1 if m ̸= m∗,
+b = 0 otherwise.
+We say that a dLE scheme Π is correct and compact if for all λ, ℓ∈N and all (possibly unbounded)
+adversaries A, the following properties holds:
+• Correctness: It holds that Pr
+
+CorΠ,A(1λ, 1ℓ) = 1
+
+= negl(λ).
+• Compactness: It holds that |dig| = poly(λ, ℓ) (at all points in the game), |wit∗| = poly(λ, ℓ), |ctind| =
+poly(λ, ℓ), and |ctdep| = poly(λ, log ℓ).
+We define the multi-digest security requirements of a dLE scheme. The security requirement is essentially
+the same as in [DKL+23], except that the challenge ciphertext is generated from the time-specific digest
+chosen by the adversary instead of the most recent one.
+Definition 3.5 (L-Digest Security). Let Π be a dLE scheme. For parameters λ, ℓ, L ∈N and an adversary
+A, define the following game SecΠ,A(1λ, 1ℓ) between A and a challenger Chal:
+• Setup phase: Chal samples (crs, dig, st) ←Setup(1λ, 1ℓ). Chal also initializes a counter ctr := 0 and a
+set CM := ∅. Finally, it gives (crs, dig, st) to A.
+• Query phase: A can now issue the following queries:
+– Honest query: In this query, A specifies an index id ∈{0, 1}ℓ.
+In response, Chal increments
+ctr := ctr + 1, generates (sk, pk) ←KGen(crs), and runs dig := MemUpd[st](crs, dig, id, pk). Then,
+Chal replies to A with (dig, st, pk). In addition, Chal stores (digctr, stctr) := (dig, st).
+– Malicious query: In this query, A specifies an index id ∈{0, 1}ℓand a public key pk. In response,
+Chal first checks that IsValid(crs, pk) = 1.
+If the check fails, it outputs ⊥.
+Otherwise, Chal
+increments ctr := ctr + 1 and runs dig ←MemUpd[st](crs, dig, id, pk) if IsValid(crs, pk) = 1. Then,
+Chal replies to A with (dig, st). In addition, Chal adds id to the set CM and stores (digctr, stctr) :=
+(dig, st).
+• Challenge phase: At some point, A specifies an index id∗∈{0, 1}ℓ, two messages m0, m1 ∈M, and L
+distinct time indices t1, . . . , tL ∈[ctr]. Chal outputs 0 if id∗∈CM. Otherwise, Chal samples rind ←$ Rind
+and rdep
+1 , . . . , rdep
+L
+←$ Rdep, computes
+ctind := Encind(crs, id∗; rind),
+ctdep
+i
+:= Encdep(crs, digti, id∗, mb; rind, rdep
+i
+),
+∀i ∈[L],
+and replies to A with (ctind, ctdep
+1 , . . . , ctdep
+L ).
+• Output phase: A outputs a bit b′ ∈{0, 1}. The game outputs 1 if b = b′ and 0 otherwise.
+We say that a dLE scheme Π is L-digest secure if for all security parameters λ ∈N, all polynomials
+ℓ= ℓ(λ) and L = L(λ), and all PPT adversaries A, it holds that Pr[SecΠ,A(1λ, 1ℓ) = 1] ≤1/2 + negl(λ).
+4
+Efficient RBE from dLE
+In this section, we present our generic transformation from a dLE scheme to an efficient RBE scheme.
+8
+
+4.1
+Construction
+Let ΠdLE =
+ eSetup, eKGen,eIsValid, eMemUpd, eEnc =
+ eEncind, eEncdep
+, eWGen, eDec
+
+be a dLE scheme with message
+space M = {Mλ}λ∈N. In Fig. 1, we describe our construction of RBE scheme ΠRBE = (Setup, KGen, Reg, Enc,
+Upd, Dec) with identity space ID = {0, 1}ℓand the same message space M, where ℓ= O(λ) is the index-
+length parameter for ΠdLE. If a collision-resistant hash function H : {0, 1}∗→{0, 1}ℓis available, one can
+use an arbitrary string as an identity. In the description, we adopt the following conventions:
+• The auxiliary information aux = (ctr, Dict1, Dict2, pp, ˜st) consists of the following components:
+– A counter ctr ≥0 is the current number of registered users in the system.
+– A dictionary Dict1 mapping a counter ctr to the ctr-th registered identity/key pair (id, pk).
+– A dictionary Dict2 mapping an identity id to a collection of the helper decryption keys hsk =
+{(ctr, ˜
+wit)} associated with id, where
+˜
+wit is a membership witness generated upon the ctr-th
+registration.
+– The current public parameter pp = (ctr, ˜
+dig1, . . . , ˜
+dighw(ctr)), where ctr is the current counter and
+˜
+dig1, . . . , ˜
+dighw(ctr) are the digests of ΠdLE. Of the digests, ˜
+dig1 is the oldest version and ˜
+dighw(ctr)
+is the newest version.
+– The state ˜st corresponding to the newest digest ˜
+dighw(ctr).
+• We use a function δ : N →N that, for an input x ∈N, outputs the position where the least significant
+bit is 1 in the binary representation of x.
+4.2
+Correctness, Compactness, and Efficiency
+Here, we will show that the correctness, compactness, and efficiency of ΠRBE are implied by the correctness
+and compactness of ΠdLE.
+Theorem 4.1 (Correctness). If ΠdLE is complete and correct, ΠRBE is correct.
+Proof. Consider the correctness game for ΠRBE (Theorem 2.2) played by an adversary ARBE and a challenger
+Chal. Let crs = ˜
+crs ←eSetup(1λ, 1ℓ) be the common reference string, let (sk∗, pk∗) := ( ˜sk
+∗, ˜pk
+∗) ←eKGen( ˜
+crs)
+be the target-key sampled by Chal in response to a target-identity registration query on the challenge identity
+id∗, and let ctr∗be the counter when (id∗, pk∗) is registered. Further, let aux = (ctr, Dict1, Dict2, pp, ˜st) be
+the auxiliary information (maintained by Chal) at any point in the correctness game after ARBE has made a
+target-identity registration query. We can write pp = (ctr, ˜
+dig1, . . . , ˜
+dighw(ctr)) with ctr ≥ctr∗.
+We need to show that in the correctness game, for any (possibly unbounded) adversary ARBE, the proba-
+bility that b = 1 (indicating decryption failure) is negligible. Let mt ∈M be the t-th encryption query made
+by ARBE, and let ctt ←Enc(crs, pp, id∗, mt) be the resulting ciphertext. Consider a decryption query on any
+index j ∈[t]. Here, Chal computes m′
+j ←Dec(sk∗, hsk∗, ctj).
+• By construction, we can write ctj = (ctrenc, ˜ctind
+j , ˜ctdep
+j,1 , . . . , ˜ctdep
+j,hw(ctrenc)) and hsk∗= {(ctri, ˜
+witi)}i∈[d].
+• If ctrenc < ctr1, Chal replies with ⊥.
+• If there is no counter such that (ctrenc ⊕ctri) < 2δ(ctri), Chal updates hsk∗:= Updaux(pp, id∗) (As will
+be shown later, the updated helper decryption key hsk∗always includes the counter ctri that satisfies
+the above).
+• Chal replies with m′
+j ←eDec
+  ˜sk
+∗, ˜
+witi,
+  ˜ctind
+j , ˜ctdep
+j,hw(ctri)
+
+.
+We now examine three failure cases.
+9
+
+Setup(1λ) →crs:
+1 :
+( ˜
+crs, ˜
+dig, ˜st) ←eSetup(1λ, 1ℓ)
+2 :
+aux := (0, ∅, ∅, (0, ˜
+dig), ˜st)
+3 :
+return crs := ˜
+crs
+KGen(crs) →(sk, pk):
+1 :
+( ˜sk, ˜pk) ←eKGen( ˜
+crs)
+2 :
+return (sk, pk) := ( ˜sk, ˜pk)
+Updaux(pp, id) →hsk:
+1 :
+{(ctri, ˜
+witi)}i∈[d] ←Dict2[id]
+2 :
+return hsk := {(ctri, ˜
+witi)}i∈[d]
+Reg[aux](crs, pp, id, pk) →pp:
+1 :
+if eIsValid( ˜
+crs, ˜pk) = 0 then
+2 :
+return pp
+3 :
+ctr := ctr + 1, Dict1[ctr] := (id, pk)
+4 :
+˜
+dig := eMemUpd[˜st]( ˜
+crs, dig, id, ˜pk)
+5 :
+for i = 1, . . . , 2δ(ctr) do
+6 :
+(id, ˜pk) ←Dict1[ctr + 1 −i]
+7 :
+˜
+wit := e
+WGen˜st( ˜
+crs, ˜
+dig, id, ˜pk)
+8 :
+Dict2[id] := Dict2[id] ∪{(ctr, ˜
+wit)}
+9 :
+pp := (ctr, ˜
+dig1, . . . , ˜
+dighw(ctr)−1, ˜
+dig)
+10 :
+return pp
+Enc(crs, pp, id, m) →ct:
+1 :
+˜rind ←$ ˜Rind, ˜rdep
+1 , . . . ,˜rdep
+hw(ctr) ←$ ˜Rdep
+2 :
+˜ctind := eEncind( ˜
+crs, id;˜rind)
+3 :
+for i = 1, . . . , hw(ctr) do: ˜ctdep
+i
+:= eEncdep( ˜
+crs, ˜
+digi, id, m;˜rind,˜rdep
+i
+)
+4 :
+return ct := (ctr, ˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(ctr))
+Dec(sk, hsk, ct) →m:
+1 :
+parse ct := (ctrenc, ˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(ctrenc))
+2 :
+if ctrenc < ctr1 then return ⊥
+3 :
+if ∄ctri s.t. (ctrenc ⊕ctri) < 2δ(ctri) then return GetUpd
+4 :
+return m := eDec( ˜sk, ˜
+witi, ( ˜ctind, ˜ctdep
+hw(ctri)))
+Figure 1: An RBE scheme ΠRBE from a dLE scheme ΠdLE.
+• Case 1: ctrenc < ctr1. By construction, we have ctr1 = ctr∗. In the correctness game, Chal only encrypts
+messages after the target identity id∗is registered. Thus, ctrenc ≥ctr∗= ctr1 always holds. Therefore,
+this case never occurs.
+• Case 2: No suitable counter ctri exists. For any ctrenc ≥ctr∗, let the binary representation of ctrenc
+be Phw(ctrenc)
+j=1
+2dj with d1 > d2 > · · · > dhw(ctrenc). This defines a canonical partition of [1, ctrenc] into
+hw(ctrenc) intervals Bi := [Ti −2di + 1, Ti], where Ti = Pi
+j=1 2dj. Since ctr∗∈[1, ctrenc], there exists
+i ∈[hw(ctrenc)] such that ctr∗∈Bi. By the Reg algorithm, when the global counter ctr reached Ti,
+the loop in step 5 added the tuple (Ti, ˜
+wit) to Dict2[id∗] because id∗was within the 2δ(Ti) most recent
+registrations. Furthermore, the condition (ctrenc ⊕Ti) ≤2δ(Ti) is satisfied because ctrenc and Ti share
+the same bits of all positions higher than di = δ(Ti), and ctrenc ≥Ti. This means that there exists a
+suitable counter ctri = Ti. Therefore, this failure case is resolved by obtaining the latest hsk∗.
+• Case 3: ΠdLE decryption fails. Finally, we consider the case that mj ̸= m′
+j. By the correctness of ΠdLE,
+this would occur with only negligible probability if the witness ˜
+witi and the digest ˜
+dighw(ctri) behind
+˜ctdep
+j,hw(ctri) were synchronized. Here, ˜
+witi is the witness for the id∗generated through the execution of
+eWGen˜st( ˜
+crs, ˜
+dig, id∗, ˜pk
+∗) during the ctri-th registration. Hence, it is sufficient to show that ˜
+dighw(ctri) is
+generated by the execution of eMemUpd in the ctri-th registration. The condition (ctrenc⊕ctri) < 2δ(ctri)
+10
+
+ensures ctrenc and ctri share the same prefix beyond the δ(ctri)-th bit. By the description of the Reg
+algorithm, this guarantees that
+˜
+dighw(ctri) is generated by the execution of eMemUpd in the ctri-th
+registration.
+Therefore, the overall probability of decryption failure is negligible. This completes the proof.
+Theorem 4.2 (Compactness). If ΠdLE is compact, ΠRBE is compact.
+Proof. We consider each requirement separately:
+Compactness of the public parameter: By construction, the public parameter pp simply consists of a
+counter ctr indicating the current number of registered users, along with hw(ctr) digests ˜
+dig1, . . . , ˜
+dighw(ctr) for
+the underlying dLE scheme ΠdLE. By compactness of ΠdLE and ℓ= O(λ), we have | ˜
+digi| = poly(λ, ℓ) = poly(λ)
+for all i ∈[hw(ctr)]. Since hw(ctr) ≤log (ctr), we have |pp| ≤|ctr| + log (ctr) · | ˜
+digi| = poly(λ, log (ctr)).
+Compactness of the helper decryption key: Let hsk = {(ctri, ˜
+witi)}i∈[d] be a helper decryption key for
+some id. By construction, we have ctri < ctri+1 and ctri+1 −2δ(ctri+1) + 1 ≤ctri for all i ∈[d −1]. The latter
+is because (ctri+1, ˜
+witi+1) is added to Dict2[id] when ctri+1 −2δ(ctri+1) + 1 ≤ctri occurs.
+Then, we show that
+ctri+1 −2δ(ctri+1) + 1 ≤ctri < ctri+1
+(1)
+implies δ(ctri) < δ(ctri+1). By definition of δ, we can write ctri+1 = ki+1 · 2δ(ctri+1) for some odd integer ki.
+Thus, the inequality (1) can be written
+(ki+1 −1) · 2δ(ctri+1) + 1 ≤ctri ≤ki+1 · 2δ(ctri+1) −1.
+This means that ctri ≡1 mod 2δ(ctri+1).
+If δ(ctri) ≥δ(ctri+1), then ctri must be divisible by 2δ(ctri),
+which contradicts the above. Therefore, we have δ(ctri) < δ(ctri+1). From the above argument, we have
+δ(ctr1) < δ(ctr2) < · · · < δ(ctrd) ≤log N. and then d ≤log N. Hence, hsk consists of at most log N pairs
+of counters and witnesses. By compactness of ΠdLE, we have | ˜
+witi| = poly(λ, ℓ) = poly(λ) since ℓ= O(λ).
+Therefore, |hsk| = poly(λ, log N).
+Furthermore, by the (ciphertext) compactness of ΠdLE, ΠRBE satisfies:
+|ct| = |ctr| + | ˜ctind| +
+hw(ctr)
+X
+i=1
+| ˜ctdep
+i
+| ≤| ˜ctind| + O(log N) · poly(λ, log ℓ).
+(2)
+Theorem 4.3 (Efficiency). If ΠdLE is compact, ΠRBE is (weakly) efficient.
+Proof. We consider each requirement separately:
+Running time of update: By construction, the GetUpd operation simply looks up the helper decryption
+key hsk.
+By Theorem 4.2, we have |hsk| = poly(λ, log N).
+Since the auxiliary information maintains a
+dictionary Dict2 mapping each identity to its helper decryption key, the update operation can be implemented
+in poly(λ, log N) time in the RAM model of computation.
+Number of updates: Let hsk = {(ctri, ˜
+witi)}i∈[d] be a helper decryption key for some id. By construction
+and Theorem 4.2, a new element is added to Dict2[id] whenever δ(ctri) < δ(ctri+1), so a registered identity
+id must invoke the Upd algorithm. Therefore, for any identity, its i-th update occurs when 2i new identities
+are registered after its (i −1)-th update. Since there are at most N registrations, the number of updates
+received by any identity is at most log N.
+11
+
+4.3
+Security
+We will show that the security of ΠRBE is implied by the multi-digest security of ΠdLE. Recall the security
+game from Theorem 2.3.
+Theorem 4.4 (Security). If ΠdLE is ⌈log N⌉-digest secure, ΠRBE is secure.
+Proof. Let ARBE be an adversary for ΠRBE, Let ctrenc be the counter used for encrypting the target identity,
+and let ct∗be the challenge ciphertext. By construction, we can write ct∗= (ctrenc, ˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(ctrenc)).
+Here, hw(ctrenc) ≤log N. We use ARBE to construct a PPT algorithm BdLE for the security of ΠdLE:
+• Setup phase: Given ( ˜
+crs, ˜
+dig, ˜st), BdLE proceeds as follows:
+1. BdLE initializes a counter ctr := 0 and dictionaries Dict1, Dict2 := ∅.
+2. BdLE also initializes pp := (0, ˜
+dig), aux = (ctr, Dict1, Dict2, pp, ˜st), S := ∅, id∗:= ⊥.
+3. In addition, BdLE internally maintains an ordered list List := ⊥which will track the digests and
+states generated during Reg algorithm execution.
+4. Finally, BdLE gives crs := ˜
+crs to ARBE.
+• Query phase: BdLE simulates responses to actions made by ARBE as follows:
+– Registering a new (non-target) identity: When ARBE specifies an identity id and a public key pk =
+˜pk, BdLE outputs the current public parameter pp if eIsValid( ˜
+crs, ˜pk) = 0. Otherwise, it proceeds as
+follows:
+1. BdLE obtains ( ˜
+dig, ˜st) by making a malicious query on (id, ˜pk).
+2. BdLE updates ctr := ctr + 1, pp := (ctr, ˜
+dig1, . . . , ˜
+dighw(ctr)−1, ˜
+dig), Dict1[ctr] := (id, ˜pk), aux =
+(ctr, Dict1, Dict2, pp, ˜st), S := S ∪{id}, and List[ctr] := ( ˜
+dig, ˜st).
+– Registering the target identity: When ARBE specifies an identity id∗, BdLE proceeds as follows:
+1. BdLE obtains ( ˜
+dig, ˜st, ˜pk) by making an honest query on id.
+2. BdLE updates ctr := ctr + 1, pp := (ctr, ˜
+dig1, . . . , ˜
+dighw(ctr)−1, ˜
+dig), Dict1[ctr] := (id∗, ˜pk), aux =
+(ctr, Dict1, Dict2, pp, ˜st), S := S ∪{id∗}, and List[ctr] := ( ˜
+dig, ˜st).
+3. BdLE replies to ARBE with pk∗:= ˜pk.
+• Challenge phase: After ARBE outputs a pair of messages m0, m1 and id∗(if no target identity id∗is
+chosen), BdLE proceeds as follows: BdLE constructs ct∗= (ctrenc, ˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(ctrenc)) as follows:
+1. Let pp = (ctrenc, ˜
+dig1, . . . , ˜
+dighw(ctrenc)) be the current public parameter.
+2. For j ∈[hw(ctrenc)], let tj ∈[ctrenc] be the time index at which ˜
+digj were generated, respectively.
+3. BdLE obtains ˜ct∗= ( ˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(ctrenc)) by querying (t1, . . . , thw(ctrenc), id∗, m∗
+0, m∗
+1) during the
+challenge phase.
+4. BdLE finally gives ct∗= (ctrenc, ˜ctind, ˜ctdep
+1 , . . . , ˜ctdep
+hw(ctrenc)) to ARBE.
+• Output phase: ARBE outputs a bit b′ ∈{0, 1}, which BdLE also outputs.
+According to the above simulation, if id∗is registered as a non-target identity, then BdLE also does not
+make a malicious query on id∗. Therefore, the game will not end due to the challenge query made by BdLE.
+Then, we show that BdLE perfectly simulates an execution of the RBE security game for ARBE. In the case
+where ˜ctdep
+j
+←eEncdep( ˜
+crs, ˜
+digj, id∗, m0), BdLE simulates the challenger in the security game of RBE when
+b = 0 whereas in the another case, BdLE simulates the challenger in the security game of RBE when b = 1.
+Correspondingly, BdLE wins the dLE security game with the same probability.
+12
+
+5
+Instantiation from Lattice
+In this section, we present a lattice-based RBE construction obtained by instantiating the transformation
+from the previous section.
+5.1
+Preliminaries on Lattices
+Here, we give preliminaries on lattices necessary to describe our dLE scheme. Cyclotomic Rings. Let
+K = Q(ζ) be a cyclotomic field and R = Z[ζ] its ring of integers, where ζ ∈C is a root of unity. Write
+degR for the degree of R. The (infinity) norm ∥a∥of an element a = P
+i∈[0,degR −1] aiζi ∈R is defined
+as the infinity norm of its coefficient vector (a0, . . . , adegR −1)⊤, i.e.
+∥a∥:= maxi ∥ai∥∞.
+For a vector
+x = (x1, . . . , xm)⊤∈Rm, its norm is defined as ∥x∥:= maxi∈[m] ∥xi∥. For q ∈N, we write Rq := R/qR.
+We then recall the ring expansion factor and its property.
+Definition 5.1 (Expansion Factor). The expansion factor of R, denoted by γR, is γR := maxa,b∈R\{0}
+∥a·b∥
+∥a∥·∥b∥.
+Lemma 5.2 ([AL21]). If R is a prime-power cyclotomic ring, then γR ≤2 degR. If R is a power-of-2
+cyclotomic ring, then γR ≤degR.
+We also recall a version of the leftover hash lemma over cyclotomic rings.
+Lemma 5.3 (Adapted from [BJRW20, Lemma 7]). Let n = poly(λ), q ∈N, and m ≥n · ⌈log q⌉+ ω(log λ).
+Then, it holds that
+
+(B, y) : B ←$ Rn×m
+q
+, x ←$ Rm
+2
+y := Bx mod q
+
+≈s
+
+(B, y) : B ←$ Rn×m
+q
+y ←$ Rn
+q
+
+.
+Gadget Matrix. Let q, n, m ∈N with m = n · ⌈log q⌉. The gadget matrix [MP12] is defined as G :=
+In ⊗
+ 1
+2
+· · ·
+2⌊log q⌋
+∈Rn×m
+q
+. Further, we write G−1(·) to denote the binary decomposition.
+Discrete Gaussian Distribution. For a positive real σ, the Gaussian function over R with parameter σ
+is defined as ρσ(x) := exp(−π|x|2/σ2) with support R. Then, we define discrete Gaussian distributions over
+Z and R.
+Definition 5.4 (Discrete Gaussian Distribution). The discrete Gaussian distribution over Z with parameter
+σ is defined as DZ,σ(x) := ρσ(x)/ρσ(Z) with support Z, where ρσ(Z) := P
+y∈Z ρσ(y) The discrete Gaussian
+distribution over R with parameter σ, denoted by DR,σ, is defined by independently sampling degR coeffi-
+cients xi from DZ,σ, and setting x := P
+i∈[0,degR −1] xi · ζi ∈R.
+We will use the following properties of discrete Gaussian distributions.
+Lemma 5.5 (Derived from [MP12, Lemma 7]). For any k > 0, it holds that Prx←DR,σ[∥x∥> k · σ] <
+2 · degR · exp(−π · k2).
+Learning with Errors and Variants. We define the (module) learning with errors (LWE) problem and
+its leaky variant as follows.
+Definition 5.6 (LWE). Let params = (R, n, m, q, E) be parametrised by λ, where R is a ring, n, m, q ∈N, E is
+distributions over Rm. For a bit b ∈{0, 1} and an adversary A, we define the experiment Exp-LWEb
+params,A(1λ)
+as in Fig. 2. The LWEparams assumption states that for any PPT A, it holds that
+Pr[Exp-LWE0
+params,A(1λ) = 1] −Pr[Exp-LWE1
+params,A(1λ) = 1]
+ ≤negl(λ).
+13
+
+Exp-LWEb
+params,A(1λ)
+1 :
+A ←$ Rn×m
+q
+2 :
+s ←$ Rn
+q , e ←E
+3 :
+if b = 0 then b⊤:= s⊤A + e⊤mod q
+4 :
+if b = 1 then b ←$ Rm
+q
+5 :
+return b′ ←A(A, b)
+Exp-LLWEb
+params,A(1λ)
+1 :
+A ←$ Rn×m
+q
+2 :
+(L, state) ←A0(A)
+// assert L ∈L
+3 :
+s ←$ Rn
+q , e ←E, f ←F
+4 :
+if b = 0 then b⊤:= s⊤A + e⊤mod q
+5 :
+if b = 1 then b ←$ Rm
+q
+6 :
+l⊤:= e⊤L + f ⊤
+7 :
+return b′ ←A1(b, l, state)
+Figure 2: The security experiments Exp-LWEb
+params,A(1λ) and Exp-LLWEb
+params,A(1λ).
+Definition 5.7 (Leaky LWE [LSW25, Definition 3]). Let params = (R, n, m, q, Q, E, F, L) be parametrized
+by λ, where R is a ring, n, m, q, Q ∈N, E and F are distributions over Rm and ZQ, respectively, and
+L ⊆Rm×Q is a polynomial-time decidable family of tuple of matrices. For b ∈{0, 1} and an adversary
+A = (A0, A1), we define the experiment Exp-LLWEb
+params,A(1λ) as in Fig. 2. The LLWEparams assumption
+states that for any PPT A, it holds that
+Pr[Exp-LLWE0
+params,A(1λ) = 1] −Pr[Exp-LLWE1
+params,A(1λ) = 1]
+ ≤negl(λ).
+Lemma 5.8 (Hardness of LLWE [LSW25, Theorem 3]). Let R be a ring and n, m, q, Q, E∗, E, F, L, and ϵ
+be parameters such that all constraints in the following condition are satisfied:
+• E∗= Dm
+R,σ∗, E = Dm
+R,σ, and F = DR,σ′, where σ∗, σ, σ′ ∈R,
+• σ∗≥
+√
+2ηϵ(Rm),
+• L :=
+n
+L ∈Rm×Q : ∥L⊤L∥≤σ′2 ·
+ (2ηϵ(Rn+m)2 + (σ∗)2)−1 −σ−2o
+.
+Then, for any PPT adversary A, there exists a PPT adversary B such that
+AdvLWE
+params∗,B(λ) ≥AdvLLWE
+params,A(λ) −4ϵ/(1 −ϵ),
+where params∗= (R, n, m, q, E∗) and params = (R, n, m, q, Q, E, F, L).
+5.2
+Lattice-Based dLE Scheme
+Our dLE scheme is syntactically built upon the laconic encryption scheme of Döttling et al. [DKL+23]. Let
+n, m, ¯m, q ∈N and σ, σ′, ¯σ ∈R be parametrized by λ.
+Correctness, Completeness, and Compactness. Our dLE scheme inherits correctness directly from
+the LE scheme in [DKL+23].
+Theorem 5.9 (Correctness). If q > 2
+√
+λ (σ′ + 2ℓmγRσ + ¯mγR¯σ) + 1, our dLE scheme is correct.
+Proof. Observe that the decryption is correct whenever
+noise :=
+e′ −
+ℓ−1
+X
+j=0
+e⊤
+j
+uid1:j∥0
+uid1:j∥1
+
+−e⊤
+ℓx
+ < q −1
+4
+.
+By Theorem 5.5, with probability 1 −negl(λ), we have |e′| ≤
+√
+λ
+2 σ′, ∥ej∥≤
+√
+λ
+2 σ for all j ∈[0, ℓ−1],
+and ∥eℓ∥≤
+√
+λ
+2 ¯σ. Since ∥x∥≤1 and
+uid1:j∥b
+ ≤1 for all j ∈[ℓ−1] and b ∈{0, 1}, we have noise ≤
+√
+λ
+2 (σ′ + 2ℓmγRσ + ¯mγR¯σ) < q−1
+4
+with probability 1 −negl(λ).
+14
+
+Setup(1λ, 1ℓ) →(crs, dig, st):
+1 :
+A0, A1 ←$ Rn×m
+q
+, B ←$ Rn× ¯
+m
+q
+2 :
+yϵ := y∗←$ Rn
+q
+3 :
+crs := (ℓ, A0, A1, B, y∗), dig := yϵ
+4 :
+st := (T := {ϵ}, {yv}v∈T )
+5 :
+return (crs, dig, st)
+KGen(crs) →(sk, pk):
+1 :
+x ←$ R ¯
+m
+2 , y := Bx mod q
+2 :
+return (sk, pk) := (x, y)
+IsValid(crs, pk) →b:
+1 :
+if y ∈Rn
+q then return 1
+2 :
+else return 0
+MemUpd[st](crs, dig, id, pk) →dig:
+1 :
+T := T ∪{id}
+2 :
+for j = ℓ−1, . . . , 0 do
+3 :
+if (id1:j∥0) /∈T ∧(id1:j∥1) /∈T then T := T \ {id1:j}
+4 :
+else
+5 :
+if (id1:j∥¯idj+1) /∈T then yid1:j∥¯idj+1 := y∗
+6 :
+uid1:j∥0 := −G−1(yid1:j∥0), uid1:j∥1 := −G−1(yid1:j∥1)
+7 :
+T := T ∪{id1:j}
+8 :
+yid1:j := A0uid1:j∥0 + A1uid1:j∥1 mod q
+9 :
+return dig := yϵ
+Enc(crs, dig, id, m) →ct = (ctind, ctdep):
+1 :
+r0, . . . , rℓ←$ Rn
+q
+2 :
+e0, . . . , eℓ−1 ←D2m
+R,σ
+3 :
+eℓ←D ¯
+m
+¯σ
+4 :
+rind := (r0, . . . , rℓ, e0, . . . , eℓ)
+5 :
+ctind := Encind(crs, id; rind)
+6 :
+rdep := e′ ←DR,σ′
+7 :
+ctdep := Encdep(crs, dig, id, m; rind, rdep)
+8 :
+return ct := (ctind, ctdep)
+WGenst(crs, dig, id, pk) →wit:
+1 :
+for j = ℓ−1, . . . , 0 do
+2 :
+uid1:j∥0 := −G−1(yid1:j∥0)
+3 :
+uid1:j∥1 := −G−1(yid1:j∥1)
+4 :
+return wit := (uid1:j∥0, uid1:j∥1)ℓ−1
+j=0
+Encind(crs, id; rind)
+1 :
+for j = 0, . . . , ℓ−1 do
+2 :
+Bj :=
+
+A0
+A1
+¯idj+1 · G
+idj+1 · G
+
+3 :
+c⊤
+j := (r⊤
+j , r⊤
+j+1)Bj + e⊤
+j mod q
+4 :
+c⊤
+ℓ:= r⊤
+ℓB + e⊤
+ℓmod q
+5 :
+return ctind := (c0, . . . , cℓ)
+Encdep(crs, dig, id, m; rind, rdep)
+1 :
+d := r⊤
+0 yϵ + e′ + ⌊q/2⌋· m mod q
+2 :
+return ctind := d
+Dec(sk, wit, ct) →m′:
+1 :
+c⊤
+id := Pℓ−1
+j=0 c⊤
+j
+
+uid1:j∥0
+uid1:j∥1
+
+2 :
+µ := d −c⊤
+id −c⊤
+ℓx mod q
+3 :
+return m′ := Decode(µ)
+Figure 3: Construction of lattice-based dLE.
+15
+
+We then show the completeness and compactness of our dLE scheme.
+Theorem 5.10 (Completeness). Our dLE scheme is complete.
+Proof. Completeness holds since IsValid always outputs 1 on all public keys pk ∈Rn
+q . By construction, the
+public keys output by KGen are in Rn
+q .
+Theorem 5.11 (Compactness). If q = O(ℓ), our dLE scheme is compact.
+Proof. By construction, we have dig ∈Rn
+q , wit ∈(Rm
+2 )2ℓ, ctind ∈R2mℓ+ ¯m
+q
+, and ctdep ∈Rq. If q = O(ℓ), then
+we have |dig| = poly(λ, log ℓ), |wit| = poly(λ, ℓ), |ctind| = poly(λ, ℓ), and |ctdep| = poly(λ, log ℓ). Thus, our
+dLE scheme is compact.
+Multi-Digest Security. We show the multi-digest security of our dLE scheme.
+Theorem 5.12 (Multi-Digest Security). Let ¯m ≥n · ⌈log q⌉+ ω(log λ) and L = poly(λ).
+Further let
+params = (R, n, 2m, q, 1, D2m
+R,σ, DR,σ′, L) and params′ = (R, n, ¯m + L, q, D ¯m
+R,¯σ) be parametrized by λ, where
+L = {l ∈R2mm : ∥l∥2 ≤
+p
+(2ℓm + ¯m) degR}. If the LLWEparams and LWEparams′ assumptions hold, our dLE
+scheme is L-digest secure.
+Proof. First, we will briefly explain the difference in the proof in [DKL+23]. Unlike the proof for a single
+digest, we introduce sets of time indices, {Hi}, and adopt a method that sequentially isolates multiple
+ctdep = d from the outside in according to the path’s branching depth.
+This allows us to sequentially
+randomize each digest-dependent part while maintaining correlation with r0.
+Let ctr ∈N be the counter when the adversary A makes the challenge query. We assume that A specifies
+an index id∗= (id∗
+1, . . . , id∗
+ℓ) ∈{0, 1}ℓ, a pair of messages m∗
+0, m∗
+1 ∈M, and L time indices t1, . . . , tL ∈[ctr].
+For l ∈[L], let digtl = yϵ,l be the tl-th root node, let sttl = (Tl, {yv,l}v∈Tl) be the tl-th tree, and let kl ∈[0, ℓ]
+be such that id∗
+1:kl is a leaf node in the tl-th tree for which A does not have a corresponding preimage.
+Furthermore, we denote y∗
+i,l = yid∗
+1:i,l at the nodes id∗
+1:1, . . . , id∗
+1:i in tl-th tree. Finally, we consider L′(≤L)
+sets H1, . . . , HL′ ⊆[L] satisfying the following conditions:
+1. For any i ∈[L′] and any h, h′ ∈Hi, we have kh = kh′.
+2. For any i, i′ ∈[L′] with i < i′, any h ∈Hi, and any h′ ∈Hi′, we have kh < kh′.
+In the following, let ct∗= (c0, . . . , cℓ−1, cℓ, d1, . . . , dL) be the challenge ciphertext. Consider the following
+hybrids:
+• Hyb0(= Sec0
+Π,A(1λ, 1ℓ)): In this hybrid, ct∗is computed as follows:
+c⊤
+j = r⊤
+j
+ A0
+A1
+
++ r⊤
+j+1
+
+¯id
+∗
+j+1 · G
+id∗
+j+1 · G
+
++ e⊤
+j ,
+∀j ∈[0, ℓ−1],
+(3)
+c⊤
+ℓ= r⊤
+ℓB + e⊤
+ℓ,
+dl = r⊤
+0 yϵ,l + e′
+l + ⌊q/2⌋· m∗
+0, ∀l ∈[L].
+• Hyb1,i for i = 1, . . . , L′: Let k = kh for some h ∈Hi. In this hybrid, we sample c0, . . . , ck−1 ←$ R2m
+q
+and e0, . . . , ek−1 ←D2m
+R,σ and set
+dl =
+
+
+
+
+
+d ←$ Rq,
+if l ∈Si−1
+j=1 Hj
+Pk−1
+j=0 (cj −ej)⊤zj,l + r⊤
+k y∗
+k,l + e′
+l + ⌊q/2⌋· m∗
+0,
+if l ∈Hi,
+Pk
+j=0 (cj −ej)⊤zj,l + r⊤
+k+1y∗
+k+1,l + e′
+l + ⌊q/2⌋· m∗
+0,
+if l ∈SL′
+j=i+1 Hj,
+where zj,l =
+ 
+uid∗
+1:j∥0,l
+uid∗
+1:j∥1,l
+!
+∈R2m
+2 . Then, we compute ck, . . . , cℓas in Eq. (3).
+16
+
+In this hybrid, dl for l ∈Si−1
+j=1 Hj has already randomized, whereas dl for l ∈SL′
+j=i+1 Hj are still
+calculated to maintains consistency with the common c0, . . . , ck. This structure enables the elimination
+of the influence of the shared randomness r0 one by one.
+• Hyb2,i for i = 1, . . . , L′: Let k = kh for some h ∈Hi. In this hybrid, we uniformly randomly sample
+ck from R2m
+q
+if k ̸= ℓ, and from R ¯m
+q if k = ℓ, and dl ←$ Rq for all l ∈Hi.
+• Hyb3(= Sec1
+Π,A(1λ, 1ℓ)): This hybrid is the same as Hyb0 except that dl for all l ∈[L] is computed as
+dl = r⊤
+0 yϵ,l + e′
+l + ⌊q/2⌋· m∗
+1.
+To complete the proof, we prove the following lemmas.
+Lemma 5.13. If the LLWEparams assumption holds, it holds that Hyb0 ≈c Hyb1,1.
+Proof. This can be proved in the same way as the proof of [DKL+23, Lemma 3].
+Lemma 5.14. Let ¯m ≥n · ⌈log q⌉+ ω(log λ). If the LWEparams′ assumption holds, it holds that Hyb1,i ≈c
+Hyb2,i for all i ∈[L′].
+Proof. This can be proved in the same way as the proof of [DKL+23, Lemma 4].
+Lemma 5.15. If the LLWEparams assumption holds, it holds that Hyb2,i ≈c Hyb1,i+1 for all i ∈[L′].
+Proof. This can be proved in the same way as the proof of [DKL+23, Lemma 3].
+Lemma 5.16. Let ¯m ≥n · ⌈log q⌉+ ω(log λ). If the LLWEparams and LWEparams′ assumptions hold, it holds
+that Hyb2,L′ ≈c Hyb3.
+Proof. This can be proved by applying Theorems 5.13 to 5.15 in reverse order.
+5.3
+Efficiency and Comparison
+Our RBE construction of Section 4.1 can be instantiated with our dLE scheme of Section 5.2. Here, we
+discuss the efficiency of this concrete instantiation and compare it to existing schemes.
+The ciphertext size of our dLE scheme is |ctind| = (2mℓ+ ¯m) · |Rq| and |ctdep| = |Rq|. Combined with
+Eq. (2), we achieve the following ciphertext size:
+|ct| = ⌈log N⌉+ |ctind| + hw(N) · |ctdep| = ⌈log N⌉+ (2mℓ+ ¯m + hw(N)) · |Rq|
+where N is the number of currently registered users. The last inequality is an equality if and only if N = 2κ−1
+for some κ ∈N. In most cases, hw(N) is strictly less than ⌈log N⌉. The case N = 2κ is of particular note.
+In this case, hw(N) = 1 and the ciphertext size achieves |ct| = κ + (2mℓ+ ¯m + 1) · |Rq| This is the same size
+as the dLE ciphertext except for the overhead of κ bits.
+We provide a comparison of ciphertext sizes for (M)LWE-based RBE schemes in Table 2. For the concrete
+comparison in Table 1, we chose the following parameters with reference to [DKL+23]: Rq = Zq[X]/(X256+1)
+and (log q, n, m, ¯m, ℓ) = (58, 4, 232, 512, 256).
+Ciphertext size
+[DKL+23]
+(n + 4mℓ+ 2 ¯m + 2) · ⌈log N⌉· |Rq|
+[FKdP23]
+(n + 8(2m(log Nmax + 1)) + ¯m + 1) · ⌈log N⌉· |Rq|
+Ours
+⌈log N⌉+ (2mℓ+ ¯m + hw(N)) · |Rq|
+Table 2: A comparison of ciphertext sizes for (M)LWE-based RBE schemes.
+17

@@ -1,0 +1,1184 @@
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in
+Text-to-Image Models
+Chaoshuo Zhang * 1 Yibo Liang * 1 Mengke Tian 1 Chenhao Lin 1 Zhengyu Zhao 1 Le Yang 1 Chong Zhang 1
+Yang Zhang 2 Chao Shen 1
+Abstract
+Despite the remarkable synthesis capabilities of
+text-to-image (T2I) models, safeguarding them
+against content violations remains a persistent
+challenge.
+Existing safety alignments primar-
+ily focus on explicit malicious concepts, often
+overlooking the subtle yet critical risks of com-
+positional semantics. To address this oversight,
+we identify and formalize a novel vulnerability:
+Multi-Concept Compositional Unsafety (MCCU),
+where unsafe semantics stem from the implicit as-
+sociations of individually benign concepts. Based
+on this formulation, we introduce TwoHamsters,
+a comprehensive benchmark comprising 17.5k
+prompts curated to probe MCCU vulnerabilities.
+Through a rigorous evaluation of 10 state-of-
+the-art models and 16 defense mechanisms, our
+analysis yields 8 pivotal insights. In particular,
+we demonstrate that current T2I models and de-
+fense mechanisms face severe MCCU risks: on
+TwoHamsters, FLUX achieves an MCCU genera-
+tion success rate of 99.52%, while LLaVA-Guard
+only attains a recall of 41.06%, highlighting a crit-
+ical limitation of the current paradigm for manag-
+ing hazardous compositional generation.
+Warning: This paper contains examples of offensive con-
+tent for safety evaluation. Reader discretion is advised.
+1. Introduction
+Recent breakthroughs in text-to-image (T2I) genera-
+tion (Kingma et al., 2021; Kawar et al., 2023; Dhariwal
+& Nichol, 2021; Ho & Salimans, 2022; Liu et al., 2022;
+Saharia et al., 2022), driven by architectures such as Stable
+Diffusion (Rombach et al., 2022) and DALL-E (OpenAI,
+1School of Cyber Science and Engineering, Xi’an Jiaotong Uni-
+versity, Xi’an, China 2CISPA Helmholtz Center for Information
+Security, Saarbr¨ucken, Germany. Correspondence to: Chenhao
+Lin <linchenhao1989@gmail.com>.
+Preprint. April 20, 2026.
+Milk + Banana = Sexual Innuendo
+Unsafe
+Safe
+Safe
+Syringe + White Powder = Drug Use
+Unsafe
+Safe
+Safe
+Child + Arcade = Underage Gambling
+Unsafe
+Safe
+Safe
+Figure 1. Illustration of Multi-Concept Compositional Unsafety
+(MCCU) vulnerability in text-to-image synthesis.
+2025), have redefined the standards for high-fidelity syn-
+thesis and semantic adherence. This technical leap has
+catalyzed widespread adoption across sectors ranging from
+digital creativity to commercial design. For instance, Stable
+Diffusion amassed over 10 million users shortly after re-
+lease, while platforms like Midjourney (Midjourney, 2025)
+and Leonardo.ai (Leonardo.ai, 2025) serve tens of millions
+of monthly visitors. However, this proliferation highlights
+critical safety vulnerabilities. Despite their utility, these
+models are highly susceptible to generating Not-Safe-For-
+Work (NSFW) content, including explicit violence and po-
+litically sensitive material. Given the growing disparity
+between generative capability and safety alignment, estab-
+lishing systematic benchmarks is imperative to rigorously
+quantify these risks and inform the design of resilient de-
+fense mechanisms.
+While existing T2I safety benchmarks (Li et al., 2025b;
+Zhang et al., 2025b) have expanded in scale and taxonomic
+breadth, they predominantly operate at a coarse granular-
+ity, neglecting the atomic visual concepts that underpin
+safety risks. Most critically, prior literature (Li et al., 2024b;
+1
+arXiv:2604.15967v1 [cs.CR] 17 Apr 2026
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+Schramowski et al., 2023; Qu et al., 2023) has largely over-
+looked Multi-Concept Compositional Unsafety (MCCU).
+As illustrated in Figure 1, MCCU is defined by the di-
+chotomy between atomic safety and interpretative harm-
+fulness, a state where concepts are benign in isolation (e.g.,
+“cotton”, “black man”) yet induce unsafe interpretations
+when composed, driven by implicit social or historical con-
+texts. For instance, the juxtaposition of specific demograph-
+ics with agricultural symbols can evoke racial tropes, dis-
+tinct from explicit gore or nudity. Consequently, standard
+NSFW filters, which rely on salient visual features, fail to
+identify these nuances. Moreover, existing concept erasure
+frameworks confront a critical dilemma when addressing
+MCCU challenges: since the constituents of MCCU are
+legitimate concepts, removing them to prevent unsafe com-
+positions potentially degrades the model’s generative utility
+for safe generation.
+To address these challenges, we introduce TwoHamsters1,
+a comprehensive benchmark tailored to MCCU vulnerabil-
+ities in T2I models. As illustrated in Figure 2, given the
+semantic complexity of MCCU, we construct a rigorous
+multi-stage pipeline for data curation and verification. We
+first derive a novel hierarchical taxonomy, comprising 10
+primary risk categories and 51 fine-grained concept pairs,
+by synthesizing safety policies from multiple leading T2I
+platforms. We emphasize that MCCU does not aim to intro-
+duce an entirely new category of harmful content, as related
+phenomena such as contextual toxicity, hateful memes, and
+compositional bias have been previously studied. Instead,
+our contribution lies in formally isolating these risks as
+a distinct evaluation regime for text-to-image generation.
+To ensure high quality, we implement strict similarity fil-
+tering and visual validity screening, discarding prompts
+where generated images fail to reflect target concepts. We
+further augment the dataset using Vision-Language Mod-
+els (VLMs) for risk reasoning, followed by expert human
+verification to guarantee validity and reliability. Finally, to
+enable automated benchmarking, we release two specialized
+detectors: MCCU-ViT, optimized for high-throughput eval-
+uation, and MCCU-VLM, designed to provide interpretable,
+fine-grained safety assessments for TwoHamsters.
+In total, TwoHamsters consists of 5.8k high-risk MCCU
+scenarios spanning 17.5k curated prompts. To drive system-
+atic analysis, we establish a multi-dimensional framework
+featuring three key metrics: MCCU Defense Rate (MDR),
+Single-Concept Retention (SCR), and Non-target Concept
+Retention (NCR). This framework enables a holistic assess-
+ment of T2I models, filters, and concept erasure methods,
+balancing safety against generative utility. Leveraging this
+benchmark on 10 sota T2I models, we uncover a critical
+1Hamsters are strictly solitary, and forcing two hamsters to live
+together results in fatal antagonism. Similarly, in MCCU, two safe
+concepts together can result in compositional unsafety.
+vulnerability termed the “Instruction-Safety” dilemma: as
+models improve in generation quality and prompt adher-
+ence, their susceptibility to MCCU paradoxically increases.
+Furthermore, our evaluation reveals that mainstream NSFW
+filters fail to identify these emergent threats due to their
+reliance on explicit visual features. Similarly, we demon-
+strate that current concept erasure methods cannot mitigate
+MCCU without causing substantial collateral damage to the
+utility of benign concepts. We synthesize these empirical
+findings into 8 pivotal insights, providing a roadmap for
+logic-oriented safety alignment in generative AI.
+Our contributions are summarized as follows:
+• We formalize the first hierarchical taxonomy mapping
+risk categories to concept pairs, providing a fine-grained
+perspective for detecting and defending against MCCU.
+Unlike traditional classifications, this taxonomy is bet-
+ter suited for evaluating the safety of filters and concept
+erasure methods.
+• We release the TwoHamsters dataset, bridging the critical
+gap in Multi-Concept Compositional Unsafety evaluation
+within the T2I domain and providing a high-quality foun-
+dation for future safety research.
+• We conduct an extensive evaluation of 26 state-of-the-art
+T2I models, NSFW filters, and concept erasure methods
+on TwoHamsters. Our analysis exposes consistent limita-
+tions in current defense mechanisms against MCCU risks,
+yielding pivotal insights for future development.
+2. Related Work
+2.1. Text-to-Image Generation Models
+Text-to-Image synthesis has transitioned from GANs (Good-
+fellow et al., 2020) to Diffusion Probabilistic Models
+(DPMs) (Song et al., 2020; Ho et al., 2020), which offer
+superior generative utility. Notably, the Stable Diffusion
+(SD) series (Rombach et al., 2022) operates within the la-
+tent space, significantly reducing computational overhead
+and serving as a cornerstone for the open-source commu-
+nity. Subsequent modular innovations, such as Control-
+Net (Zhang et al., 2023) and IP-Adapter (Ye et al., 2023),
+have further empowered these models with fine-grained
+structural and stylistic control. Recently, architectures have
+shifted toward Diffusion Vision Transformer-based back-
+bones (DiT) (Peebles & Xie, 2023). Current state-of-the-art
+trajectories exhibit a diversification of techniques: Flow
+Matching (e.g., FLUX.1 and SD3.5 (Lipman et al., 2022))
+achieves faster convergence and higher training efficiency
+by simplifying Ordinary Differential Equation (ODE) tra-
+jectories. Simultaneously, LlamaGen (Sun et al., 2024) and
+Show-o (Xie et al., 2024) revitalize the potential of dis-
+crete visual tokens to unify text understanding and image
+2
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+Table 1. Comparison of T2I safety benchmarks. Unlike prior datasets that operate at a coarse category level, TwoHamsters introduces a
+fine-grained concept-level taxonomy with 51 distinct concept pairs, integrating hybrid VLM+CLIP evaluation for precise risk assessment.
+Hierarchical
+Prompt
+Prompt
+Human
+Risk Reason
+Evaluation
+Dataset
+Taxonomy
+Categories
+Number
+Check
+Labeling
+Model
+HarmfulCmb(ICLR'2025)
+×
+-
+3k
+×
+×
+-
+UnsafeDiffusion (CCS'2023)
+×
+5
+434
+✓
+×
+CLIP
+I2P (CVPR'2023)
+×
+7
+4.7k
+×
+×
+CLIP
+T2ISafety (CVPR'2025)
+Subcategory-level
+6-22
+70k
+✓
+✓
+VLM
+T2I-RiskyPrompt (AAAI'2026)
+Subcategory-level
+6-14
+6.4k
+✓
+✓
+VLM
+TwoHamsters
+Concept-level
+10-51
+17.5k
+✓
+✓
+VLM+CLIP
+generation within a single framework. However, this expo-
+nential growth in generative capability amplifies complex
+safety vulnerabilities, necessitating investigation of NSFW
+generation risks like MCCU.
+2.2. T2I Unsafe Benchmarks
+Early T2I safety protocols primarily targeted explicit haz-
+ards like pornography and gore, though often constrained
+by scale. For instance, SneakyPrompt (Yang et al., 2024)
+synthesized a concise set of 200 prompts, while Unsafe
+Diffusion (Qu et al., 2023) and I2P (Schramowski et al.,
+2023) mined real-world user data to establish the I2P dataset
+(4,704 examples), a standard reference for concept era-
+sure. Subsequent research has expanded to nuanced risks
+such as political sensitivity and privacy. Benchmarks like
+T2IRiskyPrompt (Zhang et al., 2025b) and T2ISafety (Li
+et al., 2025b) introduced hierarchical taxonomies but re-
+main dependent on the explicit presence of unsafe concepts.
+Consequently, they structurally neglect MCCU, where tox-
+icity emerges from benign combinations. While Harmful-
+Cub (Nie et al., 2025) briefly touches upon these MCCU
+risks, it lacks the systematic rigor of a standalone benchmark.
+TwoHamsters addresses this limitation by establishing the
+first robust framework specifically engineered for assessing
+compositional vulnerabilities (see Table 1).
+2.3. Concept Erasure
+Concept erasure employs fine-tuning to induce “targeted
+forgetting“ of illicit content. Pioneer methods like ESD
+and Forget-Me-Not (Gandikota et al., 2023; Zhang et al.,
+2024a; Li et al., 2025a; Zhang et al., 2025a; Fan et al.,
+2023; Nguyen et al., 2025) aimed to eliminate target con-
+cepts while preserving fidelity. However, adversarial stud-
+ies (Zhang et al., 2024b; Pham et al., 2023) reveal that these
+techniques fail to fully expunge latent concepts, as erasure
+boundaries are easily circumvented via token manipulation
+or textual inversion to reactivate suppressed semantics.
+To counter these threats, the focus has shifted toward Robust
+Concept Erasure. Methods like RACE (Kim et al., 2024),
+AdvUnlearn (Zhang et al., 2025c), and Stereo (Srivatsan
+et al., 2025) adopt iterative frameworks to neutralize adver-
+sarial directions. Despite improved robustness, these meth-
+ods frequently incur substantial collateral damage to gen-
+erative quality. Furthermore, even recent validations (Gao
+et al., 2025) on models like FLUX remain predominantly
+engineered for explicit, atomic concepts. This creates a
+practical dilemma for MCCU: since constituent elements
+are intrinsically benign, erasing the compositional trigger
+necessitates suppressing legitimate base concepts, thereby
+severely impairing the model’s generative utility.
+3. The TwoHamsters Benchmark
+3.1. Formalization of MCCU Risk
+To rigorously assess safety in text-to-image (T2I) genera-
+tion, we model the evaluation as a mapping from visual
+concepts to their compositional semantics. Accordingly,
+TwoHamsters reformulates the annotation schema as a tuple
+(si, ci, v1
+i , v2
+i , pi), where si ∈{0, 1} represents the binary
+safety label, ci the hazard category, vi the atomic concepts,
+and pi the prompt. This formulation explicitly anchors
+safety violations to specific concept pairs.
+We distinguish MCCU through two defining characteristics:
+atomic safety and interpretative harmfulness. Atomic safety
+dictates that MCCU instances consist of inherently benign
+concepts, making them susceptible to misclassification by
+filters that analyze components in isolation. Interpretative
+harmfulness, however, implies that the synthesized combi-
+nation conveys hazardous semantics perceivable by specific
+groups. Let F(x) be a Boolean safety predicate anchored to
+a specific safety policy, such that F(x) = True if content x
+is safe under established guidelines. The logical condition
+for an MCCU concept pair is defined as the conjunction of
+atomic safety and interpretative harmfulness:
+(v1, v2) s.t. F(v1) ∧F(v2) ∧¬F(v1 ⊕v2),
+(1)
+where ∧and ¬ denote logical conjunction and negation,
+and ⊕represents semantic composition. The operator ⊕
+is instantiated as visual contextual interaction, where v1
+and v2 interact within a shared visual context. Equation (1)
+3
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+ Formalization & taxonomy
+Lora 
+Fine-turning
+ℎ����1
+ℎ����2
+ℎ���risk
+MCCU VLM
+Single-concept 
+images
+SCR
+MDR
+MCCU 
+images
+Unrelated
+images 
+NCR
+Benchmark Pipeline
+Evaluator & Evaluation Metrics
+Platform Policies
+Expert
+Data Filtering
+Prompt Collection
+Rationale Annotation
+Manual Review
+LLM
+Figure 2. Construction pipeline of the TwoHamsters benchmark. The process integrates seven main stages: formalization and hierarchical
+taxonomy establishment, prompt collection, multi-stage data filtering, rationale annotation, human review, MCCU detector training, and
+the definition of comprehensive evaluation metrics.
+functions as the operational criterion for dataset construction
+rather than a predictive model of latent dynamics.
+3.2. Category-Concept Taxonomy
+To address the subtle and implicit nature of MCCU, we care-
+fully design a taxonomy-driven, human-AI pipeline for data
+curation. Our objective is to engineer a benchmark charac-
+terized by broad taxonomic coverage, semantic granularity,
+and high adversarial potency.
+Specifically, we strictly align our taxonomy with real-world
+applications by synthesizing safety guidelines from leading
+commercial T2I platforms. This process integrates sociopo-
+litical sensitivities and ethical ambiguities to construct a
+robust hierarchical framework. Following rigorous adju-
+dication by an expert committee, this pipeline yields 10
+core risk dimensions, namely Disturbing, Harassment, Hate,
+Humiliation, Illegal, Political, Public Health Harm, Self-
+Harm, Sexual, and Violence. Comprehensive definitions
+and detailed examples are provided in Table 7.
+Then, guided by the formulation in Equation (1), we proceed
+to mine specific MCCU concept pairs. We employ LLMs
+for semantic decomposition and knowledge retrieval. Ac-
+knowledging that MCCU risks are significantly influenced
+by region, culture, and belief, we instruct LLMs to adopt
+diverse personas to identify context-specific MCCU pairs
+from different perspectives. An expert committee then cat-
+egorizes the model responses, screening for representative
+pairs that satisfy Equation (1). Furthermore, considering
+the distribution of risk severity, we prioritize the expansion
+of categories associated with higher public concern and po-
+tential harm. Ultimately, we identify 51 distinct concept
+pairs. This top-down methodology facilitates comprehen-
+sive coverage of latent risks emerging from the composition
+of individually benign atomic concepts.
+3.3. Benchmark Construction Pipeline
+We construct the benchmark via a rigorous three-stage
+pipeline designed to isolate implicit compositional risks.
+The acquisition phase employs a dual-stream strategy, com-
+bining taxonomy-guided retrieval with LLM-based adversar-
+ial expansion, while enforcing a strict blocklist to preclude
+explicit violations and ensure risks emerge solely from con-
+cept interactions.
+Following the acquisition, a multi-stage filtering protocol en-
+sures diversity and fidelity. We first utilize centrality-based
+pruning in CLIP embedding space to maximize semantic
+variance. This is complemented by a cross-modal consis-
+tency verification against single-concept baselines to ensure
+emergent risks stem from effective composition rather than
+semantic degradation.
+Finally, we augment the dataset with structured rationales
+via a human-in-the-loop process. Each sample captures the
+causal logic of the risk, adjudicated through a double-blind
+review where independent auditors verify rationale-visual
+alignment. This verification yields a finalized corpus of
+17.5k high-fidelity samples. ( Section A)
+3.4. Automated Evaluator
+Current safety classifiers struggle to discern the subtle com-
+positional semantics inherent in the TwoHamsters bench-
+mark. To address this, we propose a robust evaluation
+framework consisting of two complementary components:
+MCCU-ViT for high-throughput quantitative assessment,
+and MCCU-VLM for reasoning-heavy qualitative verifica-
+tion (Helff et al., 2024). Given the prohibitive computational
+costs of VLMs for large-scale benchmarking, we establish
+MCCU-ViT as the primary evaluator. It is designed to over-
+come the distribution shift between natural pre-training data
+and AI-generated unsafe content through domain-adaptive
+fine-tuning on 300k image–text pairs from TwoHamsters
+and auxiliary safety datasets.
+4
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+To enhance evaluation rigor, MCCU-ViT incorporates a
+Multi-Head Causal Consistency mechanism. Unlike stan-
+dard binary classifiers, our model determines safety viola-
+tions via the logical conjunction of three parallel heads:
+ˆy = I
+
+Funsafe(ˆx) ∧Falign(ˆx, v1) ∧Falign(ˆx, v2)
+
+, (2)
+a safety evaluator Funsafe(·) to {0, 1} (1 denotes unsafe),
+and a concept alignment evaluator Falign(·, v) →{0, 1}
+(1 denotes alignment). This design enables the evaluator
+to understand MCCU hazards while learning the concept
+distribution, ensuring that a generated image is penalized
+only when the risk is causally linked to the specific compo-
+sitional triggers, thereby minimizing false positives arising
+from background noise or spurious correlations. Full imple-
+mentation details are provided in Sections D.1 and D.2.
+Metric Validation. To verify model alignment with human
+perception beyond binary training labels, we conducted a
+correlation analysis between MCCU-ViT scores and human
+risk ratings (1–5 Likert scale) on samples equally distributed
+across the TwoHamsters (in-distribution, 500 samples) and
+HarmfulCmb (out-of-distribution, 500 samples) datasets.
+The model demonstrates strong in-distribution consistency
+(rin = 0.8322, ρin = 0.7751) and maintains significant
+positive correlation on unseen OOD data (rood = 0.4904,
+ρood = 0.5267). These results validate MCCU-ViT as
+a reliable proxy for human judgment without overfitting,
+demonstrating a certain degree of generalization capability
+on out-of-distribution data (see Table 6).
+3.5. Evaluation Metrics
+To rigorously quantify the trade-off between safety and
+utility, we establish a unified metric framework based on the
+generator G, We define a general evaluation score M over a
+prompt set P with a condition function Φ as:
+M(P, Φ) =
+1
+|P|
+X
+(p,v)∈P
+Φ(G(p), v)
+(3)
+Based on this formulation, we define three metrics.
+MCCU Defense Rate (MDR): Measures the defense suc-
+cess rate against compositional risks. Let PMCCU be the
+set of compositional prompts triggering vA ⊕vB, and the
+risk condition be Φrisk(ˆx, v) = Funsafe(ˆx) · Falign(ˆx, v)
+(indicating a successful jailbreak). We define MDR as the
+complement of the violation rate:
+MDR = 1 −M(PMCCU, Φrisk),
+(4)
+Higher MDR signifies robust resistance against MCCU
+risks.
+Utility Retention Metrics (SCR & NCR): To assess gener-
+ative utility, we measure concept retention using the align-
+ment condition Φutil(ˆx, v) = Falign(ˆx, v) across different
+datasets:
+Single-Concept Retention (SCR): Evaluated on atomic
+prompts Patom to ensure base concepts remain intact.
+SCR = M(Patom, Φutil),
+(5)
+Non-target Concept Retention (NCR): Evaluated on unre-
+lated prompts Pgen to quantify collateral damage.
+NCR = M(Pgen, Φutil),
+(6)
+Higher scores in SCR and NCR indicate superior preserva-
+tion of generative utility.
+4. Experiments
+4.1. Experimental Setup
+To rigorously audit safety vulnerabilities and defensive effi-
+cacy within the MCCU paradigm, we conduct a comprehen-
+sive benchmark across three distinct dimensions: generative
+models, safety filters, and concept erasure frameworks.
+For T2I models benchmarking, we assess the inherent safety
+of 10 SOTA T2I models on the full TwoHamsters suite,
+spanning diverse architectures (e.g., U-Net (Ronneberger
+et al., 2015), DiT (Peebles & Xie, 2023)) and paradigms
+(Diffusion, Flow Matching, Autoregressive). Specifically,
+our evaluation includes Stable Diffusion (v1.4, v1.5, v2.1,
+v3.5), SDXL, Playground-v2.5 (Li et al., 2024a), PixArt-
+α (Chen et al., 2023), FLUX.1-dev (Lipman et al., 2022),
+CogView4 (Zheng et al., 2024), and Janus-Pro (Chen et al.,
+2025), with performance quantified via MDR and SCR.
+For safety filters benchmarking, we partition the dataset
+into training and testing sets (80/20 split) to compare seven
+mainstream filters: MultiHeaded (Qu et al., 2023), NSFW-
+T (Jieli, 2023), Q16 (Schramowski et al., 2022), NSFW-
+I (LAION-AI, 2022), the standard SD safety checker (Rando
+et al., 2022), LLaVA-Guard (Helff et al., 2024), and Perspec-
+tiveVision (Qu et al., 2025). Note that none of these security
+filters were trained on the training set, but only tested on the
+test set.
+For concept erasure methods benchmarking, we eval-
+uate
+Negative
+Prompt
+(NP),
+System
+Prompt
+(SP),
+ESD (Gandikota et al., 2023), UCE (Gandikota et al., 2024),
+Slider (Sridhar & Vasconcelos, 2024), RECE (Gong et al.,
+2024), SPEED (Li et al., 2025c), COGFD (Nie et al., 2025),
+and KSCU (Zhang et al., 2025a) using default hyperparam-
+eter configurations to gauge their robustness against com-
+positional risks. We quantify the trade-off between erasure
+efficacy and generative utility via MDR, SCR, and NCR.
+4.2. Benchmarking T2I Models
+Table 2 presents a comprehensive evaluation of state-of-the-
+art T2I models on the TwoHamsters benchmark.
+5
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+Table 2. Quantitative evaluation of ten T2I models on TwoHamsters. We report the MCCU Defense Rate (MDR) across 10 hazard
+categories and the overall Single-Concept Retention (SCR). Models are grouped by their backbone architecture. Higher MDR indicates
+better safety, while higher SCR indicates better utility. Bold denotes the best performance, and underline denotes the second best.
+Backbone
+Model
+Dist↑
+Hara↑
+Hate↑
+Humi↑
+Ille↑
+Poli↑
+Heal↑
+Harm↑
+Sexu↑
+Viol↑
+MDR↑
+SCR↑
+UNet
+SD-v1.4
+26.80
+17.11
+34.27
+56.34
+44.10
+37.86
+31.58
+40.24
+54.79
+39.92
+40.91
+89.21
+SD-v1.5
+26.44
+18.42
+34.66
+57.98
+43.75
+35.92
+36.84
+39.04
+54.66
+40.89
+41.00
+89.55
+SD-v2.1
+18.35
+11.84
+23.36
+48.12
+32.59
+16.50
+26.32
+25.34
+39.64
+31.12
+29.54
+93.36
+SDXL
+7.19
+5.92
+10.75
+26.53
+22.94
+8.74
+19.30
+20.55
+17.62
+14.73
+16.64
+95.86
+Playg-v2.5
+5.76
+8.55
+6.15
+8.69
+12.79
+10.68
+12.28
+15.07
+11.14
+13.57
+10.29
+97.10
+Transformer
+PixArt-α
+8.09
+8.55
+7.32
+12.68
+12.22
+4.85
+10.53
+17.81
+16.45
+8.53
+11.34
+98.14
+SD-v3.5
+4.14
+2.63
+4.21
+4.23
+3.00
+1.94
+5.26
+4.28
+2.72
+1.94
+3.45
+98.05
+FLUX.1
+2.16
+0.66
+0.31
+0.47
+0.21
+0.0
+1.75
+0.34
+0.26
+0.19
+0.48
+99.56
+CogView4
+5.58
+3.29
+2.73
+2.82
+2.93
+18.45
+3.60
+3.08
+2.72
+1.55
+3.28
+98.38
+Janus-Pro
+14.75
+15.13
+20.79
+17.84
+21.37
+7.77
+21.05
+19.52
+18.52
+17.05
+19.01
+90.90
+Average
+11.93
+8.81
+11.09
+23.64
+19.59
+14.27
+16.85
+18.53
+21.85
+16.95
+-
+-
+Insight 1:
+There exists an “Instruction vs Safety”
+Dilemma in Compositional Generation. Our empirical
+analysis reveals a critical “Instruction-Safety” dilemma: as
+models achieve superior instruction following, they become
+paradoxically more vulnerable to MCCU. While early U-
+Net architectures (e.g., SD-v1.4) retain a baseline MDR of
+40.91%, modern DiT-based models (e.g., FLUX.1) plum-
+met to near-0% MDR. We interpret this as an alignment
+paradigm that is semantic rather than axiological: models
+excel at compositionally rendering entities (e.g., “Water-
+melon” and “Person”) but lack the social reasoning to detect
+their emergent toxicity. Thus, optimization for strict prompt
+adherence effectively bypasses safety constraints when risks
+are implicit rather than explicit.
+Insight 2: Taxonomic Bias in Safety Alignment. Our fine-
+grained analysis reveals a systemic imbalance in current
+defense paradigms. Categories characterized by complex
+socio-semantic nuances, specifically Harassment (8.81%
+Mean MDR), Hate Speech, and Political Sensitivity, exhibit
+significantly higher vulnerability than extensively studied
+domains such as Sexual Content (21.85% Mean MDR). The
+marked divergence in MDR across categories highlights that
+current T2I safety alignment focus on suppressing explicit,
+low-level visual hazards (e.g., nudity), yet fail to sufficiently
+address high-level risks devoid of explicit visual signatures.
+Insight 3: T2I models are agnostic to the semantic na-
+ture of MCCU. To deeply investigate whether T2I models
+truly comprehend the compositional semantics of MCCU,
+we dissected the attention mechanisms of the FLUX model
+by visualizing the cross-modal attention maps. Specifically,
+employing the multimodal attention interpretability tech-
+nique (Baek, 2023), we computed correlation heatmaps that
+quantify the relevance between MCCU images and given
+keywords. These maps visualize the attention scores as-
+signed to image patches by text tokens within the multi-
+modal attention layers. As illustrated in Figure 3, the visu-
+Cotton
+Black man
+Hate
+Beer
+Child
+Illegal
+Original
+Original
+Figure 3. MCCU examples and FLUX’s attention maps for differ-
+ent keywords
+alization results indicate that FLUX can accurately attend
+to explicit benign atomic concepts, such as “cotton,” “black
+person,” and “beer,” as evidenced by the correctly high-
+lighted regions. However, the model fails to focus on the
+appropriate regions when processing harmful keywords; ide-
+ally, the attention mechanism should encompass the union
+of all benign atomic concepts concept areas that constitute
+the harmful intent. This discrepancy demonstrates that even
+as a state-of-the-art model, FLUX fails to establish a holistic
+understanding of MCCU.
+4.3. Benchmarking Content Filters
+We benchmark mainstream safety filters. As summarized
+in Table 3, the results expose systemic deficiencies in current
+detection paradigms:
+Insight 4: Mainstream safety filters systematically fail
+by suffering from MCCU data scarcity rather than ar-
+chitectural limitations. Widely deployed safety classifiers
+in T2I pipelines (e.g., SD Safety Checker and NSFW-I) ex-
+hibit extremely low sensitivity on the TwoHamsters dataset,
+failing to detect risks arising from multi-concept compo-
+sitional usage. Even safety-fine-tuned VLMs, including
+LLaVA-Guard and PerspectiveVision, achieve only 41.06%
+6
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+Table 3. Comparative analysis of Recall for SOTA filters on the TwoHamsters test set. Results are reported to illustrate benchmark
+coverage rather than real-world filter performance. With the exception of NSFW-T, which functions as a text filter, all other filters are
+image-based. Bold denotes the best performance, and underline denotes the second best.
+Method
+Dist↑
+Hara↑
+Hate↑
+Humi↑
+Ille↑
+Poli↑
+Heal↑
+Harm↑
+Sexu↑
+Viol↑
+Recall↑
+MultiHeaded
+31.25
+0.00
+29.18
+9.41
+4.30
+42.86
+0.00
+35.04
+15.58
+48.54
+21.73
+NSFW-T
+75.00
+93.33
+98.05
+77.65
+73.84
+100.0
+100.0
+64.96
+76.62
+88.35
+81.52
+Q16
+64.29
+16.67
+47.08
+31.76
+58.42
+61.90
+36.36
+88.03
+8.44
+92.23
+52.69
+NSFW-I
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+5.19
+0.00
+0.68
+SD Filter
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+Perspective
+29.46
+0.00
+16.73
+21.18
+19.35
+42.86
+9.09
+47.86
+1.95
+0.00
+18.56
+LLaVA-Guard
+35.71
+16.67
+28.40
+42.35
+49.82
+19.05
+9.09
+76.07
+9.74
+75.73
+41.06
+and 18.56% overall recall, with detection rates in public
+health and sexually transmitted risk categories below 10%.
+Although NSFW-T achieves superior Recall, its reliance on
+the textual modality inherently constrains its deployment
+scope compared to visual filters. It is crucial to emphasize
+that these off-the-shelf filters were evaluated in a zero-shot
+setting, as they have never been exposed to the specific
+compositional concepts within our dataset. In contrast, to
+determine the theoretical detection upper bound within the
+MCCU paradigm, we evaluated MCCU-ViT and MCCU-
+VLM, which are trained on the TwoHamsters training split
+as automated evaluators, showed stronger utility on the test
+set, with MCCU-ViT achieving an average recall of 99.49%
+(see Table 5). This gap cannot be explained by architectural
+differences, as both models are derived from MultiHeaded
+and LLaVA-Guard with only minor modifications; instead,
+it primarily reflects the inclusion of targeted MCCU train-
+ing data. Overall, these results suggest that existing safety
+filters fail not due to limited model capacity, but due to the
+systematic omission of MCCU content in prior training and
+evaluation paradigms.
+Insight 5: Universal MCCU defense confronts the struc-
+tural barrier of semantic fluidity. Although MCCU-ViT
+achieves near-perfect recall on the TwoHamsters benchmark,
+we strictly position it as a benchmark-specific evaluator
+rather than a deployable, general-purpose filter. Its primary
+function is to approximate human consensus at scale, en-
+suring reproducible experimental quantification within the
+dataset’s closed ontology. However, extrapolating this ef-
+ficacy to open-world deployment faces an intrinsic hurdle:
+unlike explicit visual hazards (e.g., gore or pornography)
+characterized by stable visual features, MCCU risks are so-
+cially constructed and culture-dependent. The toxicity of a
+compositional image often stems not from pixel-level seman-
+tics but from the evolving cultural zeitgeist; a combination
+deemed benign today may acquire offensive connotations to-
+morrow via emerging subcultures or shifting societal norms.
+Consequently, a universally invariant MCCU filter capable
+of long-term, comprehensive detection remains theoretically
+elusive. Effective mitigation requires framing MCCU safety
+(a)
+(b)
+Figure 4. Visualization of TwoHamsters data distribution. (a) t-
+SNE of CLIP embeddings. (b) Distribution of cosine similarities.
+not as a one-off technical optimization, but as a persistent,
+adaptive socio-technical challenge.
+Insight 6: MCCU aligns with benign semantics while
+deviating from harmful ones in the feature space. Con-
+sidering the ubiquity of CLIP-based encoders in current
+T2I models and content filters, we probed the distribution
+of MCCU data within the CLIP latent space. Specifically,
+we extracted image embeddings using CLIP-ViT (specifi-
+cally CLIP-L/14) and projected them into a two-dimensional
+space via t-SNE. As illustrated in Figure 4 (a), MCCU clus-
+ters consistently reside in the interpolation region between
+their two constituent benign atomic clusters. This indi-
+cates that in the CLIP feature space, the representations
+of these images effectively “parasitize” the overlapping ar-
+eas of benign atomic concepts. Furthermore, we compared
+the cosine similarity scores between MCCU images and
+both their descriptive prompts and explicit harmful category
+texts. As shown in Figure 4 (b), the semantic affinity of
+MCCU images with their descriptive prompts significantly
+7
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+Table 4. Results of the SOTA concept erasure methods on TwoHamsters. Note that we evaluate on the four concept pairs with the highest
+prompt counts, serving as a representative subset to mitigate prohibitive computational costs.
+Banana + Milk
+Bathing + Camera
+Mosque + Pig
+Blackman+Watermelon
+Methods
+MDR↑
+SCR↑
+NCR↑
+MDR↑
+SCR↑
+NCR↑
+MDR↑
+SCR↑
+NCR↑
+MDR↑
+SCR↑
+NCR↑
+SD-XL
+11.00
+95.36
+83.07
+32.43
+95.05
+83.67
+6.90
+99.57
+83.17
+0.41
+99.18
+82.66
+NP
+14.43
+92.10
+75.62
+48.65
+93.24
+76.59
+13.79
+99.57
+75.91
+1.64
+98.98
+75.15
+SP
+12.37
+96.39
+81.09
+47.75
+93.69
+81.98
+9.48
+100.0
+81.23
+0.41
+99.18
+80.62
+ESD
+32.65
+89.86
+80.86
+40.54
+94.59
+82.29
+21.55
+98.71
+82.02
+8.20
+98.36
+80.59
+UCE
+66.32
+89.52
+80.53
+31.53
+93.69
+83.58
+3.45
+99.57
+83.05
+1.64
+99.18
+82.32
+RECE
+13.06
+95.02
+82.75
+29.73
+95.05
+83.67
+6.90
+99.57
+82.98
+0.82
+99.59
+82.59
+Slider
+11.34
+95.02
+82.71
+32.43
+94.59
+83.30
+9.48
+99.57
+82.85
+0.82
+99.39
+82.30
+SPEED
+14.09
+93.64
+82.26
+36.94
+95.50
+83.44
+0.43
+79.31
+82.71
+6.15
+98.77
+82.21
+KSCU
+35.74
+86.60
+79.45
+48.65
+91.89
+81.93
+35.34
+97.41
+80.36
+24.18
+96.31
+79.61
+COGFD
+14.43
+93.99
+82.17
+36.94
+95.50
+83.41
+16.38
+99.57
+83.06
+74.18
+95.70
+82.16
+surpasses their correlation with harmful texts. This quantita-
+tive evidence confirms that within the feature space, MCCU
+remains semantically proximal to benign concepts while
+keeping a distance from malicious semantics.
+4.4. Benchmarking Concept Erasure Methods
+As demonstrated in Table 4, current Concept Erasure (CE)
+paradigms fail to achieve the requisite efficacy for mitigating
+MCCU risks, manifesting in two distinct failure modes.
+Insight 7: The Dual Dilemma of Ineffective Erasure
+and Utility Collapse in Concept Erasure. First, we ob-
+serve ineffective erasure across various categories, where
+the MDR of CE-tuned models remains unacceptably close
+to the SDXL baseline. One reason is that while state-of-the-
+art methods can suppress explicit hazards in smaller models
+like SD-v1.4, they struggle to decouple deep text-to-latent
+associations in large-scale architectures such as SDXL or
+FLUX. Another reason lies in the inherent complexity of
+MCCU; MCCU prompts are often structurally intricate, and
+when these complex compositional prompts are triggered,
+latent unsafe visual features tend to re-emerge.
+Second, effective erasure often leads to a catastrophic de-
+cline in utility, as evidenced by the synchronized drop in
+MDR and SCR for methods such as ESD, UCE, KSCU, and
+COGFD. This limitation stems from the fact that existing
+erasure logic relies on coarse-grained activation suppression
+over parameter subsets, lacking the precision required to
+address fine-grained MCCU risks. We further argue that
+MCCU risks differ in practice from conventional safety haz-
+ards in terms of latent feature distributions. Prior safety
+research typically assumes manifold separation, modeling
+violating and benign data as disjoint distributions. In con-
+trast, the critical challenge of MCCU lies in its intrinsic
+distributional entanglement, where unsafe semantics do not
+form isolated clusters but are superimposed onto and para-
+sitize benign concept manifolds. Under this regime, current
+CE algorithms attempting to excise specific MCCU risks
+inadvertently induce the collapse of the underlying benign
+manifolds that constitute concept representations, thereby
+degrading generative utility.
+Insight 8: Shifting from Concept Erasure to Composi-
+tional Disentanglement. The intrinsic limitation of current
+Concept Erasure lies in its objective: attempting to remove
+a concept vector vc entirely. Our results prove this fails
+for MCCU because the constituent elements (e.g., “priest”,
+“child”) are benign and essential. Therefore, we propose a
+paradigm shift from data-centric filtration to logic-oriented
+disentanglement. Mathematically, this implies moving from
+minimizing the probability P(c) to enforcing conditional
+independence: P(A|B) ≈P(A), preventing the contextual
+triggering of risk while preserving atomic utility. While
+COGFD has explored the direction of compositional disen-
+tanglement, results on TwoHamsters demonstrate that it falls
+short in both erasure efficacy and generative utility. Practi-
+cal implementation should prioritize disrupting the semantic
+binding mechanism within the model’s cross-attention lay-
+ers. Instead of erasing weights, future alignment must focus
+on orthogonalizing the interaction manifolds—ensuring that
+the activation patterns of benign concepts (e.g., “banana”) re-
+main computationally orthogonal to sensitive contexts (e.g.,
+“sexualized textures”), thereby stripping the model’s capac-
+ity for harmful synthesis without degrading its knowledge
+base.
+5. Conclusion
+In this work, we formally define Multi-Concept Composi-
+tional Unsafety (MCCU) and introduce TwoHamsters to
+benchmark this implicit vulnerability. Our evaluation re-
+veals a severe safety risk: current SOTA T2I models exhibit
+significant susceptibility to MCCU. Notably, FLUX demon-
+8
+
+TwoHamsters: Benchmarking Multi-Concept Compositional Unsafety in Text-to-Image Models
+strates an MCCU generation rate as high as 99.52% , while
+mainstream defense methods fail to effectively shield mod-
+els against these risks. These findings demonstrate that
+current safeguards, which rely on explicit data filtering, are
+fundamentally inadequate against MCCU, underscoring the
+urgent need for logic-oriented safety alignment.
+Impact Statement
+This work advances the safety alignment of Text-to-Image
+(T2I) generation by formally defining and benchmarking
+Multi-Concept Compositional Unsafety (MCCU). We ac-
+knowledge that our introduced benchmark, TwoHamsters,
+contains prompts designed to trigger offensive content, in-
+cluding hate speech, sexual innuendo, and self-harm.
+While this dataset poses a potential risk of being repurposed
+for jailbreaking, its release is imperative given our empirical
+finding that current SOTA models (e.g., FLUX) exhibit a
+failure rate of nearly 100% against MCCU attacks. Keep-
+ing such vulnerabilities opaque hinders the development
+of robust defenses. We emphasize that the prompts in our
+benchmark consist of individually benign concepts, distin-
+guishing them from explicit malicious instructions.
+To mitigate harm during data curation, we employed a strict
+human-in-the-loop review process with established proto-
+cols to protect annotator well-being. We urge the research
+community to use this dataset responsibly, primarily for
+auditing safety boundaries and developing logic-oriented
+alignment techniques.

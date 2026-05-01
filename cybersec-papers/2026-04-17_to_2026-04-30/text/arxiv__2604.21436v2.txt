@@ -1,0 +1,1556 @@
+A Stackelberg Model for Hybridization in Cryptography
+Willie Kouama, Stefan Rassa, Zahra Seyedib, Shahzad Ahmada, Eckhard Pfluegelc
+aJohannes Kepler University, LIT Secure and Correct Systems Lab, Linz, Austria
+bPolytechnic University of Milan, Department of Electronics, Information and Bioengineering, Milan, Italy
+cKingston University, London Area, United Kingdom
+Abstract
+Similar to a strategic interaction between rational and intelligent agents, cryptography problems
+can be examined through the prism of game theory. In this setting, the agent aiming to protect
+a message is called the defender, while the one attempting to decrypt it, generally for malicious
+purposes, is the attacker. To strengthen security in cryptography, various strategies have been
+developed, among which hybridization stands out as a key concept in modern cryptographic
+design. This strategy allows the defender to select among different encryption algorithms (clas-
+sical, post-quantum, or hybrid) while carefully balancing security and operational costs. On the
+other side, the attacker, limited by available resources, chooses cryptanalysis methods capable of
+breaching the selected algorithm. We model this interaction as a Stackelberg cryptographic hy-
+bridization problem under resource constraints. Here, the defender randomizes over encryption
+algorithms, and the attacker observes the choice before selecting suitable cryptanalysis methods.
+The attacker’s decision is framed as a conditional optimization problem, which we refer to as
+the “attacker subgame”. We then propose a dynamic programming approach for the attacker’s
+subgame, while the defender’s Stackelberg optimization is formulated as a linear program.
+Keywords:
+Cryptography, Cybersecurity, Game theory, Hybridization, Stackelberg model
+1. Introduction
+Modern cryptographic deployments face a fundamental dilemma.
+The looming threat of
+quantum computing renders RSA and elliptic curve cryptography vulnerable to polynomial-
+time attacks [46], while NIST-standardized post-quantum alternatives impose 2-5× computa-
+tional overhead and 5-10 MB memory footprints [1]. No single algorithm satisfies the hetero-
+geneous requirements of contemporary systems; TLS handshakes demand sub-100ms latency,
+IoT devices face severe memory constraints, and regulatory mandates require 20-year security
+guarantees. Consider, for instance, a financial institution processing transactions. RSA-2048
+provides 10-20ms encryption [23, 7] but faces quantum threats [46]. Lattice-based schemes of-
+fer quantum resistance at 50-100ms cost [11, 19]. AES-256 is fast (submillisecond per block
+[24]) and quantum-resistant [13] but requires secure key exchange. Traditional approaches treat
+algorithm selection as static cost minimization [53]: deploy the cheapest algorithm meeting a
+security threshold. These frameworks have critical flaws.
+• Security optimization treats adversaries as passive, ignoring their adaptive responses. At-
+tackers observe deployed algorithms and optimally allocate resources among cryptanalytic
+methods, concentrating on RSA, which enables specialized factorization attacks, while
+diversification forces resource spreading.
+• Real systems consume incommensurable resources (CPU, memory, bandwidth, latency).
+Single-cost aggregation obscures trade-offs: an algorithm cheap in CPU may be expensive
+in memory.
+arXiv:2604.21436v2 [cs.CR] 27 Apr 2026
+
+• Organizations rarely know adversary capabilities reliably.
+Nation-state attackers differ
+vastly from criminal organizations, and harvest-now-decrypt-later attacks create deep un-
+certainty about effective attack budgets.
+• Regulatory standards mandate crypto-agility [6], yet traditional optimization provides no
+principled diversification mechanism. Over-concentration creates single points of failure.
+To address these limitations, we model cryptographic hybridization, strategic selection of
+algorithm portfolios, as a Stackelberg game. The defender (leader) acts first and commits to
+a mixed strategy p = (p1, . . . , pn) over n algorithms, where pi is the probability of deploying
+algorithm Ei. The attacker (follower) observes the realized algorithm and subsequently selects
+a subset S of cryptanalysis methods optimizing the probability of success as well as the cost
+to perform such an action, subject to a budget k. Knowing that the attacker will adjust their
+strategy in response, the defender anticipates these optimal moves and selects p to minimize
+the expected loss. In doing so, the defender must consider multiple practical constraints, such
+as CPU and memory usage, latency, quantum resistance, and diversification across different
+classes of encryption methods. This formulation captures essential strategic elements: observ-
+able defender commitments (via TLS negotiations, protocol parameters), attacker resource al-
+location under scarcity (attempting multiple methods increases success but consumes budget),
+and mixed-strategy uncertainty (forcing attackers to prepare for multiple contingencies). Our
+main contributions are summarized as follows:
+• We provide the first Stackelberg formulation of cryptographic hybridization, unifying se-
+curity games and cryptographic algorithm selection.
+• We prove the attacker problem is non-monotone submodular maximization with knapsack
+constraints and propose a dynamic programming (DP) algorithm to solve it.
+• We formulate the defender decision-making problem as a linear program (LP) with hetero-
+geneous resources (CPU, memory, latency), strategic requirements (quantum resilience),
+and diversification policies. We prove equilibrium existence and bound support size: with
+u binding constraints, at most u algorithms receive positive probability.
+• Assuming that the attacker’s available budget is not publicly known, we adopt a worst-case
+regret minimization approach to propose a robust solution under this uncertainty.
+The remainder of this paper is organized as follows. Section 2 reviews related work and positions
+our contribution within the existing literature. Section 3 formalizes the system model, which
+serves as the basis for the subsequent analysis, and Section 4 is dedicated to the problem formu-
+lation. With this groundwork established, Section 5 develops the Stackelberg game solution with
+attacker and defender optimization. Section 6 implements the worst-case regret minimization
+approach. Section 7 subsequently discusses implementation details and performance analysis
+results, and finally, Section 8 concludes the paper.
+2. Related work
+Security games model strategic interactions between defenders and attackers. Stackelberg
+security games, where defenders commit first, and attackers observe before responding, have
+been successfully applied to airport security [43], patrolling strategies [47], cyber-insurance [31],
+and network defense scenarios [52, 45, 39]. The FlipIt game [49] which captures the strategic
+timing of actions, can be leveraged to model cryptographic key rotation, highlighting how game-
+theoretic approaches are relevant to real-world cryptographic practices. However, no prior work
+addresses strategic cryptographic algorithm selection under heterogeneous resource constraints
+and adaptive adversaries. In the domain of cryptographic optimization, algorithm selection has
+2
+
+traditionally focused on single-objective problems: minimizing latency [7], minimizing energy
+consumption, or minimizing cost subject to fixed security thresholds. Post-quantum migration
+strategies [38] consider transition planning but treat security as a static parameter rather than
+the outcome of strategic interaction. These approaches aggregate heterogeneous resources (CPU,
+memory, bandwidth, latency) into scalar cost metrics, obscuring fundamental trade-offs between
+incommensurable dimensions. In this work, we approach the problem by recognizing that the
+choice of encryption and cryptanalysis algorithms is a strategic decision. Each party makes
+its selection while anticipating the likely actions of the other. This interaction occurs under
+budgetary constraints that reflect the practical parameters involved in evaluating the different
+algorithms.
+Our attacker problem connects to the well-studied area of submodular maximization un-
+der knapsack constraints in combinatorial optimization. Ene and Nguyen [21] provided nearly
+linear-time algorithms with constant-factor approximation ratios for this problem class. Ama-
+natidis et al. [2] develop sample-based and adaptive greedy methods that balance approximation
+quality with query complexity, which is crucial in our setting, where each "query" corresponds
+to evaluating an attack method’s marginal contribution. Cui et al. [15] achieve improved adap-
+tivity bounds through parallel algorithms. However, most existing algorithms for these types
+of problems have been designed for large-scale instance problems. For instance, in the video
+recommendation study by Amanatidis et al. [3], the ground set includes n = 62, 000 movies. In
+contrast, in our context, for any given encryption algorithm Ei, the set of relevant cryptanalysis
+methods D(i) is usually much smaller. In practice, the cryptanalysis of a specific encryption algo-
+rithm Ei is performed by considering a finite set of known attack techniques, each corresponding
+to a distinct cryptanalytic paradigm such as differential, linear, integral, boomerang/rectangle,
+related-key, algebraic, meet-in-the-middle, impossible differential, and other variants, as system-
+atically enumerated [32]. This bounded set of methods typically falls into the tens rather than
+of thousands or more potential attacks. To handle this, we propose a DP algorithm for these
+more manageable instances, and if for a given algorithm Ei the value |D(i)| is not manageable
+by the DP algorithm, we instead employ the SampleGreedy algorithm [3], while tolerating
+the approximation error introduced.
+The attacker’s available budget for carrying out actions may also be unknown to the defender.
+In such cases, robust optimization under uncertainty has been widely explored in areas like op-
+erational planning [7] and discrete optimization [30]. Approaches based on minimax regret, as
+used in [33], aim to minimize worst-case performance degradation relative to optimal hindsight
+decisions. Although robust optimization has been used for security resource allocation, applying
+it to the selection of cryptographic algorithms, when the attacker’s budget is unknown to the
+defender, and the adversary acts strategically, is a novel approach. Our work fills a critical
+gap at the intersection of security games and applied cryptography by providing the first inte-
+gration of Stackelberg games, multi-constraint optimization, and submodular maximization for
+cryptographic hybridization. We explicitly model defender-attacker strategic interaction while
+accounting for heterogeneous resources, quantum resilience requirements, diversification policies,
+and uncertainty in adversary capabilities.
+3. System model
+We model cryptographic algorithm selection as a two-player Stackelberg game between a
+defender (organization deploying cryptographic systems) and an attacker (adversary attempting
+to compromise encrypted data). This section formalizes the strategic scenario, players’ action
+spaces, information structure, and payoff functions. The following conventions are employed in
+the subsequent section: sets are denoted by capital letters (e.g., S, T), vectors are represented in
+bold (e.g., v, w), scalars are written in lowercase (e.g., x, y), and the action sets of the players
+are indicated in cursive script (e.g., A, B). Ei denotes a defender’s encryption algorithm while
+Aj represents an attacking method.
+3
+
+3.1. Cryptographic deployment scenario
+Consider an organization tasked with choosing encryption algorithms to safeguard sensitive
+information, the latter faces many options. Modern cryptographic landscape provides a wide
+variety of options, including classical schemes such as RSA and elliptic curve cryptography,
+symmetric algorithms like AES and ChaCha20, post-quantum alternatives based on lattices
+or hashes, and hybrid approaches that combine multiple primitives. Each algorithm presents
+distinct trade-offs in computing cost, memory use, processing speed, resistance to quantum
+attacks, and cryptanalytic maturity (i.e., the extent to which it has been tested by cryptanalysis).
+The defender does not commit to a single algorithm but rather deploys a probability distribution
+over available algorithms. This may be realized through randomized selection at deployment
+time, heterogeneous deployment across different services or user sessions, or temporal rotation
+of algorithms.
+The attacker observes the algorithm protecting a particular target (through
+protocol negotiation, traffic analysis, or cryptanalytic reconnaissance) and must allocate limited
+computational resources among available cryptanalytic methods.
+3.2. Players’ action spaces and Payoffs
+Let A = {E1, . . . , En} be the set of encryption algorithms available to the defender, and given
+an encryption algorithm Ei let D(i) denote the set of cryptanalytic methods that an attacker
+could apply to compromise it; the overall pool of attack methods is thus Dall =
+n
+[
+i=1
+D(i). The
+interaction between the parties is modeled as a sequential two-player game in which the defender,
+acting as the leader, first selects an encryption algorithm from the set A. Once this choice has
+been made and observed by the attacker, the latter acts as the follower and selects cryptanalytic
+methods from the corresponding set D(i) associated with the chosen encryption algorithm Ei.
+The players’ strategies and the game’s outcome are described in the following.
+• Defender: A pure strategy of the defender consists of deterministically deploying a single
+encryption algorithm Ei. Conversely, a mixed strategy is a probability distribution over
+the set of pure strategies, i.e., a function f : A →[0, 1] such that
+X
+Ei∈A
+f(Ei) = 1. In our
+model, the defender publicly commits to a mixed strategy q ∈∆n =
+n
+q = (q1, . . . , qn) ∈
+Rn  qi ⩾0 ∀i,
+n
+X
+i=1
+qi = 1
+o
+, where qi ≡Pr(Algorithm
+Ei is selected) denotes the
+probability that the encryption algorithm Ei is implemented.
+• Attacker: Once the encryption algorithm Ei ∈A is revealed, the attacker selects a subset
+S ⊆D(i) of appropriate cryptanalysis methods. Each method Aj ∈S consumes a specific
+amount of resources, represented by a cost kj, and the attacker operates under a total re-
+source budget k, which implies that the condition
+X
+Aj∈S
+kj ⩽k must be satisfied. For every
+such subset S, the attacker’s cost function is defined so that its negative is submodular.
+A function h : 2N →R is submodular if
+h(A ∪{j}) −h(A) ⩾h(B ∪{j}) −h(B),
+∀A ⊆B ⊂N, j /∈B.
+For each pair of encryption and cryptanalysis algorithms (Ei, Aj), let si,j ∈[0, 1] the success
+probability of the method Aj against algorithm Ei (i.e., the likelihood that the method Aj suc-
+cessfully breaks algorithm Ei); the resulting payoff structure is summarized in the normal-form
+representation in Table 1. Each cell contains the tuple ((si,j, ci), (si,j, kj)) which corresponds
+to the pure strategy pair (Ei, Aj) capturing the defender’s (success probability, implementation
+cost) and the attacker’s (success probability, attack cost) values, respectively. In our framework,
+4
+
+the defender’s cost is vector-valued, capturing multiple practical criteria at once, including oper-
+ational overhead, CPU and memory usage, latency, and reliability. Formally, this is represented
+as ci =
+
+c(OP)
+i
+, c(CPU)
+i
+, c(MEM)
+i
+, τi, ri
+
+and characterizes the trade-offs associated with choosing
+an encryption algorithm Ei: the fixed operational cost c(OP)
+i
+⩾0 reflects the deployment and
+maintenance expenses; c(CPU)
+i
+⩾0 captures the computational effort per operation, affecting
+efficiency and scalability; c(MEM)
+i
+⩾0 represents the memory requirements, which are critical
+in resource-constrained environments; τi ⩾0 denotes the latency per operation, determining
+execution speed and system responsiveness; and ri ∈[0, 1] measures the algorithm’s resilience
+to quantum attacks, reflecting its long-term security.
+Table 1: Two-player payoff table for players’ pure strategies: row Ei is a defender’s encryption algorithm; column
+Aj is an attacker’s cryptanalysis method. Each cell (i, j) contains
+ (success si,j, defender’s cost ci), (success si,j, attacker’s cost kj)
+
+.
+A1
+A2
+A3
+. . .
+E1
+ (s1,1, c1), (s1,1, k1)
+
+ (s1,2, c1), (s1,2, k2)
+
+ (s1,3, c1), (s1,3, k3)
+
+. . .
+E2
+ (s2,1, c2), (s2,1, k1)
+
+ (s2,2, c2), (s2,2, k2)
+
+ (s2,3, c2), (s2,3, k3)
+
+. . .
+E3
+ (s3,1, c3), (s3,1, k1)
+
+ (s3,2, c3), (s3,2, k2)
+
+ (s3,3, c3), (s3,3, k3)
+
+. . .
+...
+...
+...
+...
+...
+To avoid trivial cases, the success probabilities si,j ∈(0, 1) for i, j ∈{1, . . . , n} reflects the
+inherent uncertainty in every attack method: values close to 0 indicate a very low chance of
+success, while values near 1 suggest a high likelihood of compromise, but never absolute certainty.
+Two qualitative observations motivate the game-theoretic analysis that follows.
+• If an encryption algorithm Ei has consistently low si,· values (i.e., low success probabilities
+across all applicable cryptanalysis methods), it is highly resilient even against an attacker
+with a sufficiently large budget. Such an algorithm is therefore an attractive option for
+the defender’s mixed strategy from a security perspective.
+• If all rows exhibit high si,· values (i.e., the attacker is highly likely to breach all systems),
+the current algorithm portfolio A is systemically weak. In this case, randomization alone
+provides little protection, and the defender must consider genuinely resistant alternatives.
+4. Problem formulation
+Building on the system model of Section 3, we now formalize the optimization problems faced
+by each player. The Stackelberg structure of our problem induces a bi-level optimization issue:
+the attacker’s subgame (the inner level) is solved first as a function of the defender’s announced
+strategy; the defender then optimizes over the attacker’s best-response map (the outer level).
+4.1. Attacker subgame
+Accounting for the observed algorithm Ei, the attacker aims to optimize a weighted utility
+that balances two objectives, which are maximizing the probability of breaking the encryption
+and minimizing the resources required to perform the attack. Assuming independent attack
+attempts, the overall success probability for a chosen subset S is Psucc(S) = 1 −
+Y
+Aj∈S
+(1 −si,j),
+and the attacker must select a subset S ⊆D(i) of cryptanalysis methods such that the total
+5
+
+cost does not exceed the budget k, i.e.,
+X
+Aj∈S
+kj ⩽k, and satisfying,
+max
+S⊆D(i)
+v · Psucc(S) −ϕ(S),
+such that
+X
+Aj∈S
+kj ⩽k.
+(1)
+In problem (1), v > 0 represents the value the attacker assigns to a successful compromise and
+ϕ :
+2D(i) →R,
+S 7→ϕ(S) = φ
+ X
+Aj∈S
+kj
+
+with φ : R+ →R+ a monotone increasing cost
+function that translates resource expenditure into the same utility units as v; that is ∀S, S
+′ ∈
+2D(i), S ⊆S
+′
+=⇒
+φ
+ X
+Aj∈S
+kj
+
+⩽φ
+ X
+Aj∈S′
+kj
+
+. The function φ may be linear or convex
+to reflect an increasing marginal cost of acquiring resources (for instance, modeling the rapidly
+rising cost of additional GPUs when renting extra clusters).
+Remark 1. We assume that the function −ϕ is submodular so that the attacker’s objective
+preserves the desirable diminishing-returns property. Some examples include the linear form
+ϕ(S) = φ
+ X
+Aj∈S
+kj
+
+= λ
+X
+Aj∈S
+kj and convex, increasing forms such as ϕ(S) = φ
+ X
+Aj∈S
+kj
+
+=
+λ
+ X
+Aj∈S
+kj
+
++ α
+ X
+Aj∈S
+kj
+2
+, λ, α ⩾0.
+The problem (1) can therefore be written as the following optimization problem:
+maximize
+F(S) = v ·
+
+1 −
+Y
+Aj∈S
+(1 −si,j)
+
+−ϕ(S)
+subject to
+X
+Aj∈S
+kj ⩽k,
+The attacker’s optimization problem for a realized algorithm Ei is therefore expressed as,
+S⋆(i) = arg max
+S⊆D(i) v ·
+
+1 −
+Y
+Aj∈S
+(1 −si,j)
+
+−ϕ(S)
+such that
+X
+Aj∈S
+kj ⩽k
+(2)
+Remark 2. The objective in (2) mixes a value term v · Psucc(S) with a resource-cost term
+X
+Aj∈S
+kj. An alternative to the normalization approach adopted above is to express the problem
+as max
+S⊆D(i) Psucc(S) −λ
+X
+Aj∈S
+kj, where λ converts resource cost into probability units.
+The attacker’s optimization problem, as formulated above, exhibits several structural properties
+that are crucial for its analysis and solution.
+Submodularity property. Consider the function g : 2D(i) →R such that g(S) = Psucc(S), then
+g(A ∪{Aj}) −g(A) = 1 −
+Y
+Ar∈A∪{Aj}
+(1 −si,r) −
+ 
+1 −
+Y
+Ar∈A
+(1 −si,r)
+!
+= si,j ·
+Y
+Ar∈A
+(1 −si,r),
+g(B ∪{Aj}) −g(B) = si,j ·
+Y
+Ar∈B
+(1 −si,r);
+since 0 < 1 −si,j < 1 and A ⊆B,
+Y
+Ar∈A
+(1 −si,r) ⩾
+Y
+Ar∈B
+(1 −si,r)
+⇒
+g(A ∪{Aj}) −g(A) ⩾g(B ∪{Aj}) −g(B).
+Hence g is submodular. Adding a submodular function −ϕ preserves submodularity. Therefore
+the function F : 2D(i) →R,
+F(S) = v · g(S) −ϕ(S), ∀S ⊆D(i) is submodular.
+6
+
+Non-monotonicity. For any j /∈S,
+F(S ∪{j}) −F(S) = v · (g(S ∪{Aj}) −g(S)) −ϕ(S ∪{Aj}) + ϕ(S)
+i.e.,
+F(S ∪{j}) −F(S) ⩽0 ⇐⇒ϕ(S ∪{Aj}) −ϕ(S) ⩾v · (g(S ∪{Aj}) −g(S))
+Hence F is non-monotone. Together with the budget constraint
+X
+Aj∈S
+kj ⩽k, problem (2) is a
+non-monotone submodular maximization problem under a knapsack constraint.
+4.2. Defender Optimization Problem
+Let P ⋆
+succ(i) denote the optimal attacker success probability against algorithm Ei, achieved
+by the optimal best-response set S⋆(i) obtained by solving (2). The defender evaluates each Ei
+using a per-algorithm utility value,
+ℓi = Li ·
+ 1 −P ⋆
+succ(i)
+
+−γOP c(OP)
+i
+−γCPU c(CPU)
+i
+−γMEM c(MEM)
+i
+−γτ τi + γr ri,
+(3)
+where the parameters are defined in Table 2 while the defender specifies weights translate each
+parameter into utility units, as explained in Table 3 below.
+Table 2: Algorithm-specific parameters in the defender’s optimization problem.
+Parameter
+Meaning
+Obtainable from
+Li > 0
+Value protected: asset value remaining se-
+cure if algorithm Ei successfully resists the
+attack. Higher Li indicates more critical
+data/systems protected by algorithm Ei
+business
+impact
+analysis
+(BIA)
+P ⋆
+succ(i) ∈[0, 1]
+Attacker’s
+optimal
+success
+probability:
+maximum
+probability
+that
+a
+rational,
+resource-constrained attacker compromises
+algorithm Ei
+the attacker subgame op-
+timization (i.e., the value
+Psucc(S⋆(i)))
+c(OP)
+i
+⩾0
+Operational/setup cost: fixed deployment
+costs associated with algorithm Ei
+costs for purchasing hard-
+ware + running costs to
+maintain it; from business
+continuity management
+c(CPU)
+i
+⩾0
+CPU cost per operation: computational cy-
+cles required for one encryption algorithm
+binary code for algorithms:
+depending on programming
+language and compiler opti-
+mizations
+c(MEM)
+i
+⩾0
+Memory footprint: RAM for keys, interme-
+diate values, and algorithm state
+space complexity of the al-
+gorithm (as given in the lit-
+erature)
+τi ⩾0
+Latency per operation: wall-clock time in-
+cluding all overheads
+studies conducted in the lit-
+erature
+ri ∈[0, 1]
+Quantum-resilience score:
+assessment of
+algorithm’s resistance to quantum attacks;
+ri = 1 means quantum-safe (e.g. AES-256,
+Kyber-1024). ri ∈(0, 1): partial resilience
+or uncertain quantum security
+expert
+elicitation
+(statis-
+tics)
+7
+
+Table 3: Defender’s utility weights for different resource and strategic dimensions.
+Weight
+Interpretation
+γOP ⩾0
+Operational-cost weight: converts monetary setup/maintenance costs into de-
+fender utility.
+γCPU ⩾0
+CPU-cost weight: penalty per GHz·ms of computation; reflects server costs
+and energy.
+γMEM ⩾0
+Memory-cost weight: penalty per MB of RAM; critical in memory-constrained
+IoT devices.
+γτ ⩾0
+Latency-penalty weight: penalty per millisecond of delay.
+γr ⩾0
+Quantum-resilience reward: bonus per unit of quantum resistance; encodes
+long-term security vision.
+The defender then chose a mixed strategy p = (p1, . . . , pn) to solve
+p⋆= arg max
+p∈∆n
+n
+X
+i=1
+pi ℓi
+(ℓi given by (3))
+subject to:
+n
+X
+i=1
+pi = 1(simplex)
+n
+X
+i=1
+pi c(OP)
+i
+⩽COP (Operational cost);
+n
+X
+i=1
+pi c(CPU)
+i
+⩽CCPU (CPU budget)
+n
+X
+i=1
+pi c(MEM)
+i
+⩽CMEM (memory budget);
+n
+X
+i=1
+pi τi ⩽Tmax (latency constraint)
+n
+X
+i=1
+pi ri ⩾Rmin (quantum resilience);
+pi ⩾0, i = 1, . . . , n (non-negativity)
+X
+i∈Fj
+pi ⩽αj,
+j = 1, . . . , J
+(enforcing diversification)
+(4)
+The global constraints and their operational motivations are summarized in the Table 4 below.
+Table 4: Global constraints and their strategic motivations.
+Constraint
+Meaning
+COP > 0
+Maximum operational-cost available to the defender.
+CCPU > 0
+Maximum expected CPU resources per operation.
+CMEM > 0
+Maximum RAM available for cryptographic operations.
+Tmax > 0
+Upper bound on expected operation latency.
+Rmin ∈[0, 1]
+Required average quantum-resistance score.
+Fj ⊆{1, . . . , J}
+Subset of algorithms sharing a common cryptographic foun-
+dation (e.g., F1 = {RSA2048, RSA4096} (RSA family); F2 =
+{Kyber, Dilithium} (lattice family)).
+αj ∈(0, 1)
+Maximum total probability allocated to family j; ensures diver-
+sification across cryptographic families (e.g., αj = 0.5 prevents
+over 50% concentration in any family).
+8
+
+We note that the problem (4) is a LP with n decision variables (probabilities p1, . . . , pn), one
+equality constraint (simplex), five resource-inequality constraints (operational cost, CPU, mem-
+ory, latency, quantum resilience), J family-concentration inequalities, and n non-negativity con-
+straints.
+Remark 3. We adopt a constrained optimization framework with multiple constraints, since
+relying on a single aggregate cost is often too restrictive. Real cryptographic systems involve
+heterogeneous resources such as CPU, memory, bandwidth, and energy, which a single scalar
+measure cannot capture.
+Furthermore, the need for quantum resistance, driven by “harvest-
+now-decrypt-later” threats and NIST recommendations, makes it necessary to incorporate post-
+quantum algorithms. NIST guidelines emphasize the importance of cryptographic agility, i.e., the
+ability to transition to new cryptographic algorithms when existing ones become vulnerable [5].
+Finally, a model with only one constraint typically yields solutions with support size |supp(p⋆)| ⩽
+2, whereas in practice deploying only one or two algorithms increases the risk of correlated
+failures; the multi-constraint formulation naturally produces more diverse portfolios.
+5. Game Solution
+This section presents the solution to the Stackelberg game defined in Section 4. We first
+establish that an equilibrium always exists and characterize the support of the optimal defender
+strategy. We subsequently describe the algorithm used to solve the attacker’s subgame.
+5.1. Stackelberg equilibrium and support size of the defender
+Existence of Stackelberg equilibrium. For a given encryption algorithm Ei, the attacker chooses
+a set of attack methods S that maximizes their utility while staying within the budget. The
+attacker’s best response is defined as S∗(i) ∈arg max
+S⊆D(i)
+F(S), and knowing that, the defender antic-
+ipates the attacker’s choice and selects a mixed strategy q ∈∆n over the encryption algorithms
+to maximize their expected utility. Therefore, a pair of strategies (q∗, S∗(·)) is a Stackelberg equi-
+librium of the game if
+q∗∈arg max
+q∈∆n
+n
+X
+i=1
+qi ℓi, where ∀i ∈{1, . . . , n}, S∗(i) ∈arg max
+S⊆D(i)
+F(S);
+neither player can improve its payoff by unilaterally deviating from these strategies.
+Theorem 1. The cryptographic hybridization game always admits a Stackelberg equilibrium
+(p⋆, {S⋆(i)}n
+i=1).
+Proof. The following conditions are verified.
+1. Defender’s strategy space: ∆n is non-empty, compact, and convex.
+2. Attacker’s best response: for each observed i, the attacker maximizes a continuous function
+over the finite set 2D(i). A maximum exists; the optimum S⋆(i) may not be unique, but
+P ⋆
+succ(i) is well-defined.
+3. Defender’s objective: given attacker’s best responses, ℓi(P ⋆
+succ(i)) is fixed for each i. The
+objective
+n
+X
+i=1
+piℓi is linear (hence continuous and convex) in p.
+4. Constraints: all resource and family constraints are linear, preserving convexity.
+By the Weierstrass extreme-value theorem [34], a continuous function on a non-empty compact
+set attains its maximum. Hence, p⋆exists, and, together with the attacker’s best responses, it
+constitutes a Stackelberg equilibrium.
+Support size of the optimal defender strategy. The support size bound of the defender’s optimal
+strategy is specified by the following Theorem 2.
+9
+
+Theorem 2. Let p⋆be an optimal solution to the problem (4), and let u denote the num-
+ber of constraints (excluding non-negativity) that are binding (active with equality) at p⋆, then
+|supp(p⋆)| ⩽u,
+with supp(p⋆) = {i ∈{1, . . . , n} : p⋆
+i > 0}.
+Proof. We use the theory of Basic Feasible Solutions (BFS) in linear programming. Introducing
+slack variables s0, s1, . . . , s4+J for the inequality constraints, problem (4) is equivalent to the
+standard-form LP
+maximize
+n
+X
+i=1
+pi ℓi
+subject to
+n
+X
+i=1
+pi = 1,
+n
+X
+i=1
+pi c(OP)
+i
++ s0 = COP
+n
+X
+i=1
+pi c(CPU)
+i
++ s1 = CCPU,
+n
+X
+i=1
+pi c(MEM)
+i
++ s2 = CMEM,
+n
+X
+i=1
+pi τi + s3 = Tmax,
+n
+X
+i=1
+pi ri −s4 = Rmin,
+X
+i∈Fj
+pi + s4+j = αj,
+j = 1, . . . , J,
+pi, sℓ⩾0
+∀i, ℓ.
+This system has n + (5 + J) variables and 1 + (5 + J) equality constraints. A BFS is a feasible
+point where exactly m = 1 + (5+ J) variables are basic (potentially nonzero) and the remaining
+(n + 5 + J) −m = n −1 variables are non-basic (= 0). By the fundamental theorem of LP, if an
+optimal solution exists, there is an optimal BFS. At an optimal BFS p⋆, a constraint is binding
+(active) if its slack variable sℓ= 0, and the number of binding constraints equals the number of
+basic variables among {p1, . . . , pn} plus the number of basic slack variables that are zero. More
+precisely, let u the number of constraints (among the 1 + 5 + J equalities) that are binding at
+p⋆, then,
+• u of the slack variables is zero (non-basic or basic at zero),
+• The remaining (1 + 5 + J) −u slack variables are positive (basic and nonzero).
+• Since we have 1 + 5 + J equality constraints (a basis) and (1 + 5 + J) −u slacks are basic
+and positive, the remaining u basic variables must come from {p⋆
+1, . . . , p⋆
+n}.
+Therefore, at most u probabilities are strictly positive, i.e., |supp(p⋆)| = |{i : p⋆
+i > 0}| ⩽u.
+5.2. Solving the Attacker subgame
+As established in Section 4, problem (2) is a non-monotone submodular maximization prob-
+lem under a knapsack constraint. Table 5 surveys several approximation algorithms available in
+the literature for this class of problem.
+Table 5: Several algorithms for non-monotone submodular maximization under a knapsack constraint; these
+results hold for the general problem class, of which our attacker subgame (2) is a special instance.
+Reference
+Objective
+Constraint
+Approximation Ratio
+Queries
+Ene et al. [21]
+General
+Knapsack
+e
+˜O(n2)
+SampleGreedy [3]
+General
+Knapsack
+5.83
+˜O(n log n)
+ParKnapsack [2]
+General
+Knapsack
+9.465
+˜O(n)
+Cui et al. [14]
+General
+Knapsack
+8
+˜O(n)
+Although these algorithms represent significant theoretical advances, they could be poorly suited
+to our context, in terms of the precision of the solution obtained, for several reasons.
+10
+
+• Instance size is small: Unlike large combinatorial problems (e.g., 62,000 videos in Ama-
+natidis et al. [3]), each encryption algorithm Ei admits only a limited and well-defined
+set of cryptanalytic techniques; for instance, symmetric ciphers such as AES, public-key
+schemes like RSA, and post-quantum lattice-based constructions are subject to a finite
+catalog of attack classes (e.g., differential, algebraic, lattice reduction, etc.), as docu-
+mented in [10, 16]. Consequently, for each Ei, |D(i)| remains relatively small in practice,
+making exact methods such as dynamic programming computationally feasible, fast, and
+memory-efficient.
+• Exploitable structure: The attacker’s success probability has a closed form Psucc(S) =
+1−
+Y
+Aj∈S
+(1−si,j), allowing incremental updates in O(1) per-added method. This structure
+reduces complexity to O(|D(i)| · k), unlike generic black-box approximation algorithms.
+• Security implications of approximation: Approximation factors can underestimate adver-
+sary strength. For example, a 5.83-approximation could yield only ≈17% of the optimal
+attack success, leading to systematically underestimated threats and potentially inade-
+quate defenses (thereby creating security vulnerabilities). Real runs, as illustrated in our
+comparative example below, confirm this risk. In this particular run of SampleGreedy,
+the achieved 71.8% of the optimal value represents a non-negligible underestimation of the
+true adversarial threat.
+Illustrative example with four algorithms. To illustrate the performance gap between Sample-
+Greedy and the exact DP method in our context with relatively small cryptographic instances,
+we present the following comparative example. Consider an attacker targeting AES128 (Ei =
+AES128) with four attack methods and the parameters in Table 6 (selected only for illustration
+reasons and do not stem from real data):
+Table 6: Instance parameters: v = 1200, k = 500, φ(x) = x (linear), q = 0.414 (optimal probability from [3])
+Method
+Success si,j
+Cost kj
+Description
+A1
+0.20
+100
+Brute force variant
+A2
+0.35
+200
+Linear cryptanalysis
+A3
+0.42
+280
+Differential cryptanalysis
+A4
+0.25
+120
+Side-channel attack
+SampleGreedy first identifies the best single method (A3, utility 224.0), then runs the greedy
+construction: A4 (best density (v · si,4 −k4)/k4 = 1.50) is rejected at iteration 1; A1 (density
+1.40) is accepted at iteration 2; A2 is then rejected; all remaining candidates are exhausted.
+The algorithm returns S∗= {A1} with F(S∗) = 1200 × 0.20 −100 = 140. Since the best single
+method A3 dominates (utility 224.0), SampleGreedy finally outputs {A3} with utility 224.0.
+Application of DP: The DP algorithm explores all feasible combinations systematically to find
+the optimal solution DP[i, k] = max
+
+
+F(S) |
+S⊆Di,
+X
+Aj∈S
+kj ⩽k
+
+
+over the set {A1, A2, A3, A4}.
+Its application of DP here returns the optimal solution S∗= {A1, A2, A4} with Psucc = 1−(0.80·
+0.65 · 0.75) = 0.61 and F(S∗) = 1200 × 0.61 −420 = 312.0, a 28.2% improvement over Sample-
+Greedy. Full execution details are reported in Appendix Appendix A.
+In terms of security implications, the optimal attack achieves a success probability of 61%
+whereas SampleGreedy algorithm approximates 42%. Consequently, using SampleGreedy
+to estimate adversarial capability underestimates the threat by 19%, potentially resulting in
+11
+
+inadequate security margins; the DP solution provides the defender with the true worst-case
+risk. We therefore propose to solve our attacker subgame with a hybrid algorithm that chooses
+between DP and greedy based on problem size: If |D(i)| ⩽τ (threshold for an encryption
+algorithm Ei), then DP is applied, otherwise we employ the SampleGreedy algorithm. The
+proposed DP for the attacker subgame has a pseudo-polynomial complexity O(n × k), where
+n = |D(i)| and and k is the attacker budget, as established in [4], and is tractable when the
+capacity parameter remains relatively small (typically k ⩽105), while larger values quickly
+render the approach infeasible due to memory and time constraints. That is, the effective DP
+table size n × k must remain within moderate bounds (on the order of 104 – 106) for practical
+use 1. Since the DP runtime grows linearly with the numerical capacity, solving larger instances
+becomes prohibitive, especially when the attacker problem must be solved repeatedly. Therefore,
+in our experiments, we restrict DP usage to instances that can be solved within a small, constant
+runtime, specifically 0.2 seconds to find the switching threshold τ, as shown in Figure 1. This
+runtime selection is an illustrative heuristic rather than a general rule; alternative approaches
+or time limits could be adopted. For our experiments, we conducted the threshold (timing)
+analysis on a machine with the following capabilities:
+• CPU: Intel Core i5-1135G7, 4 physical cores / 8 threads, 2.4 GHz
+• RAM: 16 GB
+• OS: Windows 10, 64-bit
+We note that the computation time of the algorithm depends on numerous parameters, notably
+the method costs kj and the success probabilities s.,j. For the fixed parameter sets used here,
+we obtained a threshold τ = 310 as shown in Figure 1. This threshold is not universal and
+may change depending on the parameter values or computational hardware; our goal is only to
+illustrate a procedure for determining τ.
+Figure 1: Threshold approximation for the AttackerDP algorithm:
+Using a DP execution time limit of 0.2
+seconds, the threshold number of methods is approximately 310. This threshold is specific to this simulation
+and the chosen parameters (number of methods, budget, success probabilities, and costs) and may vary if the
+parameters or hardware change. Our parameters are as follows:
+• DP benchmark: maximum number of methods tested = 500, k = 500, value v = 1000
+• Success probability range: s.,j ∈[0.05, 0.85], Method cost range: kj ∈[40, 200], Cost function: φ(x) = x
+1https://www.w3tutorials.net/blog/why-is-the-knapsack-problem-pseudo-polynomial/
+12
+
+The pseudo-code for our DP is presented in Algorithm 1, while the hybrid algorithm is outlined
+in Algorithm 2.
+Algorithm 1 AttackerDP(D(i), {s.,j}, {kj}, k, v, ϕ)
+Input: Methods D(i) = {p1, . . . , pn}, success probabilities {s.,j}, costs {kj}, budget k, value v,
+cost function ϕ
+Output: Optimal subset S∗
+1: n ←|D(i)|
+2:
+▷Create DP table: dp[i][c] = (max_utility, failure_prob, selected_set)
+3: Create table dp[0..n][0..k]
+4:
+▷Base case: no methods, no cost
+5: for c = 0 to k do
+6:
+dp[0][c] ←(0, 1.0, ∅)
+7: end for
+8:
+▷Fill table for each method
+9: for i = 1 to n do
+10:
+for c = 0 to k do
+11:
+▷Option 1: Don’t take method pi
+12:
+(Fskip, FPskip, Sskip) ←dp[i −1][c]
+13:
+▷Option 2: Take method pi (if cost allows)
+14:
+if ki ⩽c then
+15:
+(Fprev, FPprev, Sprev) ←dp[i −1][c −ki]
+16:
+FPnew ←FPprev · (1 −s.,i)
+17:
+Psucc ←1 −FPnew
+18:
+Ftake ←v · Psucc −ϕ(c)
+19:
+Snew ←Sprev ∪{pi}
+20:
+▷Choose better option
+21:
+if Ftake > Fskip then
+22:
+dp[i][c] ←(Ftake, FPnew, Snew)
+23:
+else
+24:
+dp[i][c] ←dp[i −1][c]
+25:
+end if
+26:
+else
+27:
+dp[i][c] ←dp[i −1][c]
+28:
+end if
+29:
+end for
+30: end for
+31: (F ∗, _, S∗) ←max
+c⩽k dp[n][c] by utility
+▷Find best solution across all valid costs
+32: return S∗
+Algorithm 2 HybridAttacker(Di, s, kcosts, kbudget, v, ϕ, τ)
+Input: Set of cryptanalysis methods Di for algorithm Ei; success probabilities s.,j and resource
+costs kj for each method Aj; total budget k; value of successful breach v; cost function ϕ;
+threshold τ for switching between AttackerDP and SampleGreedy
+Output: Selected subset S ⊆Di
+1: if kbudget · |Di| ⩽105 and τ ⩽τ ′ then
+2:
+return AttackerDP(Di, s, kcosts, kbudget, v, ϕ)
+3: else
+4:
+return SampleGreedy(Di, s, kcosts, kbudget, v, ϕ)
+5: end if
+13
+
+In the previous analysis, the defender is assumed to possess precise knowledge of the at-
+tacker’s budget, which determines the attacker’s operational capabilities. Such an assumption,
+however, may be unrealistic in practical security settings where adversarial resources are in-
+herently uncer
+
+[…middle truncated for length…]
+
+
+
+. Latency is obtained from CPU cycles using τi = cCP U
+i
+f
+. Memory cost
+c(MEM)
+i
+is derived from the algorithm specifications and corresponds to the approximate runtime
+memory footprint required to execute the algorithm, including key material and internal state.
+That said, this value varies depending on the characteristics on which each encryption algorithm
+is built.
+For each encryption algorithm, a list of cryptanalysis algorithms generally used and cited
+in the literature is given, which is represented by the following Table 8. The cost parameter
+(k) represents the logarithm (base 2) of the computational complexity stated in the literature.
+For instance, when Bogdanov et al. report a biclique attack with time complexity of 2126.1
+operations, we extract k = 126 as the associated cost metric.
+The success probability (s)
+represents the likelihood that the attack successfully recovers the secret key when executed with
+the stated computational resources. For deterministic attacks, such as biclique cryptanalysis
+and exhaustive key search, these methods inherently ensure key recovery if completed, so we
+set s = 0.99. In the case of probabilistic attacks (e.g., side-channel, fault injection, or quantum
+approaches involving measurement uncertainty), we derive success probabilities from empirical
+success rates reported in the literature, taking into account factors like measurement noise, fault
+injection effectiveness, and quantum decoherence. When the original papers do not provide
+explicit success probabilities, we estimate them based on the attack’s data complexity and the
+statistical confidence achievable with the given number of samples or traces. Overall, the values
+presented here are not directly stated in the referenced works; instead, they are approximations
+grounded in the characteristics described by the authors, aiming to reflect as much as possible
+realistic behavior across these attack types.
+Table 8: Attack methods for each encryption algorithm
+Target Algorithm
+Attack Method
+Prob. (s)
+Cost (k)
+Reference
+AES128-GCM
+Biclique Cryptanalysis
+0.99
+126
+[9]
+Improved biclique cryptanalysis
+0.99
+126
+[48]
+Quantum Grover Search
+0.92
+64
+[22]
+Differential Fault Analysis
+0.85
+25
+[20]
+Electromagnetic Side-Channel Attack
+0.8
+13
+[50]
+Exhaustive key search
+0.99
+128
+[22]
+AES-256-GCM
+Biclique Cryptanalysis
+0.99
+254
+[9]
+Quantum Grover Search
+0.99
+128
+[22]
+Related-key boomerang
+0.95
+100
+[8]
+Cache-Based Side-Channel Attack
+0.88
+15
+[42]
+Correlation Power Analysis (CPA)
+0.99
+12
+[36]
+ChaCha20-Poly1305
+PNB-focused differential attack (7-round)
+0.5
+255.62
+[37]
+Differential-Linear Cryptanalysis (7-round)
+0.12
+189.7
+[51]
+Differential-Linear Cryptanalysis (7.25-round)
+0.12
+223.9
+[51]
+Extension of PNBs distinguisher (7.25-round)
+0.08
+228.24
+[17]
+4https://www.wolfssl.com/docs/benchmarks/
+17
+
+Extension of PNBs distinguisher (7.5-round)
+0.08
+255.24
+[17]
+Fault Injection
+0.95
+8
+[18]
+ML-KEM-768 (Kyber)
+Lattice Reduction (BKZ)
+0.99
+161
+[11]
+Hybrid Attack
+0.08
+150
+[25]
+Side-Channel (Non-pro CPA)
+0.50
+60
+[50]
+Timing Attack (KyberSlash2)
+0.99
+25
+[7]
+Timing Attack (KyberSlash1)
+0.99
+20.8
+[7]
+Brute Force (Quantum)
+0.99
+192
+[40]
+ML-DSA-65 (Dilithium)
+Lattice Reduction (BKZ)
+0.05
+170
+[41]
+Side-Channel (EM)
+0.7
+12
+[35]
+Side-Channel (Power)
+0.8
+13
+[50]
+Side-Channel via Rejected Signatures
+0.8
+30
+[50]
+Signature Correction Attack
+0.65
+16
+[26]
+RSA-2048
+GNFS (Classical)
+0.99
+112
+[27]
+Timing Attack
+0.4
+12
+[29]
+Differential Power Analysis
+0.45
+10
+[28]
+CRT Fault Attack
+0.50
+8
+[28]
+ECC P-256
+Pollard’s rho
+0.99
+128
+[44]
+Parallel Pollard’s Rho
+0.99
+126
+[12]
+Differential Power Analysis
+0.45
+10
+[28]
+SHA-256
+Preimage Brute Force
+0.99
+256
+[41]
+Grover’s (Quantum)
+0.99
+128
+[46]
+Side-Channel Attacks
+0.40
+10
+[29]
+7.1. Stackelberg Equilibrium: Known Budget (k = 40)
+Table 9 presents the Stackelberg equilibrium obtained from the defender optimization when
+the attacker has a budget k = 40, an attack value v = 300, and a linear cost function φ(x) =
+x, computed under operational, CPU, memory, latency, resilience, and family-diversification
+constraints given in Table 7.
+Table 9: Stackelberg equilibrium results under multi-constraint defender model (k = 40).
+Algorithm
+pi
+%
+ℓi
+op
+family
+Attacker Strategy
+Breach prob.
+Global Metrics
+AES-128-GCM
+0.0000
+0.00%
+1.33
+1.0
+1
+DFA, EM Side-Channel
+0.970
+AES-256-GCM
+0.0000
+0.00%
+-0.51
+1.2
+1
+CPA
+0.990
+ChaCha20-Poly1305
+0.2000
+20.00%
+4.24
+0.8
+1
+Fault Injection
+0.950
+ML-KEM-768
+0.2000
+20.00%
+-17.81
+2.5
+3
+KyberSlash1
+0.990
+ML-DSA-65
+0.0000
+0.00%
+-49.99
+3.0
+3
+EM Side-Channel, Power Side-
+Channel
+0.940
+RSA-2048
+0.0000
+0.00%
+-1490.31
+3.0
+0
+Timing
+Attack,
+DPA,
+CRT
+Fault
+0.835
+ECC-P256
+0.2000
+20.00%
+16.37
+2.0
+0
+DPA
+0.450
+SHA-256
+0.4000
+40.00%
+46.41
+0.5
+2
+Side-Channel
+0.400
+Exp. Gain: 19.12
+The Stackelberg equilibrium results reveal that the defender adopts a mixed strategy over four
+algorithms: SHA-256, ChaCha20-Poly1305, ML-KEM-768, and ECC-P256. Among these, SHA-
+256 receives the largest probability mass (40%), reflecting its high utility score (ℓi = 46.41) com-
+bined with very low operational and computational costs. ChaCha20-Poly1305, ML-KEM-768,
+and ECC-P256 each receive a probability of 20%, ensuring diversity across algorithm families
+while respecting the defender’s system constraints. Several algorithms are excluded from the
+equilibrium support. AES128-GCM and AES-256-GCM receive zero probability, likely due to
+their low expected utilities while their attacker success probabilities are high under the optimal
+18
+
+attack strategy. Similarly, ML-DSA-65 and RSA-2048 are excluded regarding their excessive re-
+source requirements and unfavorable utility scores. In particular, RSA-2048 exhibits a strongly
+negative utility value (ℓi = −1490.31), reflecting the large computational overhead combined
+with limited resilience benefits in the modeled environment. The resulting defender strategy
+satisfies all system constraints with the following values: operational cost: 1.2600 / 8.0; CPU
+usage: 500941.2560 / 2200000.0; Memory usage: 1045.6000 / 1500.0; latency: 207.0600 / 1200.0;
+resilience: 0.4000 and expected objective (gain): 19.1217. From a security perspective, the equi-
+librium produces an expected breach probability of approximately 0.638 against an optimal
+attacker response. Although this probability may appear relatively high in isolation, it reflects
+the realistic assumption that the attacker can adaptively select the most profitable attack vector
+subject to their resource constraints. The equilibrium therefore represents the defender’s best
+possible strategy under worst-case attacker behavior.
+These results highlight the practical importance of the proposed Stackelberg optimization
+approach, which enables the defender to randomize across multiple algorithm families strate-
+gically. Following the equilibrium distribution then balances performance constraints and se-
+curity robustness, limiting the attacker’s ability to focus resources on a single vulnerability
+and forcing them to distribute efforts across different cryptanalytic methods. In real-world de-
+ployments, such a strategy can be interpreted as a dynamic cryptographic configuration policy
+where systems periodically rotate or probabilistically select among several approved primitives.
+For instance, with the above parameters, a secure communication infrastructure could deploy a
+mixture of symmetric encryption (ChaCha20-Poly1305), post-quantum key encapsulation (ML-
+KEM-768), classical elliptic-curve cryptography (ECC-P256), and hashing mechanisms (SHA-
+256). To further highlight the importance of the proposed optimal strategy, we compare it with
+some heuristics in which the defender chooses his strategy randomly while the attacker responds
+optimally. Figure 2 illustrates this comparison, showing that the defender’s gain is lower when
+they deviate from the optimal recommendation.
+Figure 2: Relevance of the proposed optimal defender strategy. The figure shows that any deviation from
+the optimal strategy leads to a reduction in the defender’s utility. This degradation is particularly significant for
+purely random strategies. In contrast, strategies that partially incorporate the proposed optimization framework
+(by enforcing only a subset of the constraints) achieve improved performance, but still incur a noticeable loss
+compared to the fully optimal solution.
+The random heuristic strategies shown in Figure 2 are generated by solving an LP with randomly
+sampled objective coefficients. For each instance, we sample a coefficient vector c ∈Rn from
+an independently and identically distributed standard normal distribution N(0, 1) (through the
+function np.random.randn(n)), where n is the number of candidate algorithms. We then solve
+min c⊤p subject to the same resource constraints used for the optimal Stackelberg strategy. Be-
+cause the objective is linear, the LP solver returns an extreme point of the feasible polytope, a
+19
+
+vertex selected according to a random linear direction. The coefficients are drawn from a Gaus-
+sian distribution to avoid systematic bias toward any particular region of the feasible space. All
+generated strategies are tested in terms of constraint feasibility before inclusion in the compar-
+ison. The min-opt-cost, min-latency, and max-resilience heuristics are obtained by optimizing
+operational cost, latency, and quantum resilience, respectively, using the same constraint set.
+7.2. Robust Minimax-Regret Strategy: Uncertain Budget
+We now evaluate the robust formulation from Section 6 under different attacker-budget sce-
+narios.
+Unlike the Stackelberg model, which assumes a known adversarial budget, here the
+defender accounts for uncertainty in the attacker’s resources and aims for a strategy that per-
+forms reasonably well across a range of possible budgets. We consider attacker-budget scenarios
+k ∈{11, 15, 20, 25, 30} and, for each scenario, we compute the attacker’s optimal subset of attack
+methods and derive the corresponding defender utilities ℓi(k).
+Scenario utilities and optimal defender values.
+k = 11 :
+V ⋆= 70.154,
+ℓ(k) = [11.5275, 93.5418, 4.2352, 105.938, 81.605, −1456.808, 16.373, 46.406]
+k = 15 :
+V ⋆= 54.054,
+ℓ(k) = [11.5275, −0.5082, 4.2352, 105.938, −30.395, −1456.808, 16.373, 46.406]
+k = 20 :
+V ⋆= 53.997,
+ℓ(k) = [1.3275, −0.5082, 4.2352, 105.938, −30.395, −1479.308, 16.373, 46.406]
+k = 25 :
+V ⋆= 19.122,
+ℓ(k) = [1.3275, −0.5082, 4.2352, −17.812, −49.995, −1479.308, 16.373, 46.406]
+k = 30 :
+V ⋆= 19.122,
+ℓ(k) = [1.3275, −0.5082, 4.2352, −17.812, −49.995, −1490.308, 16.373, 46.406]
+Minimax-regret LP. The robust defender strategy is computed by solving the WCRM-LP, the
+optimal solution yields the minimax-regret strategy pmmr, shown in Table 10.
+Table 10: Robust minimax-regret strategy pmmr.
+Algorithm
+Probability pmmr
+Percentage
+AES-128-GCM
+0.000000
+0.00%
+AES-256-GCM
+0.171190
+17.12%
+ChaCha20-Poly1305
+0.000000
+0.00%
+ML-KEM-768
+0.282278
+28.23%
+ML-DSA-65
+0.000000
+0.00%
+RSA-2048
+0.000000
+0.00%
+ECC-P256
+0.146531
+14.65%
+SHA-256
+0.400000
+40.00%
+The regret values V ⋆(k) −
+X
+i
+pmmr
+i
+ℓi(k) associated with each scenario are,
+• k = 11: regret = 3.2750 ;
+k = 15: regret = 3.2750 ;
+k = 20: regret = 3.2188
+• k = 25: regret = 3.2750 ;
+k = 30: regret = 3.2750
+20
+
+Table 11 compares the worst-case regret of each scenario-specific optimal strategy with the
+minimax-regret strategy.
+Table 11: Regret comparison matrix across strategies and scenarios, ∗Optimal for this scenario. Opt(k = z)
+suppose that the defender adopts the optimal strategy associated with the budget z against another budget.
+Scenario
+Actual budget k
+Max Regret
+11
+15
+20
+25
+30
+Opt(k = 11)
+0.000∗
+2.7095
+2.6533
+4.1628
+4.1628
+4.1628
+Opt(k = 15)
+16.1005
+0.000∗
+1.9381
+3.9105
+3.9105
+16.1005
+Opt(k = 20)
+16.1567
+0.0562
+0.000∗
+2.1951
+2.1951
+16.1567
+Opt(k = 25)
+26.2824
+10.1819
+10.1257
+0.000∗
+0.0000
+26.2824
+Opt(k = 30)
+26.2824
+10.1819
+10.1257
+0.0000
+0.000∗
+26.2824
+pmmr
+3.2750
+3.2750
+3.2188
+3.2750
+3.2750
+3.2750
+The results show that strategies designed for a single attacker budget can struggle when the
+actual attacker capabilities differ. Consider the strategy optimized for k = 25: it works perfectly
+when the attacker budget really is 25 (zero regret), but performs poorly, with a regret of 26.2824,
+when the budget turns out to be smaller. The other scenario-specific strategies behave similarly.
+This suggests that assuming a fixed attacker budget and optimizing accordingly can lead to
+brittle security configurations.
+The minimax-regret strategy pmmr takes a different approach by balancing performance
+across all scenarios. Its worst-case regret is 3.275, which outperforms the best single-scenario
+strategy (Opt(k = 11) with max regret 4.1628) and is far better than the worst ones (Opt(k = 25)
+with max regret 26.2824), highlighting the value of robust optimization when we are un-
+sure about the attacker’s actual resources. Interestingly, the minimax-regret strategy assigns
+probability mass to four algorithms: SHA-256 (40%), ML-KEM-768 (28.23%), AES-256-GCM
+(17.12%), and ECC-P256 (14.65%). SHA-256 receives the largest weight, reflecting its favor-
+able utility values and consistent performance across scenarios. ML-KEM-768 follows, bringing
+post-quantum resilience into the mix. AES-256-GCM and ECC-P256 receive moderate weights,
+enough to maintain diversification without adding much risk.
+Breach probability robustness. A complementary analysis is performed using breach-probability
+regret, and the optimal breach probabilities (computed by taking the optimal strategy of the
+defender for each attacker budget scenario) are B⋆= [0.2077, 0.3454, 0.3454, 0.6331, 0.6331].
+The minimax-regret strategy achieves a worst-case breach regret of 0.0500, outperforming all
+scenario-specific strategies as shown in Table 12 below.
+Table 12: Breach-probability regret: comparison of strategies across scenarios
+Scenario
+Actual budget k
+Max Regret
+11
+15
+20
+25
+30
+Opt(K=11.0)
+0.0000∗
+0.0603
+0.0603
+0.0637
+0.0637
+0.0637
+Opt(K=15.0)
+0.1688
+0.0000∗
+0.0545
+0.0616
+0.0616
+0.1688
+Opt(K=20.0)
+0.1377
+0.0000
+0.0000∗
+0.0089
+0.0089
+0.1377
+Opt(K=25.0)
+0.2323
+0.0946
+0.0946
+0.0000∗
+0.0049
+0.2323
+Opt(K=30.0)
+0.2323
+0.0946
+0.0946
+0.0049
+0.0000∗
+0.2323
+MMR pmmr
+0.0182
+0.0500
+0.0500
+0.0418
+0.0418
+0.0500
+For comparison, the best scenario-specific strategy (Opt(k = 11)) has a worst-case breach regret
+of 0.0623, while the worst-performing strategy (Opt(k = 25)) reaches 0.2323, confirming that
+21
+
+the robust defender strategy not only minimizes utility regret but also maintains stable security
+performance in terms of expected breach probability.
+Practical interpretation. From a deployment perspective, the minimax-regret strategy can be
+interpreted as a probabilistic cryptographic configuration policy that the system rotates among
+multiple algorithms drawn from symmetric, post-quantum, elliptic-curve, and hashing families,
+rather than committing to a single cryptographic primitive, thereby reducing the effectiveness
+of targeted attacks. And even if the attacker has more resources than we expected, performance
+doesn’t crash, it just degrades more smoothly. So robust optimization gives us a practical way
+to build hybrid cryptographic systems that handle uncertainty about the attacker’s capabilities.
+8. Conslusion
+In this work, we presented a Stackelberg game-theoretic model for cryptographic algorithm
+hybridization. Our approach enables defenders to probabilistically select among multiple encryp-
+tion algorithms, thereby enhancing overall system resilience and reducing an attacker’s probabil-
+ity of successful cryptanalysis. We formulated the defender-attacker interaction as a two-stage
+game where the attacker, operating under budget constraints, observes the defender’s strategy
+commitment before selecting their optimal attack portfolio. The attacker’s subgame is charac-
+terized as a non-monotone submodular maximization problem subject to knapsack constraints, a
+problem class typically addressed through approximation algorithms in the literature. However,
+our problem exhibits structural properties, specifically, the relatively small number of available
+cryptanalysis methods per algorithm, combined with the explicit functional form of the attacker’s
+utility function, allowing us to employ DP to obtain exact optimal solutions. This stands in
+contrast to existing approximation algorithms (such as SampleGreedy), which are designed
+for large-scale instances where dynamic programming becomes computationally intractable, but
+which only guarantee bounded approximation ratios rather than exact optimality. For the de-
+fender’s problem, we formulated a multi-constraint linear programming model that accounts
+for operational costs, computational resources, latency requirements, and quantum resilience
+thresholds, while enforcing cryptographic family diversification constraints. Recognizing that
+the defender may lack precise knowledge of the attacker’s budget, we extended our framework to
+incorporate worst-case regret minimization, ensuring robust performance across a range of at-
+tacker capabilities. Our experimental evaluation demonstrates the effectiveness of the proposed
+optimization-based approach compared to heuristic strategies.
+The comparison against fea-
+sible baseline strategies, including latency-minimization and quantum-resilience-maximization,
+reveals that the optimal mixed strategy achieves superior performance under these constraints,
+validating the relevance of our principled optimization framework. The model, however, remains
+limited by its static Stackelberg structure and the independence of cryptanalysis methods, which
+overlook synergies, shared precomputation, and implementation-level attacks. The linear for-
+mulation of defender costs also abstracts away nonlinear or protocol-level constraints that could
+exist in real deployments. Extending the framework to Bayesian settings, dynamic or repeated
+interactions, and protocol-aware hybridization would broaden its applicability and capture more
+realistic adversarial behavior.

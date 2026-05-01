@@ -1,0 +1,901 @@
+The Vehicle May Be Sick: Denial of Diagnostic Services by Exploiting
+the CAN Transport Protocol
+Seungjin Baek1, Seonghoon Jeong2, and Huy Kang Kim1
+1 School of Cybersecurity, Korea University, Seoul, Republic of Korea
+baekseungjin@korea.ac.kr, cenda@korea.ac.kr
+2 Division of Artificial Intelligence Engineering, Sookmyung Women’s University, Seoul, Republic of Korea
+seonghoon@sookmyung.ac.kr
+Abstract. Vehicle diagnostics has become essential for detecting in-vehicle errors and ensuring safety.
+While the Unified Diagnostic Services (UDS) protocol is widely adopted for diagnostic operations, it
+relies on the ISO 15765-2 standard as the transport protocol over the Controller Area Network (CAN),
+which was designed without inherent security considerations. In this paper, we identify eight novel attack
+scenarios that exploit specific transport layer mechanisms in the ISO 15765-2 standard, including Flow
+Control manipulation, Sequence Number violations, and error handling abuses. We evaluate these attacks
+on a real passenger vehicle using two distinct diagnostic tools to demonstrate their practical impact. Our
+results confirm that three of these attack scenarios successfully induce denial of diagnostic services, leading
+to abnormal diagnostic results such as concealed faults and manipulated sensor readings. These findings
+highlight critical vulnerabilities that can deceive technicians and drivers, potentially exposing vehicles to
+significant safety risks.
+Keywords: Attack Scenario · CAN Transport Protocol · Cybersecurity · ISO 15765-2 · UDS · Vehicle
+Diagnostics · Vehicle Security
+1
+Introduction
+As modern vehicles integrate an increasing number of
+technologies and functions, in-vehicle complexity con-
+tinues to grow, which can lead to potential errors and
+defects [1, 14]. Vehicle diagnostics has therefore be-
+come essential as a technology for detecting errors
+and defects within internal vehicle systems and for
+enabling smooth maintenance, management, and test-
+ing throughout the vehicle life cycle. Diagnostic ser-
+vices provide direct access to Electronic Control Units
+(ECUs) through standardized protocols such as Unified
+Diagnostic Services (UDS) [9], allowing technicians to
+read fault codes, monitor sensor data, and reprogram
+vehicle systems.
+However, because diagnostic interfaces provide di-
+rect access to internal vehicle systems, they present an
+attractive attack surface for adversaries [3,19]. If vehi-
+cle diagnostic functions are exploited or compromised,
+the consequences can severely impact vehicle safety and
+reliability. Prior research has confirmed vulnerabilities
+in vehicle diagnostic services that can threaten occu-
+pant safety during driving, with exploitation methods
+focusing primarily on the application layer [2, 6, 16].
+For instance, attackers who gain access to the Con-
+troller Area Network (CAN) bus through compromised
+infotainment systems [20], ECU vulnerabilities [4,7], or
+wireless interface flaws [3] can inject malicious mes-
+sages that disrupt diagnostic operations, potentially
+masking critical fault conditions or preventing neces-
+sary maintenance.
+While existing research has primarily focused on
+application-layer attacks against diagnostic proto-
+cols [24], the transport layer remains largely unex-
+plored from a security perspective. The ISO 15765-
+2 standard [11], commonly known as CAN Transport
+Protocol (CAN-TP) or ISO-TP, defines the transport
+protocol for diagnostic communication over CAN, yet it
+was designed without considering security implications.
+This presents a significant research gap, as the trans-
+port layer handles message segmentation, flow control,
+and reassembly—mechanisms that, if exploited, can
+fundamentally disrupt diagnostic communication re-
+gardless of application-layer protections. Furthermore,
+the widespread adoption of the ISO 15765-2 standard
+as the mandatory transport protocol for emissions-
+related On-Board Diagnostics (OBD) [8, 18] and OB-
+arXiv:2604.23617v1 [cs.CR] 26 Apr 2026
+
+2
+Baek et al.
+DonUDS [17] means that vulnerabilities at this layer
+could affect vehicles across multiple manufacturers.
+This paper addresses this research gap by focusing
+on the transport layer and deriving eight novel attacks
+that exploit frame characteristics, transmission mech-
+anisms, and error handling in the ISO 15765-2 stan-
+dard. We analyze the impact of these attacks on actual
+vehicle diagnostic processes, demonstrating that spe-
+cific exploitations can induce denial of diagnostic ser-
+vices that prevents proper vehicle diagnosis. Through
+comprehensive experiments targeting a 2021 Hyundai
+Elantra CN7 passenger vehicle with two distinct diag-
+nostic tools, we demonstrate that three of these eight
+attack scenarios successfully impact the real-world di-
+agnostic process. The contributions of this paper can
+be summarized as follows:
+– This research is the first to derive eight novel
+attacks based on the ISO 15765-2 standard and
+demonstrate their impact on diagnostic communi-
+cation in a real passenger vehicle.
+– We identify fundamental design flaws in the CAN
+transport protocol resulting from a lack of secu-
+rity considerations, and present countermeasures
+for each attack.
+– We provide motivation for vehicle Original Equip-
+ment Manufacturers (OEMs) to verify whether
+their vehicles are vulnerable to the proposed at-
+tacks and whether adequate mitigations exist,
+given the widespread adoption of the ISO 15765-
+2 standard.
+The remainder of this paper is organized as follows:
+Section 2 provides background on the ISO 15765-2
+standard and related works. Section 3 describes the
+adversary model and prerequisites. Section 4 presents
+the eight attack scenarios derived from the ISO 15765-
+2 standard. Section 5 describes the experimental setup
+and results. Finally, Section 6 discusses the implica-
+tions of our findings and future work.
+2
+Background
+2.1
+ISO 15765-2: Diagnostic Communication
+over CAN
+The ISO 15765-2 standard defines the transport pro-
+tocol and network layer for diagnostic communication
+over in-vehicle CAN. This transport protocol enables
+the transmission of large diagnostic data by segmenting
+it into multiple fragments and reconstructing the orig-
+inal data through sequential reassembly. The protocol
+Diagnostic tool
+ECU
+Diagnostic services request
+Data Length
+SF, Data: 02 XX XX XX XX XX XX XX
+Diagnostic services request
+Data Length
+FF, Data: 10 1A XX XX XX XX XX XX
+Flow Status
+FC, Data: 30 03 05 XX XX XX XX XX
+Sequence Number
+CF, Data: 21 XX XX XX XX XX XX XX
+CF, Data: 22 XX XX XX XX XX XX XX
+CF, Data: 23 XX XX XX XX XX XX XX
+Block Size
+STmin
+Infotainment system
+CAN bus
+ECU
+ECU
+Physical hacking
+via OBD-II port
+Remote hacking
+via a vulnerable device
+Adversary
+ECU
+Diagnostic tool
+Well-crafted diagnostic message
+Fig. 1: Benign transmission sequence and the adversary
+model
+is designed to overcome the data size limitations inher-
+ent in CAN messages, coordinate sender-receiver in-
+teractions through flow control mechanisms, and min-
+imize data loss during transmission. Fig. 2 illustrates
+the data field formats of CAN messages exchanged be-
+tween sender and receiver during diagnostic communi-
+cation.
+Single Frame (SF). This frame is used when the di-
+agnostic data fits within a single CAN message, elim-
+inating the need for fragmentation and flow control.
+The first byte contains a 4-bit Data Length (DL) field
+indicating the length of the diagnostic data payload.
+The receiver ignores frames where SF_DL is 0.
+First Frame (FF). This frame signals the start of a
+multi-frame transmission when diagnostic data exceeds
+the capacity of a single CAN message, and includes a
+12-bit DL field. When the diagnostic data size exceeds
+the maximum FF_DL value of 4,095, an escape se-
+quence extends the data length specification to 4 bytes,
+supporting transmissions of up to approximately 4 GB.
+The receiver ignores frames where FF_DL is 7 or less,
+or where FF_DL does not match the actual diagnostic
+data size.
+Consecutive Frame (CF). This frame carries the re-
+maining diagnostic data in sequence according to flow
+
+The Vehicle May Be Sick
+3
+CAN Data Field (Maximum 8 Bytes)
+Byte[0]
+Byte[1]
+Byte[2]
+Byte[3]
+Byte[4]
+Byte[5]
+Byte[6]
+Byte[7]
+SF
+0
+4 bits
+DL
+4 bits
+Diagnostic data or padding
+7 bytes
+FF
+DL ≤4095
+1
+4 bits
+FF_DL
+12 bits
+Diagnostic data or padding
+6 bytes
+FF
+DL > 4095
+1
+4 bits
+not used
+12 bits
+Extended FF_DL
+4 bytes
+Diagnostic data or padding
+2 bytes
+CF
+2
+4 bits
+SN
+4 bits
+Diagnostic data or padding
+7 bytes
+FC
+3
+4 bits
+FS
+4 bits
+BS
+1 byte
+STmin
+1 byte
+Padding
+5 bytes
+Fig. 2: Data field structures for SF, FF, CF, and FC frames
+control parameters and includes a 4-bit Sequence Num-
+ber (SN). The CF_SN increments by 1 for each con-
+secutively transmitted CF and wraps around to 0 upon
+reaching the maximum value. Each CF must maxi-
+mize its diagnostic data payload; only the final CF in
+a transmission may contain padding.
+Flow Control (FC). Upon receiving an FF, the re-
+ceiver uses this frame to regulate the flow of sub-
+sequent CFs based on its reception capability. This
+frame contains a 4-bit Flow Status (FS), a 1-byte Block
+Size (BS), and a 1-byte Separation Time minimum
+(STmin). The FS field defines four possible values:
+FS_ContinueToSend (CTS) to proceed with transmis-
+sion, FS_Wait to pause reception for a system-defined
+duration, FS_Overflow to indicate that the received
+FF_DL exceeds the buffer capacity, and FS_Reserved
+for undefined values. Notably, FS_Wait may be trans-
+mitted consecutively up to Wait Frame Transmission
+max (WFTmax) times; FS_Overflow is valid only in
+the first FC following an FF; and FS_Reserved termi-
+nates message transmission as it represents an invalid
+state. FC_BS specifies the number of CFs that can
+be received before requiring another FC; a value of 0
+indicates that all remaining frames should be transmit-
+ted without additional flow control. FC_STmin defines
+the minimum time interval between consecutive CFs,
+supporting intervals up to 127 ms. When FS is set to
+Wait or Overflow, the FC_BS and FC_STmin fields
+are ignored.
+All frames must use system-configured padding; min-
+imizing padding can reduce bus load. Fig. 1 illustrates
+the frame transmission process during diagnostic com-
+munication. The receiver ignores any frames transmit-
+ted before receiving an initial SF or FF. When full-
+duplex communication is supported, endpoints can si-
+multaneously transmit and receive with different peers.
+If an SF or FF is received during an ongoing reception,
+the current session is terminated and a new reception
+session begins. A timeout occurs if the receiver does
+not receive the expected frame at the correct time or
+in the proper sequence.
+2.2
+Related Works
+Kurachi et al. [13] demonstrated a Man-in-the-Middle
+attack vulnerability where, following successful authen-
+tication between an ECU and a diagnostic tool, an at-
+tacker intercepts the communication, blocks messages
+from the diagnostic tool, and directly transmits mali-
+cious service requests that the ECU accepts as valid
+commands. Nie et al. [15] discovered seed-and-key vul-
+nerabilities in the UDS Security Access authentica-
+tion mechanism that enabled unauthorized ECU ac-
+cess. Similarly, Kiley [12] identified Security Access
+vulnerabilities in in-vehicle modules and demonstrated
+that exploiting these flaws could enable unauthorized
+battery management system firmware uploads. More
+recent research has revealed that diagnostic services
+lacking authentication requirements can also be ex-
+ploited. Chatterjee et al. [2] investigated the security
+impact on medium and heavy-duty vehicles through
+exploitation of UDS diagnostic services and ISO-TP.
+Their work demonstrated that attackers can interrupt
+periodic ECU message transmissions and induce denial
+of both diagnostic sessions and diagnostic communica-
+tion. Han et al. [6] further demonstrated that permit-
+
+4
+Baek et al.
+ted diagnostic services in certain vehicles can trigger
+sudden vehicle movements or stops during driving, di-
+rectly threatening occupant safety. Ren et al. [16] sim-
+ilarly revealed that UDS diagnostic service injection
+and session attacks can reboot ECUs or cause denial
+of steering and throttle control while driving.
+Regarding defensive measures, Yekta et al. [23] pro-
+posed a methodology for detecting sophisticated UDS
+attacks within a Vehicle Security Operations Cen-
+ter. Their approach, combining logging, contextual log
+data, and detection mechanisms, achieved higher at-
+tack detection coverage for known UDS attacks com-
+pared to existing AUTOSAR security events. Weiss
+et al. [21] proposed a methodology for automatically
+detecting endpoints in in-vehicle CAN communica-
+tion using ISO-TP. By addressing limitations of ex-
+isting application-layer-based endpoint detection, they
+demonstrated improved detection reliability in real ve-
+hicles, reducing potential attack surfaces and high-
+lighting implications for future penetration testing and
+security analysis. Researchers have also investigated
+methods to provide confidentiality, integrity, and au-
+thentication for CAN message transmission. Yushev et
+al. [25] designed, implemented, and evaluated a secure
+communication channel for applying transport layer se-
+curity to the CAN bus. They demonstrated feasibility
+for low time-sensitivity applications through optimiza-
+tion leveraging the ISO-TP segmentation and reassem-
+bly mechanism.
+The research surveyed above primarily focuses on
+application-layer vulnerabilities and their exploitation,
+with countermeasure research following similar trends.
+This application-layer focus presents a limitation: the
+attacks proposed in this paper operate at the transport
+layer and therefore remain unaffected by such counter-
+measures. Accordingly, this paper proposes eight novel
+attacks exploiting the frame characteristics, transmis-
+sion mechanisms, and error handling defined in the ISO
+15765-2 standard, thereby addressing this research gap
+and demonstrating their impact on the vehicle diag-
+nostic process.
+3
+Adversary Model
+Prerequisites. We assume the attacker has direct ac-
+cess to the target CAN bus, enabling both passive mon-
+itoring of transmitted CAN messages and active in-
+jection of arbitrary CAN messages. Such access can
+be achieved through the methods discussed in Sec-
+tion 1, including compromised infotainment systems,
+ECU vulnerabilities, and wireless interface exploits.
+Additionally, attackers can leverage vulnerable OBD
+dongles [5,22] to gain the required CAN bus access.
+Knowledge. The attacker must identify the CAN
+identifier range used for diagnostic communication
+within the target vehicle. For emissions-related diag-
+nostic services, the ISO 15765-4 standard [10] legally
+mandates a specific addressing scheme. This standard
+requires diagnostic tools to use 0x7DF for functional
+addressing (broadcast requests to multiple ECUs),
+0x7E0–0x7E7 for physical addressing (requests to spe-
+cific ECUs), and 0x7E8–0x7EF for ECU responses.
+For UDS-based enhanced diagnostic services, 0x7DF
+is commonly used for broadcast requests, while other
+addressing follows OEM-specific definitions, requiring
+CAN bus monitoring for identification. Through such
+monitoring, the attacker can observe that the arbitra-
+tion ID range 0x700–0x7FF is typically used for diag-
+nostic communication. This design choice assigns di-
+agnostic identifiers a lower arbitration priority than
+driving-related identifiers, preventing interference with
+safety-critical vehicle functions.
+Goal. The attacker’s objective is to induce denial of
+diagnostic services by exploiting vulnerabilities in the
+ISO 15765-2 transport protocol implementation. Suc-
+cessful attacks prevent diagnostic sessions from com-
+pleting normally or cause them to produce abnormal
+results, effectively disrupting vehicle maintenance and
+fault detection capabilities.
+4
+Attack Scenarios
+This section details eight novel attack scenarios A1
+– A8
+from an attacker’s perspective, illustrated in
+Fig. 3. Each scenario is structured to first explain the
+relevant protocol mechanism, followed by the attacker’s
+method of exploitation, and finally the resulting dis-
+ruption to the diagnostic process.
+A1
+Preceding FlowControl Attack: In diagnos-
+tic communication, the FC frame regulates the re-
+ception of CFs transmitted by the ECU. By exploit-
+ing frame characteristics and transmission mecha-
+nisms, the attacker monitors CF reception and pre-
+emptively transmits a manipulated FC frame at the
+expected timing of the legitimate FC response, as
+shown in Fig. 3a. Since the protocol may accept
+parameters from a subsequent FC that differ from
+those of the preceding one, the attacker can set the
+Block Size (FC_BS) to a minimum value, causing
+the omission of subsequent CFs.
+
+The Vehicle May Be Sick
+5
+Table 1: Systematic classification of proposed ISO 15765-2 transport layer attacks categorized by frame types,
+exploited protocol mechanisms, and relevant standard clauses.
+Attacks
+Frame Characteristics
+Transmission
+Error
+ISO 15765-2
+SF
+FF
+CF
+FC
+Mechanism
+Handling
+Clause
+A1 Preceding FlowControl Attack
+✓
+✓
+§9.6.5.6
+A2 FlowStatus Wait Attack
+✓
+✓
+§9.6.5.1, §9.8.4
+A3 FlowStatus Overflow Attack
+✓
+✓
+§9.6.5.1
+A4 DataLength Attack
+✓
+✓
+§9.6.3.2
+A5 SequenceNumber Attack
+✓
+✓
+§9.6.4.4
+A6 Session Override Attack
+✓
+✓
+✓
+§9.8.3
+A7 Reserved Value Attack
+✓
+✓
+§9.6.5.2
+A8 Timeout Attack
+✓
+✓
+§9.8.2
+A2
+FlowStatus Wait Attack: The Flow Status
+(FC_FS) parameter manages CF reception. The
+system limits the maximum number of consecu-
+tive FC frames with FS_Wait status using the
+WFTmax parameter. If transmission resumes with
+an FS_CTS frame after the maximum FS_Wait
+count is reached but reception performance re-
+quirements are not met, the system treats this as
+an error and aborts reception. As shown in Fig. 3b,
+the attacker exploits this by transmitting the max-
+imum allowable number of FS_Wait frames at
+the expected timing of the normal FC response.
+Immediately following this, the attacker sends an
+FS_CTS frame, causing the system to terminate
+message reception due to exceeding performance
+limits.
+A3
+FlowStatus Overflow Attack: An FC frame
+with FS_Overflow status is valid only when re-
+sponding to the first received FF and causes im-
+mediate termination of message transmission. As
+shown in Fig. 3c, the attacker exploits this mecha-
+nism by injecting an FS_Overflow FC frame imme-
+diately after detecting the first FF, thereby forcing
+the termination of the ongoing message transmis-
+sion.
+A4
+DataLength Attack: The FF_DL field indi-
+cates the size of the diagnostic data payload. The
+receiver considers it an error if FF_DL exceeds
+its available buffer size. Exploiting this error han-
+dling mechanism (Fig. 3d), the attacker trans-
+mits an FF with FF_DL set to the maximum
+12-bit value (4,095) or the maximum 32-bit value
+(4,294,967,295) using the escape sequence, causing
+the receiver to abort message reception.
+A5
+SequenceNumber Attack: The CF_SN must
+increment sequentially by one within the range of
+0x0 to 0xF. Any violation of this rule causes the
+receiver to abort reception. As shown in Fig. 3e,
+the attacker monitors CF reception and injects a
+CF with an arbitrary SN, deliberately violating the
+sequence rule and forcing the receiver to terminate
+the session.
+A6
+Session Override Attack: The protocol dic-
+tates that if an SF or FF is received from the
+same CAN identifier during an active reception,
+the current reception is terminated and a new one
+is initiated. The attacker exploits this mechanism
+(Fig. 3f) by transmitting an arbitrary SF or FF
+via physical addressing to a specific ECU, thereby
+overriding and terminating the legitimate reception
+process.
+A7
+Reserved Value Attack: Values in the range
+0x3–0xF for the FC_FS field are reserved. The
+transmitter treats any FC frame containing a re-
+served value as an error and aborts transmission.
+As shown in Fig. 3g, the attacker monitors CF re-
+ception and transmits an FC frame with a reserved
+FC_FS value at the expected timing of a normal
+FC response, causing immediate termination of the
+message transmission.
+A8
+Timeout Attack: Timeouts are implemented
+during CF and FC reception to ensure system re-
+liability in cases of frame loss, bus congestion, or
+delays. While the system allows a tolerance mar-
+gin (up to 50% relative to the lower limit), a time-
+out event is treated as an error that terminates
+transmission. The attacker exploits this (Fig. 3h)
+by flooding the bus with high-priority CAN mes-
+sages, intentionally causing delays that trigger a
+timeout and abort the diagnostic session.
+Through an exhaustive analysis of logical flaws and
+edge cases in the ISO 15765-2 standard, we identified
+
+6
+Baek et al.
+Diagnostic
+tool
+ECU
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+Consecutive Frame(CF), Data: 27 XX XX XX XX XX XX XX
+Consecutive Frame(CF), Data: 28 XX XX XX XX XX XX XX
+Attacker
+Flow Control(FC), Data: 30 01 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 29 XX XX XX XX XX XX XX
+(a) A1 Preceding FlowControl
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+Attacker
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+ECU
+Consecutive Frame(CF), Data: 27 XX XX XX XX XX XX XX
+Attacker
+Flow Control(FC), Data: 31 00 00 00 00 00 00 00
+Error Occurred
+Diagnostic
+tool
+(b) A2 FlowStatus Wait
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+ECU
+Attacker
+Flow Control(FC), Data: 32 00 00 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+Diagnostic
+tool
+(c) A3 FlowStatus Overflow
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+OR
+Attacker
+First Frame(FF), Data: 1F FF XX XX XX XX XX XX
+    Attacker
+First Frame(FF), Data: 10 00 FF FF FF FF XX XX
+Error Occurred
+ECU
+Diagnostic
+tool
+(d) A4 DataLength
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+Consecutive Frame(CF), Data: 25 XX XX XX XX XX XX XX
+Consecutive Frame(CF), Data: 26 XX XX XX XX XX XX XX
+ECU
+Consecutive Frame(CF), Data: 25 XX XX XX XX XX XX XX
+Attacker
+Error Occurred
+Diagnostic
+tool
+(e) A5 SequenceNumber
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+OR
+    Attacker
+First Frame(FF), Data: 10 XX XX XX XX XX XX XX
+Error Occurred
+Diagnostic
+tool
+Attacker
+Single Frame(FF), Data: 02 XX XX 00 00 00 00 00
+ECU
+(f) A6 Session Override
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+Consecutive Frame(CF), Data: 27 XX XX XX XX XX XX XX
+ECU
+Attacker
+Flow Control(FC), Data: 35 XX XX 00 00 00 00 00
+Error Occurred
+Diagnostic
+tool
+(g) A7 Reserved Value
+First Frame(FF), Data: 10 57 XX XX XX XX XX XX
+Diagnostic request
+Single Frame(SF), Data: 02 XX XX 00 00 00 00 00
+Flow Control(FC), Data: 30 08 05 00 00 00 00 00
+Consecutive Frame(CF), Data: 21 XX XX XX XX XX XX XX
+Attacker
+High Priority CAN Message Injection    
+ECU
+Consecutive Frame(CF), Data: 27 XX XX XX XX XX XX XX
+Error Occurred
+Diagnostic
+tool
+(h) A8 Timeout
+Fig. 3: Detailed flow of ISO 15765-2 standard based attack scenarios
+
+The Vehicle May Be Sick
+7
+Laptop 1
+Laptop 2
+Kvaser 1
+Kvaser 2
+G-Scan 3
+Power Supply
+(a) Using the Hyundai Motor Group OEM-level G-Scan3
+diagnostic tool
+Kvaser 1
+Laptop 1
+G-Scan 3
+CAN Bus
+OBD-II Port
+(b) Configuration for practicing diagnostics and attacks in a
+2021 Hyundai Elantra CN7 passenger vehicle
+Fig. 4: The setup also configures an OBDSCAN4.0 diagnostic tool based on ELM327 instead of G-Scan3. Laptop
+1 performs the role of an attacker using Kvaser 1, and Laptop 2 monitors the CAN bus using Kvaser 2.
+these non-heuristic attacks based on frame characteris-
+tics, transmission mechanisms, and error handling. Ta-
+ble 1 summarizes these findings.
+5
+Experimental Evaluation
+5.1
+Diagnostic Tools
+The experimental setup follows the configuration in
+Fig. 4 to demonstrate the impact of attacks through
+the use of two diagnostic tools with distinct character-
+istics. OBDSCAN4.0 is an affordable and easily acces-
+sible OBD-II aftermarket diagnostic tool that requests
+diagnostic services and displays results through com-
+patible free diagnostic applications such as Car Scan-
+ner and Torque. Specifically, it provides services to
+retrieve in-vehicle Diagnostic Trouble Codes (DTCs)
+and ECU information, monitor onboard sensors, and
+record data. However, the tool does not support Se-
+cure Gateway (SGW) security authentication, restrict-
+ing it to limited services. Furthermore, reliability issues
+may arise because the tool relies on an external CAN
+database to interpret results, rather than querying the
+vehicle directly. The G-Scan3 (Fig. 4a), developed by
+GIT (an affiliate of Hyundai Motor Group), supports
+OEM-level diagnostics for Hyundai/Kia vehicles. This
+tool performs SGW security authentication, enabling
+access to restricted diagnostic services such as variant
+coding, actuation tests, emission tests, and sensor cali-
+bration. This ensures highly reliable diagnostic results
+for Hyundai/Kia vehicles. Although this experimental
+setup employs two diagnostic tools with distinct char-
+acteristics within a single vehicle, it can be configured
+with various OEM vehicles and diagnostic tools.
+5.2
+Attack Validation
+We execute each attack in the real vehicle diagnostic
+environment shown in Fig. 4b and analyze the resulting
+responses at the diagnostic communication level. No-
+tably, significant results were observed for only a subset
+of attacks.
+Fig. 5a shows the normal diagnostic communication
+process during the execution of the ‘ECU Identifiers’
+vehicle diagnostic function. In Fig. 5g and Fig. 5h, the
+attacker sends an FF and an SF using physical ad-
+dressing to induce the termination of the active recep-
+tion session. Because the attack does not generate an
+error, the CFs appeared to be transmitted normally af-
+terward; however, abnormal diagnostic results were ob-
+served. This indicates that the active reception session
+was interrupted by the initiation of a new reception
+session, overwriting the previous diagnostic data. In
+Fig. 5e, the attacker sends an FF with the FF_DL set
+to the maximum value, thereby exceeding the receiver’s
+buffer size and inducing message reception termination.
+Although message reception did not cease immediately,
+abnormal diagnostic results were observed. This indi-
+cates that the induced error corrupted the results, or
+
+8
+Baek et al.
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.12
+Time (s)
+CF
+FC
+FF
+SF
+DR
+(a) Normal
+Preceding
+No Effect
+(b) A1 Preceding FlowControl
+FS_Wait
+No Effect
+FS_CTS
+(c) A2 FlowStatus Wait
+FS_Overflow
+No Effect
+(d) A3 FlowStatus Overflow
+Error Occurs or Reception Ends
+(e) A4 DataLength
+Invalid SN
+Retransmission Routine
+Time Gap
+(f) A5 SequenceNumber
+Terminates Reception
+(g) A6 Session Override (SF)
+Terminates Reception
+(h) A6 Session Override (FF)
+Reserved
+No Effect
+(i) A7 Reserved Value
+High Priority
+No Effect
+(j) A8 Timeout
+Fig. 5: CAN message traces for normal communication and each attack scenario. Green and red markers indicate
+normal and attack frames, respectively.
+that a session-override behavior analogous to A6 was
+triggered. In Fig. 5f, the attacker induces message re-
+ception termination by transmitting CFs that violate
+SN continuity. Following the attack, CF transmission
+ceased immediately, and after a period of unrespon-
+sive delay, a diagnostic request retransmission routine
+occurred a fixed number of times to resume the diag-
+nostic service. This indicates that the in-vehicle trans-
+port protocol implementation recognized the error and
+halted message reception, successfully inducing abnor-
+mal diagnostic results. Other attacks demonstrated no
+influence on the diagnostic results, although they were
+executed as intended. For Figs. 5b to 5d, we can infer
+that the in-vehicle transport protocol implementation
+is designed to ignore or reject additionally transmitted
+FC frames. Furthermore, for Figs. 5i and 5j, we sus-
+pect that the implementation similarly ignores frames
+where the FC_FS is set to a reserved value, or that
+the configured timeout margin is sufficiently wide.
+5.3
+Attack Impact
+Focusing on the A4 – A6 attacks, which successfully
+induced abnormal diagnostic results, we explain their
+impact and potential risks to vehicle diagnostic func-
+tions using two distinct diagnostic tools.
+ECU Identifiers. The ECU identification function of
+the Car Scanner diagnostic application retrieves soft-
+ware versions, Vehicle Identification Numbers (VINs),
+and manufacturing and supply information for in-
+vehicle ECUs that are difficult to access directly. At-
+tacks A4 , A5 , and A6
+cause diagnostic result
+omission by terminating the active reception session
+
+The Vehicle May Be Sick
+9
+or interrupting message flow. In particular, these at-
+tacks increase the diagnostic time by up to six times
+the normal duration. Furthermore, A6
+induces ‘di-
+agnostic data spraying’ where a new reception session
+overwrites parts of the valid diagnostic results with ini-
+tialization values. These results render the identifica-
+tion of in-vehicle information and status through diag-
+nostics impossible.
+DTC Inquiry. In-vehicle ECUs detect system errors
+and record them as DTCs to enable subsequent diag-
+nosis. Attacks A4 , A5 , and A6 interfere with this
+detection process and manipulate the count of queried
+DTCs. Specifically, the G-Scan3 failed to receive DTC
+inquiry data normally; it displayed ‘0’, a presumed de-
+fault value, without indicating an error. These results
+expose the vehicle to potential risks by concealing in-
+ternal errors during the reporting process.
+Functional Test. Evaporative emission leak tests in-
+spect the evaporative emission system for gas leaks to
+maintain vehicle performance and safety. Although the
+G-Scan3 normally reports no leaks while the vehicle
+remains stationary, attacks A4 , A5 , and A6 ma-
+nipulate these test results. Specifically, the tool failed
+to receive valid leak test data and displayed “gas leak
+detected”—likely a default state—without triggering
+an error code. These results deceive in-vehicle sys-
+tems, which can impact emissions-related inspections
+and lead to regulatory violations.
+Variant Coding. Variant coding functions allow for
+modifying specific ECU options or setting specification
+information. This capability adapts common hardware
+properties to specific vehicle configurations, activating
+necessary functions. Attacks A4 , A5 , and A6 in-
+terfered with the transmission of coding request data
+and disrupted the normal operation of G-Scan3’s cod-
+ing functions. These results can hinder the replacement
+of faulty vehicle components or restrict the activation
+of specific functions.
+6
+Discussion and Future Work
+The eight novel attacks derived in this paper are
+based on the ISO 15765-2 standard, and vehicles
+adopting the Controller Area Network Flexible Data-
+Rate (CAN-FD) protocol may also be affected. As we
+demonstrated in our evaluations, these attacks can de-
+grade vehicle safety and reliability, exposing the sys-
+tem to potential risks and leading to non-compliance
+with emission regulations. Furthermore, they can im-
+pact the data transmission processes for ECU flash-
+ing and firmware updates, disrupting their normal ex-
+Table 2: Brief mitigation strategies for attack scenarios
+based on the ISO 15765-2 standard.
+Attack
+Mitigation Strategy
+A1
+Stateful tracking to prevent inconsistencies
+between FF_DL and FC parameters
+A2
+Validation of FC frame counting and state
+synchronization between sender and receiver
+A3
+Validation of FC frame counting and state
+synchronization between sender and receiver
+A4
+Service-based allow-listing for escape
+sequences in high-volume diagnostics
+A5
+Immediate discard of discontinuous CF_SN
+frames, with logging and IDS hooking
+against sophisticated attacks
+A6
+FIFO queue-based sequential management
+for reception sessions
+A7
+Immediate discard of frames with undefined
+FC_FS values
+A8
+Dynamic timeout management based on
+CAN bus load
+ecution. To address this, future standards must in-
+corporate security-oriented enhancements, and vehicle
+OEMs need to consider appropriate mitigation mea-
+sures when implementing in-vehicle transport protocols
+based on the ISO 15765-2 standard. However, existing
+countermeasure frameworks such as AUTOSAR SecOC
+and ISO/SAE 21434 do not fully cover the attack
+surface addressed in this work. SecOC authenticates
+PDU payloads at the application layer and therefore
+cannot detect adversarial manipulation of transport-
+layer control fields (e.g., FF_DL, CF_SN, FC_FS) or
+session-override attempts that abort reception below
+the PDU boundary. ISO/SAE 21434 prescribes a risk-
+management process but does not mandate transport-
+layer controls. Consequently, attacks A4 – A6 remain
+effective even in vehicles that deploy SecOC. To address
+this gap in current automotive security standards, Ta-
+ble 2 briefly proposes mitigation strategies for each de-
+rived attack. Furthermore, beyond the transmission of
+in-vehicle diagnostic data, it is necessary to validate the
+derived attacks and evaluate their extended impact in
+broader contexts, such as general vehicle control.

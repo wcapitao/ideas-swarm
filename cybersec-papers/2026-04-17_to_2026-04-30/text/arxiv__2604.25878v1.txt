@@ -1,0 +1,121 @@
+*Correspondence Author: khaled.kirah@eng.asu.edu.eg 
+Ray Iskander: ray@verdictsecurity.com 
+ 
+Prime-Field PINI: Machine-Checked Composition 
+Theorems for Post-Quantum NTT Masking 
+ 
+Ray Iskander1, Khaled Kirah2,* 
+1 Verdict Security, ray@verdictsecurity.com 
+2 Faculty of Engineering, Ain Shams University, Cairo, Egypt 
+ 
+ 
+Abstract 
+This is Paper 6 of a series of formally-verified analyses of masked NTT hardware for post-
+quantum cryptography; Paper 1 [1] established structural dependency analysis of the 
+QANARY platform, and Paper 2 [2] quantified security margins under partial NTT masking. 
+Boolean masking composition is well-understood through NI, SNI, and PINI. Arithmetic 
+masking over ℤ𝑞 for prime 𝑞, the foundation of NTT-based post-quantum cryptography, has 
+lacked an analogous theory. We prove, to our knowledge, the first machine-checked 
+composition theorems for arithmetic masking over prime fields. Our key insight is the 
+renewal argument: when a fresh random mask is applied between two pipeline stages, the 
+intermediate wire becomes perfectly uniform regardless of Stage 1’s security parameter. For 
+two PF-PINI gadgets with parameters 𝑘1 and 𝑘2, the composed two-stage pipeline with fresh 
+masking satisfies PF-PINI( 𝑘2 ), Stage 1’s multiplicity is completely erased from the 
+composed output. Without fresh masking, intermediate wires have multiplicity up to 𝑘1, 
+creating a necessary condition for differential power analysis. We formalize both theorems in 
+Lean 4 with 18 machine-checked proofs and zero sorry stubs. We formally bridge the 
+algebraic and hardware-faithful arithmetic models of Barrett reduction, and instantiate the 
+theorems to formally diagnose Microsoft’s Adams Bridge PQC accelerator: its absence of 
+fresh inter-stage masking leaves Barrett output wires non-uniform under the first-order 
+probing model, the same architectural flaw that two independent empirical analyses [3, 4] and 
+our own prior structural analysis [1] identified. Computational evidence further suggests the 
+1-Bit Barrier is universal across Barrett and Montgomery reductions. 
+ 
+Keywords: Post-Quantum Cryptography, Side-Channel Analysis, Arithmetic Masking, Fresh 
+Masking, PF-PINI, Formal Verification, ML-KEM, ML-DSA 
+ 
+1. Introduction 
+The Number Theoretic Transform (NTT) is the computational backbone of the new NIST 
+post-quantum standards ML-DSA (FIPS 204) and ML-KEM (FIPS 203). Hardware 
+implementations of NTT-based cryptography must resist side-channel attacks, particularly 
+differential power analysis (DPA), through masking: splitting sensitive values into random 
+shares that are processed independently. For Boolean masking over GF(2ⁿ), the composition 
+
+problem is solved by the NI/SNI/PINI hierarchy [5, 6, 7], with machine-checked guarantees 
+in [8] (see section 2.1). 
+ 
+1.1. The Arithmetic Gap 
+Arithmetic masking over ℤ𝑞 for prime 𝑞 is fundamentally different. In GF(2𝑛), XOR is its 
+own inverse, and masking 𝑥= 𝑥̃ ⊕𝑚 preserves the algebraic structure cleanly. In ℤ𝑞, 
+masking 𝑥= 𝑥̃ + 𝑚 (mod 𝑞) interacts with modular reduction in non-trivial ways. Barrett 
+reduction, for example, has input-dependent branching: the map 𝑥↦((𝑥+ 2𝑠−
+𝑚) mod 2𝑠) mod 𝑞 has a two-branch structure that breaks uniform mask distributions. This 
+is the PF-PINI(2) phenomenon, some output values are hit by two masks while others are hit 
+by one, leaking up to one bit of information per probed wire. No prior work provides 
+composition theorems for arithmetic masking over prime fields, and none provides machine-
+checked proofs in this setting. This paper fills both gaps. 
+1.2. The Renewal Argument 
+Our key insight is remarkably simple: a single fresh random mask applied between pipeline 
+stages completely erases Stage 1’s security parameter from the composed output. Consider a 
+two-stage pipeline 𝐺1 →𝐺2 where a fresh mask 𝑚fresh is applied between stages. For any 
+target intermediate value 𝑤, the set of mask pairs (𝑚1, 𝑚fresh) that produce 𝑤 has cardinality 
+exactly 𝑞. The proof is four lines of Lean 4: for each 𝑚1, there is exactly one 𝑚fresh =
+𝐺1(𝑥, 𝑚1) −𝑤 that works, and the map 𝑚1 ↦(𝑚1, 𝐺1(𝑥, 𝑚1) −𝑤) is injective. This renewal 
+lemma has a powerful consequence: Stage 2 sees each input value with equal frequency, 
+regardless of how non-uniform Stage 1’s output is. The composed pipeline’s PF-PINI 
+parameter is therefore bounded by 𝑘2 alone, 𝑘1 is completely erased. 
+1.3. Contributions 
+We make six contributions: 
+1. The Renewal Theorem (Theorem 4.1): Fresh inter-stage masking erases Stage 1’s 
+PF-PINI parameter from the intermediate wire distribution. Every intermediate value 
+is produced by exactly 𝑞 mask pairs. 
+2. The Positive Composition Theorem (Theorem 4.4): The composed two-stage 
+pipeline with fresh masking satisfies PF-PINI(𝑘2). The composed output multiplicity 
+is bounded by 𝑘2 ⋅𝑞2 over the three-mask space ℤ𝑞
+3. 
+3. The Negative Theorem (Theorems 5.1–5.3): Without fresh masking, intermediate 
+wires have multiplicity up to 𝑘1, and when this bound is achieved, the wire is non-
+uniform, creating a necessary condition for DPA. 
+4. The Algebraic-Hardware Bridge (Theorem 6.1): The algebraic Barrett reduction 
+map equals the hardware-faithful Nat arithmetic map under the scope condition 𝑞≤
+2𝑠, so the PF-PINI(2) bound applies directly to hardware implementations. 
+5. Adams Bridge Diagnosis (Section 7): We formally instantiate both composition 
+theorems to diagnose the architectural flaw in Microsoft’s Adams Bridge PQC 
+accelerator, the same flaw that three independent empirical analyses exploited [1, 3, 
+4]. 
+
+6. Machine-Checked Proofs: All results are formalized in Lean 4 with zero sorry stubs: 
+a total of 18 public theorems (3 combinatorial lemmas, 4 positive-composition results, 
+4 negative-composition results, 5 Adams Bridge instantiations, 2 algebraic-hardware 
+bridge results). The proof artifact is publicly available. 
+1.4. Paper Organization 
+Section 2 reviews related work on masking composition. Section 3 defines PF-PINI and 
+establishes its relationship to standard notions. Section 4 proves the renewal theorem and 
+positive composition. Section 5 proves the negative results. Section 6 bridges algebraic and 
+hardware Barrett models. Section 7 instantiates the theorems for Adams Bridge. Section 8 
+discusses extensions and limitations. Section 9 concludes. 
+2. Related Work 
+2.1. Boolean Masking Composition 
+The composition theory for Boolean masking is mature. Reference [5] established the 
+probing security model, proving a construction that resists 𝑡-probing attacks. Reference [6] 
+formalized this as Non-Interference (NI) and Strong Non-Interference (SNI), proving that 
+SNI gadgets compose securely: the output of an SNI gadget can be fed to another gadget 
+without degrading the security order. In reference [7] PINI (Probe Isolating Non-Interference) 
+was introduced, achieving trivially composable gadgets. Any circuit built from PINI 
+components is automatically PINI, with no composition proof required. These results provide 
+a complete theoretical foundation for Boolean masking composition. However, they operate 
+over GF(2𝑛) and do not extend to arithmetic masking over ℤ𝑞 for prime 𝑞. 
+2.2. Automated Verification Tools 
+Several tools automate the verification of masked implementations. maskVerif [9] verifies 
+higher-order masking in the presence of physical defaults such as glitches and transitions. 
+SILVER [10] uses Reduced Ordered Binary Decision Diagrams (ROBDDs) for statistical 
+independence verification at the gate level. Coco [11] co-verifies masked software on CPUs 
+down to the gate level. These tools verify individual gadgets or circuits against the probing 
+model, but they do not provide composition theorems, general results about how the security 
+of composed pipelines relates to the security of individual stages. 
+2.3. Formal Verification of Masking 
+Machine-checked proofs of masking security have been developed in [8], providing high-
+assurance guarantees for Boolean masking constructions. These formalizations cover NI, SNI, 
+and specific masking schemes, but they operate exclusively over GF(2𝑛). No formalization [8] 
+(or other proof assistant) addresses arithmetic masking composition over ℤ𝑞. 
+2.4. Arithmetic Masking

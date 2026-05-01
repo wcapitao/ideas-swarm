@@ -1,0 +1,1051 @@
+Residual Risk Analysis in Benign Code: How Far
+Are We? A Multi-Model Semantic and Structural
+Similarity Approach
+Mohammad Farhad1,2[0009−0002−1788−6082] and Shuvalaxmi
+Dass1,2[0000−0001−9254−8134]
+1 University of Louisiana at Lafayette, Lafayette LA 70504, USA
+2 AICSIL Research Lab
+{mohammad.farhad1,shuvalaxmi.dass}@louisiana.edu
+Abstract. Software security relies on effective vulnerability detection
+and patching, yet determining whether a patch fully eliminates risk re-
+mains an underexplored challenge. Existing vulnerability benchmarks of-
+ten treat patched functions as inherently benign, overlooking the possibil-
+ity of residual security risks. In this work, we analyze vulnerable–benign
+function pairs from the PrimeVul, a benchmark dataset using multi-
+ple code language models (Code LMs) to capture semantic similarity,
+complemented by Tree-sitter–based abstract syntax tree (AST) analysis
+for structural similarity. Building on these signals, we propose Residual
+Risk Scoring (RRS), a unified framework that integrates embedding-
+based semantic similarity, localized AST-based structural similarity, and
+cross-model agreement to estimate residual risk in code. Our analysis
+shows that benign functions often remain highly similar to their vulner-
+able counterparts both semantically and structurally, indicating poten-
+tial persistence of residual risk. We further find that approximately 61%
+of high-RRS code pairs exhibit 13 distinct categories of residual issues
+(e.g., null pointer dereferences, unsafe memory allocation), validated us-
+ing state-of-the-art static analysis tools including Cppcheck, Clang-Tidy,
+and Facebook-Infer. These results demonstrate that code-level similarity
+provides a practical signal for prioritizing post-patch inspection, enabling
+more reliable and scalable security assessment in real-world open-source
+software pipelines.
+Keywords: Code LM Models, Source Code Analysis, Embedding Similarity,
+Abstract Syntax Tree, Software Security, Residual Risk Assessment.
+1
+Introduction
+Open-source software systems (e.g., Linux, Xserver, OpenSSL, Chrome) form the
+backbone of modern computing, where continuous development and widespread
+reuse demand high levels of robustness and reliability. To maintain this robust-
+ness, software is frequently updated through defect correction, feature enhance-
+ment, and, critically, vulnerability patching often on a daily basis in large-scale
+arXiv:2604.21051v1 [cs.SE] 22 Apr 2026
+
+2
+M. Farhad et al.
+projects. In security-critical contexts, these patches are designed to eliminate re-
+ported flaws while preserving functional correctness and minimizing unintended
+side effects. However, even after patching, code often retains key semantic and
+structural traits of the original vulnerable implementation, allowing residual risks
+to persist. In practice, developers tend to focus on quick, targeted fixes, priori-
+tizing functionality and release constraints while avoiding extensive refactoring
+unless strictly required. Consequently, while such patches may be correct with re-
+spect to the identified vulnerability, they do not necessarily induce a substantial
+transformation of the underlying semantics or structure of the affected function.
+The rapid expansion of open-source software ecosystems further amplifies these
+challenges by increasing both code reuse and exposure to hidden residual vulner-
+abilities [42]. Public repositories host millions of patches that are integrated and
+reused at scale, often without thoroughly checking whether the fix fully resolves
+all underlying logical and structural issues. Although vulnerability patches are
+released frequently, their effectiveness in fully mitigating underlying weaknesses
+remains uncertain [9]. This uncertainty has motivated research into patch anal-
+ysis, vulnerability repair automation, and residual risk estimation. For instance,
+multi-level code representations enable detection of subtle residual risks within
+patched code [31]. Similarly, hybrid approaches combining transformer-based
+representations with static analysis techniques have shown promise in identi-
+fying sensitive data exposures (CWE-200) that persist post-remediation [20].
+Advances in large language models (LLMs) for automated patch generation high-
+light the potential of self-repairing software [40], yet these systems still struggle
+to reliably evaluate the semantic completeness of the fixes they propose. Despite
+significant progress in detection and repair, evaluating the efficacy of patches
+remains an open challenge [34,15]. Traditional Static Application Security Test-
+ing (SAST) and learning-based vulnerability prediction frameworks offer partial
+insights into post-patch behavior, but they seldom quantify how function se-
+mantics change through patching [8]. This gap limits our ability to reason about
+the degeneracy between vulnerable and benign representations an effect wherein
+benign code continues to resemble the vulnerable version closely, semantically or
+structurally. Function-level assessment offers a natural lens for analyzing these
+effects, facilitating fine-grained vulnerability characterization in languages such
+as C/C++ [25]. Moreover, longitudinal studies on patch evolution underscore
+that many “fixes” remain functionally partial or revert-prone in later software
+versions [39]. Understanding the semantic and structural deviations introduced
+by patches is essential for reliable vulnerability triage, automated repair valida-
+tion, and model-based reasoning about software integrity.
+From a broader reliability perspective, these issues echo the notion of residual
+risk, the uncertainty that remains after exhaustive testing or patch deployment
+[6]. Even when a testing campaign reveals no defects, the probability that fu-
+ture inputs might still uncover latent vulnerabilities remains strictly positive
+[9]. If unaddressed, this residual risk can eventually manifest as zero-day vul-
+nerabilities, which refer to previously unknown security flaws that are exploited
+before developers have the opportunity to identify, patch, or disclose them [5].
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+3
+Recent work on dependency-aware risk estimation refines classical models by ac-
+counting for conditional dependencies among execution paths, resulting in more
+accurate residual risk bounds than traditional estimators such as Good–Turing
+[23]. Together, these efforts raise the question of whether patched (benign) code
+undergoes sufficient semantic and structural transformation to meaningfully re-
+duce security risk. Importantly, residual risk does not imply patch incorrectness
+or immediate exploitability. Rather, it reflects the practical nature of software
+maintenance, where patches are often minimal and localized, addressing spe-
+cific fault conditions while leaving broader logic unchanged. As a result, benign
+code may remain semantically and structurally close to its vulnerable counter-
+part, potentially retaining risky patterns (e.g., null dereference, buffer overflow)
+that warrant further inspection. At the same time, minimal changes are often
+sufficient and desirable, as they prevent vulnerabilities while preserving system
+stability and avoiding unintended side effects.
+Parallel advances in semantic code analysis highlight the importance of mea-
+suring code similarity for tasks such as clone detection, code retrieval, and plagia-
+rism detection [29]. Embedding-based and structure-aware models further enable
+capturing underlying semantics across programming languages [11]. However,
+these techniques are rarely applied to security patches, leaving an open research
+question regarding the extent to which a benign function semantically and struc-
+turally differ from the vulnerable function it replaces. Rather than proposing new
+detection or repair methods, we investigate whether such proximity can serve as
+an indicator of residual risk, warranting careful post-patch analysis.
+Contributions. This paper makes the following contributions:
+1. We propose Residual Risk Scoring (RRS), a unified scoring framework that
+quantifies residual risk in benign code by integrating embedding-based se-
+mantic similarity, localized AST-based structural similarity, and cross-model
+agreement. To the best of our knowledge, this is the first work to formalize
+residual risk through representation-level proximity between vulnerable and
+benign code.
+2. We show that localized AST analysis more accurately captures patch-induced
+changes than global tree-based metrics, which can obscure fine-grained, security-
+relevant modifications.
+3. We validate the practical utility of RRS through empirical analysis of high-
+risk benign functions, leveraging state-of-the-art C/C++ static analysis tools
+(Cppcheck, Clang-Tidy, Facebook Infer) and manual inspection to identify
+residual security issues.
+2
+Background: An Illustrative Scenario
+Figure 1 shows a minimal syntactic change between a vulnerable and benign
+function, where a version check is refactored from a function call–based compar-
+ison (≥) to a direct field comparison (==). Although this appears as a minor
+token-level modification, the corresponding ASTs differ only in a small subtree,
+replacing a call_expression with a field_expression while preserving the
+
+4
+M. Farhad et al.
+overall structure. The functions contain 74 and 75 AST nodes, respectively, in-
+dicating that most of the structure remains unchanged.
+if (TLS1_get_version(s) >= TLS1_2_VERSION &&
+    alg2 == (SSL_HANDSHAKE_MAC_DEFAULT |
+TLS1_PRF))
+Vulnerable Function (74 nodes)
+if (s->method->version == TLS1_2_VERSION &&
+    alg2 == (SSL_HANDSHAKE_MAC_DEFAULT |
+TLS1_PRF))
+Benign Function (75 nodes)
+Fig. 1: Vulnerable and benign code (left) with corresponding AST subtrees
+(right).
+Despite this localized change, global tree edit distance (TED) which measures
+the minimum number of node insertions, deletions, and substitutions required
+to transform one AST into another reports a much larger edit cost. While the
+actual modification involves only ∼10 node-level edits (5 deletions in red and
+5 insertions in green), yielding a localized TED similarity of 0.91, the global TED
+reports 60 operations (normalized similarity 0.20). This inflation occurs because
+global TED treats modified subtrees as bulk replacements, propagating edits
+across the hierarchy. Semantically, the function remains largely unchanged (em-
+bedding similarity 0.96), highlighting a mismatch between syntactic magnitude
+and semantic impact. Thus, global TED may overestimate structural change,
+while embeddings alone may overlook residual risk. Localized TED better cap-
+tures patch-relevant changes and aligns more closely with semantic similarity.
+From a structural perspective, AST-based methods such as TED provide
+richer insight than simpler measures (e.g., Jaccard similarity) by capturing hier-
+archical transformations. However, structural and semantic signals are comple-
+mentary and must be considered jointly.
+Importantly, existing vulnerability workflows often assume a binary transi-
+tion from vulnerable to benign after patching [18,35]. This overlooks the repre-
+sentational continuity between versions. High similarity does not imply developer
+error, but rather reflects narrowly scoped fixes. From a security perspective, such
+proximity may warrant further inspection to ensure that remediation extends
+beyond the immediate condition.
+Recent advances in code language models (e.g., CodeBERT, CodeT5) en-
+able semantic comparison via embeddings, which effectively capture functional
+behavior across tasks [11,20]. However, existing datasets and evaluation frame-
+works rarely combine semantic and structural signals to assess post-patch risk.
+High embedding similarity and minimal structural change together suggest the
+possibility of residual risk, where benign code remains closely aligned with its
+vulnerable predecessor and may require additional scrutiny.
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+5
+3
+Residual Risk Analysis Approach
+Our approach is motivated by the observation that vulnerability patches often
+introduce localized fixes while preserving large portions of the original code struc-
+ture and behavior. Given a vulnerable–benign function pair (fv, fb), we encode
+both functions using multiple pretrained code language models to capture their
+semantic representations across diverse model architectures. To capture struc-
+tural changes, we compute AST-based similarity focusing on localized structural
+differences that reflect minimal modified regions introduced by the patch. Addi-
+tionally, we quantify cross-model variance to assess the consistency of semantic
+similarity across different models, providing an additional signal of representa-
+tional uncertainty. As illustrated in Figure 2, these components are integrated
+to derive a Residual Risk Score (RRS), combining semantic similarity, localized
+structural similarity, and cross-model agreement to estimate the residual risk
+associated with benign (patched) code.
+Benign Code
+fb
+Vulnerable Code
+fv
+Semantic Score
+Ssem
+Structural Score
+Sast
+Code Pair
+(fv, fb)
+(e.g. CodeBERT, CodeT5)
+Semantic Similarity
+AST-Based Analysis
+(Localized TED)
+Structural Similarity
++ Cross-Model Variance
+ɑ2
+cross
+Model Agreement
+(⍺, β, 𝛾)
+Weighted Fusion
+Residual Risk
+Score (RRS)
+Fig. 2: Residual risk analysis pipeline combining semantic similarity (Ssem),
+structural similarity (Sast), and cross-model (σ2
+cross) agreement to compute RRS.
+Table 1 summarizes the code language models (Code LMs) utilized in this study,
+covering a diverse set of architectures and model scales. Specifically, we include
+encoder-based models such as CodeBERT, UniXCoder, and GraphCodeBERT,
+each with approximately 125M parameters, where GraphCodeBERT further
+incorporates data-flow graph (DFG) information to capture richer structural
+dependencies in code. In addition, we consider encoder–decoder architectures,
+namely CodeT5-base (220M) and CodeT5-770M (770M), which enable more
+expressive sequence-to-sequence representations. All models are employed in a
+fine-tuning setting to adapt their pretrained representations to our analysis task.
+This selection allows us to systematically evaluate the impact of architectural de-
+sign (encoder vs. encoder–decoder), structural awareness (e.g., DFG), and model
+scale on capturing semantic relationships between vulnerable and benign code.
+Each model encodes vulnerable and benign functions into dense embeddings. For
+each vulnerable–benign function pair (fv, fb), we compute:
+Xm = Em(fv),
+Ym = Em(fb)
+where Em(.) denotes the embedding function of model m.
+
+6
+M. Farhad et al.
+Table 1: The code language models (Code LMs) we have analyzed in this study.
+Model
+Parameters
+Type
+Usage
+CodeBERT [14]
+125M
+Encoder
+Fine-tune
+UniXCoder [16]
+125M
+Encoder
+Fine-tune
+GraphCodeBERT [17]
+125M
+Encoder+DFG Fine-tune
+CodeT5-base [37]
+220M
+Enc–Dec
+Fine-tune
+CodeT5-770m [36]
+770M
+Enc–Dec
+Fine-tune
+3.1
+Embeddings Representation Similarity
+To quantify semantic preservation after patching, we compute cosine similarity
+Sm between fv and fb:
+Scos
+m (fv, fb) =
+Xm · Ym
+∥Xm∥∥Ym∥
+(1)
+Here, Xm and Ym denote the vector embeddings of the vulnerable function fv and
+the benign function fb, respectively, obtained using model m. ∥· ∥denotes the
+Euclidean norm. This metric reflects how closely the benign function remains
+to the vulnerable version in the learned representation space. High similarity
+indicates that the functional behavior encoded by the model has not significantly
+changed, which may imply incomplete mitigation.
+To justify the choice of cosine similarity, Table 2 compares multiple dis-
+tance and similarity metrics computed over vulnerable–benign function pairs
+from primevul [10] dataset using model m = CodeBERT as a representative
+example. We observe that cosine similarity consistently produces highly stable
+and normalized scores (mean: 0.9988, standard deviation: 0.0036), effectively
+capturing semantic proximity while remaining invariant to embedding magni-
+tude. In contrast, metrics such as dot product are sensitive to vector scale, while
+distance-based measures (e.g., Euclidean, Manhattan, Chebyshev) reflect abso-
+lute differences but lack direct interpretability in terms of semantic equivalence.
+Table 2: Distance metrics and average similarity across vulnerable–benign func-
+tion pairs from primeVul (Model m = CodeBERT).
+Metric
+Formula
+Mean Median Std Dev
+Cosine (Baseline)
+Xm · Ym
+∥Xm∥2∥Ym∥2
+0.9988
+0.9998
+0.0036
+Dot
+Xm · Ym
+338.75
+337.39
+13.33
+Manhattan (L1)
+∥Xm −Ym∥1
+9.96
+6.87
+12.26
+Euclidean (L2)
+∥Xm −Ym∥2
+0.56
+0.34
+0.75
+Chebyshev (L∞)
+max
+i
+|Xi
+m −Y i
+m|
+0.24
+0.08
+0.42
+Based on these observations, we adopt baseline cosine similarity as our pri-
+mary semantic similarity measure due to its robustness, bounded range, and
+consistency across samples. Prior studies have also employed cosine similarity
+over learned code embeddings as an effective measure of semantic relatedness
+in tasks such as plagiarism detection and vulnerability analysis [11,26]. We note
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+7
+that similar trends are observed across other code language models considered
+in this study, indicating that cosine similarity provides a reliable and model-
+agnostic measure for comparing vulnerable and benign code representations.
+3.2
+Localized Abstract Syntax Tree Analysis
+Semantic similarity alone is insufficient to capture fine-grained structural changes
+introduced by patches. To address this, we analyze structural similarity using
+Tree-sitter–derived ASTs. Let Tv and Tb denote the ASTs of vulnerable and
+benign functions. We compute normalized Tree Edit Distance (TED) as:
+SAST(fv, fb) = 1 −TED(Tv, Tb)
+max(|Tv|, |Tb|)
+(2)
+where |T| denotes the number of nodes in the Localized AST. Higher values
+indicate smaller structural changes. We interpret this as structural residuality,
+defined as: Rstruct = SAST.
+Limitations of Global Structural Metrics. A key design choice in our ap-
+proach is the use of localized AST similarity rather than global tree-based met-
+rics. Vulnerability patches are typically minimal and localized, affecting only
+small regions while leaving most of the structure unchanged. As a result, global
+metrics such as NTED dilute these changes by averaging over large unchanged
+regions, often masking subtle but security-critical modifications. Prior work on
+AST differencing similarly shows that global comparisons capture overall syn-
+tactic variation but fail to reflect localized behavioral changes [29,12,7]. In our
+analysis, we retain cases where global TED yields very low or degenerate simi-
+larity scores, not as noise, but as evidence of this limitation.
+To address this, we focus on localized AST differences, isolating the mod-
+ified subtrees corresponding to patches. This enables more accurate quantifica-
+tion of patch-induced structural changes relevant to vulnerability mitigation.
+Table 3 compares different structural measures: (1). NTED (global): Low simi-
+larity (mean 0.27, median 0.34), reflecting sensitivity to full-tree variation. (2).
+Jaccard Similarity: High values (mean 0.94, median 0.97), but ignores hierarchy
+and ordering. (3). Alignment Similarity: Captures node correspondence across
+aligned subtrees (4). LTS (ours): More discriminative (mean 0.82, median 0.93),
+capturing localized changes.
+Design Choice and Key Insight. We adopt Localized TED Similarity (LTS)
+as our primary structural signal, as it better reflects the nature of real-world
+patches. Supporting analysis using alignment-based similarity further confirms
+consistent structural preservation patterns aligned with localized patch behavior.
+This choice is critical for residual risk estimation: global metrics such as NTED
+introduce bias by over-penalizing unchanged regions, while localized similarity
+captures subtle structural preservation that may indicate persistent vulnerability
+patterns.
+
+8
+M. Farhad et al.
+Table 3: Several metrics of AST structural similarity for vulnerable–benign func-
+tion pairs.
+Metrics
+Formula
+Mean
+Median
+LTS (Utilized)
+lT EDlocal(T1, T2) = 1 −T EDlocal(T1, T2)
+max(|T1|, |T2|)
+0.82
+0.93
+NTED Similarity
+(Baseline)
+T EDnorm(T1, T2) = 1 −
+T ED(T1, T2)
+max(|T1|, |T2|)
+0.27
+0.34
+JS
+SAST(fv, fb) =
+|N(fv)∩N(fb)|
+|N(fv)∪N(fb)|
+0.94
+0.97
+AS (Custom)
+AlignSim(fv, fb) =
+matches(fv, fb)
+|N(fv) ∪N(fb)|alignment
+0.75
+0.81
+NTED = Normalized Tree Edit Distance (Global); LTS = Localized TED Similarity; JS =
+Jaccard Similarity; AS = Alignment Similarity.
+3.3
+Cross-Model Semantic Agreement
+While individual models may produce noisy or biased similarity estimates, con-
+sistent agreement across multiple models provides stronger evidence of semantic
+preservation. To capture this, we compute the mean semantic similarity:
+¯Ssem(fv, fb) = 1
+M
+M
+X
+m=1
+Scos
+m (fv, fb)
+(3)
+We further quantify agreement using cross-model variance:
+σ2
+cross = 1
+M
+M
+X
+m=1
+ Scos
+m (fv, fb) −¯Ssem(fv, fb)
+2
+(4)
+Low variance indicates strong agreement among models. We normalize this into
+an agreement score, Cagree:
+Cagree = 1 −σcross
+σmax
+(5)
+where σmax is the maximum observed variance across all pairs. This formulation
+bounds Cagree ∈[0, 1], where values close to 1 indicate strong agreement (low
+variance) across models, and values close to 0 indicate high disagreement.
+3.4
+Residual Risk Scoring (RRS)
+We define residual risk as a composite signal that emerges when (1). semantic
+similarity remains high, (2). structural changes are limited, and (3). multiple
+models consistently agree. These three conditions jointly indicate that the be-
+nign code remains close to its vulnerable counterpart in both representation and
+structure. The final Residual Risk Score (RRS) is computed as:
+RRS(fv, fb) = α · ¯Ssem + β · Rstruct + γ · Cagree
+(6)
+where α, β, γ ∈[0, 1] and α + β + γ = 1. As an example, we set: α = 0.5, β =
+0.3, γ = 0.2. Importantly, semantic similarity ( ¯Ssem) captures functional equiv-
+alence between vulnerable and benign code, while structural similarity (Rstruct)
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+9
+reflects localized code transformations introduced by patches. Cross-model agree-
+ment (Cagree) provides complementary evidence by measuring the consistency of
+similarity scores across different code language models, thereby capturing repre-
+sentational robustness. To integrate these signals, we adopt a weighted formula-
+tion where α and β control the contribution of semantic and structural similarity,
+respectively, while γ captures cross-model agreement. The weighting coefficients
+(α, β, γ) balance the contribution of these heterogeneous signals within a unified
+framework, rather than serving as a normalization mechanism, as all signals are
+normalized to a common range prior to aggregation.
+To ensure that our analysis is not dependent on specific weight assignments,
+we conduct a sensitivity analysis by varying α and β over [0, 1] under the con-
+straint α+β+γ = 1 (Section 5.2). We fix γ = 0.2 as a moderate auxiliary weight,
+since cross-model agreement serves as a consistency signal rather than primary
+evidence of residual risk. Lower values underutilize agreement, while higher val-
+ues risk overshadowing the semantic and structural signals. This design enables
+us to analyze their trade-off without allowing agreement to dominate the overall
+score.
+4
+Experimental Design
+This section presents the experimental design to analyze the persistence of se-
+mantic and structural similarity in benign code and its implications for residual
+risk, guided by the following research questions (Section 5).
+4.1
+Research Questions
+RQ1: How closely do benign functions preserve the semantic and structural
+properties of their vulnerable predecessors?
+This research question examines how vulnerability patches affect code repre-
+sentations. Since patches are often minimal and localized, key semantic and
+structural properties may remain unchanged. We evaluate this by measuring
+embedding-based semantic similarity and localized AST-based structural sim-
+ilarity between vulnerable and benign functions across multiple models. Sec-
+tion 5.1 quantifies the resulting residual similarity and its implications for post-
+patch risk.
+RQ2: Can joint embedding and AST-based similarity yield a robust estimate
+of residual risk in benign code?
+We investigate whether combining complementary signals: embedding-based se-
+mantic similarity, localized AST-based structural similarity, and cross-model
+agreement, can reliably estimate residual risk in benign code. Semantic similarity
+captures functional equivalence, structural similarity reflects localized changes,
+and cross-model agreement measures consistency across models. By integrating
+these signals, we evaluate whether this multi-signal approach better characterizes
+residual risk than any single metric. Results in Section 5.2 assess the effectiveness
+and stability of the proposed RRS.
+
+10
+M. Farhad et al.
+RQ3: Do benign functions with high RRS exhibit potential vulnerabilities
+when analyzed using state-of-the-art static analysis tools?
+Building on RQ1 and RQ2, this research question evaluates whether high residual
+risk scores correspond to observable security-relevant issues in practice. Specifi-
+cally, we assess whether benign functions identified as high-risk by RRS exhibit
+potential vulnerabilities under state-of-the-art static analysis tools. The results
+are presented in Section 5.3.
+4.2
+Dataset & Implementation Setup
+We use PrimeVul [10], a widely adopted benchmark dataset of real-world soft-
+ware vulnerabilities, which provides curated vulnerable–benign function pairs in
+C/C++ with annotated vulnerability types and corresponding patches. From
+this dataset, we select 3,789 function pairs (7,578 functions), covering diverse
+vulnerability types, patch sizes, and code contexts. Each pair is treated as a unit
+of analysis for computing embedding-based similarity and structural changes.
+This dataset forms the foundation of our RRS framework, enabling quantifi-
+cation of post-patch similarity and identification of functions that may require
+further inspection using static analysis tools.
+For representation, we use pretrained code language models from the Hugging
+Face [19] library to generate embeddings. Structural analysis is performed using
+ASTs constructed via the Tree-sitter framework [32], which provides accurate,
+language-aware parsing for C/C++ code.
+5
+Results
+5.1
+RQ1: Semantic & Structural Properties Preservation
+Embedding-Based Semantic Similarity. To assess how benign functions pre-
+serve properties of their vulnerable counterparts, we analyze embedding-based
+similarity across multiple code language models (Table 4). Across all models,
+similarity scores are consistently high (typically 0.97–0.99), indicating strong
+preservation of semantic representations after patching. CodeBERT and Graph-
+CodeBERT exhibit near-perfect similarity (means of 0.9988 and 0.9970, medi-
+ans ≈1.0), with very low variance. CodeT5 variants show similarly high values,
+while UniXCoder exhibits slightly higher variability but maintains a high median
+(0.9929), suggesting that most function pairs remain semantically close.
+Table 4: Embedding cosine similarity statistics for different code LM models.
+Model
+Embedding
+Mean Median Std Dev
+CodeBERT
+0.9988
+0.9998
+0.0036
+UniXCoder
+0.9767
+0.9929
+0.0442
+GraphCodeBERT
+0.9970
+0.9995
+0.0087
+CodeT5-base
+0.9834
+0.9978
+0.0396
+CodeT5-770m
+0.9867
+0.9979
+0.0228
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+11
+Implications of High Semantic Similarity. These results reflect real-world
+patch behavior: fixes are typically minimal and localized (e.g., boundary checks),
+preserving overall functionality. Consequently, embedding-based models, captur-
+ing global semantics, produce highly similar representations for vulnerable and
+benign (see Figure 3a). Importantly, this does not indicate model weakness or
+poor patch quality. Instead, it highlights a fundamental challenge: semantic
+similarity alone cannot capture subtle, security-critical changes, moti-
+vating the need for complementary structural analysis.
+Localized Structural Similarity (LTS) Analysis. To capture fine-grained
+changes, we analyze structural similarity using Localized TED Similarity (LTS).
+Most function pairs cluster in the high-similarity range [0.8–1.0] in Fig. 3b, indi-
+cating that patches introduce only localized modifications while preserving over-
+all structure. However, occasional drops in similarity reveal cases with substan-
+tial structural changes (e.g., control flow). The distribution is therefore skewed:
+a high median (0.93) reflects dominant localized edits, while a lower mean (0.82)
+is influenced by outliers. Note that, due to computational constraints, we limit
+RRS computation to function pairs with AST size ≤350 nodes (≈1088 pairs).
+(a) Embedding consistency across models.
+(b) Distribution of Localized TED Simi-
+larity (LTS).
+Fig. 3: Semantic and structural similarity analysis across vulnerable–benign func-
+tion pairs.
+Answer to RQ1: Benign functions remain highly similar to their vulnerable
+counterparts across multiple code language models, with near-unity cosine
+similarity and low variance, indicating that vulnerability patches often pre-
+serve substantial semantic and structural properties of the original code.
+5.2
+RQ2: Residual Risk Estimation
+Quadrant-Based Risk Characterization. To evaluate residual risk, we par-
+tition function pairs into four quadrants based on embedding (E) and structural
+(A) similarity (Table 5), using median-based thresholds (E = 0.994, A = 0.927).
+
+12
+M. Farhad et al.
+where Quadrant I (29.5%): High E, High A →minimal change, strong can-
+didates for residual risk., Quadrant II (20.5%): High E, Low A →structural
+change missed by embeddings, Quadrant III (20.6%): Low E, High A →
+cosmetic/lexical changes and Quadrant IV (29.4%): Low E, Low A →sub-
+stantial transformation, likely mitigated.
+Limitations of Single-Signal Analysis. This distribution highlights that rely-
+ing on a single signal is insufficient: (a). Embeddings may overestimate equiva-
+lence (Quadrant II) (b). Structural metrics may miss semantic preservation
+(Quadrant III). These mismatches reveal blind spots in isolated representations.
+Multi-Signal Advantage (RRS). By jointly combining signals, our approach
+provides a more reliable estimate of residual risk. Quadrant I emerges as a criti-
+cal region where minimal observable change may mask persistent vulnerabilities.
+Robustness to Weight Sensitivity. To validate robustness, we analyze RRS
+under varying semantic (α) and structural (β) weight configurations in Figure
+4 (additional configurations are provided in Appendix A, Figure 6). Across all
+settings, the distribution and relative positioning of function pairs remain stable.
+High-risk clusters (Quadrant I) consistently persist, indicating that risk identifi-
+cation is not sensitive to parameter selection. Although RRS values vary slightly
+with weighting, the relative ranking of function pairs remains largely unchanged,
+confirming that high-risk candidates reflect inherent transformation properties
+rather than parameter artifacts.
+Cross-Signal Interaction Analysis. Figure 5 (in Appendix A) further illus-
+trates the interaction between signals. Embedding similarity and cross-model
+agreement remain consistently high, reflecting stable global semantics, while lo-
+calized AST similarity varies more, capturing fine-grained structural changes.
+Notably, several cases exhibit high semantic similarity but lower structural sim-
+ilarity, reinforcing that embedding-based representations alone may overlook
+meaningful structural modifications.
+These findings confirm that combining semantic, structural, and cross-model sig-
+nals yields more accurate and robust residual risk estimation.
+Table 5: Distribution and impact of code pair types based on semantic and
+structural representation changes (≈1088 code pairs).
+Quadrant
+RRS
+Pairs
+(%)
+Behavioral Interpretation
+I (EH, AH)
+≥97%
+321
+29.5%
+Minor change, likely residual risk
+II (EH, AL)
+0.94% ≤RRS < 97%
+223
+20.5%
+Structural change, embeddings blind spot
+III (EL, AH)
+0.90% ≤RRS < 94%
+224
+20.6%
+Cosmetic vs. lexical change
+IV (EL, AL)
+< 90%
+320
+29.4%
+Major change, likely mitigated
+EH = High Embedding Similarity; AH = High Structural Similarity; EL = Low Embedding
+Similarity; AL = Low Structural Similarity.
+Answer to RQ2: Combining semantic and structural similarity enables
+stable residual risk estimation by capturing complementary aspects of code
+transformation. High similarity in both indicates minimal changes and higher
+likelihood of residual risk, while consistent results across weighting configu-
+rations demonstrate the robustness of RRS.
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+13
+(a) α = 0.5, β = 0.3
+(b) α = 0.3, β = 0.5
+(c) α = 0.4, β = 0.4
+Fig. 4: Semantic vs. structural similarity for vulnerable–benign pairs under dif-
+ferent (α, β) configurations (γ = 0.2).
+5.3
+RQ3: State-of-the-art Static Analysis Tools
+To assess whether high residual risk corresponds to practical security concerns,
+we analyze high-RRS benign functions using state-of-the-art static analysis tools.
+We focus on Quadrant I (29.5% of all pairs), which represents cases with both
+high semantic and structural similarity and forms the primary candidate space
+for residual risk. While other quadrants may also contain risk, our goal is to
+evaluate whether RRS effectively prioritizes the most likely high-risk cases.
+We evaluate top-ranked high-RRS function pairs using Cppcheck [2], Clang-Tidy
+[3], and Facebook Infer [4]. Cppcheck provides lightweight detection of unde-
+fined behavior and common errors, Clang-Tidy performs rule-based and AST-
+level checks, and Infer developed by Meta [1] applies interprocedural, path-
+sensitive analysis to detect issues such as null dereferences and memory errors.
+Our results show that approximately 61% of high-RRS functions are flagged
+by at least one tool for security-relevant issues, including memory safety vio-
+lations, boundary errors, and improper error handling. Among these, 43% are
+flagged by two tools, and 27% by all three, indicating stronger agreement. Con-
+versely, 39% produce no warnings, suggesting that not all high-similarity cases
+correspond to detectable issues.
+These findings indicate that RRS captures meaningful signals related to real
+security concerns rather than merely reflecting representational similarity. Par-
+tial disagreement across tools further highlights their complementary detection
+capabilities and the importance of multi-tool evaluation
+Answer to RQ3: High-RRS benign functions are often flagged by static
+analyzers, indicating that residual similarity helps prioritize potential vulner-
+abilities rather than confirm them.
+6
+Empirical Validation of Residual Risk
+To complement the quantitative findings, we conduct an empirical validation to
+examine how residual risk manifests in practice. Since functions in the PrimeVul
+
+14
+M. Farhad et al.
+Table 6: Validation outcomes for residual risk analysis
+Cases
+Cppcheck [2]
+Clang-tidy [3]
+Infer [4]
+Agr.
+R.I.
+CVE
+M.V.
+C1
+Uninit. var
+–
+Uninit. var
+G
+#
+✓
+2024-32878
+Y
+C2
+–
+Dead store
+Dead store
+G
+#
+✓
+2023-53024
+Y
+C3
+Unsafe realloc
+Unsafe realloc
+Dead store
+G
+#
+✓
+2023-37573
+Y
+C4
+Null ptr
+–
+Null ptr
+G
+#
+✓
+2025-29886
+Y
+C5
+Invalid ptr
+Invalid ptr
+Invalid ptr
+●
+✓
+2025-21919
+Y
+C6
+Resource leak
+Dead store
+Resource leak
+G
+#
+✓
+2024-31735
+Y
+C7
+–
+Mem. leak
+Mem. leak
+G
+#
+✓
+2024-31735
+Y
+C8
+Uninit. val
+Uninit. val
+Uninit. val
+●
+✓
+2024-47540
+Y
+C9
+–
+Return misuse
+–
+G
+#
+✓
+2024-45337
+Y
+C10
+Null ptr
+Dead store
+Null ptr
+G
+#
+✓
+2025-38562
+Y
+C11
+–
+Missing default
+–
+G
+#
+✓
+2026-33064
+Y
+C12
+–
+–
+Null ptr
+G
+#
+✓
+2024-41130
+Y
+C13
+–
+Int. truncation
+–
+G
+#
+✓
+2022-34169
+Y
+C14
+–
+Missing default
+Uninit. val
+G
+#
+✓
+2024-32878
+Y
+C15
+Alloc overflow
+Alloc overflow
+Alloc overflow
+●
+✓
+2025-13601
+Y
+Agr. = Agreement; R.I. = Residual issues; M.V. = Manually verified; ●= full agreement; G
+# =
+partial agreement; “–” = no finding; ✓= any warning or error reported by any tool; Y = Yes.
+dataset are often isolated and lack necessary dependencies, static analysis tools
+cannot process them directly. To address this, we introduce minimal dummy
+helpers to reconstruct a compilable context without altering program seman-
+tics (Figure 7 in Appendix A). Using this setup, we analyze high-RRS functions
+and identify 13 distinct categories of errors and warnings, including memory
+safety violations, boundary issues, and null pointer dereferences (see Table 6).
+The most frequent issues include null pointer dereferences, uninitialized
+variable usage, and memory-related errors. Table 8 in Appendix A high-
+lights the top 5 categories, emphasizing areas that require immediate atten-
+tion. These results indicate that high residual similarity corresponds to code
+regions that retain security-relevant patterns even after patching. We observe
+that many patches introduce minimal fixes (e.g., guard conditions) while leaving
+broader logic unchanged, leading static analyzers to flag potential issues such
+as null dereferences or buffer errors. This supports our hypothesis that RRS
+captures meaningful security-relevant properties. While not all flagged cases
+are exploitable and static analysis may produce false positives, they identify
+regions warranting further inspection. To improve robustness and reduce tool-
+specific bias, we employ three complementary static analysis tools. Our goal is
+not definitive vulnerability detection, but prioritization of high-risk candidates.
+Table 6 shows that multiple tools consistently identify residual issues across
+benign code, reinforcing the effectiveness of RRS-based prioritization. Finally,
+comparison with prior work (see Table 7) shows that existing approaches focus
+primarily on pre-patch vulnerability detection or general similarity analysis, and
+do not explicitly address post-patch residual risk. This highlights the relevance
+of our empirical evaluation in targeting residual risk in benign code.
+7
+Threats to Validity
+Internal Validity. Our validation relies on static analysis tools (Cppcheck,
+Clang-Tidy, Infer), which may produce false positives and negatives. Although
+we mitigate this using multiple tools and manual checks, discrepancies may
+still affect reliability, and some flagged issues may reflect conservative heuristics
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+15
+Table 7: Comparison with recent representative works on vulnerability analysis
+and code similarity.
+Works
+Stage
+Task
+Technique
+Representation
+Signals
+Output
+Post-Patch
+Risk
+[7]
+Pre-
+patch
+VD
+Graph learning
+(PDG)
+Structural +
+PDG-based
+embeddings)
+Vulnerable /
+benign
+×
+[11]
+Pre-
+patch
+Code
+plagiarism
+CodePTMs +
+classifiers
+Semantic
+(embeddings)
+Binary label
+×
+[20]
+Pre-
+patch
+VD
+Embeddings +
+static analysis
+Semantic + flow
+analysis
+Vulnerability
+prediction
+×
+[24]
+Pre-
+patch
+Clone
+detection
+Pretrained code
+models
+Semantic
+Similar / not
+similar
+×
+[29]
+General
+Code
+similarity
+AST edit distance Structural (AST)
+Similarity
+score
+×
+[31]
+Post-
+patch
+Patch
+classification
+Multi-level
+embeddings
+Semantic
+(multi-granular)
+Patch label
+×
+Ours
+Post-
+patch
+Residual
+risk
+assessment
+Embeddings +
+AST + Model
+agreement
+Semantic +
+Structural +
+Consistency
+Risk score
+✓
+VD = refers to vulnerability detection; ✓= post-patch risk considered; × = not considered.
+rather than true vulnerabilities. Construct Validity. RRS is based on semantic
+similarity, structural similarity, and cross-model agreement, which may not cap-
+ture all aspects of security risk. Additionally, helper-function introduction may
+alter representations without reflecting meaningful security impact. External
+Validity. Our evaluation uses PrimeVul, which, despite containing real-world
+vulnerabilities, may not fully represent all software systems or patching prac-
+tices, limiting generalizability. Selection Bias. We focus validation on high-
+risk (Quadrant I from Table 5) cases to analyze critical patterns, but residual
+issues may also exist in other quadrants, potentially underrepresenting broader
+risk patterns. Scalability. To manage computational constraints, we limit AST
+analysis to bounded node sizes, which may exclude larger or more complex func-
+tions and affect completeness. Interpretation of Residual Risk. RRS is a
+prioritization signal rather than a definitive indicator of exploitability. High sim-
+ilarity often reflects minimal or localized patches, which may preserve behavior
+without necessarily implying exploitable conditions.
+8
+Related Work
+Embedding-Based Code Similarity and VD. Embedding-based similar-
+ity has been widely used in code analysis tasks such as plagiarism detection,
+clone detection, and vulnerability analysis [11,31]. Pretrained models (e.g., Code-
+BERT, UniXCoder) show strong performance but struggle to capture semanti-
+cally equivalent code with structural differences [24]. Hybrid approaches combin-
+ing embeddings with static analysis further improve detection accuracy [20,13].
+However, recent studies highlight opportunities to enhance embedding-based
+similarity by incorporating complementary signals [26].
+Structural and AST-Based Code Analysis. Structural representations (e.g.,
+ASTs and program dependence graphs) complement embedding-based approaches,
+with graph-based methods like ContraFlow improving vulnerability detection
+
+16
+M. Farhad et al.
+and bug localization [7], while AST-based representations are particularly effec-
+tive for structurally sensitive tasks despite token-based models often performing
+better overall [30]. Tree-based similarity metrics, such as AST edit distance,
+further demonstrate effectiveness in capturing structural similarity across lan-
+guages [29]. Additionally, neural approaches like UAST and CoCoAST enhance
+structural modeling for cross-language analysis and large-scale code tasks [33,28].
+These studies highlight the importance of structural representations for captur-
+ing syntactic and semantic relationships in source code.
+Deep Learning for Software Testing and VD. Deep learning and LLMs
+are widely used for vulnerability detection, repair, and testing, though recent
+studies show their performance can be comparable to simpler models, suggesting
+reliance on shallow patterns [38]. They are also applied to automated repair (e.g.,
+LoopRepair) and vulnerability assessment, where traditional ML and multi-task
+learning remain competitive and efficient [40,25]. Large-scale datasets support
+these approaches but often introduce noise, affecting reliability [22], while re-
+cent work explores LLM-generated vulnerable code for data augmentation [41].
+Efforts to estimate residual risk further highlight the importance of prioritizing
+remaining vulnerabilities in software testing [23].
+Static Analysis and Post-Patch Security Assessment. Static analysis and
+empirical studies remain essential for vulnerability detection and post-patch eval-
+uation, though challenges such as false positives and trust persist [21]. Com-
+parisons show that static and learning-based approaches offer similar detection
+capabilities, with ML methods sometimes improving precision [8]. Empirical evi-
+dence further reveals that vulnerabilities often persist in shared code and are not
+fully resolved through revisions [27], while patch evolution over time complicates
+reliable post-patch security assessment [39].
+9
+Conclusion & Future Work
+We revisit the assumption that patched code is inherently benign and intro-
+duce a representation-driven view of post-patch analysis. We formalize residual
+risk as the persistence of vulnerability-relevant semantic and structural proper-
+ties after patching, and propose Residual Risk Scoring (RRS), which inte-
+grates embedding-based similarity, localized AST-based structural analysis, and
+cross-model agreement. Our results show that benign functions often remain
+highly similar to their vulnerable counterparts, indicating limited transforma-
+tion in code representations. Sensitivity analysis demonstrates the robustness of
+RRS across weighting configurations, while validation with state-of-the-art static
+analysis tools reveals that high-RRS functions may still exhibit security-relevant
+issues. This work opens several directions for future research, including extend-
+ing the approach to diverse languages and datasets, and incorporating dynamic
+analysis to further refine risk estimation. Overall, our findings highlight the im-
+portance of representation-aware analysis for enabling more reliable vulnerability
+triage, improved patch validation, and risk-aware software maintenance.
+
+Residual Risk Analysis in Benign Code: How Far Are We?
+17
+10

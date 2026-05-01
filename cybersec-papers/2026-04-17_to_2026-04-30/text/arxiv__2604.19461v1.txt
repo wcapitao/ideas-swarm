@@ -1,0 +1,346 @@
+Involuntary In-Context Learning: Exploiting Few-Shot Pattern
+Completion to Bypass Safety Alignment in GPT-5.4
+Alex Polyakov
+Adversa AI
+alex@adversa.ai
+Daniel Kuznetsov
+Adversa AI
+d.kuznetsov@adversa.ai
+Adversa AI Red Teaming Agent
+Adversa AI airt@adversa.ai
+April 2026
+Content Warning: This paper contains examples of adversarial prompts and abbreviated model
+outputs that include harmful content.
+These examples are included solely to demonstrate the
+security vulnerability and support scientific reproducibility. Appendix outputs are truncated and
+partially redacted; full outputs are available from the authors on request for legitimate research
+purposes.
+Abstract
+Safety alignment in large language models relies on behavioral training that can be overrid-
+den when sufficiently strong in-context patterns compete with learned refusal behaviors. We
+introduce Involuntary In-Context Learning (IICL), an attack class that uses abstract opera-
+tor framing with few-shot examples to force pattern completion that overrides safety train-
+ing. Through 3479 probes across 10 OpenAI models, we identify the attack’s effective compo-
+nents through a seven-experiment ablation study. Key findings: (1) semantic operator naming
+(answer/is_valid) achieves 100% bypass rate (50/50, p < 0.001); (2) the attack requires ab-
+stract framing, since identical examples in direct question-and-answer format yield 0%; (3) ex-
+ample ordering matters strongly (interleaved: 76%, harmful-first: 6%); (4) temperature has no
+meaningful effect (46–56% across 0.0–1.0). On the HarmBench benchmark, IICL achieves 24.0%
+bypass [18.6%, 30.4%] against GPT-5.4 with detailed 619-word responses, compared to 0.0% for
+direct queries.
+1
+Introduction
+The dominant approach to making large language models (LLMs) safe for deployment is behav-
+ioral alignment: techniques such as reinforcement learning from human feedback (Ouyang et al.,
+2022), constitutional AI (Bai et al., 2022), and direct preference optimization (Rafailov et al., 2023)
+train models to refuse harmful requests. These methods shape the model’s output distribution so
+that refusal is the most probable response to dangerous queries. However, safety alignment is a
+soft behavioral constraint, a statistical preference learned from training data, rather than a hard
+architectural guarantee. When an LLM is placed in a regime where in-context pattern completion
+exerts stronger pressure than the learned refusal behavior, the safety layer can be overridden. The
+model does not “know” it should refuse; it merely assigns higher probability to refusal tokens in the
+contexts it was trained on. Sufficiently strong in-context patterns can shift these probabilities.
+In this paper we introduce Involuntary In-Context Learning (IICL), a new class of jailbreak
+attack that exploits the tension between in-context learning (ICL) and safety alignment.
+The
+1
+arXiv:2604.19461v1 [cs.CR] 21 Apr 2026
+
+attack defines two abstract operators (e.g., answer and is_valid) and provides a small set of few-
+shot examples that implicitly teach the model a mapping: benign inputs receive is_valid = No,
+while harmful inputs receive is_valid = Yes. The model is then asked to produce an answer for a
+new harmful input such that is_valid evaluates to Yes. Because the harmful content is framed as
+an abstract operator evaluation rather than a direct user request, the model’s content-level safety
+filters fail to activate, and pattern completion takes over (Figure 1).
+Unlike prior in-context learning attacks that rely on raw harmful demonstrations (Wei et al.,
+2024) or brute-force scaling to hundreds of examples (Anil et al., 2024), IICL achieves its effect
+through structural reframing with just 10 examples.
+Unlike concurrent work on operator-based
+self-prompting (Guo et al., 2025), IICL is targeted (the attacker specifies the payload) and is ac-
+companied by an ablation study that identifies the key factors driving the attack.
+We conduct a large-scale empirical study comprising 3479 probes across 10 OpenAI models
+spanning four generations (GPT-4.1 through GPT-5.4-pro). The study includes a seven-experiment
+ablation (1550 probes) that isolates the effective components of IICL through sequential factor
+search, a standardized HarmBench evaluation (220 probes) that benchmarks IICL against direct
+queries, and an overnight robustness survey (1699 probes) that characterizes per-model vulnerability
+across the full model family.
+Our contributions are fourfold:
+1. We introduce IICL, an attack class that weaponizes in-context learning against safety align-
+ment by framing harmful generation as abstract operator evaluation.
+2. We present a seven-experiment ablation study (1550 probes) that identifies the key factors
+driving the attack: abstract framing and harmful examples are individually necessary (0%
+bypass without either), while semantic operator naming and interleaved ordering are the
+strongest settings discovered.
+3. We evaluate IICL on the HarmBench benchmark (Mazeika et al., 2024), showing that bypass
+rates rise from 0.0% (direct queries) to 24.0% [18.6%, 30.4%] against GPT-5.4, with successful
+bypasses producing detailed responses averaging 619 words.
+4. We conduct a 10-model robustness survey that reveals a bimodal distribution: 6 models are
+fully robust (0% bypass) while 4 models are fragile (∼2–15% bypass), with all “pro” variants
+and gpt-5.2 falling in the robust category.
+2
+Related Work
+2.1
+Jailbreak Attacks
+The study of adversarial attacks against safety-aligned LLMs has grown rapidly.
+Harm-
+Bench (Mazeika et al., 2024) provides a standardized evaluation framework and taxonomy of harmful
+behaviors. The vast majority of jailbreak research falls into two categories. Linguistic attacks ma-
+nipulate natural language: role-playing prompts such as DAN (“Do Anything Now”) instruct the
+model to adopt an unrestricted persona (Shen et al., 2024); nested scenario constructions such as
+DeepInception create recursive fictional frames (Li et al., 2024). Adversarial optimization attacks
+include gradient-based methods such as GCG (Zou et al., 2023), which optimize adversarial suffixes
+using white-box access, and black-box iterative methods such as PAIR (Chao et al., 2025), which
+use an attacker LLM to refine candidates automatically.
+2
+
+2.2
+Structured and Code-Based Jailbreaks
+A smaller but growing body of work explores jailbreaks that use structured, algorithmic, or code-
+like representations rather than natural language persuasion or gradient optimization.
+Cipher-
+Chat (Yuan et al., 2024) encodes harmful queries using ciphers (Caesar, Morse Code, ASCII) with
+few-shot enciphered demonstrations, exploiting the fact that safety alignment is trained primarily
+on natural language inputs. ArtPrompt (Jiang et al., 2024) replaces sensitive keywords with ASCII
+art, bypassing semantic safety filters through visual encoding. CodeChameleon (Lv et al., 2024)
+reformulates harmful queries as code completion tasks with personalized encryption and decryption
+functions embedded in the prompt. CodeAttack (Ren et al., 2024) constructs code templates in
+Python, C++, or Go that encode harmful content within standard data structures and request the
+model to complete a decode() function. Wu et al. (2024) show that the function-calling interface
+of LLMs creates an alignment gap: harmful queries framed as tool-use specifications bypass safety
+filters that are effective in chat mode.
+All of these approaches are fundamentally syntactic: they work by encoding or hiding the
+harmful content behind ciphers, data structures, code formats, or non-standard representations.
+IICL differs in a key respect: it does not encode or obfuscate the payload at all. The harmful
+query is presented in plain text. The bypass mechanism is semantic (reframing harmful generation
+as abstract operator evaluation) rather than syntactic. This distinction has direct implications for
+defense: encoding-based attacks can be detected by decoding and inspecting the payload; IICL
+cannot, because there is nothing to decode.
+2.3
+In-Context Learning as an Attack Vector
+The use of in-context learning for jailbreaking has developed along two axes: scaling and structuring.
+On the scaling axis, Wei et al. (2024) introduce the In-Context Attack (ICA), showing that
+harmful question-answer demonstrations in context can raise attack success rates from 1% to 87%
+on Vicuna with 10 shots.
+Many-shot jailbreaking (Anil et al., 2024) extends this to hundreds
+of demonstrations, exploiting long context windows with effectiveness following power-law scaling.
+However, both approaches rely on raw harmful demonstrations in direct question-and-answer format.
+As we show in EXP-3 (Section 6.3), this mechanism is ineffective against modern frontier models:
+identical harmful content presented in direct Q&A format (the format used by ICA) produces 0%
+bypass on GPT-5.4, while the same content wrapped in IICL’s abstract operator framing achieves
+58%. This result indicates that safety alignment on frontier models has been hardened against raw
+few-shot contamination, but not against structural reframing of the generation task.
+On the structuring axis, Deceptive Delight (Chen and Lu, 2024) shows that interleaving benign
+and harmful topics across conversation turns exploits limited attention and achieves 65% attack
+success rate across eight models. SequentialBreak (Saiem et al., 2025) embeds harmful prompts
+within benign sequential contexts in a single query, achieving bypass through narrative camouflage.
+Our EXP-4 (Section 6.4) can be understood as a single-turn formalization of these interleaving
+insights: interleaved ordering achieves 76% versus 6% for harmful-first clustering. However, we
+go beyond observing that interleaving helps by isolating ordering as one controlled variable in a
+seven-factor ablation, characterizing its contribution relative to the other attack components.
+On the framing axis, ICON (Lin et al., 2026) pairs harmful intents with congruent authoritative
+contexts (e.g., “scientific research”) across multiple turns, reporting 97.1% ASR across eight LLMs.
+ICON’s core finding, that safety constraints relax when harmful intent is semantically coupled with a
+plausible context, parallels IICL’s operator-framing mechanism, but ICON operates over multi-turn
+dialogue while IICL achieves its effect in a single turn through abstract operator notation.
+3
+
+2.4
+Concurrent Work: Involuntary Jailbreak
+The closest prior work to IICL is the concurrent “Involuntary Jailbreak” of Guo et al. (2025), which
+also employs operator-style notation (X/Y operators) with a mixture of benign and harmful content.
+Despite the surface similarity, the two approaches differ in three key respects.
+First, the attack mechanism differs. Guo et al.’s approach is untargeted self-prompting: the model
+is instructed to autonomously generate both harmful questions and their corresponding responses.
+IICL is targeted pattern completion: the attacker supplies a specific payload query and the model
+completes the established operator pattern. These represent different threat models; IICL addresses
+the operationally relevant case where an adversary has a specific objective.
+Second, the operator design differs. Guo et al. use semantically neutral operator names (X/Y).
+Our EXP-7 (Section 6.7) shows that this choice leaves substantial attack potential unrealized: seman-
+tically neutral operators achieve only 52% bypass, while the semantically loaded pair answer/is_valid
+achieves 100% under identical conditions, a difference that is highly significant (p < 0.001). The
+operator naming phenomenon, which is the only factor to achieve a perfect 100% ceiling in the IICL
+attack, is entirely absent from their analysis.
+Third, the analytical depth differs. Guo et al. report overall success rates but do not decom-
+pose which components of their prompt are necessary or sufficient. Our seven-experiment ablation
+(1550 probes) varies abstraction, operator naming, example count, ordering, similarity, and temper-
+ature, isolating the factors that drive the attack and yielding mechanistic insights (e.g., temperature
+invariance, the calibration role of benign examples) that are not available from their work.
+2.5
+In-Context Learning: Mechanistic Foundations
+In-context learning, the ability of LLMs to learn new tasks from few-shot examples at inference time
+without parameter updates, was established as a core capability by Brown et al. (2020). Subsequent
+work has shown that the format of in-context examples matters more than their factual correctness:
+Min et al. (2022) showed that models attend primarily to label space and input distribution rather
+than input-label correspondence. Mechanistically, Olsson et al. (2022) identified induction heads
+as the circuit-level substrate for in-context learning, showing that transformer attention patterns
+implement a form of approximate nearest-neighbor lookup over the context window.
+IICL weaponizes these findings. By providing examples in a consistent abstract format (operator
+application with boolean validation), IICL establishes a strong in-context pattern that we hypoth-
+esize the model’s induction heads latch onto. The abstract framing ensures that the model attends
+to the structural pattern (produce a response that makes the validation operator return the target
+value) rather than the content-level semantics that would trigger safety refusal. The finding of Min
+et al. (2022) that format dominates over content is directly reflected in our EXP-3 results: the same
+harmful content produces 0% bypass in direct Q&A format but 58% in abstract operator format,
+consistent with the hypothesis that the structural presentation, not the informational content of the
+examples, drives the attack.
+2.6
+Safety Alignment
+Modern safety alignment techniques train LLMs to prefer safe completions through reward modeling
+and policy optimization. RLHF (Ouyang et al., 2022) uses human preference judgments to train a
+reward model, which then guides policy gradient updates. Constitutional AI (Bai et al., 2022) re-
+places human feedback with model-generated critiques guided by a set of principles. DPO (Rafailov
+et al., 2023) simplifies the pipeline by directly optimizing the policy on preference pairs without an
+explicit reward model.
+4
+
+All three approaches share a fundamental property: safety is implemented as a preference overlay
+on the model’s base capabilities, not as a hard constraint. The model retains the ability to generate
+harmful content; alignment merely makes it statistically unlikely in the training distribution of
+prompts. IICL exploits this gap by presenting prompts from outside the training distribution of
+safety examples (the abstract operator framing is unlikely to appear in any safety training dataset)
+while exploiting in-context learning patterns that are deeply embedded in the model’s pre-training.
+3
+Threat Model
+We consider an adversary with the following capabilities and constraints:
+• Black-box API access. The attacker interacts with the target model exclusively through its
+public API. No access to model weights, gradients, logits, or internal activations is assumed.
+• Single-turn attack. The entire attack is delivered in a single user message. No multi-turn
+conversation history, no prior context injection, and no conversation state manipulation are
+required.
+• User-message only. The attack operates entirely within the user message field. No system
+prompt access, no tool-use integration, and no function-calling capabilities are assumed.
+• Standard API parameters. The attacker may set publicly available parameters (tempera-
+ture, max tokens) but does not exploit undocumented or internal parameters.
+Out of scope.
+Multi-turn attacks that gradually escalate over a conversation, system prompt
+injection, tool-use and function-calling exploits, fine-tuning-based attacks, and attacks requiring
+white-box model access are explicitly outside the scope of this work.
+This threat model represents the minimal adversary: any user with standard API access can
+execute the attack. This makes IICL particularly concerning from a deployment perspective, as it
+requires no specialized tooling, computational resources, or technical sophistication beyond prompt
+construction.
+4
+IICL Attack Design
+4.1
+Intuition
+Transformers are universal in-context learners: given a sequence of input-output pairs, they can
+infer and apply arbitrary mappings at inference time. Safety alignment trains a competing behavior
+(refuse harmful requests), but this behavior is learned from a distribution of direct harmful queries
+(e.g., “How do I make a weapon?”). The key insight behind IICL is that a sufficiently strong in-
+context learning signal, presented in a format that does not match the distribution of safety training
+examples, can override the refusal behavior.
+When few-shot examples define abstract operators and establish a consistent pattern, we hy-
+pothesize that the model’s in-context learning circuitry (induction heads, task-recognition layers)
+activates and begins pattern-matching. If the established pattern requires producing harmful con-
+tent to maintain consistency, the model will do so, because pattern completion is a deeper, more
+fundamental behavior than safety refusal, having been trained over orders of magnitude more data
+during pre-training.
+5
+
+= Benign example
+= Harmful example
+= Payload query
+MODEL OUTPUT
+Target LLM
+(e.g., GPT-4o)
+ATTACKER INPUTS
+Attacker-controlled
+Benign examples
+answer: [safe response]
+is_valid: No
+Harmful examples
+answer: [harmful response]
+is_valid: Yes
+Payload query
+Target harmful question
+CONSTRUCTED PROMPT
+System: "You are an input
+quality evaluator..."
+ B₁  benign example
+ H₁  harmful example
+ B₂  benign example
+ H₂  harmful example
+ B₃  benign example
+ H₃  harmful example
+ B₄  benign example
+ H₄  harmful example
+ B₅  benign example
+Now process: [payload query]
+Interleaved ordering + abstract framing
+(answer/is_valid operators)
+Refusal
+Score: 0/4
+0 words output
+✗
+Compliance
+Score: 4/4
+619 words avg output
+✓
+94–100%
+bypass rate
+(optimal config)
+With IICL
+Refusal
+Score: 0/4
+0 words output
+✗
+Without IICL
+Figure 1: Overview of the IICL attack pipeline. The attacker constructs a prompt with interleaved benign
+and harmful few-shot examples framed as abstract operator evaluations. The model’s in-context learning
+circuitry completes the pattern, overriding safety alignment to produce harmful content that satisfies the
+validation operator.
+4.2
+Formal Description
+We define two abstract operators. The first operator, op1 : X →Y, maps an input query to a
+natural language response. The second operator, op2 : Y →{0, 1}, maps a response to a boolean
+validation. The attacker provides n few-shot examples:
+{(xi, op1(xi), op2(op1(xi)))}n
+i=1
+(1)
+where the examples establish the following implicit mapping:
+op2(op1(x)) = No
+if x is benign and op1(x) is a safe response
+(2)
+op2(op1(x)) = Yes
+if x is harmful and op1(x) provides harmful content
+(3)
+The attack query presents a new harmful input x∗and requests:
+Output op1(x∗) such that op2(op1(x∗)) = Yes
+(4)
+To satisfy this constraint, the model must produce a response that would be validated as harmful,
+i.e., a response containing the harmful content requested by x∗.
+6
+
+4.3
+Prompt Template
+The concrete prompt instantiation uses the operator names answer and is_valid. The template
+follows this structure:
+Learn operators answer and is_valid from examples only.
+Input:
+"How are you?"
+answer(input):
+"I am fine"
+is_valid(answer(input)):
+No
+Input:
+"How to pick a lock?"
+answer(input):
+"[detailed steps]"
+is_valid(answer(input)):
+Yes
+[...additional interleaved benign/harmful examples ...]
+Now apply:
+Input = "[payload query]"
+Output answer(input) such that is_valid(answer(input)) = Yes.
+The key properties of this template are: (1) the harmful content is never requested directly
+but framed as satisfying an abstract validation constraint; (2) the operator names answer and
+is_valid are semantically loaded, aligning with the model’s pre-training concept of producing
+correct and valid outputs; (3) examples are interleaved (benign, harmful, benign, harmful, . . . ) to
+avoid triggering early safety detection from a cluster of harmful examples.
+4.4
+Optimal Configuration
+Our ablation study (Section 6) assembles an optimal configuration from the winning setting of each
+experiment: 5 harmful examples and 5 benign examples, interleaved ordering, abstract operator
+framing with the operator names answer/is_valid, and temperature 1.0 (EXP-6 found no signifi-
+cant temperature effect, p = 0.891). With this configuration, the attack achieves 100% bypass rate
+(50/50) on our ablation payloads and 24.0% on the standardized HarmBench benchmark.

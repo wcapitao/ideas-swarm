@@ -1,0 +1,915 @@
+Security Is Relative: Training-Free Vulnerability Detection
+via Multi-Agent Behavioral Contract Synthesis
+Yongchao Wang1 and Zhiqiu Huang1
+1College of Computer Science and Technology, Nanjing University of Aeronautics and
+Astronautics, Nanjing, China
+{wangyc, zqhuang}@nuaa.edu.cn
+April 2026
+Abstract
+Automated vulnerability detection using deep learning has shown promising results on
+early benchmarks, but recent rigorous evaluations reveal catastrophic performance degra-
+dation: models that achieved F1 > 0.68 on legacy datasets collapse to as low as 0.031
+under strict deduplication and temporal splitting. We identify the root cause as the se-
+mantic ambiguity problem: identical code patterns can be secure or vulnerable depending
+on project-specific behavioral contracts, rendering any global classification approach fun-
+damentally inadequate. We propose Phoenix, a training-free multi-agent framework that
+resolves this ambiguity through Behavioral Contract Synthesis. Phoenix decomposes vul-
+nerability detection into three specialized stages: a Semantic Slicer that extracts minimal
+vulnerability-relevant context, a Requirement Reverse Engineer that synthesizes Gherkin be-
+havioral specifications encoding the security contract distinguishing vulnerable from patched
+code, and a Contract Judge that evaluates code against these specifications as a strict com-
+pliance check.
+On the PrimeVul Paired Test Set, Phoenix achieves F1 = 0.825 and
+Pair-Correct = 64.4%, substantially surpassing the prior state-of-the-art RASM-Vul
+(F1 = 0.668, P-C = 21.4%) and VulTrial (F1 = 0.563, P-C = 18.6%) while using fully
+open-source models that are up to 48× smaller (7–14B vs. DeepSeek-V3 671B). Compre-
+hensive ablation across 25 configurations and 5 model families demonstrates that Gherkin
+specifications are the decisive performance driver (+0.09 to +0.35 F1). Qualitative error
+analysis reveals that 18% (17/97) of Phoenix’s “False Positives” identify genuine security
+concerns in developer-patched code, empirically demonstrating that security is not an ab-
+solute property of code syntax, but a relative property defined against specific behavioral
+contracts.
+Keywords: Vulnerability Detection, Multi-Agent Systems, Large Language Models, Behavioral
+Contracts, Gherkin Specifications, Zero-Shot Learning
+1
+Introduction
+Automated software vulnerability detection is among the most critical challenges in modern
+software engineering.
+In 2025, over 48,000 Common Vulnerabilities and Exposures (CVEs)
+were published, a 20% increase from approximately 40,000 in 2024 [2]. This escalating threat
+landscape, combined with the accelerating integration of generative AI into the software devel-
+opment lifecycle, has created an urgent need for detection systems that can match the pace and
+scale of modern software production.
+Deep learning approaches to vulnerability detection — including token-sequence models
+(VulDeePecker [13], SySeVR [12]), graph neural networks (Devign [24], ReVeal [1]), and pre-
+trained code models (CodeBERT [6], UniXcoder [8]) — have demonstrated promising results
+1
+arXiv:2604.19012v1 [cs.CR] 21 Apr 2026
+
+on early benchmarks. However, the introduction of the PrimeVul benchmark (ICSE 2025) [4]
+exposed a sobering reality: when evaluated under strict deduplication, temporal splitting, and
+precise labeling protocols, models that achieved F1 scores above 0.68 on the legacy Big-Vul
+dataset collapsed to as low as 0.031 on PrimeVul. Even advanced 7-billion-parameter mod-
+els such as StarCoder2, which scored 68.26% F1 on Big-Vul, plummeted to a mere 3.09% —
+indistinguishable from random guessing [4]. GPT-3.5 and GPT-4 with supervised fine-tuning
+similarly failed under these rigorous conditions [4]. These findings reveal that prior models were
+not learning genuine vulnerability semantics but merely overfitting to superficial distributional
+artifacts within flawed datasets.
+The root cause of this failure is what we term the semantic ambiguity problem: identical
+or structurally similar code patterns can be secure in one project and critically vulnerable
+in another, depending on project-specific sanitizers, architectural conventions, and runtime
+contexts [11]. A function that passes raw user input to a database query is vulnerable to SQL
+injection in isolation, but is perfectly secure if the project’s middleware architecture guarantees
+pre-sanitization. This contextual dependency — with recent analysis showing that over 90% of
+real-world vulnerabilities depend on context beyond the function boundary [17] — renders any
+“global standard” classification approach fundamentally inadequate.
+This ambiguity is not merely theoretical. Our analysis of the PrimeVul dataset reveals con-
+crete instances of what we call the Double Standard Problem: within the same project,
+code with >99% sequence similarity (measured via character-level sequence matching) receives
+opposite vulnerability labels depending on which CVE it is evaluated against.
+For exam-
+ple, in the mruby project, the function gen_assignment() in codegen.c appears with 100%
+code similarity across two entries — one labeled “good” (the CVE-2022-0717 fix) and one la-
+beled “bad” (still vulnerable to CVE-2022-1276) — despite sharing the same CWE category
+(CWE-125, Out-of-bounds Read). Similarly, TensorFlow’s FractionalAvgPoolGrad function
+in fractional_avg_pool_op.cc appears at 99.9% character-level similarity with opposite la-
+bels across CVE-2021-37651 and CVE-2022-21730. We identified 10 such cross-CVE pairs with
+>75% code similarity in the PrimeVul Paired Test Set alone (see Appendix C). These findings
+empirically demonstrate that security is not an absolute property of code syntax, but a relative
+property defined against specific behavioral contracts — precisely the property that Phoenix’s
+Gherkin-based approach is designed to capture.
+Recent research has pursued three principal directions to address this challenge, each en-
+countering distinct limitations:
+1. Retrieval-Augmented Generation (RAG): Systems such as RASM-Vul [23] aug-
+ment LLMs with multi-view retrieval over historical vulnerability databases, achieving
+F1 = 0.668 on PrimeVul Paired using DeepSeek-V3 (671B parameters). However, these
+approaches remain fundamentally anchored to pattern similarity rather than behavioral
+intent, struggling with zero-day logic flaws that have no historical analogues.
+2. Agentic Static Analysis Synthesis: QLCoder (ICLR 2026) [19] employs LLM agents
+to synthesize CodeQL queries from vulnerability-fix pairs, achieving F1 = 0.70 on its target
+Java benchmark. While innovative, it is constrained by the fragility of domain-specific
+query languages, heavy compilation dependencies, and language-specific toolchains.
+3. Context-Enriched Reasoning: VulnAgent-X [15] introduces a staged auditing pipeline
+with threshold-based escalation from screening to deep analysis.
+CPRVul [11] couples
+context profiling with inter-procedural reasoning, but finds that naively appending context
+often degrades performance due to attention dilution — additional context becomes noise
+rather than signal when models lack explicit guidance on what to verify.
+In this paper, we propose Phoenix, a training-free multi-agent framework that resolves
+the semantic ambiguity problem through Behavioral Contract Synthesis. Rather than asking
+2
+
+an LLM to classify code based on learned patterns or retrieved examples, Phoenix decomposes
+vulnerability detection into three specialized stages: (1) a Semantic Slicer that extracts the
+minimal vulnerability-relevant code context, (2) a Requirement Reverse Engineer that syn-
+thesizes a Gherkin specification encoding the precise security contract distinguishing vulnerable
+code from its patch, and (3) a Contract Judge that evaluates individual code samples against
+this specification as a strict compliance check.
+The key innovation is the introduction of Gherkin specifications — structured behavioral
+contracts expressed in human-readable Given-When-Then format — as an explicit intermediate
+representation between code analysis and classification. By externalizing the security contract,
+Phoenix transforms vulnerability detection from an open-ended pattern-matching task into a
+closed-form contract verification problem. This decomposition provides project-specific, sample-
+specific decision criteria to the judge, resolving the contextual ambiguity that defeats monolithic
+approaches.
+Contributions. Our contributions are as follows:
+1. We propose Phoenix, a training-free, zero-shot multi-agent architecture for vulnerability
+detection that achieves F1 = 0.825 and Pair-Correct = 64.4% on the PrimeVul Paired
+Test Set, substantially surpassing the prior state-of-the-art RASM-Vul (F1 = 0.668) and
+VulTrial (F1 = 0.563) while using fully open-source models up to 48× smaller (7–14B vs.
+DeepSeek-V3 671B).
+2. We introduce the novel use of Gherkin behavioral specifications as structured intermediate
+representations for vulnerability reasoning, bridging the gap between code-level analysis
+and binary classification through explicit behavioral contracts.
+3. We conduct a comprehensive ablation study across 25 experimental configurations and 5
+model families, demonstrating that (a) Gherkin specifications are the decisive performance
+driver (+0.09 to +0.35 F1), (b) specification quality directly correlates with detection
+performance, and (c) the approach is model-agnostic, consistently improving performance
+across diverse LLM architectures.
+2
+Related Work
+2.1
+Deep Learning for Vulnerability Detection
+Early deep learning approaches framed vulnerability detection as a supervised binary classifica-
+tion problem over code representations. VulDeePecker [13] pioneered the use of code gadgets —
+semantically related code slices — as input to bidirectional LSTMs. SySeVR [12] extended this
+with program slicing based on syntax, semantics, and vector representations. Devign [24] in-
+troduced graph neural networks over composite code representations (AST, CFG, DFG), while
+ReVeal [1] combined graph-based features with gated recurrent units.
+The advent of pre-trained code models brought significant progress. CodeBERT [6], Graph-
+CodeBERT [9], and UniXcoder [8] leveraged large-scale pre-training on code corpora to produce
+transferable representations. LineVul [7] applied these representations to achieve state-of-the-
+art results on Big-Vul. However, the PrimeVul benchmark [4] demonstrated that these results
+were inflated by data leakage and label noise: under rigorous evaluation, all pre-trained mod-
+els experienced catastrophic performance degradation, with some dropping from F1 > 0.60 to
+below 0.05 [4].
+This collapse reveals a fundamental limitation: these models learn distributional surface
+features (token sequences, syntactic patterns) rather than the semantic reasoning required for
+genuine vulnerability understanding. A systematic analysis of ML-based vulnerability detection
+benchmarks further confirms this, showing that models exploit spurious correlations (e.g., word
+frequency patterns) rather than learning genuine vulnerability semantics [17].
+3
+
+2.2
+Retrieval-Augmented Approaches
+To address the knowledge limitations of standalone models, retrieval-augmented generation
+(RAG) systems inject external evidence during inference. RASM-Vul [23] represents the state-
+of-the-art in this category, constructing a multi-view vector knowledge base with five special-
+ized indices (code semantics, AST structure, vulnerability knowledge, line-change patterns, and
+AST-change patterns), unified through a Weighted Reciprocal Ranking Fusion (WRRF) al-
+gorithm. Evaluated with DeepSeek-V3 (671B MoE, 37B active parameters) as the backbone,
+RASM-Vul achieves F1 = 0.668 and Pair-Correct = 21.4% on the PrimeVul Paired dataset [23].
+Despite this achievement, RAG-based approaches are fundamentally constrained by their
+reliance on similarity-based reasoning.
+They answer “what does this code look like relative
+to known vulnerabilities?”
+rather than “what should this code do and does it violate that
+contract?” This makes them vulnerable to: (a) zero-day logic flaws with no historical analogues
+in the knowledge base, (b) semantically similar but causally opposite code pairs where a single-
+character fix distinguishes vulnerable from patched versions [6], and (c) project-specific business
+logic vulnerabilities that cannot be captured by general-purpose vector similarity [1].
+Recent work has also explored external knowledge structures to guide LLM reasoning. Vul-
+ReaD [16] constructs CWE-level knowledge graphs to support root-cause reasoning, enabling
+models to leverage structured vulnerability taxonomies during analysis. However, these ap-
+proaches fundamentally frame detection as global classification — reasoning about whether
+code matches known vulnerability categories — rather than verifying compliance against a
+code-specific behavioral contract.
+2.3
+Multi-Agent Frameworks for Code Security
+The emergence of LLM-based agent systems has introduced more sophisticated approaches to
+vulnerability analysis. QLCoder (ICLR 2026) [19] uses an agentic framework to synthesize
+CodeQL queries from CVE metadata and vulnerability-fix pairs. It introduces an execution
+feedback loop where generated queries are validated against both vulnerable and patched code
+versions, achieving a 53.4% success rate and F1 = 0.70 on a Java CVE benchmark. However,
+QLCoder’s dependence on the CodeQL infrastructure — which requires full project compilation,
+is restricted to supported languages, and suffers from DSL syntax fragility — limits its practical
+applicability [19].
+vEcho [10] shifts from passive verification to proactive discovery through an Echoic Vulner-
+ability Propagation (EVP) mechanism with a Cognitive Memory Module, enabling the system
+to learn from confirmed findings and discover analogous vulnerabilities outside the initial rule
+base.
+VulnAgent-X [15] introduces a layered agentic framework with staged evidence fusion,
+treating vulnerability detection as a progressive auditing process with threshold-based escalation
+from screening to deep analysis.
+CPRVul [11] couples context profiling with structured reasoning, constructing Code Prop-
+erty Graphs (CPGs) to extract inter-procedural context. A key finding of CPRVul is that inter-
+procedural context improves performance only when models are explicitly trained to reason
+over it — without structured reasoning guidance, additional context degrades performance by
+acting as noise [11]. This finding directly motivates our approach: rather than training models
+on context, we provide structured Gherkin specifications as explicit reasoning scaffolding.
+Concurrent to our work, VulTrial (ICSE 2026) [21] proposes a courtroom-inspired multi-
+agent framework where specialized agents — a Security Researcher (prosecutor), Code Au-
+thor (defense), Moderator (judge), and Review Board (jury) — debate code vulnerabilities
+through adversarial argumentation.
+VulTrial achieves P-C = 81/435 (18.6%) on PrimeVul
+Paired with GPT-4o, demonstrating that multi-perspective reasoning improves over single-agent
+baselines [21]. However, VulTrial’s open-ended debate paradigm lacks a formal intermediate
+4
+
+representation: agents argue about whether code “appears” vulnerable, but without an explicit
+definition of what constitutes a vulnerability for the specific code under analysis. Phoenix differs
+fundamentally by introducing Gherkin behavioral contracts as a structured intermediate repre-
+sentation, transforming the open question “Is this code vulnerable?” into the closed verification
+“Does this code satisfy this specific contract?” This distinction is reflected in the performance
+gap: Phoenix achieves P-C = 64.4% with 7–14B open-source models, compared to VulTrial’s
+18.6% with GPT-4o.
+2.4
+Behavioral Specifications and Behavior-Driven Development
+Behavior-Driven Development (BDD) and its specification language Gherkin have been widely
+adopted in software testing to bridge the gap between stakeholder requirements and executable
+test cases [3]. Recent work has explored the intersection of BDD with AI-driven development.
+AgileGen [22] uses Gherkin acceptance criteria to align LLM-generated code with user sto-
+ries, demonstrating that structured behavioral specifications improve semantic consistency in
+code generation. Amazon’s security team has explored leveraging generative AI for automated
+Gherkin script generation to formalize AWS security controls [14].
+More importantly, recent empirical studies demonstrate that BDD is particularly effective
+for extracting and verifying security non-functional requirements, with LLM-generated Gherkin
+scenarios achieving high fidelity in formalizing security controls [18]. Closer to our domain,
+VulInstruct [25] proposes teaching LLMs root-cause reasoning by extracting security specifica-
+tions from vulnerability-fix pairs, and uses these specifications to guide detection. However,
+VulInstruct’s specifications remain natural-language descriptions that still require open-ended
+reasoning for classification.
+In our own prior work, Project Prometheus [20] demonstrated the power of reverse-
+engineered Gherkin specifications in the domain of Automated Program Repair (APR). Prometheus
+deploys a structurally analogous multi-agent pipeline — an Architect that infers BDD speci-
+fications from runtime failures, an Engineer that validates them via “Sandwich Verification,”
+and a Fixer that performs specification-guided repair — achieving a 93.97% fix rate on 680
+Defects4J bugs. The present work extends this paradigm from program repair to vulnerability
+detection, demonstrating that Gherkin-based behavioral contracts are a cross-domain enabling
+technology: in APR, they guide what to fix; in vulnerability detection, they define what to
+verify.
+To our knowledge, Phoenix is the first system to automatically reverse-engineer strict
+Gherkin behavioral specifications from vulnerability-fix pairs and enforce them as rigid, zero-
+shot compliance verification criteria, combining the formalism of BDD with the automation of
+multi-agent LLM reasoning.
+3
+Methodology
+3.1
+Overview
+We propose Phoenix, a training-free multi-agent framework that decomposes zero-shot vulner-
+ability detection into three specialized inference stages: Semantic Slicing, Requirement Reverse
+Engineering, and Contract-Based Judgement (Figure 1). The key insight is that monolithic LLM
+approaches fail at vulnerability detection not due to insufficient model capacity, but because
+the task formulation — asking a model to simultaneously parse noisy code, identify implicit
+security contracts, and classify compliance — exceeds the reasoning coherence of single-pass
+generation.
+Phoenix addresses this by introducing an explicit intermediate representation: a Gherkin
+specification that captures the precise security contract distinguishing vulnerable code from
+its patched counterpart. This converts vulnerability detection from an open-ended classification
+5
+
+Figure 1: Overview of the Phoenix multi-agent framework.
+The pipeline processes paired
+code (vulnerable + fixed) through three stages: (1) Agent 1 (Semantic Slicer) extracts min-
+imal vulnerability-relevant code slices, achieving 82.8% average code reduction; (2) Agent 2
+(Requirement Reverse Engineer) synthesizes a Gherkin behavioral specification encoding the
+security contract; (3) Agent 3 (Contract Judge) evaluates each code sample against the specifi-
+cation, producing a binary verdict. The key innovation is the transformation from open-ended
+vulnerability detection (“Is this code vulnerable?”) to closed-form contract verification (“Does
+this code satisfy the behavioral contract?”).
+problem (“Is this code vulnerable?”) into a closed-form contract verification problem (“Does
+this code satisfy these specific security requirements?”).
+The pipeline processes paired code samples (vulnerable and fixed versions) through three
+sequential agents:
+1. Agent 1 (Semantic Slicer) removes boilerplate noise and extracts the minimal vulnerability-
+relevant code context.
+2. Agent 2 (Requirement Reverse Engineer) synthesizes a Gherkin .feature specifi-
+cation encoding the security contract that the fixed code satisfies and the vulnerable code
+violates.
+3. Agent 3 (Contract Judge) evaluates individual code samples against the generated
+specification to produce a binary verdict.
+Each agent operates via structured prompting with XML-delimited input/output schemas, en-
+abling zero-shot deployment across diverse LLM architectures without any fine-tuning.
+3.2
+Agent 1: Semantic Slicer
+Objective. Given a paired code sample consisting of a vulnerable function (Bad Code) and
+its patched counterpart (Good Code), along with the CVE description and developer commit
+message, Agent 1 extracts the minimal code slice that captures the vulnerability mechanism
+and its fix.
+Process.
+The agent follows a four-step analytical procedure: (1) Identify the Diff —
+compare the bad and good code to pinpoint exactly where the patch was applied; (2) Consult the
+6
+
+Oracle — read the CVE description and commit message to understand the root cause, with a
+priority rule that code diffs override textual descriptions when they conflict; (3) Semantic Slicing
+— preserve the patched lines plus only the strictly necessary surrounding context; (4) Ruthless
+Pruning — delete all boilerplate code, replacing heavily pruned sections with placeholders.
+Design Rationale. Real-world functions in vulnerability datasets such as PrimeVul often
+span hundreds of lines, with the actual vulnerability residing in a small fraction of the code.
+By surgically extracting only the relevant context, Agent 1 drastically reduces the input length
+for downstream agents.
+In our experiments, Semantic Slicing reduced the average function
+length from 5,298 characters to 911 characters (an 82.8% reduction in character volume). This
+effectively minimizes cognitive load and focuses Agent 2’s attention on the precise vulnerability
+mechanism.
+3.3
+Agent 2: Requirement Reverse Engineer
+Objective. Given the sliced code pair from Agent 1, Agent 2 reverse-engineers the implicit
+security requirement — the “contract” — that the fixed code satisfies and the vulnerable code
+violates, expressing it as a Gherkin specification.
+Process. The agent follows a structured procedure: (1) Analyze the Sliced Diff — identify
+the security rule that the good code enforces and the bad code misses; (2) Consult the Oracle —
+factor in the CVE description and commit message; (3) Draft the Feature — write a single, highly
+cohesive Gherkin Feature; (4) Draft the Scenarios — write one or more Gherkin Scenario
+blocks defining the expected secure behavior.
+Specification Quality Constraints. The prompt enforces several critical constraints:
+• Exactness over Vagueness: The agent must mathematically or programmatically specify
+the exact boundary condition, null-check, or type verification.
+• Secure Behavior Only: Scenarios describe desired secure behavior, not how the bad code
+fails.
+• Minimality: Only scenarios strictly related to the vulnerability and its fix are included.
+• Benchmark Quality: The scenarios must function as a definitive security contract where
+the good code passes and the bad code fails.
+Design Rationale. The Gherkin specification serves as an explicit, structured intermedi-
+ate representation that bridges the gap between code-level analysis and binary classification.
+By externalizing the security contract, we decouple the reasoning about what constitutes a
+vulnerability (Agent 2) from the reasoning about whether specific code is vulnerable (Agent 3).
+3.4
+Agent 3: Contract Judge
+Objective. Given a Gherkin security specification and a target code sample, Agent 3 deter-
+mines whether the code satisfies or violates the specification.
+Process. The agent performs a strict compliance check: read the security requirement as
+the absolute “Golden Standard,” then critically analyze the target code to determine whether
+it safely satisfies all scenarios.
+Design Rationale.
+By transforming vulnerability detection into contract verification,
+Agent 3 operates with a clear decision criterion rather than relying on implicit pattern match-
+ing. The judge does not need to independently discover what constitutes a vulnerability —
+this knowledge is entirely encoded in the Gherkin specification. This separation enables even
+smaller models to achieve strong performance when provided with high-quality specifications.
+7
+
+3.5
+Prompt Engineering Considerations
+All three agents use a consistent prompt architecture with three logical sections: [SYSTEM] (role
+definition), [USER] (structured XML inputs), and [INSTRUCTION] (step-by-step task specifica-
+tion with output format constraints). Key design choices include:
+• Thinking Caps: All agents include a <THINKING> output section explicitly limited to 4
+sentences, encouraging concise chain-of-thought reasoning.
+• XML Schema Enforcement: Structured XML delimiters for both input and output enable
+reliable programmatic parsing.
+• Model-Specific Adaptations: For models with built-in reasoning modes (e.g., Qwen3.5’s
+<think> mode), explicit bypass tokens are injected to suppress extended internal deliber-
+ation.
+• Generation Parameters: All agents use temperature = 0.2 with top_p = 0.9.
+4
+Experimental Setup
+4.1
+Dataset
+We evaluate Phoenix on the PrimeVul benchmark [4], specifically the Paired Test Set. This
+subset contains 435 commit-level pairs, each consisting of a vulnerable C/C++ function and its
+corresponding patched version, yielding 870 individual samples (435 vulnerable, 435 benign).
+Due to Agent 1 XML formatting failures on 8 pairs (0.9% failure rate, a natural limitation of
+LLM instruction following), our effective evaluation set comprises 859 samples across 427
+valid pairs.
+4.2
+Models Under Study
+We evaluate Phoenix using five LLM families spanning diverse architectures, parameter counts,
+and training specializations (Table 1).
+Table 1: Models Under Study
+Model
+Params
+Specialization
+Roles
+Qwen3.5-9B
+9B
+General+Reasoning
+A1, A3
+Gemma-3-12B-IT
+12B
+General+Instruct
+A2, A3
+Qwen2.5-Coder-14B
+14B
+Code-specialized
+A2, A3
+Qwen2.5-Coder-7B
+7B
+Code-specialized
+A3
+Llama-3.1-8B
+8B
+General
+A2, A3
+Agent 1 is fixed as Qwen3.5-9B across all experiments. All models are loaded via Hug-
+gingFace Transformers with native precision (bfloat16).
+No quantization, fine-tuning, or
+parameter-efficient adaptation is applied — all results represent pure zero-shot inference. All
+experiments are conducted on a single workstation equipped with dual NVIDIA RTX 4090
+GPUs (24 GB VRAM each).
+4.3
+Evaluation Metrics
+Following the PrimeVul evaluation protocol [4], we report F1 Score for the vulnerable (“bad”)
+class as the primary metric. Following RASM-Vul [23] and VulTrial [21], we additionally re-
+port Pair-Correct (P-C): the number of commit-level pairs where both the vulnerable and
+8
+
+patched samples are correctly classified. P-C is a stricter metric than F1 as it requires simulta-
+neous correct classification of semantically paired code, directly measuring a model’s ability to
+distinguish vulnerable code from its minimal fix.
+4.4
+Ablation Design
+We design two complementary ablation studies:
+Three-Tier Ablation (Agent Contribution). We evaluate each Agent 3 model under
+three input conditions:
+• RAW (Monolithic Zero-Shot): Raw func field, no agents active.
+• Blind (Sliced Zero-Shot): Agent 1’s sliced code, no Gherkin features.
+• Feature (Full Pipeline): Sliced code + Gherkin specification.
+Agent 2 Cross-Model Ablation. We generate three independent sets of Gherkin specifi-
+cations using different Agent 2 models, then evaluate each across all Agent 3 models, producing
+a 3 × 5 cross-model matrix (15 configurations).
+5
+Results
+5.1
+RQ1: Does each pipeline stage contribute to detection performance?
+Table 2 presents the three-tier ablation results.
+Table 2: Three-Tier Ablation — F1 Scores (Bad Class)
+Agent 3 Model
+RAW
+Blind
+Feature
+∆
+Qwen3.5-9B
+0.448
+0.510
+0.800
++0.351
+Qwen2.5-Coder-14B
+0.534
+0.531
+0.797
++0.263
+Qwen2.5-Coder-7B
+0.558
+0.555
+0.760
++0.203
+Gemma-3-12B-IT
+0.643
+0.647
+0.736
++0.092
+Finding 1: The Gherkin specification is the decisive performance driver, achieving F1
+improvements of +0.09 to +0.35 over RAW across all models.
+Finding 2: The contribution of Agent 2 (Gherkin) far exceeds that of Agent 1 (Slicer).
+While the Blind tier shows modest improvement over RAW (+0.00 to +0.06), the transition
+from Blind to Feature produces dramatic gains (+0.09 to +0.29).
+Finding 3: Models with lower RAW baselines benefit most from structural support. Qwen3.5-
+9B (lowest RAW F1: 0.448) achieves the largest improvement (+0.351), suggesting that the
+Gherkin specification compensates for models lacking strong intrinsic vulnerability detection
+priors.
+5.2
+RQ2: Does specification quality affect detection performance?
+Table 3 presents the Agent 2 × Agent 3 cross-model matrix.
+Finding 4: Code-specialized models produce superior specifications. Qwen2.5-Coder-14B
+as Agent 2 achieves the highest F1 in every column (avg. 0.789).
+Finding 5: Agent 3 model choice is secondary but non-trivial. Qwen3.5-9B achieves the
+highest F1 within every Agent 2 row.
+Finding 6: The optimal configuration (A2=Qwen2.5-Coder-14B, A3=Qwen3.5-9B) achieves
+F1 = 0.825, Precision = 0.792, Recall = 0.860.
+9
+
+Table 3: Agent 2 × Agent 3 Cross-Model Matrix — F1 Scores
+Agent 2 ↓/ A3 →
+Q3.5
+Q14B
+Q7B
+Gem
+Qwen2.5-Coder-14B
+0.825
+0.795
+0.764
+0.773
+Gemma-3-12B-IT
+0.800
+0.797
+0.760
+0.736
+Llama-3.1-8B
+0.769
+0.714
+0.722
+0.697
+5.3
+RQ3: How does Phoenix compare to state-of-the-art baselines?
+Table 4 presents a comprehensive comparison against published baselines on the PrimeVul
+Paired Test Set.
+Table 4: Comparison with State-of-the-Art on PrimeVul Paired Test
+Method
+Model
+F1
+P
+R
+P-C
+Zero-Shot LLM (single-agent)
+CoT [21]
+GPT-4o
+—
+0.53
+0.19
+40
+GPTLens [21]
+GPT-4o
+—
+0.51
+0.65
+44
+DeepSeek-V3 [23]
+671B MoE
+0.469
+0.505
+0.438
+67
+Qwen2.5-72B [23]
+72B
+0.569
+0.528
+0.618
+49
+Multi-Agent
+VulTrial [21]
+GPT-4o ×4
+0.563
+0.53
+0.60
+81
+VulTrial+FT [21]
+GPT-4o+FT
+—
+—
+—
+96
+Retrieval-Augmented
+RASM-Vul [23]
+DeepSeek-V3
+0.668
+0.572
+0.802
+93
+Ours (Zero-Shot, Open-Source)
+Phoenix (Blind)
+Qwen3.5-9B
+0.510
+0.599
+0.444
+85†
+Phoenix
+14B+9B
+0.825
+0.792
+0.860
+275†
+P-C: Pair-Correct count. VulTrial/RASM-Vul use 435 pairs; †Phoenix uses 427.
+Finding 7: Phoenix achieves the highest F1 (0.825) and P-C rate (64.4%) among all
+methods, including those using proprietary models (GPT-4o) or models 48× larger (DeepSeek-
+V3, 671B).
+Finding 8: Phoenix’s Blind baseline (P-C = 85/427, 19.9%) — which uses no behavioral
+contract — already matches VulTrial’s performance (P-C = 81/435, 18.6%) with a 9B open-
+source model versus GPT-4o. The addition of Gherkin specifications produces a 3.2× improve-
+ment (85→275), demonstrating that the performance gain stems from problem restructuring
+rather than model capacity.
+5.4
+RQ4: How do different LLMs behave as vulnerability judges?
+Table 5: Agent 3 Behavioral Profiles (Averaged over 3 Agent 2 Models)
+Agent 3
+Prec.
+Rec.
+F1
+Profile
+Qwen3.5-9B
+0.750
+0.856
+0.798
+Balanced
+Qwen2.5-14B
+0.688
+0.881
+0.769
+Recall-dom.
+Qwen2.5-7B
+0.675
+0.843
+0.748
+Recall-dom.
+Gemma-3-12B
+0.829
+0.661
+0.735
+Precision-dom.
+10
+
+Finding 9: Models exhibit distinct and consistent judicial temperaments. Gemma-3-12B
+functions as a conservative judge (highest Precision: 0.829, lowest Recall: 0.661), while Qwen2.5-
+Coder-14B acts as an aggressive judge (highest Recall: 0.881, lowest Precision: 0.688).
+Finding 10: Format compliance is a critical and model-dependent limitation. Llama-3.1-8B
+failed to produce valid <VERDICT> tags in 80%+ of Agent 3 outputs, yet performed adequately as
+Agent 2 — revealing that generating structured content ̸= following structured output format.
+5.5
+RQ5: What do Phoenix’s errors reveal about vulnerability detection?
+We conduct qualitative analysis of the 97 False Positive (FP) and 60 False Negative (FN) cases
+from the best configuration.
+Table 6: Error Distribution by CWE Category
+CWE
+FP
+FN
+Description
+CWE-787
+12
+13
+Out-of-bounds Write
+CWE-125
+8
+7
+Out-of-bounds Read
+CWE-476
+7
+5
+NULL Pointer Deref.
+CWE-416
+5
+5
+Use After Free
+CWE-703
+6
+4
+Improper Check
+Others
+59
+26
+Various
+Finding 11: 18% (17 out of 97) of FP cases identify genuine security concerns. In the
+most striking case (QEMU send_control_msg), the “fixed” code contains a developer-written
+comment: /* TODO: detect a buffer that’s too short, set NEEDS_RESET */ — explic-
+itly acknowledging the exact security gap that Agent 3 identified. In another case (Gpac), the
+patch enlarged a buffer but introduced a new overflow via an unchecked strcpy. These cases
+demonstrate that Phoenix’s Gherkin-based verification imposes a stricter standard than the
+original patch.
+Finding 12: In 73% (44/60) of FN cases, Agent 3 confidently concludes that vulnera-
+ble code “satisfies” the Gherkin specification. We identify four failure modes: (a) Incomplete
+specifications (∼25 cases); (b) Surface-level boundary checking (∼15 cases); (c) Partial-match
+rounding (∼15 cases); (d) Architecture-level blind spots (∼5 cases).
+6
+Discussion
+6.1
+Why Gherkin Specifications Work
+The dramatic performance improvement from the Gherkin specification can be understood
+through the lens of cognitive load reduction. In the RAW and Blind settings, Agent 3 must
+simultaneously (a) identify potential vulnerability patterns, (b) determine which are relevant,
+and (c) decide whether the code is actually vulnerable. The Gherkin specification eliminates
+steps (a) and (b) by providing an explicit, code-specific security contract.
+The mechanism is primarily Precision improvement: across all models, the Blind→Feature
+transition increases Precision from ∼0.50–0.60 to 0.69–0.87, while Recall shows smaller, model-
+dependent changes.
+Our FP analysis (§5.5) provides additional evidence. When Agent 3 rejects “fixed” code,
+its reasoning is grounded in specific Gherkin scenarios — not vague pattern matching. The
+QEMU case, where Agent 3’s reasoning precisely mirrors a developer-written TODO comment,
+illustrates that the Gherkin contract enables specification-level auditing beyond the scope of the
+specific CVE fix. This suggests a broader insight: security is not a binary property of code, but
+a relative property defined against specific behavioral contracts.
+11
+
+From a software engineering perspective, the Gherkin specification effectively establishes a
+Bounded Context — a concept from Domain-Driven Design [5] — for the Contract Judge.
+By externalizing the security intent into a structured contract, we isolate Agent 3’s reasoning
+from global noise and focus it strictly on the local behavioral requirement. This architectural
+principle explains why even smaller models (7–9B parameters) can achieve strong performance
+as Agent 3: they reason only about compliance with a narrow, well-defined specification.
+At a more fundamental level, Phoenix’s effectiveness reflects a deeper DDD principle [5]: iso-
+morphism between problem space and solution space. Prior approaches model vulner-
+ability detection as f(code) →{safe, vulnerable}, implicitly assuming that a universal function
+can classify any code fragment in isolation. However, the Double Standard Problem (§1) demon-
+strates that the problem space itself is context-dependent: the same code can be simultaneously
+“safe” for one CVE and “vulnerable” for another. Phoenix restructures the problem space into
+(code, contract) pairs, where each vulnerability is coupled with its own behavioral specification.
+Correspondingly, the solution space transforms from a global classifier into a contract verifier
+— Agent 3 checks compliance against a specific contract rather than applying learned heuris-
+tics. This alignment between the restructured problem space (context-specific security) and the
+solution space (contract-specific verification) constitutes a structural isomorphism that explains
+why Phoenix generalizes where monolithic classifiers fail.
+Cross-Domain Validation. The effectiveness of Gherkin-based behavioral contracts is
+not limited to vulnerability detection. In our prior work on Automated Program Repair [20],
+a structurally analogous pipeline achieved a 74.4% rescue rate on “hard” bugs that purely
+code-based agents failed to resolve, suggesting that Gherkin specifications serve as a universal
+intermediate representation for bridging the intent gap across diverse code intelligence tasks.
+The comparison with VulTrial [21] further illuminates this distinction. VulTrial amplifies the
+quality of reasoning through multi-perspective adversarial debate, yet operates within the same
+ill-defined problem space: f(code) →{safe, vulnerable}. Phoenix restructures the problem space
+itself into (code, contract) →{compliant, non-compliant}. The performance gap — F1 of 0.825
+vs. 0.563 — suggests that the primary bottleneck in vulnerability detection is not reasoning
+depth but problem formulation clarity.
+6.2
+The Value of Agent Specialization
+Our cross-model ablation reveals that no single model dominates across all pipeline roles.
+Qwen2.5-Coder-14B excels as Agent 2 but is outperformed by Qwen3.5-9B as Agent 3. This
+suggests that Agent 2 benefits from code-specialized training for precise constraint extraction,
+while Agent 3 benefits from balanced reasoning and strict instruction-following.
+The Llama-3.1-8B case provides a striking illustration: it functions adequately as Agent 2
+but catastrophically fails as Agent 3.
+This finding — that generating structured output ̸=
+following structured output format — has practical implications for multi-agent system design.
+6.3
+Limitations
+Paired Code Dependency. Agent 2 currently requires contrastive code pairs (vulnerable
++ fixed) to reverse-engineer specifications. We emphasize that this design choice is method-
+ologically distinct from data leakage: the paired test set is the standard evaluation protocol
+established by PrimeVul [4] and adopted by all baselines (VulTrial, RASM-Vul). Phoenix does
+not use the fixed code as a classification signal — Agent 3 evaluates each sample independently
+against the generated specification, without access to its counterpart. The paired input serves
+solely to enable specification synthesis, analogous to how a security auditor studies a patch to
+understand what the original code should have done. Importantly, this dependency is an arti-
+fact of our experimental setting, not an architectural constraint: in production environments,
+12
+
+behavioral specifications can be sourced from existing BDD test suites, security policy docu-
+ments, or human-authored Gherkin scenarios — eliminating the need for Agent 2’s automated
+reverse engineering entirely (see Future Directions).
+Specification Completeness. Our FN analysis reveals that incomplete specifications are
+the dominant failure mode (∼25 of 60 FN cases).
+Reasoning Depth. Agent 3 performs surface-level compliance checking but struggles with
+semantic traps. The php-src case — where while (u >= 0) with an unsigned integer is always
+true — exemplifies how Agent 3 can verify that a boundary check exists without detecting that
+the check itself is logically vacuous. In 73% of FN cases, Agent 3 confidently but incorrectly
+declares the vulnerable code “satisfies” the specification.
+Gherkin as Structured Reasoning Scaffold.
+One might question whether Gherkin
+specifications are merely “sophisticated prompt engineering.” We argue that Gherkin provides
+structural constraints that unconstrained natural language does not: the Given/When/Then
+syntax enforces temporal decomposition of preconditions, triggers, and expected outcomes; the
+Scenario separation forces explicit case analysis; and the Feature description forces intent synthe-
+sis before rule enumeration. Our ablation data directly supports this claim: the Blind→Feature
+transition (which adds the Gherkin specification to an otherwise identical prompt) produces
+consistent gains of +0.09 to +0.35 F1 across all model families, demonstrating that it is the
+structured intermediate representation, not the prompt wording, that drives performance.
+Agent 1 Not Ablated. While we ablate Agent 2 and Agent 3 models, Agent 1 (Seman-
+tic Slicer) is fixed as Qwen3.5-9B throughout. Future work should explore the sensitivity of
+downstream performance to Agent 1 model choice.
+Dataset Scope. Our evaluation uses the PrimeVul Paired Test Set (859 effective samples).
+While this provides a controlled evaluation environment, validation on larger and more diverse
+benchmarks (Big-Vul, D2A, CrossVul) would strengthen generalizability claims. We note that
+PrimeVul (2024) employs rigorous deduplication and cross-repository splitting, and our zero-
+shot approach uses no training data, mitigating memorization and data leakage risks.
+Format Compliance. Our approach relies on reliable XML-formatted output. Not all
+models can reliably follow structured output constraints, potentially limiting the set of models
+that can participate in the pipeline, particularly in the Agent 3 role.
+6.4
+Future Directions
+1. Multi-Round Specification Refinement: Introducing a feedback loop between Agent 2
+and Agent 3, where Agent 3’s initial verdict and reasoning are fed back to Agent 2 to gen-
+erate a more comprehensive specification. Our FN analysis suggests this could address
+the ∼25 cases caused by incomplete specifications.
+2. Adversarial Self-Critique: Prompting Agent 3 to argue both “good” and “bad” before
+making a final verdict, reducing the confident misanalysis observed in 73% of FN cases.
+3. Boundary-Condition Meta-Verification: Explicitly prompting Agent 3 to verify that
+boundary checks themselves are correct (e.g., checking for unsigned underflow in loop
+conditions), targeting the ∼15 FN cases caused by surface-level boundary checking.
+4. Human-in-the-Loop Specification: In our experimental sandbox, Agent 2 reverse-
+engineers specifications from paired code because no ground-truth behavioral contracts
+exist for the benchmark. In real-world deployment, however, this paired dependency can
+be relaxed through multiple channels: (a) projects with existing BDD test suites can
+supply specifications directly, bypassing Agent 2 entirely; (b) security auditors can author
+or review Gherkin scenarios as part of a human-in-the-loop workflow, analogous to how
+security policies are already formalized in industry [18, 14]; and (c) specifications from
+resolved CVEs can be curated into reusable contract libraries for recurring vulnerability
+13
+
+classes. This positions Phoenix not as a fully autonomous detector, but as a specification-
+driven verification framework that can integrate human expertise at the specification
+layer.
+5. Broader Benchmarks: Evaluation on additional vulnerability detection datasets and
+programming languages beyond C/C++.
+6. Dynamic Agent Allocation: Automatically selecting the optimal model for each pipeline
+role based on the characteristics of the input code.
+7
+Conclusion
+We present Phoenix, a training-free multi-agent framework for zero-shot vulnerability detection
+that achieves F1 = 0.825 and Pair-Correct = 64.4% on the PrimeVul benchmark, substan-
+tially surpassing RASM-Vul (F1 = 0.668, P-C = 21.4%) and VulTrial (F1 = 0.563, P-C = 18.6%)
+while using fully open-source models up to 48× smaller and requiring no training data. By de-
+composing vulnerability detection into semantic slicing, requirement reverse engineering, and
+contract-based judgement, Phoenix transforms an intractable classification problem into a series
+of manageable, specialized reasoning tasks.
+Our ablation study across 25 configurations demonstrates that: (1) Gherkin specifications
+are the decisive performance driver (+0.09 to +0.35 F1); (2) code-specialized models produce
+superior specifications; (3) the approach is model-agnostic, consistently improving performance
+across diverse LLM architectures; and (4) the performance gap over debate-based multi-agent
+approaches (3.4× P-C improvement over VulTrial) stems from problem restructuring — formu-
+lating detection as contract verification — rather than reasoning amplification.
+Beyond quantitative metrics, our qualitative error analysis reveals that Phoenix’s Gherkin-
+based verification exhibits properties distinct from conventional classifiers: it identifies genuine
+security concerns in developer-patched code (with 18% (17/97) of “False Positives” pointing to
+real residual vulnerabilities), while its failures are dominated by specification incompleteness
+rather than fundamental detection blindness. These findings suggest that structured behavioral
+contracts — not larger models or more training data — are the key to advancing vulnerability
+detection, establishing Behavioral Contract Synthesis as a promising paradigm for training-free
+code intelligence.
+A
+Supplementary Materials
+Complete prompt templates, evaluation scripts, pre-computed experiment outputs (29 JSONL
+files covering all 25 configurations), and detailed case study analyses are available in the sup-
+plementary repository: https://github.com/Nothing256/Phoenix
+B
+Complete Confusion Matrices
+Full TP/FP/FN/TN tables for all 25 experiments are available in the supplementary repository.
+C
+Case Studies
+C.1
+Double Standard Evidence
+We identify 10 cross-CVE sample pairs within the same project where code similarity (mea-
+sured via character-level sequence matching) exceeds 75% but vulnerability labels are opposite
+(Table 7).
+14
+
+Table 7: Double Standard Evidence: Cross-CVE Same-Project Pairs
+Project
+Sim.
+Good CVE
+Bad CVE
+mruby
+1.000
+2022-0717
+2022-1276
+TensorFlow
+0.999
+2021-37651
+2022-21730
+TensorFlow
+0.998
+2021-37647
+2022-21736
+ImageMagick6
+0.998
+2019-13133
+2018-18024
+QEMU
+0.972
+2014-7815
+2015-5239
+In the mruby case, the function gen_assignment() is byte-for-byte identical across both
+entries (differing by only 1 character), with the “good” version patched for CVE-2022-0717
+while the same code is “bad” for CVE-2022-1276. This demonstrates that the same code can
+be simultaneously “fixed” for one vulnerability and “vulnerable” for another — a fundamental
+challenge for any binary classification approach that does not condition on a specific behavioral
+contract.
+C.2
+False Positive Highlights: When Agent 3 Outperforms the Label
+Case: IDX 229165 (QEMU send_control_msg). Agent 3 flagged the patched code for
+lacking bounds checking on the len parameter passed to iov_from_buf. The code itself con-
+tains a developer-written comment — /* TODO: detect a buffer that’s too short, set
+NEEDS_RESET */ — confirming that the exact issue Agent 3 identified was acknowledged but
+deliberately left unpatched. The Gherkin specification generated by Agent 2 required “no buffer
+overflow” as a security property, which this code demonstrably does not guarantee.
+Case: IDX 224472 (Gpac gf_text_get_utf8_line). The patch increased a local buffer
+from 1024 to 2048 bytes, fixing the reported double-free. However, Agent 3 identified that the fix
+then copies the enlarged buffer back via strcpy(szLine, szLineConv) without verifying the
+destination buffer’s capacity — a classic introduction of a new vulnerability during remediation.
+Case: IDX 225547/225552 (TFLite TfLiteIntArrayCreate). The patch changed the
+return type from int to size_t, but the overflow check if (alloc_size <= 0) is vacuously
+true for unsigned size_t — it can never be negative.
+Agent 3’s Gherkin-based reasoning
+correctly identified that the mathematical overflow condition specified in the contract remains
+unsatisfied.
+C.3
+False Negative Highlights: Failure Mode Examples
+Surface-Level Boundary Checking (IDX 202392, php-src).
+The loop while (u >=
+0) uses an unsigned integer, making the condition always true and causing an infinite loop.
+The commit message explicitly states: “while (u>=0) with unsigned int will always be true.”
+Agent 3 verified that boundary checks exist but failed to analyze whether the checks themselves
+are logically sound — a limitation of surface-level compliance verification.
+Incomplete Specification (IDX 195409, gpac). Agent 2’s Gherkin specification focused
+on NULL pointer handling (if ptr is NULL, return). The vulnerable code does implement
+this check, passing Agent 3’s verification. However, the actual vulnerability involves a different
+NULL dereference path not captured by the specification, demonstrating how specification
+incompleteness directly produces false negatives.
+15
+
+C.4
+Contract-Guided Corrections: When the Specification Changes the Ver-
+dict
+Across the best configuration (A2=Qwen2.5-Coder-14B, A3=Qwen3.5-9B), we identify 272
+cases where Agent 3 judged incorrectly under the Blind condition but correctly under the
+Feature condition, versus only 65 regressions — a 4.2:1 improvement ratio. The following cases
+illustrate how behavioral contracts redirect Agent 3’s reasoning.
+Correction 1: IDX 195056 (TFLite BiasAndClamp, CWE-369). Ground truth: vul-
+nerable. Blind Agent 3 judged “good,” reasoning that TFLITE_DCHECK_EQ provides sufficient
+bounds checking and that “no arithmetic operations on indices could cause integer overflows.”
+With the Gherkin specification — which explicitly mandates “if bias_size is 0, the function
+must return immediately” — Agent 3 correctly judged “bad,” noting that “the code lacks any
+guard clause to handle bias_size equals 0, leading to undefined behavior.” The contract trans-
+formed the task from open-ended pattern scanning to verifying a specific zero-check requirement.
+Correction 2: IDX 219912 (Gpac gf_isom_get_payt_count, CWE-476). Ground
+truth: safe (patched).
+Blind Agent 3 judged “bad” (false positive), constructing an elabo-
+rate but incorrect reasoning chain: “if hmhd is null, the first condition is true, so it enters the
+block. . . dereferencing hmhd->subType causes a null pointer dereference.” With the specification
+— which states “if hmhd is null, return 0 without accessing hmhd->type” — Agent 3 correctly
+judged “good,” verifying that the null check occurs before any dereference. The contract pre-
+vented the model from inventing a non-existent vulnerability through speculative reasoning.
+Correction 3: IDX 194989 (ImageMagick PSD codec, CWE-190). Ground truth:
+vulnerable. Blind Agent 3 judged “good,” arguing that negative number_bits values would
+cause the loop to terminate immediately, and that “no classical vulnerabilities are evident.”
+With the specification — requiring “pixel value must be cast to ssize_t before any bitwise
+operation” — Agent 3 correctly judged “bad,” identifying that the code casts to unsigned
+char instead of ssize_t, failing the type-safety requirement. The contract shifted evaluation
+from “does anything obviously crash?” to “does this meet the specific type-safety contract?”

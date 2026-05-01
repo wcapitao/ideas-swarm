@@ -1,0 +1,715 @@
+Mechanistic Anomaly Detection via Functional Attribution
+Hugo Lyons Keenan 1 Christopher Leckie 1 Sarah Erfani 1
+Abstract
+We can often verify the correctness of neural net-
+work outputs using ground truth labels, but we
+cannot reliably determine whether the output was
+produced by normal or anomalous internal mech-
+anisms. Mechanistic anomaly detection (MAD)
+aims to flag these cases, but existing methods ei-
+ther depend on latent space analysis, which is
+vulnerable to obfuscation, or are specific to par-
+ticular architectures and modalities. We reframe
+MAD as a functional attribution problem: ask-
+ing to what extent samples from a trusted set
+can explain the model’s output, where attribution
+failure signals anomalous behavior. We opera-
+tionalize this using influence functions, measur-
+ing functional coupling between test samples and
+a small reference set via parameter-space sam-
+pling. We evaluate across multiple anomaly types
+and modalities. For backdoors in vision mod-
+els, our method achieves state-of-the-art detection
+on BackdoorBench, with an average Defense Ef-
+fectiveness Rating (DER) of 0.93 across seven
+attacks and four datasets (next best 0.83). For
+LLMs, we similarly achieve a significant improve-
+ment over baselines for several backdoor types,
+including on explicitly obfuscated models. Be-
+yond backdoors, our method can detect adver-
+sarial and out-of-distribution samples, and distin-
+guishes multiple anomalous mechanisms within
+a single model. Our results establish functional
+attribution as an effective, modality-agnostic tool
+for detecting anomalous behavior in deployed
+models.
+1. Introduction
+A key challenge to the safe deployment of neural networks
+is our inability to understand the internal processes driving
+their outputs. When a model produces an output, we can
+1School of Computing and Information Systems, The Univer-
+sity of Melbourne, Victoria, Australia. Correspondence to: Hugo
+Lyons Keenan <hlyonskeenan@student.unimelb.edu.au>.
+Preprint.
+verify its correctness relative to the ground truth (when avail-
+able), but there is no principled way to determine whether
+the output arose from normal or anomalous internal mech-
+anisms (e.g., because of a backdoor trigger, as shown in
+Figure 1a). Mechanistic Anomaly Detection (MAD) aims
+to address this problem, flagging cases where the model
+relies on abnormal internal processing that warrants further
+scrutiny (Christiano & Xu, 2022). Since we cannot reli-
+ably obtain models that reason abnormally or deceptively
+in natural settings, backdoor attacks have emerged as a
+tractable model organism (Hubinger et al., 2024; Mallen
+et al., 2024) for studying these behaviors and their detection.
+A backdoored model processes benign inputs normally, but
+conditionally exhibits attacker-specified behavior if a trigger
+is present. This makes backdoors a reproducible testbed for
+developing detection methods that may ultimately general-
+ize to naturally arising instances of anomalous processing
+(Hubinger et al., 2019).
+To date, approaches aiming at the specific problem of MAD
+have been rare, but many works address the narrower sub-
+task of backdoor detection and mitigation. In the vision
+domain, methods are frequently designed with a specific
+backdoor attack in mind, and are often modality (Gao et al.,
+2019; Liu et al., 2023; Guo et al., 2023) or architecture- spe-
+cific (Ma et al., 2023). Generalizable approaches typically
+rely on latent space to discriminate between samples, includ-
+ing Mahalanobis distance (Podolskiy et al., 2021; M¨uller &
+Hein, 2025), VAE-based reconstruction (An & Cho, 2015),
+and TED (Mo et al., 2024). Fundamentally, all latent-space
+methods share a common vulnerability: adversaries can
+craft inputs to execute harmful behaviors while mimicking
+normal activation patterns, bypassing these defenses (Bai-
+ley et al., 2024). This motivates detection approaches that
+sidestep latent analysis, providing a decorrelated detection
+signal that can complement existing methods.
+We develop such an approach by recasting anomaly detec-
+tion as a question of functional attribution to trusted data.
+Given a set of trusted samples on which the model uses
+normal mechanisms, we ask how well they can explain the
+model’s behavior on a test input. To operationalize the no-
+tion of functional similarity, we adopt influence functions
+(Cook, 1977; Koh & Liang, 2017), which measure how be-
+havior on one sample relates to behavior on another through
+their shared dependence on model parameters. Though
+1
+arXiv:2604.18970v1 [cs.LG] 21 Apr 2026
+
+Mechanistic Anomaly Detection via Functional Attribution
+Clean
+"airplane"
+Anomalous
+"airplane"
+w1
+w2
+SGLD samples
+SGLD step
+Loss
+T
+c
+b
+( T, c )> ( T, b)
+UMAP 1
+UMAP 2
+Trusted
+Clean
+OOD
+Adversarial
+Backdoor
+a)
+b)
+c)
+k-NN AUROC:
+Backdoor 0.992 | OOD 0.990 | Adversarial 0.933
+Figure 1. a) Mechanistic Anomalies: A model can produce a given output via distinct internal mechanisms, in this case: responding
+to normal airplane features vs. a checkerboard backdoor trigger; b) Our Method: SGLD sampling around trained weights w∗yields
+loss traces (ℓ) where clean mechanisms correlate strongly with trusted data while anomalies exhibit lower correlation; c) Results: For a
+backdoored CIFAR-10 model, a UMAP of pairwise correlations reveals and separates distinct internal processing of different pathological
+input types including backdoored, adversarial, and OOD images compared to clean samples.
+influence functions are usually applied to the problem of
+training data attribution, they are in principle applicable to
+non-training samples, and are capable of capturing two sam-
+ples’ co-dependence on complex learned mechanisms such
+as logical reasoning with chains of thought (Grosse et al.,
+2023). We build on a recent scalable method for estimating
+influence via sampling from a localized parameter poste-
+rior (Kreer et al., 2025), adapting it to the test-time setting
+where ground-truth labels are unavailable. Figure 1b gives a
+schematic view of this method: loss values from parameter
+samples around w∗correlate strongly for clean samples, but
+weakly for anomalous ones.
+Our method has relatively few requirements:
+only a
+differentiable model and a small set of trusted reference
+samples are needed, with no access to training data or
+assumptions about input modality (e.g. vision, language).
+While we focus primarily on backdoor detection as a
+testbed, we find that our approach generalizes beyond
+this setting, with competitive performance in detecting
+out-of-distribution and adversarial samples (Figure 1c
+shows how these sample types form distinct clusters
+in a UMAP of pairwise correlations).
+We develop a
+theoretical account of this detection capability based on
+spectral properties of the Hessian: clean and anomalous
+samples exhibit different gradient energy distributions, with
+anomalous mechanisms more concentrated in flat directions
+that do not affect normal behavior.
+Our primary contributions are:
+• We reframe mechanistic anomaly detection as func-
+tional attribution to trusted data, adapting influence
+functions for test-time detection of anomalous samples
+without relying on latent representations.
+• We provide theoretical grounding for our method’s suc-
+cess by analyzing the Hessian eigenspectrum, showing
+that the gradient energy of anomalous samples concen-
+trates in flat directions where parameter changes do not
+affect normal behavior.
+• We demonstrate a broader capacity to detect different
+functional modes within a model, including out-of-
+distribution and adversarial samples in image models
+and distinct backdoored behaviors in language models
+with near-perfect accuracy.
+• We achieve strong backdoor detection across modali-
+ties, including in vision models (improving upon the
+best method’s DER by 0.095 at a 5% poisoning ra-
+tio) and language models (0.98+ AUROC consistently
+across backdoor types), even when latent-space meth-
+ods fail due to obfuscation attacks.
+2
+
+Mechanistic Anomaly Detection via Functional Attribution
+2. Background and Related Work
+Mechanistic Anomaly Detection.
+Mechanistic anomaly
+detection (MAD) addresses a fundamental concern in de-
+ploying neural networks: identifying when models pro-
+duce outputs through unusual or unintended internal pro-
+cesses (Christiano & Xu, 2022). This goal shares motiva-
+tion with work in mechanistic interpretability, which aims
+to understand the internal structures of neural networks
+and the computations they perform (Bereska & Gavves,
+2024).
+Progress in this area includes identifying inter-
+pretable directions in transformer residual streams (Arditi
+et al., 2024), characterizing how algorithms emerge dur-
+ing training (Nanda et al., 2023), and mapping circuits re-
+sponsible for specific behaviors (Wang et al., 2023). How-
+ever, fully reverse-engineering internal mechanisms remains
+intractable for large, complicated models.
+Mechanistic
+anomaly detection takes a slightly different approach: rather
+than requiring complete understanding of a mechanism, it
+aims only to detect when an unusual mechanism is active,
+handing off to interpretability methods for further examina-
+tion.
+Model Organisms for Anomalous Mechanisms.
+Since
+we cannot readily obtain models that reason deceptively or
+anomalously, backdoor attacks have been used as ‘model
+organisms’ to study these behaviors (Hubinger et al., 2024;
+Greenblatt et al., 2024), with the hope that detection meth-
+ods will generalize to naturally arising pathologies (Hub-
+inger et al., 2019). In vision models, data poisoning at-
+tacks insert pixel-level triggers that override normal clas-
+sification (Gu et al., 2019; Chen et al., 2017), with more
+sophisticated variants employing imperceptible perturba-
+tions (Nguyen & Tran, 2021) or frequency-domain manip-
+ulations (Barni et al., 2019). In language models, triggers
+range from single phrases (Hubinger et al., 2024) to compos-
+ite multi-phrase patterns (Huang et al., 2024) or conceptual
+triggers based on semantic content (Zhang et al., 2024).
+These attacks allow evaluation of MAD methods by provid-
+ing a known anomalous mechanism to detect.
+Detection Methods and Related Problems.
+The formu-
+lation of MAD is deliberately general, subsuming several
+existing fields of work. Backdoor detection is the most ex-
+tensively studied among them, but related efforts include
+detecting shortcuts (Geirhos et al., 2020; Dolatabadi et al.,
+2024), spurious correlations (Yang et al., 2022b) and ad-
+versarial attacks (Cohen et al., 2020). Efforts to detect
+other mechanistically distinct behaviors such as memoriza-
+tion (Ravent´os et al., 2023) and sandbagging (van der Weij
+et al., 2025; Tice et al., 2025) could similarly be viewed
+within this framework. Importantly, methods developed for
+these sub-problems are often specific to their setting, and
+frequently to the particular modalities or architectures for
+which they were developed. Within backdoor detection,
+for example, STRIP (Gao et al., 2019) measures prediction
+entropy under input perturbations, TECO (Liu et al., 2023)
+detects inconsistent robustness to image corruptions, and
+ScaleUp (Guo et al., 2023) amplifies trigger artifacts by scal-
+ing pixel values, all of which are specific to vision models.
+Many of the more generally applicable methods instead rely
+on statistical tests performed in latent space, either fitting
+Gaussians (Lee et al., 2018; Podolskiy et al., 2021; M¨uller
+& Hein, 2025), using derived topological features (Mo et al.,
+2024) or reconstructing latents with autoencoders (An &
+Cho, 2015). The common theme of these approaches is
+their assumption that anomalous mechanisms produce de-
+tectable patterns in activation space, but recent work has
+shown that internal representations can be deliberately ob-
+fuscated by adversaries to avoid detection by latent space
+methods (Bailey et al., 2024; Tan & Shokri, 2020; Qi et al.,
+2023). This motivates our approach, which avoids latent
+space analysis entirely and instead uses the machinery of
+influence functions.
+Singular Learning Theory.
+Singular Learning Theory
+(SLT) provides a mathematical framework for analyzing
+learning in singular models, in which the Fisher informa-
+tion matrix is degenerate and parameters are not identifiable
+from data alone (Watanabe, 2009; Wei et al., 2023). A
+central object in the SLT framework is the (local) learning
+coefficient (LLC), which can be thought of as a measure
+of effective model complexity, and is estimable via SGLD
+sampling from a localized posterior (Lau et al., 2025). The
+LLC has been used to track stage-wise development during
+training (Hoogland et al., 2024; Carroll et al., 2025), and
+refined variants characterize the specialization of attention
+heads and other substructures in transformers (Wang et al.,
+2024). The related notion of susceptibilities enables attri-
+bution of observed behaviors to components of the model
+(Baker et al., 2026; Wang et al., 2025), and influence func-
+tions estimated via the same SGLD machinery (Kreer et al.,
+2025) can identify inputs associated with distinct compu-
+tational structures (Adam et al., 2025). These methods
+together constitute a broader developmental interpretability
+agenda aimed at characterizing the learning process through
+the lens of posterior geometry (Pepin Lehalleur et al., 2025).
+3. Preliminaries
+In this section we introduce influence functions, a tool orig-
+inating in robust statistics (Cook, 1977; Hampel, 1974)
+for measuring the effect of individual training samples on
+model behavior. Importantly, for deep neural networks,
+influence functions have been shown to capture samples’
+co-dependence on complex internal mechanisms, not merely
+surface-level similarity. Grosse et al. (2023) show for large
+models that influence reflects shared use of chain of thought
+3
+
+Mechanistic Anomaly Detection via Functional Attribution
+reasoning when solving logic tasks, while Adam et al. (2025)
+demonstrate that influence captures different samples’ re-
+liance on distinct computational circuits in a transformer
+trained on two distinct modular arithmetic tasks. We review
+the classical formulation and its Bayesian extension, which
+provides the practical estimation method we build upon.
+3.1. Classical Influence Functions
+Given training data Dtrain = {zi}N
+i=1 where zi = (xi, yi),
+and per-sample loss ℓ(zi; w), the influence of sample zi on
+an observable1 ϕ : Rd →R is:
+IF(zi, ϕ) = −∇wϕ(w∗)⊤H−1∇wℓ(zi; w∗)
+(1)
+where H = ∇2
+wL(w∗) is the Hessian of the total training
+loss at w∗, the trained parameter. While influence functions
+have proven useful for understanding model behavior (Koh
+& Liang, 2017), neural networks are known to be singular
+models with non-invertible Hessians (Watanabe, 2007), and
+even approximations (Basu et al., 2021; Park et al., 2023;
+Grosse et al., 2023) remain expensive to compute at scale.
+3.2. Bayesian Influence Functions
+Bayesian influence functions (BIFs) (Kreer et al., 2025) ad-
+dress these limitations by replacing Hessian inversion with
+a distributional approach. Rather than considering a single
+point w∗, the BIF measures influence through expectations
+over a parameter distribution.
+Given a tempered model posterior pβ(w|Dtrain)
+∝
+exp(−βL(w))φ(w) with prior φ(w) and inverse tempera-
+ture β, the influence of sample zi on an observable ϕ is:
+BIF(zi, ϕ) = −Covw∼pβ(w|Dtrain) [ℓ(zi; w), ϕ(w)]
+(2)
+This formulation avoids the Hessian entirely, requiring only
+the ability to draw samples from the posterior.
+3.3. Local BIF and Estimation
+Computing
+expectations
+over
+the
+global
+posterior
+p(w|Dtrain) is intractable for large neural networks. We
+instead consider the localized form of the BIF, which
+replaces the global prior with a Gaussian prior centered at
+the trained parameter w∗:
+pγ(w|Dtrain, w∗) ∝exp (−βL(w)) · N(w; w∗, γ−1I)
+(3)
+where γ > 0 controls localization strength. This restricts
+sampling to a neighborhood around w∗, probing the be-
+havior of the specific trained model and making estimation
+tractable. To practically estimate this covariance, we use
+1The observable ϕ is often another sample’s loss e.g. the loss
+on a query/validation sample
+Stochastic Gradient Langevin Dynamics (SGLD) (Welling
+& Teh, 2011; Lau et al., 2025) to draw a sequence of pa-
+rameter samples {wt}T
+t=1 from the localized posterior. For
+each draw, we evaluate ℓ(zi; wt) and ϕ(wt), yielding traces
+ℓi and ϕ. The empirical covariance d
+Cov(ℓi, ϕ) provides an
+unbiased estimator of the BIF. See Appendix C.1 for details.
+4. MAD as Functional Attribution
+Problem Setup.
+Mechanistic anomaly detection is con-
+cerned with identifying when a model’s output arises from
+anomalous internal mechanisms, rather than normal pro-
+cessing. More formally, let fw : X →Y be a neural
+network with parameters w ∈Rd. A defender receives the
+trained parameters w∗without knowledge of the training
+process or data. The defender also has access to a trusted
+set DT = {(xi, yi)}n
+i=1 containing samples on which the
+model is known to behave normally. This trusted set serves
+to define the ‘normal’ behavior that we want to detect anoma-
+lies relative to.
+At test time, the defender observes inputs xtest and must
+detect whether the model’s output fw(xtest) arises from
+normal mechanisms consistent with DT , or from anomalous
+mechanisms absent from it.
+Influence Functions as Mechanistic Similarity.
+To per-
+form this detection, we need a way to measure whether two
+samples engage the same internal mechanisms. Influence
+functions provide exactly this. As discussed in Section 3,
+influence functions naturally capture the co-dependence of
+two samples on model parameters, including on complex
+learned mechanisms.
+From Training Data Attribution to Anomaly Detection.
+In the training data attribution setting for which they were
+developed, influence functions require access to Dtrain as
+well as ground-truth labels for train and query samples. Our
+setting has neither: the defender receives only trained pa-
+rameters w∗, and the test inputs that we wish to detect lack
+labels. We make two modifications to adapt to this setting.
+First, rather than attributing to training data, we compute
+influence with respect to the trusted set DT , shifting the
+question from ‘which training sample caused this behavior?’
+to ‘can any trusted sample explain this behavior?2’ Second,
+we replace the standard observable ϕ(w) = ℓ(x, y; w) with
+an observable based on the model’s own prediction:
+ϕtest(w) = ℓ(xtest, ˆytest; w)
+(4)
+2Note that we assume the defender has no knowledge of what
+types of anomalous behavior may be manifest at test time, but if
+they do they are able to use our method on any anomalous samples
+they have collected, and penalize correlation with them to provide
+another complementary signal.
+4
+
+Mechanistic Anomaly Detection via Functional Attribution
+where ˆytest = arg max fw∗(xtest). This places focus on the
+model’s actual (potentially anomalous) behavior rather than
+the hypothetical correct behavior.
+Detection Score.
+Combining these modifications, our
+anomaly score measures the strength of functional attri-
+bution between a test sample and the trusted set:
+Det(xtest) = Aggzi∈DT
+
+Covw∼pγ (ℓ(zi; w), ϕtest(w))
+
+(5)
+where Agg is a chosen aggregation function. Pseudocode
+for the detection pipeline is provided in Appendix C.4.
+4.1. Aggregation and Coupling Choices
+Equation 5 requires choosing an aggregation function to
+combine influence scores from all trusted samples into one
+number. The choice of coupling measure (e.g. covariance,
+correlation) is also important and we evaluate several op-
+tions for each:
+Coupling Measure.
+While raw covariance follows natu-
+rally from the BIF formulation, anomalous samples tend to
+exhibit inflated loss variance under parameter perturbations,
+which can dominate the covariance signal. We therefore use
+Pearson correlation by default, which is invariant to affine
+transformations. An alternative is the concordance correla-
+tion coefficient (CCC) (Lin, 1989), which retains sensitivity
+to variance and scale differences, penalizing non-agreement
+(see Appendix C.2 for details).
+Aggregation Function.
+The aggregation function com-
+bines correlations between a test sample and all trusted
+samples into a single score. We default to Mean, which
+averages correlation across all trusted samples. For image
+classification, we find that Class-Clustered (CLC) aggrega-
+tion performs better: compute the mean within each class
+and take the maximum. This exploits the fact that a clean
+sample should correlate strongly with samples of at least
+one class in the trusted set.
+4.2. Theoretical Justification
+Here we sketch the geometric intuition for why our method
+separates clean from anomalous samples, showing that nat-
+ural sharp-flat subspace separation between normal and
+anomalous samples leads to detectability using our method.3
+See Appendix A for the full proof.
+3Intuitively, clean samples share internal mechanisms (e.g., a
+‘wing detector’ for classifying airplanes) and their losses respond
+similarly to parameter perturbations, while backdoored samples
+rely on distinct trigger-detecting mechanisms and respond orthog-
+onally, producing low correlation.
+Covariance as Weighted Gradient Product.
+Under a
+Laplace approximation of the probe distribution, the co-
+variance between two samples’ losses decomposes as
+a weighted gradient inner product (plus higher-order
+terms) (Kreer et al., 2025):
+Covw∼pγ[ℓ(z; w), ℓ(z′; w)] ≈∇ℓ(z)⊤Σw∇ℓ(z′)
+(6)
+where Σw = (βHT + γI)−1, and HT is the Hessian of
+the trusted loss at w∗. This is equivalent to the classical
+influence function with a dampened Hessian. The leading
+term dominates as nT →∞, so correlations are governed
+by gradient alignment under Σw-weighting.
+Sharp and Flat Subspaces.
+Let HT = V ΛV ⊤with
+eigenvalues λ1 ≥· · · ≥λd. The probe covariance Σw
+shares these eigenvectors, with eigenvalues σi = (βλi +
+γ)−1. Importantly, the ordering inverts: directions with high
+curvature in the trusted loss (large λi) receive small weight
+in Σw, while low-curvature directions receive large weight.
+For a threshold τ > 0, we define the sharp subspace S =
+span{vi : λi > τ} and flat subspace F = span{vi : λi ≤
+τ}. Any gradient decomposes as g = gS + gF.
+Anomalous Mechanisms Hide in Flat Directions.
+Con-
+sider any mechanism that must operate without degrading
+clean performance. Sharp directions of HT are where clean
+predictions are sensitive: perturbing parameters along these
+directions changes the trusted loss. A mechanism using
+sharp directions would impact clean accuracy and likely be
+caught by standard evaluation.
+Therefore, stealthy mechanisms, including backdoors, must
+concentrate in flat directions where parameters can change
+without affecting clean predictions (Pham et al., 2024). We
+verify this prediction empirically in a toy model in Ap-
+pendix B.
+Since Σw is diagonal in the eigenbasis of HT , gradients
+supported on different subspaces are orthogonal under Σw-
+weighting:
+Proposition 4.1 (Cross-subspace Orthogonality). For any
+gradients gS supported entirely on the sharp subspace
+S and gF supported entirely on the flat subspace F,
+(gS)⊤Σw(gF) = 0.
+In practice, exact subspace separation is too strong an as-
+sumption; gradient energy leaks across subspaces and no
+binary threshold suffices to distinguish them. We refer the
+reader to Appendix A for a continuous treatment quantifying
+detection conditions despite this leakage.
+5. Experiments
+In this section, we rigorously evaluate our method’s perfor-
+mance in various settings. In Section 5.2 we study backdoor
+5
+
+Mechanistic Anomaly Detection via Functional Attribution
+Table 1. Detection Error Rate (DER ↑) on BackdoorBench at 5% poisoning rate. Our best online method surpasses the best baseline
+method by an average DER of 0.095, and our offline UMAP method performs well above all others.
+Baselines
+Ours (Online)
+Ours (Offline)
+Dataset
+Attack
+ANP
+NC
+DDE
+i-BAU
+ABL
+STRIP
+TeCO
+Mean
+CCCC
+CLC
+UMAP K-NN
+CIFAR-10
+Blended
+0.910
+0.500
+0.495
+0.778
+0.859
+0.791
+0.558
+0.957
+0.946
+0.983
+0.995
+Bpp
+0.956
+0.500
+0.947
+0.968
+0.457
+0.564
+0.803
+0.939
+0.993
+0.992
+0.994
+Lf
+0.942
+0.500
+0.563
+0.698
+0.366
+0.795
+0.530
+0.925
+0.946
+0.979
+0.984
+Sig
+0.949
+0.500
+0.972
+0.930
+0.748
+0.899
+0.838
+0.921
+0.922
+0.970
+0.983
+Ssba
+0.943
+0.959
+0.909
+0.944
+0.916
+0.937
+0.677
+0.938
+0.864
+0.913
+0.965
+Trojannn
+0.913
+0.519
+0.971
+0.941
+0.124
+0.975
+0.811
+0.958
+0.984
+0.994
+0.998
+Wanet
+0.902
+0.500
+0.766
+0.894
+0.389
+0.500
+0.500
+0.873
+0.908
+0.913
+0.907
+Average
+0.931
+0.568
+0.803
+0.879
+0.551
+0.780
+0.674
+0.930
+0.938
+0.963
+0.975
+CIFAR-100
+Avg. (6 attacks)
+0.758
+0.878
+0.806
+0.833
+0.827
+0.873
+0.772
+0.862
+0.919
+0.940
+0.959
+GTSRB
+Avg. (6 attacks)
+0.896
+0.847
+0.748
+0.886
+0.491
+0.824
+0.767
+0.976
+0.939
+0.899
+0.990
+Tiny-ImageNet
+Avg. (6 attacks)
+0.593
+0.832
+0.776
+0.514
+0.828
+0.863
+0.832
+0.784
+0.914
+0.831
+0.965
+Overall
+Avg. (25)
+0.800
+0.773
+0.784
+0.782
+0.669
+0.833
+0.758
+0.890
+0.928
+0.910
+0.972
+Online: online detection (observes test samples individually). Mean: mean correlation, CCCC: class-clustered concordance correlation
+coefficient, CLC: class-clustered correlation. Bold: best among baselines and online methods. Underline: second best.
+detection/mitigation in image models, in Section 5.3 we
+turn to backdoored language models, and in Section 5.4 we
+demonstrate our method’s ability to detect other kinds of
+anomalous behavior such as adversarial and OOD samples
+as well as multiple mechanisms within a single model.
+5.1. Experimental Setup
+Models and Data.
+For image classification, we evaluate
+PreAct ResNet-18 models trained on CIFAR-10, CIFAR-
+100, GTSRB, and Tiny-ImageNet using the BackdoorBench
+framework (Wu et al., 2022). For language models, we fine-
+tune Gemma 2-2B (Gemma Team et al., 2024) on backdoor
+tasks of varying complexity using parameter efficient LoRA
+(Hu et al., 2022). In all experiments, we use a held-out set
+of verified clean samples as our trusted reference set DT .
+More details are available in Appendix D.
+Online vs Offline Detection.
+We study two detection set-
+tings. In online detection, test samples arrive sequentially
+and must be classified immediately using only the trusted
+reference set. In offline detection, all test samples are avail-
+able simultaneously. Our core method (correlation to trusted
+samples) operates online; however, we can also leverage
+inter-sample information in the offline setting to achieve
+better detection performance. We perform UMAP on a
+correlation-based distance matrix and derive scores using
+distance to nearest neighbors in the transformed space, more
+details are available in Appendix C.5. We note that perfor-
+mance gains in the offline setting are likely due in part to the
+fact that multiple anomalous samples share internal mecha-
+nisms, producing correlated loss traces that can be clustered
+together for clearer identification. The degree to which this
+is true will have bearing on the achievable gains from offline
+detection.
+Implementation Details.
+Our method requires sam-
+pling from the localized posterior via Stochastic Gradient
+Langevin Dynamic (SGLD). Key hyperparameters include
+the (effective) inverse temperature nβ, localization strength
+γ, learning rate ϵ, and number of draws Ndraws. We find
+performance stable across reasonable ranges. Full specifi-
+cations appear in Appendix D and sensitivity analysis are
+in Appendix E.1. With the exception of CCCC (which uses
+the concordance correlation coefficient), we use Pearson
+correlation as our coupling measure. Compute details are in

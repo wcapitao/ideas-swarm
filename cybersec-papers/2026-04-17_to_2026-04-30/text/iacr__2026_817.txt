@@ -1,0 +1,1549 @@
+SOLMAE: Lightweight Post-Quantum Signature
+based on NTRU lattices with Hybrid Sampling
+Kwangjo Kim
+IRCS and KAIST(Korea), CSU(USA),
+kkj@kaist.ac.kr
+Abstract. The paper introduces SOLMAE, a lightweight post-quantum
+signature scheme that follows the traditional hash-and-sign paradigm
+of Gentry–Peikert–Vaikuntanathan and is instantiated over NTRU lat-
+tices using hybrid Gaussian samplers. As a natural successor to earlier
+designs including Falcon, Mitaka and Antrag, SOLMAE combines
+the strengths of these approaches. In particular, SOLMAE positions
+itself as offering a unified framework that achieves improved efficiency
+and security trade-offs over Falcon, Mitaka, and Antrag, continuing
+the evolution of efficient lattice-based signatures over structured lattices.
+SOLMAE leverages the simplicity, speed, and parallelizability of Mitaka
+while matching the high security and compact key and signature sizes
+of Falcon. This is achieved through a novel key-generation algorithm
+that enhances security and removes the rigidity present in Falcon. At
+the same time, it retains full parameter flexibility and a fast signing
+procedure. The design is further compatible with recent ellipsoidal Gaus-
+sian sampling techniques, enabling even smaller signatures. Altogether,
+SOLMAE, suitable for resource-constrained environment, establishes a
+new efficiency point in lattice-based signatures, with remaining imple-
+mentation considerations deferred to the conclusion.
+Keywords: Falcon · Lattice-based cryptography · Mitaka · Antrag
+· Hash-and-sign paradigm · NTRU lattices · Hybrid Sampling
+1
+Introduction
+Designing cryptographically strong primitives—such as digital signatures
+and key encapsulation mechanisms—is a highly challenging task that can-
+not be achieved by a single expert within a short time frame. It requires
+the collective effort of a group of skilled designers who possess a deep
+understanding of all known attacks, from both theoretical and implemen-
+tation perspectives, and who can anticipate plausible future attack vectors.
+Our design team for SOLMAE, which is an abbreviation of quantum–
+Secure algOrithm for Long-term Message Authentication and Encryption,
+https://solmae-sign.info, composed of leading cryptographers from
+
+around the world, has initiated the development of long-term secure and
+post-quantum digital signature schemes based on NTRU lattices. These
+lattice structures have been extensively studied and rigorously scrutinized
+by the cryptographic community for over two decades, providing a solid
+foundation for building secure and practical post-quantum cryptographic
+solutions.
+After six-years NIST PQC standardization project (2017–2022,) Fal-
+con [41] was selected as one of the final quantum-safe digital signature
+algorithms for based on the NTRU trapdoor together with Dilithium and
+SPHINCS+ in 2022. Falcon is a hash-and-sign signature scheme based
+on paradigm on the Gentry, Peikert and Vaikuntanathan (GPV) [16] based
+on the lattice problem. To be efficiently instantiated, this framework needs
+a class of lattices with efficiently computational trapdoor bases for the
+signing procedure. Ducas, Lyubashevsky and Prest (DLP) [8] showed that
+NTRU lattices are a nice class of lattices. Thus, short Gaussian vectors
+are sampled in a public NTRU lattice; a quasi-linear (time and memory)
+but complex procedure called Fast Fourier Sampling was described by
+Ducas and Prest [9]. Falcon achieves the most compact signatures, and
+the most compact verification key and signatures combined sizes, and
+boasts verification times on par with elliptic curve signatures.
+Inspired by Falcon’s design, Espitau et al. in 2023 suggested so–called
+Antrag [13] in order to improve Mitaka [10] without loss of security
+covering all NIST five levels of security using the degree of cyclotomic ring
+from 512 to 1024 over specific cyclotomic polynomials under the prime
+modulus but is not limited to the power of 2.
+Leveraging the advantages of Falcon, Mitaka and Antrag, SOL-
+MAE is yet another post–quantum signature based on NTRU trapdoor
+and achieves better performance for the same security and advantages as
+Falcon which focused only on NIST I and V levels of security. More
+precisely, SOLMAE offers a unified framework achieving improved effi-
+ciency and security trade-offs over Falcon, Mitaka and Antrag. At a
+high–level, it removes the inherent technicality of the sampling procedure,
+and most of its induced complexity from an implementation standpoint,
+for free, that is with no loss of efficiency. The simplicity of our design trans-
+lates into faster operations while preserving signature and verification key
+sizes, in addition to allowing for additional features absent from Falcon,
+such as enjoying less expensive masking, and being parallelizable.
+Figure 1 presents an overview of the overall concept of SOLMAE.
+2
+
+Hybrid Sampler [37]
+Optimal NTRU Trapdoors
+MITAKA [10] & ANTRAG [13]
+SOLMAE
+Figure 1: Overview of SOLMAE
+While its predecessor Falcon could be summed up as “an efficient
+instantiation of the GPV framework”, SOLMAE takes it one step further.
+The ingredients behind the boxes in Figure 1 are as follows:
+– An optimally tuned key generation algorithm, enhancing the
+security of our new sampler to that of Falcon’s level I and V;
+– The hybrid sampler is a faster, simpler, parallelizable and maskable
+Gaussian sampler to generate signatures;
+– Easy implementation by assembling all the advantages of Mitaka
+and Antrag to make the scheme faster and simpler for practical
+deployment.
+Our main contributions are:
+– A new NTRU-based signature scheme eliminating rejection-based key
+generation.
+– A hybrid Gaussian sampler achieving quasi-linear complexity.
+– A masking-friendly design enabling t-NI and t-SNI secure implementa-
+tions.
+– Improved practical performance compared to Falcon in signing.
+SOLMAE is not intended to replace Falcon in standardization, but
+rather to explore a new design point emphasizing simplicity, maskability,
+and implementation efficiency. The organization of this paper is as follows.
+Section 2 reviews the mathematical and algebraic preliminaries. Section 3
+presents the SOLMAE construction, including the KeyGen, Sign, Sample,
+and Verif algorithms. Section 4 provides a concrete security analysis
+based on the core-SVP framework. Section 5 evaluates the performance of
+SOLMAE through implementation benchmarks and comparisons with
+3
+
+Falcon. Section 6 describes the encoding rules and Falcon-compatible
+data formats used in SOLMAE. Finally, Section 7 concludes the paper
+with remarks on practical implications and future directions.
+2
+Preliminaries
+Vectors are denoted in bold lower case, and considered to be in column.
+Matrices are in bold upper case. When we say that a matrix is a basis
+of a space, we mean that the column vectors of the matrix are the basis.
+The ℓ2-norm of a vector x = (x1, . . . , xd) is ∥x∥= (P
+i |xi|2)1/2 and its
+ℓ∞-norm is ∥x∥∞= maxi |xi|.
+Lattices A lattice is a discrete subgroup of Rn. Equivalently, it is the set
+of integer linear combinations obtained from a basis B of Rn. The volume
+of a lattice is det B for any of its basis.
+Cyclotomic powers-of-two rings For d = 2n, we let K = Q[X]/(Xd+1)
+be the d-th cyclotomic field. We often work in the subring R = Z[X]/(Xd+
+1), and sometimes in the overring KR = R[X]/(Xd+1). Let ζj = exp(i(2j−
+1)π/d) for 1 ≤j ≤d be the d-th primitive root of 1, and for all f ∈KR,
+let φi(f) = f(ζi). A polynomial in KR can be represented in several
+ways. The first is the so-called coefficient embedding f = P fiXi 7→
+f = (f0, . . . , fd−1). Another is the canonical embedding f 7→φ(f) =
+(φ1(f), . . . , φd(f)). The map φ is also known as the Discrete Fourier
+Transform (DFT) and in particular, φ maps the polynomial multiplication
+in KR to a coordinate-wise multiplication. The set of f’s such that all
+φi(f) ∈R∗
++ is denoted by K++
+R . We have ∥φ(f)∥=
+√
+d∥f∥. We let f∗be
+the complex conjugate of f and
+f∗= f0 −fd−1X −. . . −f1Xd−1,
+φ(f∗) = (φi(f))i.
+The third representation of cyclotomic elements is by matrices of multipli-
+cation:
+f 7→[f] :=
+
+
+f0
+−fd−1 . . . −f1
+f1
+f0
+. . . −f2
+...
+...
+...
+fd−1 fd−2 . . . f0
+
+
+.
+We have [f∗] = [f]t.
+In algorithms, we write (fi)i ∈Rd or f ∈KR: the former highlights
+that the vector of coefficient is considered, while the latter implies
+that the Fourier representation is used.
+4
+
+Algebraic Gram-Schmidt For (f, g), (F, G) ∈K2×2
+R
+, we define ⟨(f, g), (F, G)⟩K =
+f∗F + g∗G. The Gram-Schmidt orthogonalization of (F, G) ∈K2
+R with
+respect to (f, g) is
+( eF, eG) = (F, G) −⟨(f, g), (F, G)⟩K
+⟨(f, g), (f, g)⟩K
+· (f, g),
+and one checks that ⟨(f, g), ( eF, eG)⟩K = 0.
+NTRU lattices Let q be an integer, and f ∈R such that f is invertible
+modulo q (equivalently, det[f] is coprime to q). Let h = g/f mod q and
+consider the NTRU module associated with h:
+MNTRU = {(u, v) ∈R2 : hu −v = 0 mod q},
+and its lattice version
+LNTRU = {(u, v) ∈Z2d : [h]u −v = 0 mod q}.
+This lattice has a volume qd. Over R, it is generated by (f, g) and any
+(F, G) such that fG −gF = q. For such a pair (f, g), (F, G), this means
+that LNTRU has a basis of the form
+Bf,g =
+"
+[f] [F]
+[g] [G]
+#
+.
+One checks that ([h], −Idd) · Bf,g = 0 mod q, so the verification key is h.
+More details are given in Section 3.2. The NTRU-search problem is as
+follows: given h = g/f mod q, find any (f′ = xif, g′ = xig). In its decision
+variant, one must distinguish h = g/f mod q from a uniformly random
+h ∈Rq := Z[X]/(q, Xd + 1) = (Z/qZ)[X]/(Xd + 1). These problems are
+assumed to be intractable for large d.
+Quality of an NTRU basis The secret basis will not be any pair, as it
+also needs to enable the sampling of short Gaussian vectors in LNTRU by
+hybrid sampling. The quality of an NTRU basis Bf,g quantifies this:
+Q(f, g) =
+max
+1≤i≤d/2 max
+|φi(f)|2 + |φi(g)|2
+q
+,
+q
+|φi(f)|2 + |φi(g)|2
+1/2
+.
+Note that only half of the embeddings are needed, since the remaining ones
+correspond to the complex conjugates. It is one of the main parameters
+driving the security of the scheme. It cannot be lower than 1, but the
+closer it is to 1, the harder forgery attacks are.
+5
+
+Gaussian distributions The Gaussian function centered at c ∈Rd and
+(positive definite) covariance Σ is ρc,Σ(x) = exp(−1
+2(x −c)tΣ−1(x −c)).
+The normal distribution Nc,Σ centered at c and covariance Σ has density
+proportional to ρc,Σ. When we write x ←N KR
+Σ , we mean that the corre-
+sponding d dimensional vector
+q
+2
+d(ℜφ1(x), ℑφ1(x) . . . , ℜφd/2(x), ℑφd/2(x))
+has a distribution NΣ, where ℜz and ℑz are the real and imaginary parts
+of complex z, respectively. For a lattice L ⊂Rd, the discrete Gaussian
+distribution over L with parameters c ∈Rd and Σ is defined for all x ∈L
+as
+DL,c,Σ(x) =
+ρc,Σ(x)
+ρΣ(L −c).
+We omit the center if it is 0. When Σ is a scalar matrix s2I, we note Ns
+or DL,t,s.
+3
+Specifications
+We first detail the principles of the GPV framework. This highlights the
+necessary ingredients for an efficient signature scheme. The next sections
+are devoted to the scheme’s description, and how we instantiate the triple
+KeyGen, Sign, Verif. The concrete values for the many parameters to be
+introduced can be found at the end of the section in Table 1.
+3.1
+High-level view of the SOLMAE’s signature scheme
+As in any signature scheme, we need to instantiate three algorithms
+KeyGen, Sign and Verif. Moreover, the GPV framework has the following
+requirements:
+– a class of lattices where KeyGen computes trapdoor pairs;
+– Sign uses a Sample procedure to generate random vectors in these
+lattices, with a distribution not leaking information about the trapdoor.
+In the GPV framework, KeyGen outputs trapdoor pair (A, B) for a lattice
+L with AB = 0 mod q, for a public integer q. Note that L is spanned by
+B. The signing-verification routine is then:
+1. Sign(B, M) first uses a cryptographic hash function H to get a vector
+m = H(M) in the ambient space Rm, and computes a preimage c =
+A−1m. Then Sample(B, c) finds a random vector v ∈L close to c.
+Thanks to the knowledge of B, the vector s = c −v is indeed short.
+6
+
+2. Verif(A, M, s, γ) computes m = H(M), then c′ = As mod q. If s is a
+valid signature, it can be written as s = c −v, and then c′ = Ac =
+m mod q because v ∈L, so Verif first checks this property. But a
+valid signature is also short, so Verif additionally checks that ∥s∥
+does not exceed a (public, fixed) bound γ. When these two checks are
+satisfied, the signature is accepted. Otherwise it is rejected.
+Of course, the resulting scheme must be efficient in practice: consume
+the least possible bandwidth while ensuring practically fast signing and
+verification timings. This implies that:
+– KeyGen should give compact trapdoor pairs (that is, small bit repre-
+sentation);
+– Sample is fast, and outputs short vectors; the shortness of the output
+depends on the quality of the trapdoor.
+– Sign outputs the smallest (in bitsize) possible signature from these
+random vectors.
+Lastly, note that intuitively, the shorter the output of Sample is, the more
+difficult it is for an attacker to forge a valid signature, so that only with the
+knowledge of a very good trapdoor pair should signatures be short vectors.
+Technicalities start when one realizes that the notion of good trapdoor
+highly depends on how Sample is instantiated. Optimizing this aspect is
+the main guiding principle of our design, and in GPV’s instantiation in
+general.
+3.2
+Design of KeyGen
+For the class of NTRU lattices, a trapdoor pair is (h, Bf,g), and Prest
+& Pornin showed that a completion (F, G) can be computed in O(d log d)
+time from (f, g). In practice their implementation is as efficient as can
+be for this technical procedure: it is called NtruSolve in Falcon. Their
+algorithm only depends on the underlying ring and now has a stable
+version for Z[X]/(Xd + 1), where d = 2n. We therefore reuse it in our
+design.
+An important concern here is that not all pairs (f, g) and (F, G)
+provides good trapdoor pairs for Sample. Schemes such as Falcon and
+Mitaka solve this technicality essentially by sieving among all possible
+bases to find the ones that reach an acceptable quality for the Sample
+procedure. This technique is costly, and many tricks have been used to
+achieve an acceptable KeyGen. We totally bypass this sieving routine by
+redesigning completely how good quality bases can be found — see the
+7
+
+next section for details. This improves the running time of KeyGen, and
+also increases the security offered by Sample. In any case, the running time
+of NtruSolve largely dominates the overall time for KeyGen: this is not
+avoidable because the basis completion algorithm requires the operation
+of large integers and relatively high-precision floating-point arithmetic.
+At the end of the procedure, the secret key contains not only the secret
+basis, but also the necessary data for Sign and Sample. This additional
+information can be represented by elements in KR, and is computed during
+or at the end of NtruSolve. All-in-all, KeyGen outputs:
+sk = (b1 = (f, g), b2 = (F, G), eb2 = ( eF, eG), Σ1, Σ2, β1, β2),
+pk = (h, q, σsig, η),
+where we recall that h = g/f mod q. These parameters are described more
+thoroughly in Sections 3.3 and 3.4. A list of their practical value is given
+in Table 1. Informally, they correspond to the following:
+– (f, g), (F, G) is a good basis of the lattice LNTRU associated with h,
+with quality Q(f, g) = α, and eb2 is the Gram-Schmidt orthogonaliza-
+tion of (F, G) with respect to (f, g);
+– σsig and η are the standard deviation for signature vectors and a tight
+upper bound on the smoothing parameter of Zd, respectively;
+– Σ1, Σ2 ∈KR represent covariance matrices for two intermediate Gaus-
+sian samplings in Sample;
+– the vectors β1 and β2 ∈K2
+R represent the orthogonal projections from
+K2
+R onto KR · b1 and KR · eb2, respectively. In other words, they act as
+getCoordinates for vectors in K2
+R. They are used by Sample, and are
+precomputed for efficiency.
+Specification of KeyGen Algorithm 1 computes the necessary data for
+signature sampling, and then outputs the key pair. Note that NtruSolve
+could also compute the sampling data and the public key, but for clarity,
+the pseudo-code gives these tasks to KeyGen. Figure 2 sketches the key
+generation procedure.
+8
+
+KeyGen (Algorithm 1)
+PairGen (Algorithm 2)
+NtruSolve [36]
+Precomputation: Σ1, Σ2, β1, β2
+UnifCrown (Algorithm 9)
+Figure 2: Flowchart of KeyGen
+Algorithm 1: KeyGen
+Input: A modulus q, a target quality parameter 1 < α,
+parameters σsig, η > 0
+Output: A basis ((f, g), (F, G)) ∈R2 of an NTRU lattice LNTRU
+with Q(f, g) = α;
+// Secret basis computation:
+1 repeat
+2
+b1 := (f, g) ←PairGen(q, α, R−, R+);
+3 until f is invertible modulo q;
+4 b2 := (F, G) ←NtruSolve(q, f, g);
+// Public key data computation:
+5 h ←g/f mod q;
+6 γ ←1.1 · σsig ·
+√
+2d;
+/* tolerance for signature length */
+// Sampling data computation, in Fourier domain:
+7 β1 ←
+1
+⟨b1,b1⟩K · b1;
+8 Σ1 ←
+r
+σ2sig
+⟨b1,b1⟩K −η2;
+9 eb2 := ( eF, eG) ←b2 −⟨β1, b2⟩· b1;
+10 β2 ←
+1
+⟨eb2,eb2⟩K · eb2;
+11 Σ2 ←
+r
+σ2sig
+⟨eb2,eb2⟩K −η2;
+12 sk ←(b1, b2, eb2, Σ1, Σ2, β1, β2);
+13 pk ←(q, h, σsig, η, γ);
+14 return sk, pk;
+The technical description on subroutines PairGen (Algorithm 2) and
+NtruSolve are described below.
+9
+
+1. The PairGen algorithm generates d complex numbers (xjeiθj)j≤d/2 and
+(yjeiθj)j≤d/2 to act as the FFT representations of two real polynomial
+fR and gR in KR, respectively. The magnitudes of these complex
+numbers are sampled in a planar annulus whose small and large radii
+are set to match a target Q(f, g) with UnifCrown (see also Section 3.6).
+It then finds close elements f, g ∈R by rounding, unless the rounding-
+error is too large. When the procedure ends, it outputs a pair (f, g)
+such that Q(f, g) = α, where α depends on the security level.
+2. NtruSolve is exactly Prest & Pornin’s algorithm and implementa-
+tion [36]. It takes as input (f, g) ∈R2 and a modulus q, and outputs
+(F, G) ∈R2 such that (f, g), (F, G) is a basis of LNTRU associated
+with h = g/f mod q. It does so by solving the Bézout-like equation
+fG −gF = q in R using recursively the tower of subfields for optimal
+efficiency.
+Specification of PairGen This algorithm is a new addition to schemes
+such as Mitaka. The NTRU module associated with a public key h is
+morally a 2-dimensional object. When (f, g) and (F, G) are the basis for
+a given modulus of the lattice, q, we have
+det MNTRU = (ff∗+ gg∗)( eF eF ∗+ eG eG∗) = q2 ∈R.
+Similarly, the area of a rectangle is the product of its length and width.
+This means that all the information about eF eF ∗+ eG eG∗is determined by
+(f, g) and q, which explains why only (f, g) is needed to know the quality
+of the basis found by NtruSolve. Recall from Section 2 that the quality is
+α := Q(f, g) =
+max
+1≤i≤d/2 max
+|φi(f)|2 + |φi(g)|2
+q
+,
+q
+|φi(f)|2 + |φi(g)|2
+1/2
+.
+Equivalently, a basis has quality α when for all i ≤d/2, we have
+q
+α2 ≤|φi(f)|2 + |φi(g)|2 ≤α2q.
+(1)
+As this is determined by the evaluations of the polynomials f and g, or
+equivalently, by their FFT representations, it is natural to sample these
+polynomials directly via their complex evaluations. This is handled by the
+subroutine UnifCrown, described in Section 3.6 (see Algorithm 9).
+A technical challenge arises because inverting the FFT leads a priori
+only to real polynomials fR and gR ∈KR. We thus have to round the
+coordinates of fR and gR to their nearest integers which incurs a small
+10
+
+error. We handle this error by sampling fR and gR in FFT-format in a
+smaller annulus (or crown) with radii
+R−=
+ 1
+α + δ
+√q
+and
+R+ = (α −δ)√q,
+where δ is a small correction parameter to ensure that the rounding will
+remain in the correct crown A(√q/α, α√q) with a large probability. In
+practice we take δ512 = 0.065 and δ1024 = 0.3, values that are set so that
+≈80 tries on average for d = 512, resp. ≈5 tries on average for d = 1024,
+of the decoded polynomials (f, g) satisfy Eq.(1).
+Let us explain the determination of these values. The decoding errors
+can be accurately modeled as continuous 2-dimensional Gaussian vectors.
+This means that in average, the decoding makes an error proportional
+to the standard deviation of these Gaussians, which are heuristically
+identically and independently distributed. Due to the good concentration
+properties of Gaussians, we can fine-tune the tolerance with standard
+calculations, that match experimental observations. This leads to PairGen,
+where the target quality is by default α512 = 1.17 and α1024 = 1.64.
+Algorithm 2: PairGen
+Input: A modulus q, a target quality parameter 1 < α, two radii parameters
+0 < R−< R+
+Output: A pair (f, g) with Q(f, g) = α
+1 for i = 1 to d/2 do
+2
+xi, yi ←UnifCrown(R−, R+) ;
+/* see Algorithm 9
+*/
+3
+θx, θy ←U(0, 1);
+4
+φf,i ←|xi| · e2iπθx;
+5
+φg,i ←|yi| · e2iπθy;
+6 (f R, gR) ← FFT-1((φf,i)i≤d/2), FFT-1((φg,i)i≤d/2)
+;
+7 (f, g) ←(⌊f R
+i ⌉)i≤d/2, (⌊gR
+i ⌉)i≤d/2;
+8 (φ(f), φ(g)) ←(FFT(f), FFT(g));
+9 for i = 1 to d/2 do
+10
+if q/α2 > |φi(f)|2 + |φi(g)|2 or α2q < |φi(f)|2 + |φi(g)|2 then
+11
+restart;
+12 return (f, g);
+11
+
+3.3
+Design of Sign
+Recall that NTRU lattices live in R2d. Their structure also helps to
+simplify the preimage computation. Indeed, the signer only needs to
+compute m = H(M) ∈Rd, as then c = (0, m) is a valid preimage: the
+corresponding polynomials satisfy (h, 1) · c = m.
+Another interesting feature is that only the first half of the signature
+(s1, s2) ∈LNTRU needs to be sent along the message, as long as h is
+available to the verifier. This comes from the identity hs1 = s2 mod q
+defining these lattices, as we will see in the Verif algorithm description.
+The same identity can also be used to check the validity of signatures only
+with a hash of the public key h, requiring this time send both s1 and s2,
+but we will not consider this setting here.
+Because of their nature as Gaussian integer vectors, signatures can
+be encoded to reduce the size of their bit-representation. The standard
+deviation of Sample is large enough so that the ⌊log √q⌋least significant
+bits of one coordinate are essentially random. In Falcon, the most signif-
+icant bits (MSBs) of each coordinate are then sent through an unary (or
+Huffman) encoding together with their corresponding tails, which already
+save a nice portion of bandwith. This generic approach is summed-up as
+the Compress and Decompress functions in Section 3.6.
+Following [14], we can go a step further by noticing that instead of
+encoding each sets of MSB’s separately, we can batch-encode them as
+a whole using for example Asymmetric Numeral Systems (ANS). Our
+signatures then enjoy an additional 7 −12% compression factor. This will
+be implemented in a future version of SOLMAE.
+In the description above, the scheme cannot output two different
+signatures for a message. This well-known concern of the GPV framework
+can be addressed in several ways, for example making a stateful scheme
+or by hash randomization. Like Falcon, we chose the latter solution for
+efficiency purposes. In practice, Sign adds a random “salt” r ∈{0, 1}k,
+where k is large enough that an unfortunate collision of messages is unlikely
+to occur, that is, it hashes (r||M) instead of M — our analysis in this regard
+is identical to that of Falcon. A signature is then sig = (r, Compress(s1)).
+Fig. 3 sketches the signing procedure.
+Specification of Sign The signing algorithm Sign handles the hash
+and the Fourier conversions, leaving the important task of generating the
+signature vectors to Sample. The hash function is instantiated as explained
+in Section 3.6. It also generates the salt r ∈{0, 1}k; the length of the salt
+12
+
+Sign (Algorithm 3)
+Sample (Algorithm 4)
+Compress (Algorithm 11)
+PeikertSampler (Algorithm 5)
+N-Sampler (Algorithm 10)
+Z-Sampler [40]
+Figure 3: Flowchart of Sign
+is obtained by standard conversions from a conservative target bit-security
+and the maximum number of queries qs = 264 as k = 320 = 256 + log qs.
+The parameter η is selected as a tight upper bound on the smoothing
+parameter ηϵ(Zd), for some ϵ > 0. Informally, this parameter quantifies the
+amount of noise to smooth out the discreteness of lattice Gaussian vectors.
+The value of ϵ is deduced following [38, 10] and the current standard Renyi
+divergence arguments. The corresponding value for η is then
+ϵ = 2−41
+and
+η = 1
+π
+s
+1
+2 · log
+
+2d
+
+1 + 1
+ϵ
+
+.
+Concretely, we have η512 ≈1.338 and η1024 ≈1.351. The output is a
+Gaussian vector v ∈LNTRU centered at c = (0, H(r||M)); the parameter
+σsig determines the expected distance from v to its center, and therefore
+drives the hardness of the forgery. Its value is determined from [37, 10]:
+σsig = η · Q(f, g) · √q.
+The sampling of the signature vector in Algorithm 3 is a cascade
+of different sampling algorithms, Sample, PeikertSampler, and at the
+deepest level, Z-Sampler. Their specifications follow.
+3.4
+Design of Sample
+Our second main change from Falcon is to rely on the hybrid sampler
+for the Sample procedure. To make sense of this change, we provide the
+briefest possible outline of Lattice Gaussian sampling — as the sampling
+13
+
+Algorithm 3: Sign
+Input: A message M ∈{0, 1}∗, a tuple
+sk = ((f, g), (F, G), ( eF, eG), σsig, Σ1, Σ2, η), a rejection parameter γ > 0.
+Output: A pair (r, Compress(s1)) with r ∈{0, 1}320 and ∥(s1, s2)∥≤γ.
+1 r ←U({0, 1}320);
+2 c ←(0, H(r||M));
+3 ˆc ←FFT(c);
+4 repeat
+5
+(ˆs1, ˆs2) ←ˆc −Sample(ˆc, sk);
+// (s1, s2) ←DLNTRU,c,σsig
+6 until ∥(FFT-1(ˆs1), FFT-1(ˆs2))∥2 ≤γ2;
+7 s1 ←FFT-1(ˆs1);
+8 s ←Compress(s1);
+9 return (r, s);
+of signature ultimately is the whole core of the entire fast-GPV design,
+this is anyway a required paragraph.
+Such algorithms are usually regarded as randomized decoding proce-
+dures. Babai described two well-known lattice decoding algorithms: the
+round-off and the nearest-plane. Intuitively speaking, the first just rounds
+coordinates of the target in the lattice basis to their nearest integer, while
+the second is more fine-grained and rounds the Gram-Schmidt coordinates
+of the target iteratively, correcting the deviation from the original lat-
+tice basis with each decoding step. By randomizing the rounding using
+Gaussian integers, one obtains either Peikert’s sampler [33] or Klein’s
+sampler [28, 16]. The former is more efficient over NTRU lattices, but
+suffers from a lack of good trapdoors. In other words, signatures are longer
+with this approach. The latter compensates for its lack of efficiency by
+large sets of very good trapdoors, and therefore almost optimal signature
+lengths. As we mentioned, if one accepts a delicate and practically un-
+maskable implementation involving tree data structures, this drawback
+can be mitigated.
+The hybrid sampler stands in-between, both in efficiency and signature
+lengths: the Gram-Schmidt orthogonalization and randomized decoding
+are both done at the ring level, so that the algorithm can be seen as
+a combination of Klein and Peikert’s approach. In particular, only two
+decoding steps are performed for NTRU lattices, compared to 2d for the
+FFO sampler, and the randomization is handled by Peikert’s algorithm in
+the ring, which runs in quasi-linear time: this explains its overall better
+efficiency. On its first analysis [37], it seemed that good trapdoors for this
+sampler were costlier to find. Owing to our new KeyGen algorithm, this
+14
+
+is no longer a concern, and we are now able to enjoy all the advantages
+that the hybrid sampler brings versus the FFO sampler: it is simpler to
+implement, it is more efficient, and it is more friendly to parallelization.
+Moreover, its masking can be performed with standard, well-understood
+techniques [10] and online-offline approaches, since the tree structure is
+now entirely avoided.
+Specification of Sample Sample is an instantiation of the hybrid sam-
+pler [37, 10], and can be seen as 2-step randomized decoding, with random-
+ization occurring at the ring level, or morally, in a d-dimensional space. In
+Algorithm 4 below, note that all operations are performed in Fourier
+domain.
+Algorithm 4: Sample
+Input: A target c = (0, c′) ∈K2
+R, a tuple
+sk = (b1 = (f, g), b2 = (F, G), f
+b2 = ( eF, eG), σsig, Σ1, Σ2, β1, β2).
+Output: A vector v ∈LNTRU with distribution statistically close to
+DLNTRU,c,σsig.
+1 t ←c, v ←0;
+2 for i = 2 to 1 do
+3
+ti ←⟨βi, t⟩K;
+4
+zi ←PeikertSampler(ti, Σi, η) ;
+/* zi ←D
+R,ti,
+σ2sig
+⟨e
+bi,e
+bi⟩
+*/
+5
+t ←t −zibi, v ←v + zibi;
+6 return v;
+The randomization is performed by a call to PeikertSampler (see Al-
+gorithm 5), which outputs elements in R with a Gaussian distribution of
+suitable covariance matrices. In Fourier domain, these covariance matrices
+are diagonal, and can then be represented by a vector of complex numbers.
+From Section 3.2, we view σsig as a constant in KR, and the intermediate
+standard deviation parameters are
+Σi =
+v
+u
+u
+t σ2sig
+⟨f
+bi, f
+bi⟩
+−η2 ∈KR.
+By choice of σsig, they correspond in Fourier domain to positive definite
+matrices which are actually diagonal with entries the embeddings of Σi.
+The square roots are then easily computed coordinate-wise.
+15
+
+Specification of PeikertSampler Again, input, output as well as arith-
+metic operations are all done in Fourier representation. The principle
+of PeikertSampler is perturbation-based sampling. This translates con-
+cretely as a continuous, elliptic Gaussian sampling that is easy to handle in
+Fourier domain with enough precision, combined with a spherical, discrete
+Gaussian sampling of width η, as shown in Algorithm 5. The latter is
+handled by d calls to Z-Sampler.
+Algorithm 5: PeikertSampler
+Input: A target t ∈KR, parameters Σ, η ∈K++
+R
+.
+Output: A vector v ∈R with distribution statistically close to DR,t,σ, where
+σ =
+p
+Σ2 + η2.
+1 p ←Σ · N KR
+1
+;
+/* p ←N KR
+Σ2 , done with N-Sampler (Algorithm 10) */
+2 (p1, . . . , pd) ←FFT-1(p) ;
+/* (pi)i ∈Rd */
+3 (t1, . . . , td) ←FFT-1(t) ;
+/* (ti)i ∈Zd */
+4 for i = 1 to d do
+5
+xi ←Z-Sampler(ti −pi, η);
+6 return FFT(x1, . . . , xd);
+By definition of the parameters, the calls to Algorithm 5 in Algo-
+rithm 4 output two ring elements with respective covariance σ2
+sig/⟨ebi, ebi⟩K,
+in Fourier representation.
+Specification of Z-Sampler This step is surprisingly delicate. We reuse
+the ingenious method of Falcon, and refer to their documentation [40]
+for the details about the parameters. Below, we give only an informal
+description of the necessary steps based on [45, 20].
+The first concern is the necessity to sample around an arbitrary center
+c ∈R. A technique is to first identify it to its fractional part {c} ∈
+[0, 1), and then use a rejection approach to allow a sampling centered
+around 0 instead. This implies computations of the rejection probability,
+which involve the exponential function and must be performed efficiently
+at a sufficiently high floating-point precision. Next, the sampling uses
+a Cumulative Distribution Table (CDT) approach (also known as an
+inversion-based sampler). The space is saved by using the CDT of a half
+Gaussian distribution combined with a Bernoulli sampler to obtain the
+sign of the output.
+16
+
+3.5
+Design of Verif
+The last step of the scheme is thankfully simpler to describe as shown in
+Algorithm 6. Upon receiving a signature (r, s) and message M, the verifier
+decompresses s to a polynomial s1 and c = (0, H(r||M)) to recover the
+full signature vector v = (s1, s2). If v is a valid signature, the verification
+identity is (h, −1)·(c−v) = −H(r||M)−hs1+s2 mod q = 0, or equivalently
+the verifier can compute
+s2 = H(r||M) + hs1 mod q.
+This is computed in the ring Rq, and can be performed very efficiently for
+a good choice of modulus q using the Number Theoretic Transform (NTT).
+We currently follow the standard choice (as in Falcon) of q = 12289, as
+the multiplication in NTT format amounts to d integer multiplications
+in Z/qZ. In future versions, we will consider different trade-offs between
+verification efficiency and public-key size. The last step is to check that
+∥(s1, s2)∥2 ≤γ2: the signature is only accepted in this case.
+The rejection bound γ comes from the expected length of vectors
+outputted by Sample. Since they are morally Gaussian, they concentrate
+around their standard deviation; a “slack” parameter τ = 1.042 is tuned
+to ensure that 90% of the vectors generated by Sample will pass through
+the loop:
+γ = τ · σsig ·
+√
+2d.
+Algorithm 6: Verif
+Input: A signature (r, s) on M, a public key pk = h, a bound γ.
+Output: Accept or reject.
+1 s1 ←Decompress(s);
+2 c ←H(r||M);
+3 s2 ←c + hs1 mod q;
+4 if ∥(s1, s2)∥2 > γ2 then
+5
+return Reject.
+6 return Accept.
+3.6
+Miscellaneous
+In this section we define several supporting algorithms invoked by KeyGen, Sign,
+and Verif.
+17
+
+Specification of FFT and FFT-1:
+Algorithms 7 and 8 show the
+computation of FFT and its inverse over KR, respectively.
+Algorithm 7: FFT
+Input: f ∈KR = R[X]/(Xd + 1).
+Output: the FFT representation of f
+1 ζ = exp(iπ/d);
+2 φ(f) ←(f(ζ1), f(ζ3), · · · , f(ζ2d−1));
+3 return φ(f)
+Algorithm 8: FFT-1
+Input: c = (c0, · · · , cd−1) ∈Cd such that cd−1−i = ci.
+Output: f ∈KR such that c = φ(f)
+1 ζ = exp(iπ/d);
+2 V =  ζjk
+j∈Zd,k∈Z∗
+2d
+;
+3 f ←1
+d · Vc;
+4 return f
+Specification of UnifCrown Algorithm 9 below outputs a uniformly
+random element in a fixed planar annulus A(R−, R+) = {(x, y) ∈R2 : R2
+−≤
+x2 + y2 ≤R2
++}, from uniformly random numbers in (0, 1) — that is, uni-
+form in the set of floating point numbers with given mantissa and exponent
+inside (0, 1).
+Algorithm 9: UnifCrown
+Input: Parameters 0 < R−< R+.
+Output: A point (x, y) with uniform distribution in A(R−, R+)
+1 uρ, uθ ←U(0, 1);
+2 ρ ←p
+R2
+−+ uρ(R2
++ −R2
+−);
+3 x ←ρ · cos( π
+2 uθ);
+4 y ←ρ · sin( π
+2 uθ);
+5 return (x, y)
+18
+
+To verify this implementation visually, the scatter plot of UnifCrown
+sampler with 10,000 samples was depicted in Figure 4. From this, we can
+Figure 4: Scatter plot of UnifCrown Sampler
+see that UnifCrown sampler works properly.
+Specification of N -Sampler In Algorithm 10, the first step is the sam-
+pling of a continuous Gaussian perturbation with some elliptic covariance
+E. If Σ is a matrix such that ΣtΣ = E, then NE = Σ · N1.
+A multivariate normal distribution is a natural distribution that is
+used in many fields. The process of generating a sample that follows
+normal distribution is called Gaussian sampling. In SOLMAE, we use an
+N-Sampler (which is the same as the Gaussian sampler) to generate the
+FFT representation of d–dimensional standard normal distribution. To
+generate Rd vector that follows the multivariate normal distribution of
+mean 0 and variance matrix d
+2 · Id, we can generate independent d
+2 many
+random vectors that follow a bivariate normal distribution with mean 0
+and variance matrix d
+2 ·I2, then concatenate them together. Also, sampling
+bivariate normal distribution with mean 0 and variance matrix d
+2 · I2 can
+be done by using Box–Muller transform [4]. We describe how it works:
+First, generate u1 and u2, two independent random numbers, that follow
+uniform distribution between 0 and 1. Then, compute R and θ as shown
+below.
+R =
+q
+−d · ln(u1),
+Θ = 2π · u2
+(2)
+Finally, calculate X and Y , to convert (R, Θ) into Cartesian coordi-
+nates.
+19
+
+X = R · cos(Θ),
+Y = R · sin(Θ)
+(3)
+Algorithm 10: N-Sampler
+Input: The degree d of R.
+Output: Two variables x, y with distribution Nd/2
+1 uρ, uθ ←U(0, 1);
+2 ρ ←
+p
+−d ln uρ;
+3 x ←ρ · cos(2πuθ);
+4 y ←ρ · sin(2πuθ);
+5 return (x, y)
+Theorem 1. (X, Y ) in Eq.(3) follows bivariate normal distribution with
+mean 0 and variance matrix d
+2 · I2.
+Proof. By using the random variable transform theorem stated in [?], we
+show that this theorem holds as follows:
+pdfX,Y (x, y) = pdfU1,U2(u1, u2) ·
+
+∂u1
+∂x
+∂u1
+∂y
+∂u2
+∂x
+∂u2
+∂y
+
+=
+
+−2x
+d · e−x2+y2
+d
+−2y
+d · e−x2+y2
+d
+1
+2π ·
+−y
+x2+y2
+1
+2π ·
+x
+x2+y2
+
+(u1 = e−x2+y2
+d
+, u2 = 1
+2π tan−1(y
+x))
+= (2π)−1 · |Σ|−1/2exp(−1
+2xT Σ−1x)(x = (x, y)T , Σ = d
+2 · I2)
+where pdf means the probability density function. Thus, we see that (X, Y )
+in Eq.(3) follows the bivariate normal distribution.
+⊓⊔
+To check whether the N-Sampler used in SOLMAE reference imple-
+mentation generates the multivariate normal distribution of mean zero and
+variance matrix d
+2 · Id properly, we made a checking program in Python
+script that produces a sample of size 1,000, then plots the random vec-
+tors’ projections to R2 and Chi-square QQ-plot using the built-in library
+provided in Python. Figure 5 illustrates the 2–dimensional plot of this
+N-Sampler. Figures 5(a) and 5(b) are its scatter plot and QQ–plot, re-
+spectively. From this experiment, we can see that this N-Sampler works
+properly.
+20
+
+(a) Scatter plot
+(b) QQ–plot
+Figure 5: Plot of N-Sampler
+Specification of Compress and Decompress: We reuse the same method
+as in Falcon to encode and decode keys and signatures. For the sake of
+completeness, we describe the compression and decompression functions
+as depicted in Algorithms 11 and 12, respectively. Note that slen =
+8 · |sgn| −320 by default where |sgn| denotes the signature size in bytes.
+Again, we can use the improved encoding technique suggested in [14] to
+further reduce the signature size which will be implemented in a future
+version of SOLMAE.
+Algorithm 11: Compress
+Input: A polynomial s = Pd−1
+i=0 siXi ∈R = Z[X]/(Xd + 1) and an integer
+slen.
+Output: A compressed representation of str of s of bitsize slen, or ⊥
+1 str ←{};
+2 for i = 0 to d −1 do
+3
+str ←(str || b) where b = 1 if si < 0, b = 0 otherwise;
+4
+str ←(str || b6b5 · · · b0) where bj = (|si| ≫j)&0x1;
+5
+k ←|si| ≫7;
+6
+str ←(str || 0k1)
+7 if |str| > slen then
+8
+str ←⊥;
+9 else
+10
+str ←(str || 0slen−|str|)
+11 return str
+21
+
+Algorithm 12: Decompress
+Input: A bitstring str of bitsize slen
+Output: A polynomial s = Pd−1
+i=0 siXi ∈R = Z[X]/(Xd + 1) or ⊥
+1 if |str| ̸= slen then
+2
+return ⊥;
+3 for i = 0 to d −1 do
+4
+s′
+i ←P6
+j=0 26−jstr[1 + j];
+5
+k ←0;
+6
+while str[8 + k] = 0 do
+7
+k ←k + 1
+8
+si ←(−1)str[0] · (s′
+i + 27k);
+9
+if si = 0 and str[0] = 1 then
+10
+return ⊥
+11
+str ←str[9 + k : ]
+12 if |str| ̸= 0|str| then
+13
+return ⊥;
+14 return s = Pd−1
+i=0 siXi
+3.7
+Domain parameters
+For the sake of clarity, we summarize all the concrete values for the domain
+parameters as described in Table 1. Note that smoothing η of 1.320 can
+be used for SOLMAE-512 and SOLMAE-1024 simultaneously for the
+sake of convenience. In practice, there are no cryptographic differences.
+4
+Security
+4.1
+Model for lattice reduction
+In all of the following, we follow the so-called Geometric Series Assumption
+(GSA), asserting that a reduced basis sees its Gram-Schmidt vectors’ norm
+decrease with geometric decay. More formally, it can be instantiated as
+follows for the self-dual BKZ (DBKZ) reduction algorithm of Miccian-
+cio and Walter [31]: an output basis (b1, . . . , bn) yielded by the DBKZ
+algorithm with block size β on a lattice L of rank n satisfies
+∥b∗
+i ∥= δd−2(i−1)
+β
+det(L)
+1
+n ,
+where
+δβ =
+
+(πβ)
+1
+β · β
+2πe
+
+
+1
+2(β−1)
+,
+for b∗
+i being the i-th Gram-Schmidt vector of the basis.
+22
+
+Table 1: Domain parameters for SOLMAE family
+SOLMAE-512
+SOLMAE-1024
+ring degree d
+512
+1024
+dimension 2d
+1024
+2048
+modulus q
+12289
+12289
+salt length k
+320
+320
+smoothing η
+1.320
+1.320
+smoothness ϵ
+2−41
+2−41
+quality α
+1.17
+1.64
+correction δ
+0.065
+0.3
+lower radius R−
+101.95
+100.85
+upper radius R+
+122.49
+148.54
+signature width σsig
+173.54
+245.62
+slack τ
+1.04
+1.04
+rejection bound γ2
+33870790
+134150669
+4.2
+Key recovery attack
+The key recovery consists of finding the private secret key (i.e., f, g ∈R2)
+from the sole data of the public elements q and h. To the best of our
+knowledge, the most powerful attacks are realized through lattice reduction.
+It consists of constructing the algebraic lattice over R spanned by the
+vectors (q, 0) and (h, 1) (i.e. the public basis of the NTRU key) and retrieve
+the lattice vector s = (g, f) among all possible lattice vectors of the norm
+bounded by ∥s∥=
+√
+2dσ (or a functionally equivalent vector, for instance
+(µg, µf) for any unit µ of the number field).
+We make use of the so-called projection trick to avoid enumerating
+over all the sphere of radius
+√
+2dσ (which contains around
+
+2dσ2
+q
+d vectors
+under the Gaussian heuristic). More precisely we proceed as follows. Set
+β to be the block size parameter of the DBKZ algorithm and start by
+reducing the public basis with this latter algorithm. Call [b1, . . . , b2d] the
+resulting vectors. If we can recover the projection of the secret key onto
+P, the orthogonal space to Span(b1, . . . , b2d−β−1), then we can retrieve
+the full key in polynomial time by Babai nearest plane algorithm to lift it
+to a lattice vector of the desired norm. Hence it suffices to be able to find
+the projection of the secret key among the shortest vector of the lattice
+generated by the last β vectors projected onto P. Classically, sieving on
+this projected lattice will recover all vectors with a norm smaller than
+q
+4
+3ℓ, where ℓis the norm of the 2d −β-th Gram-Schmidt vector b∗
+2d−β of
+23
+
+the reduced basis. Under the GSA, we have:
+ℓ= √qδ−2d+2β+2
+β
+≈
+ β
+2πe
+1−d
+β .
+Moreover, considering that s behaves as a random vector of norm
+√
+2dσ,
+and using the GSA to bound the norm of the Gram-Schmidt vectors
+[b∗
+1, . . . , b∗
+2d−β], that the norm of its projection over P is roughly
+s
+β
+2d∥s∥= β
+1
+2 σ.
+Hence, we will retrieve the projection among the sieved vectors if β
+1
+2 σ ≤
+q
+4
+3ℓ, that is if the following condition is fulfilled:
+σ2 ≤4q
+3β δ4(β+1−d)
+β
+(4)
+4.3
+Signature forgery by reduction to Approx-CVP
+As a Hash-and-Sign paradigm signature, forging a signature stems to feed
+a lattice point v at a bounded distance from a random space point x. This
+Approx-CVP problem can be solved using the so-called Nearest-Cospace
+framework developed in [12]. Under the GSA, Theorem 3.3 of [12] states
+that under the condition: ∥x −v∥≤
+
+δ2d
+β q
+1
+2
+
+, decoding can be performed
+in time poly(d) calls to a CVP oracle in dimension β.
+As mentioned in [6] a standard optimization of this attack consists of
+considering only the lattice spanned by a subset of the vectors of the public
+basis and decoding within this sublattice. The only interesting subset seems
+to consist of forgetting the k ≤n first vectors. The dimension is of course
+reduced by k, at the cost of working with a lattice with covolume q
+k
+2(2d−k)
+larger. Henceforth the global condition of decoding becomes the (slightly
+more general) inequality ∥x−v∥≤mink≤d
+
+δ2d−k
+β
+q
+d
+2d−k
+
+As such, we need
+to enforce the condtion:
+γ ≥min
+k≤d
+
+δ2d−k
+β
+q
+d
+2d−k
+
+(5)
+4.4
+On the other attacks on SOLMAE
+In this section, we list the other possible types of attacks on the signature,
+which are nonetheless irrelevant for the set of parameters we are using.
+24
+
+Algebraic attacks As remarked in the design of NTRU-based schemes
+(such as for instance Falcon or ModFalcon signatures), there exists a rich
+algebraic structure in the modules over the convolution ring R used in
+SOLMAE. However, there is no known way to improve all the algorithms
+previously mentioned with respect to their general lattice equivalent by
+more than polynomial factors (see for instance the speedup on lattice
+reduction of [26]).
+Overstretched NTRU-type As observed in [27], when the modulus
+q is significantly larger than the magnitudes of the NTRU secret key
+coefficients, the attack on the key based on lattice reduction recovers
+the secret key better than the results presented above. This so-called
+“overstretched NTRU” parameter occurs when q > (2d)2.83 for binary
+secrets, implying that, as is the case for Falcon and other NTRU-based
+NIST candidates, even very significant improvements of this attack would
+still be irrelevant for the security of the scheme.
+Hybrid attacks Odlyzko’s meet on the middle attack, or more recently
+the hybrid attack of Howgrave-Graham [22] which combines a meet-
+in-the-middle algorithm with a key recovery by lattice reduction were
+used effectively against NTRU, mainly due to its design using sparse
+polynomials. As this is not the case (secrets are dense elements in the
+ring R), their impact is not sufficient to be a problem on the parameter
+selection of SOLMAE.
+4.5
+Concrete security
+In order to assess the concrete security of our signature scheme, we proceed
+using the usual cryptanalytic methodology of estimating the complexity
+of the best attacks against key recovery attacks on the one hand, and
+signature forgery on the other.
+The analyses translate into concrete bit-security estimates following the
+methodology of NewHope [1], sometimes called the “core-SVP method-
+ology”. In this model [2, 29], the bit complexity of lattice sieving (which is
+asymptotically the best SVP oracle) is taken as ⌊0.292β⌋in the classical
+setting and ⌊0.265β⌋in the quantum setting in dimension β.
+The resulting security in terms of the sampling quality α is given in
+Fig. 6 in the dimensions 512 and 1024.
+25
+
+1
+1.2
+1.4
+1.6
+1.8
+2
+2.2
+2.4
+2.6
+2.8
+3
+75
+80
+85
+90
+95
+100
+105
+110
+115
+120
+125
+130
+135
+Classical
+antum
+1
+1.2
+1.4
+1.6
+1.8
+2
+2.2
+2.4
+2.6
+2.8
+3
+190
+200
+210
+220
+230
+240
+250
+260
+270
+280
+290
+300
+310
+Classical
+antum
+Figure 6: Security (classical and quantum) against forgery as a function
+of the quality 1 ≤α ≤3 of the lattice sampler (left: dimension 512 and
+right: dimension 1024).
+Table 2: Security level for SOLMAE (C: Classical, Q: Quantum)
+SOLMAE-512
+SOLMAE-1024
+Bit security (C/Q)
+127/115
+256/232
+NIST equivalent
+NIST-I
+NIST-V
+4.6
+Side-Channel Resilience
+As is the case with Falcon, the difficulty of realizing constant-time imple-
+mentation lies in the use of floating-point arithmetic. A potential approach
+to address this problem would be to rely on the work of Pornin [34], which
+has successfully presented constant-time implementation of floating-point
+arithmetic by either benefiting from dedicated floating-point hardware
+when available, or otherwise by emulating floating-point with only integer
+operations. At the core of PeikertSampler is Gaussian sampling over the
+integers (Z-Sampler). We recommend implementing this step by following
+the isochronous sampler of Howe et al. [20]. Their version of Z-Sampler
+essentially invokes a base Gaussian sampler that samples an element with
+a fixed half Gaussian distribution (which can be made constant-time by
+naively going through all entries in the CDT) and then rejects that element
+with a certain probability in such a way that the rejection rate leaks no
+information about the secret.
+Unlike Falcon’s tree-based sampler, SOLMAE avoids recursive struc-
+tures, enabling straightforward application of masking techniques that
+satisfy t-NI (non-interfering) and t-SNI (strong non-interfering) security.
+In particular, polynomial multiplication and Gaussian sampling can be
+masked using standard techniques described in Mitaka paper [11] We
+26
+
+believe this property makes SOLMAE particularly suitable for embedded
+and side-channel resistant implementations.
+5
+Performance Analysis
+Kim [23] analyzed the asymptotic complexities of Falcon and SOLMAE
+for the KeyGen, Sign, and Verif procedures, showing that all of them
+have similar asymptotic complexity of Θ(d log d). This makes it difficult to
+evaluate their exact performance based solely on Python implementations.
+Using the reference implementations [24] of Falcon and SOLMAE,
+which are available on GitHub in C and on the SOLMAE website, respec-
+tively, we report their average execution times and provide a performance
+comparison on the same platform. For further insight into the behav-
+ior of the Python implementations of Falcon and SOLMAE, we refer
+the reader to Kim’s monograph [24] published by Springer Briefs in
+Information Security and Cryptography. A broader performance and im-
+plementation security analysis of KpqC competition Round 1 candidates
+was also conducted by Choi et al. [5].
+5.1
+Description of Platform
+The data were collected using two cores of an Intel Xeon CPU E5–2640 v3
+@ 2.60 GHz, with 4.00 GB RAM on an Ubuntu 20.04 server, compiled with
+CFLAGS = -Wall -Wextra -march=native -O3. All tests were executed
+10,000 times, and average values were reported for fair comparison.
+5.2
+Performance Comparison
+For these experiments, input messages of 1,024 bytes were randomly gener-
+ated for each of the 10,000 trials using independent key pairs. Performance
+results for Falcon were obtained using the speed tool provided in the
+official implementation. We first compare the performance of Falcon
+at different security levels—256 (educational level), 512 (NIST Level I),
+and 1024 (NIST Level V)—as shown in Figure 7. The Sign procedure is
+observed to be more computationally intensive than KeyGen and Verif.
+The average clock cycles and execution times (µs) for KeyGen, Sign,
+and Verif using SOLMAE-512 and SOLMAE-1024 are reported in
+Table 3.
+The average time in µs of internal common computations such as FFT,
+point-wise multiplication and Gaussian sampling,etc. which are commonly
+used for Falcon and SOLMAE families shown in Table 4.
+27
+
+Table 3: Performance comparison of SOLMAE and Falcon
+SOLMAE-512 SOLMAE-1024 Falcon–512 Falcon–1024
+KeyGen time
+Mcycles
+58.77
+137.76
+33.65
+98.65
+time (ms)
+22.6
+52.97
+12.94
+37.93
+pk size
+Bytes
+896
+1,792
+896
+1,792
+Sign time
+Kcycles
+758.3
+1,512.9
+1,353.15
+2,792.22
+time (µs)
+291.63
+581.82
+520.4
+1,073.81
+sgn size
+Bytes
+666
+1,375
+666
+1,280
+Verif time
+Kcycles
+121.3
+289.48
+144.31
+301.52
+time (µs)
+46.66
+111.34
+55.51
+115.97
+Table 4: Average time (µs) of common computations for Falcon and
+SOLMAE
+Degree FFT poly-add point-mult FFT-mul FFT-poly-div discrete-Gauss Gaussian-sampling
+512
+4.62
+0.17
+0.21
+0.21
+0.68
+68.85
+46.06
+1024
+8.94
+0.3
+0.4
+0.38
+1.37
+139.07
+89.99
+28
+
+Figure 7: Performance comparison of Falcon-{256, 512, 1024}
+From these results, we observe that SOLMAE, without incorporating
+compression and decompression functions, consistently outperforms Fal-
+con in both Sign and Verif at the same dimension. However, KeyGen
+is slightly slower due to the additional precomputation required for the
+private key. The overhead of compression and decompression is negligible.
+The average execution times (in µs) of common internal operations—such
+as FFT, point-wise multiplication, and Gaussian sampling—used in both
+Falcon and SOLMAE are summarized in Table 4.
+Finally, Table 5 compares the performance of SOLMAE-512 with
+SHAKE-128 and ECDSA P256r1 with SHA-256, using a third-party
+implementation of our SOLMAE-512 C reference code.
+Table 5: Comparison of SOLMAE and ECDSA
+SOLMAE ECDSA
+Specification
+512 P256r1
+Size(Bytes)
+pk
+1,792
+65
+sgn
+1,375
+32
+Time
+KeyGen(ms)
+30.21
+2.53
+Sign(µs)
+288.2 2,582.8
+Verif(µs)
+55.6 7,744.7
+29
+
+Compared to ECDSA, the KeyGen procedure of SOLMAE-512 is
+slower in an online setting.⋆However, Sign and Verif are approximately
+an order of magnitude faster than those of ECDSA P256r1, which is
+widely used in TLS/SSL. These results demonstrate that the SOLMAE
+family achieves strong performance without degradation when deployed
+in quantum-secure PKI and embedded security applications.
+6
+Coding Rules
+We follow the same encoding and decoding formats used in Falcon for
+the maximum compatibility but some customized headers are used for
+keypairs and signature of SOLMAE.
+Bits and Bytes We restate this part from Falcon specification to
+increase the readability of this paper. As usual, a byte is a sequence of
+eight bits (formally, an octet). Within a byte, bits are ordered from left
+to right. A byte has a numerical value, which is obtained by adding the
+weighted bits; the leftmost bit, also called top bit or most significant, has
+a weight of 128; the next bit has a weight of 64, and so on, until the
+rightmost bit, which has a weight of 1. Some of the encoding formats
+defined below use sequences of bits. When a sequence of bits is represented
+as bytes, the following rules apply:
+– The first byte will contain the first eight bits of the sequence; the
+second byte will contain the next eight bits, and so on. item Within
+each byte, bits are ordered left-to-right in the same order as they
+appear in the source bit sequence.
+– If the bit sequence length is not a multiple of 8, up to 7 extra padding
+bits are added at the end of the sequence. The extra padding bits
+MUST have value zero.
+This handling of bits matches widely deployed standards, e.g., bit
+ordering in the SHA-2 and SHA-3 functions, and BIT STRING values in
+ASN.1.
+Signatures A SOLMAE signature consists of two strings r and s. These
+strings may conceptually be encoded separately, because the salt r must be
+known before beginning to hash the message itself, while the s value can
+be obtained or verified only after the whole message has been processed.
+⋆Note that KeyGen in SOLMAE can be executed in a hybrid online/offline manner.
+30
+
+In a format that supports streamed processing of long messages, the salt
+r would normally be encoded before the message, while the s value would
+appear after the message bytes. However, we here define an encoding that
+includes both r and s. The first byte is a header with the following format
+(bits indicated from most to least significant):
+1cc0nnnn
+with these conventions:
+– The leftmost bit is 1, and the fourth bit from the left is 0.
+– Bits cc are 01 or 10 to specify the encoding method for s. Encod-
+ing 01 uses the compression (or decompression) Algorithm 11 (or
+Algorithm 12); encoding 10 is alternate uncompressed encoding in
+which each coefficient of s is encoded over a fixed number of bits. The
+encoding 00 is used for no encoding applied.
+– Bits nnnn encodes the hexadecimal value of 0x02 for SOLMAE-512
+and 0x0C for SOLMAE-1024 in Table 6.
+Public Keys A public key in Falcon and SOLMAE is a polynomial h
+whose coefficients are considered modulo q. An encoded public key starts
+with a header byte:
+1000nnnn
+with these conventions:
+– The four leftmost bits are 1000.
+– Bits nnnn encode the same value as the encoding header of signature
+from Table 6.
+Using these conventions, the header byte of encoded public key is 0x82
+and 0x8C for SOLMAE-512 and SOLMAE-1024, respectively. After
+the header byte comes the encoding of h: each value (in the 0 to q −1
+range) is encoded as a 14-bit sequence (since q = 12289, 14 bits per value
+are used). The encoded values are concatenated into a bit sequence of 14n
+bits, which is then represented as ⌈14n/8⌉bytes.
+Private Keys Private keys use the following header byte:
+1001nnnn
+with these conventions:
+31
+
+– The four leftmost bits are 1, and the fourth bit from the left is 1.
+– Bits nnnn encode the same value as the encoding header of signature
+and public key from Table 6
+Using these conventions, the header byte of encoded private key is
+0x92 and 0x9C for SOLMAE-512 and SOLMAE-1024, respectively.
+Table 6: Coding value for SOLMAE-d-q
+d
+q
+nnnn Comments
+512 12289 0x02
+1024 12289 0x0C
+7
+Concluding Remarks
+This paper summarizes the important features of SOLMAE which is a
+lattice-based signature scheme following the hash-and-sign paradigm in the
+style of GVP framework, and is instantiated over NTRU-lattices. In that
+sense, it is closely related to, and a successor of, several earlier schemes
+including Falcon, Mitaka and Antrag. More precisely, SOLMAE
+offers the unified framework achieving improved efficiency and security
+trade-offs over Falcon, Mitaka and Antrag.
+Falcon has the advantage of providing short public keys and signatures
+(offering essentially the best bandwidth trade-off among post-quantum
+constructions) as well as high security levels. In contrast, Mitaka is much
+simpler to implement, twice as fast in equal dimension, straightforward to
+parallelize and fully versatile in terms of parameters; however, it has lower
+security than Falcon in equal dimension, has an even more contrived
+key generation algorithm that tends to be quite slow, and has somewhat
+larger keys and signatures at equivalent security levels.
+We can conclude that SOLMAE addresses the trade-off among these
+schemes by offering all their advantages. It uses the same simple, fast,
+parallelizable signing algorithm as Mitaka, with flexible parameters.
+However, by leveraging a novel key generation algorithm, SOLMAE
+achieves the same high security and short key and signature sizes as
+Falcon and a faster Sign procedure. This positions SOLMAE as a highly
+competitive approach for constructing efficient lattice-based signatures
+over structured lattices for the embedded systems.
+32
+
+At Real World Post-Quantum Cryptography 2023 (RWPQC2023)
+symposium held in Tokyo, Prest [39] commented in his talk that SOLMAE
+uses the same simple, fast, parallelizable signing algorithm as Mitaka.
+By leveraging a novel key generation algorithm, SOLMAE achieves the
+same high security and short key and signature size as Falcon. Moreover,
+based on SOLMAE specification [25], Cottaar et al. [7] concluded that
+SOLMAE is close to Falcon, but easier to implement in their evaluation
+report on KpqC submissions in terms of practical implementation.
+Many practical reports on good fit for Falcon were presented on
+V2V communications [44], TLS certificates [42], DNSSEC [32, 17], low–
+resource verification of FPGA [3] and Cortex–M3 [18]. It is quite clear
+that SOLMAE can take all these practices as well due to its fundamental
+inheritance from Falcon.
+Further implementation challenges are left to do next:
+– Optimized implementation on various platform.
+– Extension of ordinary SOLMAE signature to deterministic [30], mes-
+sage recovery [19] and ring [15] signatures.
+– Comparison with the key generation procedure without floating-point
+arithmetic using Pornin’s idea [35] using native FPU instructions with
+Cortex M7 Raspberry Pi 3 and others [21]
+Finally, SOLMAE-512 and SOLMAE-1024 were officially approved
+as institutional standards [43] by the Telecommunications Technology
+Association (TTA) of Korea at the end of 2025.

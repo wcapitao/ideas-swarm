@@ -1,0 +1,1226 @@
+VRSafe: A Secure Virtual Keyboard to Mitigate Keystroke
+Inference in Virtual Reality∗
+Yijun Yuan
+University of Pittsburgh
+Pittsburgh, PA, USA
+yiy95@pitt.edu
+Na Du
+University of Pittsburgh
+Pittsburgh, PA, USA
+na.du@pitt.edu
+Adam J. Lee
+University of Pittsburgh
+Pittsburgh, PA, USA
+adamlee@pitt.edu
+Balaji Palanisamy
+University of Pittsburgh
+Pittsburgh, PA, USA
+bpalan@pitt.edu
+Abstract
+Password-based authentication is one of the most commonly used
+methods for verifying user identities, and its widespread usage
+continues in virtual reality (VR) applications. As a result, various
+forms of attacks on password-based authentication in traditional
+environments such as keystroke inference and shoulder surfing, are
+still effective in VR applications. While keystroke inference attacks
+on virtual keyboards have been studied extensively, few efforts
+have developed an effective and cost-efficient defense strategy to
+mitigate keystroke inferences in VR. To address this gap, this paper
+presents a novel QWERTY keyboard called VRSafe that is resilient
+to keystroke inference attacks. The proposed keyboard carefully
+introduces false positive keystrokes into the information collected
+by attackers during the typing process, making the inference of
+the original password difficult. VRSafe also incorporates a novel
+malicious login detector that can effectively identify unauthorized
+login attempts using credentials inferred from keystroke inference
+attacks with high detection rate and minimal time and memory
+cost. The proposed design is evaluated through both simulation
+experiments and a real-world user study, and the results show that
+VRSafe can significantly reduce the accuracy of keystroke infer-
+ence attacks while incurring a modest overhead from a usability
+standpoint.
+CCS Concepts
+• Human-centered computing →Virtual reality; User studies;
+Keyboards; Text input; • Security and privacy →Authentica-
+tion.
+Keywords
+VR Security; Password-based Authentication; Keystroke Inference
+Attack Defense
+1
+Introduction
+Virtual reality (VR) devices and applications are becoming increas-
+ingly prevalent. Studies show that over 171 million people globally
+use VR [18], and nearly 88% of VR users use their devices multiple
+times in a month [13]. VR applications provide immersive expe-
+riences not only in gaming and entertainment, but also in many
+other domains including education, fitness, healthcare and engi-
+neering [13]. The widespread use of VR leads to increased exchange
+of sensitive information (e.g. passwords), making them attractive
+targets for adversaries.
+Password-based authentication stands out as the most commonly
+used authentication method to date, however, extensive prior work
+∗Accepted at ACM CODASPY 2026
+has shown its vulnerability to keystroke inference attacks and shoul-
+der surfing across various settings [8, 14, 38, 44, 51, 56]. With the
+growing adoption of VR devices, these risks become more severe.
+VR applications provide a rich immersive experience to the user,
+enabling more stealthy attacks as users are generally less aware of
+their physical surroundings when using the VR devices. Many infer-
+ence attacks only require placing an inconspicuous sensor (e.g. cam-
+era) and achieve high inference accuracy [2, 12, 19, 23, 40, 55, 58, 60].
+These threat models exploit various information such as user’s hand
+movement [12], gyroscope data [40], wifi-signal data [2] or acoustic
+signals [23]. Such attacks are highly practical in the real world as
+they incur low cost and require minimal use of specialized knowl-
+edge. Prior efforts have also explored biometric-based approaches
+as an alternative to password-based authentication [5, 24, 39, 42]
+such as using eye-tracking cameras to capture iris information in
+VR headsets [5, 24]. Although biometric approaches have better
+resistance against keystroke inference attacks, they have not gained
+wide acceptance among the users. This is in part due to the lack of
+mature regulations and laws on how to store highly unique biomet-
+ric data, as well as due to OS and hardware compatibility issues [43]
+across different commercial VR products.
+In existing threat models, the risk of full password inference is
+underestimated. Though existing keystroke inference attacks can
+achieve high character-level guessing accuracy (often exceeding
+95%) [58], inferring a full password string is significantly more
+challenging due to the absence of inter-word context and limited
+intra-word semantics compared to inferring words in natural lan-
+guage texts (e.g. email content). While simple typographic correc-
+tion tools [55] may yield reasonable improvements for general text
+inference, such tools offer little benefit for reconstructing pass-
+words. Designing or evaluating defense mechanisms based on such
+a threat model can lead to overly optimistic conclusions, as these
+methods fail to capture the strategies that a practical adversary
+would adopt. To build a more robust and practical defense, in this
+work, we adopt a stronger threat model in which the attacker in-
+tegrates advanced password guessing techniques [35, 36, 50, 57]
+into the inference process, rather than relying on simple correction
+tools.
+Although there have been many research efforts on studying
+keystroke inference attacks in VR environments, countermeasures
+on this topic have not received adequate attention yet. Some studies
+briefly discuss ideas for potential defenses [58], others have pro-
+posed and evaluated defense solutions based on obfuscating user
+inputs using randomized keyboard layouts [26] or by repositioning
+the UI components [47]. However, such techniques increase the
+usage difficulty and impose additional physical and cognitive loads
+to the user.
+arXiv:2604.21001v1 [cs.CR] 22 Apr 2026
+
+There are several challenges involved in building an effective
+countermeasure against keystroke inference attacks. First, many
+attack models can reliably detect the precise moments when keys
+are pressed (e.g. [12, 19, 40, 58]). A strong defense method should
+therefore remain effective even under such worst cases, where the
+adversary can perfectly identify every key press event made by the
+user. Second, when an attacker attempts to log in with an incorrect
+but closely matching password, it is inherently difficult to detect the
+source of the password leakage. A comprehensive countermeasure
+may detect such malicious login attempts in addition to mitigating
+them. Finally, maintaining a high level of usability in the defense
+solution design remains a critical challenge.
+In this paper, we propose VRSafe, a security solution designed to
+enhance the security of password inputs entered through a standard
+QWERTY keyboard in virtual reality. The proposed approach care-
+fully injects fabricated noise into the typing process, making the
+inference of the original password harder for the attacker. VRSafe
+also incorporates a novel detection mechanism to identify whether
+an incorrect login attempt is a direct result of a keystroke inference
+attack. To the best of our knowledge, VRSafe is the first approach
+to alert the user when an attacker attempts to login using their
+inferred keystroke information. Our evaluation using public leaked
+password datasets and an IRB-approved user study demonstrates
+that VRSafe is a secure, practical and user-friendly approach for
+individuals with higher security and privacy needs in VR environ-
+ments.
+2
+Background and Related Work
+In this section, we discuss the existing works on keystroke inference
+attack and defense in VR.
+Keystroke inference attack, as the name suggests, tries to re-
+construct the user’s input sequence on the keyboard through side-
+channel information emanated from typing (e.g. sound, motion).
+Over the past decade, keystroke inference attack has been widely in-
+vestigated, prompting the use of many different techniques to lever-
+age these side-channel signals. Recent work [12, 21, 58] have demon-
+strated the feasibility of reconstructing sensitive texts through ana-
+lyzing hand movements captured by videos, highlighting the crit-
+ical need for enhanced privacy and security protection. It is also
+possible to use the hand tracker camera of an Augmented Real-
+ity Head-Mounted Display (AR-HMD) [32] to recover passwords
+similar to the video-based attack in the VR environment. Wang
+et al. [52] find that gaze motions observed in videos can also leak
+typing sequence information. In addition to video-based attacks,
+attacks that exploit other channels such as audio, radio frequency
+(RF) or infrared signals generated during typing also pose serious
+threats. VRecKey [34] discloses an attack in which Infrared Remote
+(IR) signals emitted from VR controllers can be represented in heat
+map to reveal controller positions during typing in order to infer
+keystroke information. The attack presented in [2] uses Channel
+State Information (CSI) of Wifi signals from routers placed near the
+victim. The information exhibits unique patterns as users move the
+controller to type different keys, helping the attacker to identify
+the keystrokes. Another class of attacks uses the acoustic signals
+emitted by the VR devices. Heimdall [23] captures subtle variance
+in acoustic information created by the controller in different key po-
+sitions using their customized directional microphone. Prior works
+have also shown that attackers can utilize Inertial Measurement
+Unit (IMU) data such as combination of position, orientation and
+velocity [22, 40, 55] or memory usage in the victim’s device [60] to
+perform keystroke inference.
+In contrast to the widespread prior efforts in developing var-
+ious attacks, models to mitigate or to prevent inference attacks
+in VR environments are much less explored. In practice, very few
+methods can balance ease of use with strong performance in de-
+fending against the inference attacks. The defense solution outlined
+in [58] suggests placing physical screens to block the external line
+of sight. The approach presented in [3] replaces the normal 2D
+QWERTY keyboard with a curved, arc-shaped layout in AR to in-
+troduce variation in key spacing. Another approach to safeguard
+against keystroke inference attacks is to introduce randomness.
+For instance, the solution presented in [27] proposes projecting a
+random layout keyboard, and [20] generates a random mapping
+between alphabets and keypad keys to secure password entry in
+smart wearable glasses. The authors in [47] propose repositioning
+the UI components (e.g. cursor, keyboard) after each click so that
+an adversary cannot reliably map observed movements to specific
+keys.
+Overall, current solutions often adopt radical changes to the
+conventional keyboard layouts or input designs, and some rely
+on extra external protection devices. Such approaches introduce
+substantial learning overhead and increase the difficulty of use for
+end users. In contrast, the research presented in this paper aims
+to fill this gap by developing a usable and secure VR keyboard
+architecture that can withstand video-based keystroke inference
+attacks and yet provide a highly usable VR experience to the user.
+3
+VRSafe Design
+In this section, we present VRSafe, a secure keyboard in virtual
+reality that provides word-level protection for user password input
+against keystroke inference attacks. We first introduce the threat
+model used in the design of VRSafe and then describe the strategies
+employed for achieving better security and balancing the overhead
+incurred while using the keyboard. Finally we present our proposed
+mechanism for detecting malicious login attempts using credentials
+stolen through keystroke inference attacks.
+3.1
+Threat Model
+3.1.1
+Keystroke Inference. Keystroke inference threat models can
+employ a range of sensors, each with its own tolerance to noise.
+Video-based attacks often use ordinary digital cameras with no
+special configuration [12, 21, 22, 58], and videos are generally more
+robust to noise. To ensure reproducibility and fair performance
+comparisons with prior work, we adopt a video-based attack in our
+study. Specifically, we follow the attack model proposed in [12],
+where the adversary captures the VR user’s hand movements with
+a camera placed in the surrounding environment. We believe such a
+threat model is quite practical and is within the capabilities of most
+real world adversaries. In this model [12], the victim is assumed to
+interact with the keyboard using hand tracking features provided
+by VR headsets for typing. The captured video frames are processed
+
+using the hand landmark detection framework in MediaPipe [59]
+to extract coordinates of hand joints. By leveraging unique joint
+patterns exhibited during typing, such as relative joint positions
+and velocities, the model infers both the spatial position of the
+virtual keyboard plane and the final keystroke predictions. To better
+model the attacker’s ability, we make three more assumptions, each
+with a brief rationale: (i) The attacker can correctly identify every
+keystroke in the corresponding video clips. While raw video data
+may include false positives and false negatives, techniques like
+denoising and clustering can significantly reduce such detection
+errors, leading to a high true positive detection rate. (ii) The attacker
+can access any publicly available information within the application,
+but does not have access to private data of the legitimate user.
+Public data like keyboard layouts and language preference are easily
+obtainable, whereas private data such as screen display content are
+protected and inaccessible without privileged permissions. (iii) We
+also assume that the attacker is allowed at most 𝑘guessing attempts.
+This is consistent with most web applications, which allow only a
+small number of password guesses to be made before the system
+locks the user for suspicious action.
+3.1.2
+Password Guessing Refinement. Although existing keystroke
+inference attacks can achieve high character-level accuracy, end-
+to-end word guessing accuracy still has significant room for im-
+provement. Prior work has used simple typo correction tools such
+as grammar and spelling correction in Google Doc [55] on texts
+reconstructed from keystrokes, which underestimates the capabili-
+ties of real world attackers. In contrast, we find that using targeted
+password guessing models can improve the full password guessing
+accuracy, providing a more realistic assessment of defense effective-
+ness. Particularly, Pal et al. [36] proposed a sequence to sequence
+(seq2seq) targeted password guessing model using recurrent neural
+network (RNN) which is trained on users’ leaked passwords from a
+breached site to guess their passwords on another uncompromised
+site. Wang et al. [50] introduced Pass2Edit, which further improves
+this idea and currently achieves state-of-the-art performance. By
+inputting passwords inferred from keystrokes into such models,
+one can generate a list of plausible passwords, and one of which
+could correspond to the actual password.
+3.2
+Design Overview
+VRSafe consists of two modules, Keystroke Noise Injection Key-
+board and Inference Attack Detector, as shown in Figure 1. Users
+interact with VRSafe keyboard in a way similar to normal virtual
+keyboards, with only a small number of additional actions that in-
+tentionally introduce noise into the user’s password input. VRSafe
+can differentiate the noise from the actual password, maintaining
+the original password unchanged while storing a "noisy" version of
+the password. Upon clicking the login button, both the original and
+"noisy" password will be sent to the server. The server verifies the
+original password against the stored credentials in the database and
+only if the verification succeeds, it adds the corresponding “noisy”
+password to the detector. The shaded region in Figure 1 represents
+a keystroke inference attacker who covertly places a camera to
+record the user’s interactions with the VR headset, including the
+additional actions required by VRSafe. Based on these recordings,
+the attacker attempts to infer keystrokes and launch a malicious
+login attempt. However, the attacker can only recover the “noisy”
+password from the recorded video, and any such login attempts
+using the “noisy” passwords will be detected by the server.
+Noise Injection 
+Keyboard
+Credential
+Database
+Ghost Password
+(dKsjhXf*lq13)
+1 0
+0 0
+1 1
+0 0
+…
+Password
+(dKsjhflq13)
+Detector (Bloom Filter)
+…
+1 0
+1 0
+1 1
+0 1
+VR User
+Malicious
+Recording
+Video Frames
+Generate
+Guesses
+Identify
+Keystrokes
+Guess-1: DKsjhXf*lq13
+Guess-2: dKsjhXf*lq13!
+…
+Guess-k: dKsjhXf*lq13
+Server
+Keystroke 
+Inference Attack 
+Detected!
+4
+2
+1
+3
+Figure 1: VRSafe architecture. (1) Normal user interacts with
+VRSafe keyboard, the original password should remain un-
+changed for successful authentication and "noisy" password
+will be forwarded to detector. (2) Server adds the "noisy" pass-
+word to detector if the original password matches the record
+in database(i.e. a legitimate login). (3) A keystroke inference
+attacker captures the user’s keystroke on VRSafe keyboard
+and attempts to login. (4) The detector raises an alarm if cre-
+dential exists in the detector.
+3.3
+Keystroke Noise Injection in VR Keyboard
+We first explain the design rationale behind our approach of inject-
+ing fabricated noise to mitigate keystroke inference attacks and
+present the technical details of our design. The keystroke noise
+injection in VRSafe is based on insights from recent work demon-
+strating that even for attack models with high accuracy [58], certain
+behaviors significantly affect the accuracy: a participant pressing
+down towards a key, hesitating and then retracting the finger(s)
+before hitting, can lead to large amounts of false positive keystrokes.
+Drawing insights from this observation, we explore this phenome-
+non and propose our keystroke noise injection mechanism. Instead
+of accidentally "false pressing a key" or asking users to type some-
+thing wrong occasionally [56], VRSafe leverages an adaptive mech-
+anism that prompts the user to insert fabricated characters (noise)
+based on the current input string and previously injected noise. An
+attacker observing the hand movements of the VR user will not
+be able to differentiate the true intended inputs from fabricated
+ones, resulting in incorrect password inference. From a password
+protection standpoint, this process can be viewed as generating
+an augmented password 𝑆′ derived from the original password 𝑆.
+There is a constraint in this process: 𝑆must be a subsequence
+of 𝑆′, otherwise we will lose content in the original password. At
+the same time, the key press signals triggered by fabricated char-
+acters are processed differently and will not be forwarded to the
+keyboard output function (Fig. 2). This ensures the integrity of
+the normal login process. We refer to the characters that exist in
+user’s original/real password as real characters, the additional
+fabricated characters prompted by VRSafe as ghost characters and
+the augmented password as ghost password.
+
+Key Press
+Textbox Output
+Keyboard
+Update
+Ghost Character?
+Yes
+No
+Ghost Character 
+Generator
+Current String: dKsjhflq13
+Probability of Inject Ghost 
+Character: 70%
+User
+Figure 2: VRSafe will maintain a state variable to indicate
+whether the input is a ghost character or a real character, and
+only real characters will be forwarded to the textbox.
+Ghost Password Generation. Many models such as RNN-based
+seq2seq model [45], transformer based LLM models [1, 46] are
+capable of generating a similar password sequence based on a given
+password. However, they are inadequate for this task as they cannot
+guarantee the subsequence constraint (i.e. original password 𝑆is a
+subsequence of ghost password𝑆′) is satisfied on every input/output
+pair. To address this limitation, we need to employ a method that
+can reliably embed the characters of the original password into the
+ghost password. In VRSafe, we adopt a pointer-based method with
+two actions: (i) copy action, which appends the current pointed
+character in the original password to ghost password, and (ii) inject
+action, which appends a random ghost character. By progressing the
+pointer from the first to the last character of the original password,
+this approach ensures that the subsequence constraint is always
+satisfied. To decide between the two actions, we model the process
+as a finite sequence of Bernoulli trials: with probability 𝑃, the model
+performs an inject action and with a probability 1 −𝑃, it performs
+a copy action. Furthermore, to prevent the ghost password from
+becoming excessively long or identical to the original password,
+we impose a maximum limit on the number of consecutive ghost
+characters and a minimum requirement on the total number of
+injected ghost characters.
+Like words in natural languages, many passwords also contain
+semantics, especially in human-chosen passwords. If we inject a
+ghost character into an improper position, the adversary can easily
+spot the ghost character and remove it. Conversely, if a password
+already has a high entropy, adding many ghost characters provides
+little additional benefit. Therefore, the ghost password generation
+process should dynamically choose which action to take based on
+the current context. To address this, we train a small RNN-based
+model as a meter to evaluate the "randomness" of the current string,
+and adjust the injection probability 𝑃accordingly. The model con-
+sists of a single-layer Gated Recurrent Unit (GRU) with a hidden
+size of 64, and input tokens are represented with embeddings dimen-
+sion of 16. The GRU output is then fed into a fully connected (FC)
+layer and the final output is passed through a sigmoid activation
+to return a value between 0 and 1. For training, we use a publicly
+leaked dataset, namely Compilation of Many Breaches (COMB)
+dataset [37]. We label passwords from publicly leaked password
+dataset with 0 and machine generated passwords with 1. We note
+that not all passwords in public leaked dataset are human-chosen,
+but there is no consensus on how to reliably distinguish them, since
+passwords do not have "correct spelling" or linguistic rules like
+natural language words. Nevertheless, leaked password datasets
+remain the most representative and widely used source of human
+created passwords, making them a reasonable choice for approx-
+imating the human-chosen class in this case. To exclude extreme
+outliers, we remove passwords that exceed 30 characters or only
+contain hexadecimal characters, since they are more likely to be
+hashes than passwords. The ghost password generation algorithm
+(Algorithm 1) starts with an initial injection probability 𝑝0. After
+each action, the current ghost password will be forwarded to the
+meter model, the return value will be smoothed through exponen-
+tial moving average (EMA) and compared with randomness level
+𝑟. If it is smaller than 𝑟, meaning that the current string is not ad-
+equately random, then 𝑝will increase Δ𝑝, otherwise 𝑝becomes
+smaller.
+Algorithm 1 Adaptive Ghost Character Injection
+Require: smoothing factor 𝛼, randomness level 𝑟, injection proba-
+bility 𝑝0, step size Δ𝑝, password 𝑝𝑤𝑑
+1: Initialize 𝑝←𝑝0, 𝑟EMA ←𝑟, ghost_pwd ←””, 𝑝𝑜𝑠= 0
+2: while 𝑝𝑜𝑠< len(𝑝𝑤𝑑) do
+3:
+if random() < 𝑝then
+4:
+Inject(ghost_pwd)
+5:
+else
+6:
+Copy(ghost_pwd, pwd, pos)
+7:
+𝑝𝑜𝑠←𝑝𝑜𝑠+ 1
+⊲moves forward to next character
+8:
+end if
+9:
+ˆ𝑟←Eval(ghost_pwd)
+⊲Evaluate randomness of current
+string with meter model.
+10:
+𝑟EMA ←(1 −𝛼) · 𝑟EMA + 𝛼· ˆ𝑟
+11:
+if 𝑟EMA < 𝑟then
+12:
+𝑝←𝑝+ Δ𝑝
+13:
+else
+14:
+𝑝←𝑝−Δ𝑝
+15:
+end if
+16: end while
+17: return ghost_pwd
+Choosing Ghost Characters. We further elaborate the noise in-
+jection process (Inject() in Algorithm 1) in the generation of ghost
+passwords. A straightforward baseline approach is to uniformly
+choose a ghost character from an alphabet set of all legal charac-
+ters. However, a selection based on uniform distribution remains
+vulnerable to simple human inspection. For instance, suppose that
+the original password contains a date of birth, and if an alphabetic
+letter is added as a ghost character in between, then the attacker
+can easily exclude this letter from the inferred text. In order to make
+the ghost character look similar to a real character, we select ghost
+characters using simple language models that can capture linguistic
+connections between characters to make the process context-aware.
+Unlike neural networks that often require significant computational
+resources and introduce additional latency, the Markov model offers
+a lightweight and efficient alternative for ghost character selection.
+By definition, a 𝑘-order Markov model assigns a probability distri-
+bution over the next character conditioned only on the preceding
+𝑘characters:
+
+𝑃(𝑥𝑖| 𝑥𝑖−1,𝑥𝑖−2, . . . ,𝑥1) = 𝑃(𝑥𝑖| 𝑥𝑖−1,𝑥𝑖−2, . . . ,𝑥𝑖−𝑘)
+=
+count(𝑥𝑖−𝑘,𝑥𝑖−𝑘+1, . . . ,𝑥𝑖)
+Í
+𝑐∈Σ count(𝑥𝑖−𝑘,𝑥𝑖−𝑘+1, . . . ,𝑥𝑖−1,𝑐)
+where 𝑐𝑜𝑢𝑛𝑡(𝑥𝑖−1,𝑥𝑖) refers to the number of occurrences of string
+𝑥𝑖−1𝑥𝑖in a given dataset. We test the Markov model using the
+configuration used in [25] with different orders and find that the
+3-order Markov does not incur any noticeable delay in the ghost
+character generation process and yet provides sufficient context-
+awareness and randomness.
+Implementation. The keyboard in VRSafe is built using Unity
+based on a publicly available QWERTY keyboard template from
+the MRTK toolkit by Microsoft[33]. While entering the password, if
+the next character is a ghost character, the keyboard will disable all
+other keys on the keyboard except the ghost character and notify
+the user via text prompts, ensuring the user’s next action injects
+the intended noise. After typing the ghost character, the keyboard
+layout will be restored to normal QWERTY and the user can con-
+tinue typing. In a normal keyboard, every key fired by the user click
+will be appended to the textbox. We add a private variable to track
+whether each character is a real or a ghost character, and only real
+characters are forwarded to the text output. The ghost password
+is stored alongside the real password in the textbox GameObject,
+ensuring that it persists even if the keyboard is closed. We also
+create a login interface together with the VRSafe keyboard as a VR
+application using Unity 2022.3.24f1 and deploy it on Meta Quest2
+for the user study. The screenshot of the application is shown in
+Figure 3.
+VRSafe
+Ghost Character(Highlighted)
+Simulated Login Page
+Other Keys(Disabled)
+Tracked Hand
+*For user study
+Figure 3: A screenshot when the user needs to type a ghost
+character. All other keys except the ghost character will be
+disabled, and the user will be notified via text prompts.
+Overhead. Ghost characters enhance the security of the original
+password, however, they also incur longer text entry time. There-
+fore, it is critical to carefully consider the overhead introduced
+in the process. Although entry time can be influenced by various
+factors such as the user’s experience with the device and typing
+proficiency, we focus on reducing the overhead introduced by the
+additional characters, and we further discuss the subjective factors
+of users’ perceived overhead in the user study (Section 4.3).
+A
+C
+T
+Hand Movement Trajectory
+VR Cursor Trajectory
+Figure 4: The green arrows depict the cursor’s trajectory in
+keyboard space, and the purple line denotes the user’s hand
+trajectory in the physical world for typing word "CAT" using
+virtual keyboard.
+In VR applications, the cursor is often bound to handheld con-
+trollers, and interactions with components require moving the cur-
+sor to the target position. Typing on a virtual keyboard typically
+involves two steps: moving the cursor to the target key and pressing
+the button on the controller to select, and then this process repeats
+for each character. We can see that a substantial portion of entry
+time is spent on the controller movement. Meanwhile, to provide
+a realistic user experience, the ratio between cursor movement in
+virtual space and physical controller movement in the real world is
+often close to one [31]. For example, the hand and cursor movement
+trajectories for typing the word “CAT” on a virtual keyboard are
+illustrated in Fig. 4. Thus, the entry time of a given password can be
+approximated by the total distance traversed by the controller, or
+equivalently by the cursor. Suppose 𝐶𝑖= (𝑥𝑖,𝑦𝑖) denotes the coor-
+dinates of the 𝑖𝑡ℎcharacter in the password on the keyboard plane,
+then the total distance traversed by the cursor for the entering the
+password is computed using the following formula, where ∥· ∥2
+denotes Euclidean distance:
+𝑑𝑠𝑢𝑚=
+𝑛
+∑︁
+𝑖=2
+∥𝐶𝑖−𝐶𝑖−1∥2
+Based on the above formula, the overhead can be calculated as
+the difference in the distance between the original password and
+the ghost password. Our objective is to reduce the overhead with-
+out significantly compromising the enhanced security achieved by
+VRSafe. We can either reduce the number ghost characters or use
+weighted selection instead of uniform random choice. The former
+can be adjusted by choosing different randomness levels discussed
+in Algorithm 1. Here, we primarily focus on the latter. In natural
+languages, certain bi-grams occur with similar frequencies, yet their
+corresponding cursor traversal distances on the QWERTY keyboard
+can differ substantially. For instance, the bi-gram "PA" shows up
+10963 times and "PO" appears 11965 times in one million English
+words [41]. This indicates that both bi-grams are equally plausible
+from a linguistic standpoint, selecting either “A” or “O” as a ghost
+
+character offers no meaningful advantage to an attacker. However,
+typing "PO" results in a much smaller distance cost than "PA". There-
+fore, we can choose ghost characters that are located closer on the
+keyboard to reduce the moving overhead and yet achieve a similar
+protection performance. We implement this constraint in two ways,
+namely hard constraint and soft constraint. With hard constraint,
+we remove the characters that are unacceptably far from the preced-
+ing character by defining a threshold distance 𝜏and assigning zero
+probability to any candidate that exceeds the threshold. In contrast,
+the soft constraint does not explicitly eliminate distant characters
+from the candidate set. Instead, it adjusts their probabilities of being
+selected based on the distance. We compute the distance 𝑑between
+each candidate ghost character 𝑐𝑖and preceding character 𝑐𝑖−1, and
+adjust the selection probability using a softmax weighted function
+where closer characters receive higher probabilities:
+𝑃′(𝑐𝑖) =
+𝑃(𝑐𝑖) exp(−𝜆𝑑(𝑐𝑖,𝑐𝑖−1))
+Í
+𝑗
+𝑃(𝑐𝑗) exp −𝜆𝑑(𝑐𝑗,𝑐𝑖−1)
+Higher 𝜆or lower 𝜏will both result in smaller overhead with a
+more compact key distribution. However, it might increase the risk
+of weakening the enhanced security. We discuss the performance
+of VRSafe for different values of 𝜆and 𝜏in Section 4.
+3.4
+Inference Attack Detector
+Although the proposed noise injector increases the difficulty of
+obtaining the original password, an attacker may still correctly
+guess the password given enough attempts. In this case, the total
+number of brute-force attempts required to infer the correct orig-
+inal password from the ghost password is approximately 𝑘× 2𝑛,
+where 𝑘is the number of inferred ghost password candidates and
+𝑛is the length of the ghost password owing to the subsequence
+relationship between the ghost password and the real password.
+Thus, it is crucial to add a detection mechanism to identify whether
+an account is being actively targeted or guessed. By identifying
+targeted guessing attempts early, the service provider can notify
+the user to limit potential damage. We add a checker at the server
+side inspired by the honey checker proposed in [16]. The approach
+behind honey checker is to create false passwords (also called "hon-
+eywords" or "decoy passwords") that are similar to the user’s real
+password. All password hashes are stored in the credential database,
+and the server knows which one is authentic. An adversary who
+inverts the hashes will obtain multiple password candidates of each
+user, and if the attacker attempts to authenticate with a decoy pass-
+word, the server can immediately detect and flag the unauthorized
+attempt. Typically, this approach is employed to defend against
+attacks where password hash files from credential databases are
+compromised by data breaches. In our context, the attacker has
+knowledge of the ghost password which they believe is the original
+password of the user, and this password can also be considered
+as a "decoy password". Therefore, for better illustration, we refer
+to the password used for detecting keystroke inference attacks as
+"honeyword". If the adversary attempts to login with the ghost pass-
+word, we can infer that a keystroke inference attack has previously
+taken place. We draw this inference because neither the legitimate
+user nor other types of attackers would use the ghost password for
+authentication, and only a keystroke inference attacker possesses
+knowledge of the ghost password.
+To the best of our knowledge, no prior work has explored this
+setting, and our approach provides a novel detection mechanism
+specifically for keystroke inference attacks. Some research also
+explored alarm raising attackers [15, 49, 53] where the goal is to
+trigger false alarm than gaining unauthorized access. We argue that
+keystroke inference attackers are unlikely to adopt this strategy for
+the following reason: if an attacker already acquires user password
+from keystroke inference attack, raising alarm would not give them
+any profit about user’s sensitive information, and the password
+would expire soon since the compromised user will be notified
+by the server to change the password right away. As a result, a
+keystroke inference attacker who is interested in user’s sensitive
+data would always implement a false negative attack (i.e. try to
+login without being noticed).
+Honeyword Selection and Storage. Without any doubt, the ghost
+password should be included as a honeyword, as it is highly likely
+to be selected by an attacker in a login attempt. To broaden the de-
+tection surface, we should include as many honeywords as possible,
+however, introducing too many honeywords may greatly increase
+verification time and impair the performance. To maximize detec-
+tion rate while using a reasonable number of honeywords, we rank
+all possible guesses in descending order of probability from the
+password guessing model and choose the top 𝑛−1 guesses ex-
+cluding the ghost password and the original password, making 𝑛
+honeywords in total. As for false alarms caused by the user due to
+typographic errors, since the ghost password has a requirement for
+the minimum number of injected characters, the likelihood that
+a user’s typo accidentally matches the ghost password should be
+minimal.
+We now discuss how to store the honeywords at the server. We
+note that the ghost password is generated from a probabilistic model
+which varies across login sessions, and the honeywords are derived
+based on it. As a result, each time a user logs in using VRSafe, we
+might get a different honeyword set and the total number tends to
+increase as the user continues to log in multiple times over time. To
+reduce the storage overhead associated with the growing number of
+honeywords, we use bloom filter (BF)[4], a compact data structure
+that tests whether an element is a member of a set with possible false
+positives but guarantees that there are no false negatives. Using BF
+has two advantages over storing honeywords as individual hashes.
+First, it provides insert and lookup operation with constant time
+𝑂(𝑘) regardless of the number of elements already inserted, where
+𝑘is the number of hash functions of BF defined during initialization.
+Second, the space cost of BF is fixed and it does not grow with the
+number of stored elements. However, BF also has its limitations.
+For a given BF consisting of 𝑘hash functions and size of the bit
+array 𝑚, there would be a maximum expected elements 𝑛given a
+certain false positive rate (FPR) 𝑝𝑓𝑝:
+𝑝𝑓𝑝≈
+
+1 −𝑒−𝑘𝑛
+𝑚
+𝑘
+At the same time, the bloom filter does not support deletion op-
+eration, which means that once the number of inserted elements
+approaches the expected maximum 𝑛, we can only rebuild a new
+
+filter, otherwise the FPR will become higher than expected. There-
+fore, we need to have a good estimate on the expected growth trend
+of the password logins by the user in order to avoid rebuilding the
+BF frequently. According to a study on web password habits [10],
+on average, a user logs into a website approximately 3.22 times
+per day (i.e. roughly 1,000 times per year). Such estimates can be
+used to determine the expected interval (e.g., 6 or 12 months) for
+rebuilding a BF and the expected maximum number of elements.
+4
+Experiments
+We evaluate VRSafe through both simulations and a real-world user
+study approved by the Institutional Review Board (IRB). Before
+presenting the experiment results, we first describe our experiment
+setup.
+4.1
+Experiment Setup
+Table 1: Summary of training time and iterations of models
+used in this paper.
+Model
+Epoch
+Training Time (Total)
+Pass2Edit
+3
+24hr
+Randomness Meter
+10
+10hr
+3-Order Markov
+-
+2hr
+We evaluate VRSafe based on real leaked password datasets namely
+COMB datasets. The Compilation of Many Breaches (COMB) dataset
+was firstly leaked in Feb. 2021 on a popular online hacking fo-
+rum [37]. The dataset includes the largest volume of recently leaked
+passwords from various websites. 1 Consistent with prior work[36,
+50], we remove entries that contain non-ASCII printable characters
+and empty rows. The cleaned dataset is described in Table 2. All
+models are trained on Google Colab platform using T4 GPU and
+High-RAM mode. For both training and testing, we choose pass-
+words between 5 and 30 characters in length within the dataset, as
+passwords outside this range are either too weak or unlikely to be
+human chosen passwords. The targeted password guessing model
+follows the setup in [50] except the data size. With the configuration
+data size used in [50], it results in more than 7 days of training time
+per epoch for large datasets. To ensure practical training efficiency,
+we instead sample 50 million password pairs. For the randomness
+meter model in Algorithm 1, we train on 5 million real passwords
+and an equal number of randomly generated passwords with the
+same length distribution for 10 epochs. The Markov model for ghost
+character selection is trained on 5 million passwords. Training time
+for all the models is shown in Table 1.
+4.2
+Experiment Results
+We conducted a series of experiments to evaluate the factors that af-
+fect the guessing accuracy and overhead. We also evaluate accuracy
+and resource cost of our detection mechanism.
+#1: Targeted Guessing vs. Simple Typo Correction. We first
+illustrate that evaluating the effectiveness of our defense under
+the password guessing model is a more realistic setup. To simulate
+1The dataset was collected from publicly accessible websites for research purposes only.
+We intentionally omit the source URL of the leaked dataset to limit further exposure.
+passwords inferred from keystrokes, we randomly sample 20,000
+passwords in the test set. Specifically, each character is replaced
+with one of its adjacent keys on the QWERTY layout with a proba-
+bility of 5%, which aligns with a character level inference accuracy
+of approximately 95% in state-of-the-art studies [58]. We then copy
+all passwords into a Google Doc, refining passwords with "spelling
+and grammar" tools. Some suggestions will split the word into
+phrases (e.g. "iloveyou" to "i love you"), we only accept the sug-
+gestions that retain a single word. At the same time, we input the
+passwords into the guessing model and pick the top-1 guess of each
+password. We find that the refined passwords from Google Doc
+have similar performance (64.55%) compared to targeted password
+guessing model (64.69%) when no ghost characters are injected, but
+it quickly falls behind once a small amount of noise is introduced
+(27.52% vs. 32.78% with an injection probability 𝑃= 0.1). In real-
+world cases, it is also likely to have false negative or false positive
+keystrokes, which will result in larger divergence between inferred
+passwords and original passwords. Therefore, using the password
+guessing model can more accurately reflect the performance of our
+defense against realistic attackers.
+#2: Accuracy Analysis. We sample passwords in different cate-
+gories to simulate users with different password choosing habits.
+First, each character in a password can be classified as either digits,
+letters or symbols [54], and prior work has shown that the number
+of classes is one of the key factors affecting password guessing
+performance [17, 29, 50]. We categorize passwords based on the
+number of classes they consist of, denoted as Class-X where 𝑋
+denotes the number of classes of characters in the password. For
+instance, the password string "Jamesbond007" belongs to Class-2
+passwords. In addition, password length is another important factor
+that influences password guessing performance, with longer pass-
+words generally being more difficult to guess accurately. In [50], the
+researchers found that their model outperformed prior approaches
+for passwords with lengths between 10 and 16 characters. Based on
+this, we categorize passwords into Short (< 10), Medium (10 −16)
+and Long (> 16) passwords to provide comprehensive evaluations
+of our defense method. We input passwords to our noise injection
+algorithm using 𝑝0 = 0.5, Δ𝑝= 0.05, 𝛼= 0.1 at various randomness
+level 𝑟. Then we forward the ghost passwords to Pass2Edit pass-
+word guessing model to determine the final adversary’s guesses.
+Fig. 6 shows password guessing accuracy under different pass-
+word lengths and number of classes at different number of guesses
+(10, 100, 1000), which are common numbers evaluated in prior re-
+search [36, 48, 50]. The x-axis represents different randomness
+levels 𝑟as described in Algorithm 1 and y-axis represents guessing
+accuracy under top-k guesses. Overall, using the Markov model in
+selecting ghost characters results in a better performance compared
+to uniform selection, especially for long passwords (see Table 3).
+The password accuracy of Class-2, Long passwords using Markov
+model achieve 5% to 15% lower accuracy compared to uniform selec-
+tion under the same setting when 1,000 guesses are allowed across
+all randomness levels (Fig. 6(e)). With different number of allowed
+guesses, we observe that the adversary’s guessing accuracy has an
+approximately linear relationship with the logarithm of the number
+of guesses, and the accuracy under 10 guesses is only around 20%
+(see Fig. 5). When the number of guesses increases, an attacker
+typically needs to generate ten times as many candidates in order
+
+Table 2: Data cleaning result of leaked password dataset.
+Dataset
+Leaked Time
+Raw
+Non-ASCII
+Empty
+Removed(%)
+Cleaned
+COMB
+Feb. 2021
+3,279,064,312
+14,827,020
+187,089
+4.6
+3,264,050,203
+to achieve approximately twice the accuracy, and the improvement
+is even smaller for more complex passwords.
+Figure 5: The average guessing accuracy for randomness level
+in [0.4,0.7] for both Markov and Uniform ghost character
+generation under various # of guesses. Take Fig 6(e) as an
+example.
+Randomness level 𝑟also plays a critical role in affecting accuracy.
+When 𝑟is low(𝑟< 0.3), the algorithm strongly prefers to copy
+the character from the original password, resulting in a small or
+even minimum number of injected ghost characters, therefore, the
+accuracy remains high and the original password is still likely to be
+guessed. On the other hand, a very high randomness level (𝑟> 0.7),
+drives the algorithm to produce extremely long and random pass-
+words, negatively impacting usability. From the perspective of bal-
+ancing usability and security, we conclude that the ghost injection
+algorithm achieves a good performance under 𝑟∈[0.4, 0.6], and
+we will discuss how to further reduce overhead with acceptable
+trade-off on accuracy in the following experiments.
+Table 3: Guessing accuracy of Class-2 passwords under 1,000
+guesses.
+Randomness
+Length
+Accuracy (%)
+Level
+Uniform
+Markov
+0.3
+Medium
+64.36
+73.22
+Long
+60.80
+55.28
+0.5
+Medium
+44.32
+40.28
+Long
+30.12
+15.14
+0.7
+Medium
+0.64
+0.00
+Long
+0.30
+0.04
+#3: Overhead in Typing. While increasing the number of ghost
+characters consistently reduces the attack accuracy, it also intro-
+duces additional overhead which can potentially impact usability.
+As shown in Table 5, overhead measured in moving distance al-
+ways exhibits a trade-off relationship with guessing accuracy. For
+instance, when the randomness level is fixed at 0.4, increasing 𝜆
+from 0 (i.e. no constraint) to 0.2 and 0.5, the overhead reduces from
+34.5% to 24.2% and 18.1%, respectively, but simultaneously increases
+adversary’s guessing accuracy to 1.12% and 3.5%, respectively. We
+also see that, the main factor affecting accuracy is the randomness
+level, and applying constraints does not cause guessing accuracy
+to deviate significantly from the baseline accuracy at the same
+randomness level without constraints. Moreover, as more ghost
+characters are injected, our method achieves greater overhead re-
+duction, thereby improving usability. These results demonstrate
+that VRSafe can be flexibly configured in different methods and
+parameters for different user and application needs.
+#4: Detecting Malicious Logins. Previous experiments show that
+injecting ghost characters cannot prevent the adversary from guess-
+ing the original password if we allow a large number of guesses. In
+this experiment, we build a malicious login detector with bloom
+filter with maximum expected element, 𝑛= 106 elements, expected
+𝐹𝑃𝑅= 10−30 and SHA-256 as hash function to ensure enough capac-
+ity to store honeywords with low risk of false positive. We believe
+this is a reasonable setup for most websites that enforce a manda-
+tory password renewal policy not exceeding one year. Given that a
+typical user is likely to log in thousands of times in this period [10],
+the chosen configuration ensures that a sufficient number of hon-
+eywords can be generated without exceeding the bloom filter’s
+maximum expected capacity. We generate a total of 20 honeywords
+including the ghost password using the same password guessing
+framework, but with only 1/10 of the data size, which is already
+sufficient for detecting malicious login at high accuracy. As shown
+in Table 4, on average, 52.04% of malicious attempts can be detected
+in the first guess, and 83.97% are identified within 10 malicious
+login attempts. If we expand the number of honeywords to 100, the
+detector can achieve 72.43% and 96.05% detection rate under 1 and
+10 login attempts, respectively.
+Table 4: Malicious login attempts detection rate under # of
+honeywords = 20.
+Randomness
+Login
+Detection
+Level
+Attempts
+Rate (%)
+0.3
+1
+57.18
+10
+86.32
+0.5
+1
+54.76
+10
+85.36
+0.7
+1
+42.20
+10
+78.04
+#5: Computing Resource Cost. We evaluated the computing
+resource usage for VRSafe. The time and memory costs of the mali-
+cious login detection bloom filter are summarized in Table 6, with a
+storage space cost of approximately 17.55 MB. We further measured
+the CPU and memory cost for running VRSafe using Android Debug
+Bridge (ADB), a widely used development toolkit recommended
+in official Meta documentation [30]. Over a 10-minute profiling
+
+Figure 6: Password guessing accuracy for passwords in 6 categories, for each contains curves under 2 different ghost password
+selection strategies and 3 different allowed guessing numbers.
+Table 5: Overhead and accuracy of ghost passwords under different constraints.
+Randomness
+Length
+No Constr.
+Soft (Distance/Acc(%))
+Hard (Distance/Acc(%))
+Level
+Distance/Acc(%)
+𝜆= 0.2
+𝜆= 0.5
+𝜏= 3
+𝜏= 6
+0.3
+Medium
+4.52/73.22
+4.26/74.72
+4.11/75.56
+4.07/73.84
+4.2/74.92
+Long
+5.14/55.28
+4.89/57.26
+4.75/57.54
+4.71/57.46
+4.84/56.60
+0.4
+Medium
+4.83/62.68
+4.46/63.80
+4.24/66.18
+4.19/64.52
+4.37/64.64
+Long
+5.83/35.68
+5.34/35.72
+5.05/36.82
+4.97/36.60
+5.21/36.38
+0.5
+Medium
+5.88/40.28
+5.09/41.70
+4.65/42.00
+4.56/42.06
+4.91/41.54
+Long
+7.36/15.14
+6.23/15.34
+5.63/15.96
+5.54/16.34
+6.01/14.90
+0.6
+Medium
+8.48/3.08
+6.64/4.50
+5.69/4.02
+5.51/3.62
+6.33/3.68
+Long
+10.06/0.94
+7.9/0.94
+6.73/0.90
+6.48/1.00
+7.48/1.28
+0.7
+Medium
+10.30/0.00
+7.86/0.04
+6.47/0.10
+6.26/0.02
+7.46/0.06
+Long
+11.53/0.04
+8.82/0.00
+7.36/0.02
+7.07/0.02
+8.39/0.02
+0.8
+Medium
+10.37/0.00
+7.94/0.00
+6.57/0.00
+6.31/0.00
+7.54/0.00
+Long
+11.69/0.00
+8.94/0.00
+7.45/0.00
+7.17/0.00
+8.5/0.00
+Note: Distance for original medium length passwords is 3.59, for long passwords is 4.3.
+session on Meta Quest 2, VRSafe with ghost character added during
+typing has a CPU utilization averaging 48% (with a range of 35-62%)
+and memory averaging 1.77 GB. In comparison, typing without the
+ghost character (i.e. using the regular QWERTY keyboard) showed
+a similar average CPU utilization of 48% (with a range of 35-52%)
+and a slightly lower average memory usage of 1.75 GB. These re-
+sults indicate that enabling the ghost character introduces only
+marginal memory overhead and no noticeable increase in average
+CPU utilization.
+4.3
+User Study
+Methods. Our study is approved by our Institutional Review Board
+(IRB). To simulate user account logins using password within a VR
+environment, we developed a VR application using Unity 2022.3.24f1
+that uses VRSafe as the keyboard for typing (Fig. 3). Participants
+
+Table 6: Bloom filter time and space cost.
+Operation
+Time (s)
+Memory (KiB)
+Init
+4.20e-05
+0.37
+Insert
+7.02e-06
+4.38
+Lookup
+4.35e-06
+4.38
+in our study were seated in a chair and instructed to complete the
+password typing tasks, and their actions were recorded by a cam-
+era to simulate video-based keystroke inference attacks (see Fig. 8
+in Appendix A). All participants were informed of the recording
+and provided consent. To protect participants’ privacy, facial in-
+formation was excluded from the recordings, and the passwords
+used for the typing tasks were selected from the publicly available
+leaked datasets. We did not initially disclose that the recording sim-
+ulated an attack scenario, to avoid influencing participants’ natural
+typing behavior. After completing the study, we fully debriefed
+participants on the experiment design, including the purpose of the
+video recording, and addressed any concerns or questions. Each
+participant received 10 USD as appreciation. Participants were first
+introduced to the essential knowledge for using the VR device (e.g.,
+moving the cursor, typing), as well as the differences between a
+standard keyboard and the VRSafe keyboard. They were then given
+five minutes to explore the application freely. The main experiment
+consisted of ten password typing tasks. The first two tasks involved
+standard keyboard input without ghost characters, serving as a
+baseline. The remaining eight tasks incorporated ghost characters,
+simulating the enhanced security mechanism of VRSafe. After com-
+pleting each task, the participant notifies the researcher and clicks
+the “Next” button on the login page to proceed to the next task.
+Upon completion of all tasks, participants were asked to complete
+a post-study questionnaire regarding their experience. We used
+MediaPipe [59], a popular hand-tracking framework to extract the
+keystrokes from the collected video clips.
+Results: We recruited 15 participants (mean age = 25.6, sd = 4.22; 7
+males, 8 females) in this study through printed flyers and announce-
+ments in weekly newsletters. All participants were over 18 years
+old. There were no restrictions regarding student status or prior
+VR experience, and the only requirement was for the participant
+to have a normal or corrected-to-normal vision when wearing the
+VR headset. Among the 15 participants, 9 do not have any prior
+experience with VR headset, and the remaining 6 use VR devices
+less than once per month. A total of 150 video clips were recorded,
+of which 6 were discarded. 2 The average password length across
+all tasks was 8.35. The average number of keystrokes detected in
+the baseline tasks (without ghost characters) was 10.5, while the
+average in the remaining eight tasks (with ghost characters) was
+16.2.
+We find that the "false keystrokes" are treated as authentic ones
+by the threat model and injected to the inferred keystroke inference
+as expected. We examine if using VRSafe will result in longer entry
+time compared to a normal QWERTY keyboard. In Fig. 7, we plot
+2Mediapipe failed to recognize hands in 2 videos since the participant had long wearable
+nail extensions and 3 videos were discarded since the participant misunderstood the
+ghost character typing process as a bug and terminated the task. 1 video was discarded
+because the hand tracking was lost and the participant could not proceed with the
+task.
+the entry times of all 15 participants across the 10 typing tasks and
+we highlight the first two tasks (i.e. no ghost characters) with red
+dots. We observe that the average entry time of most participants
+fall within 40 to 60 seconds, with no evident pattern suggesting
+that tasks with added ghost characters take significantly longer.
+For instance, some participants (e.g. P2, P13) completed baseline
+tasks more quickly, while others (e.g. P1, P8) showed longer or
+mixed durations. As the visual distributions do not suggest a clear
+difference in entry time between the conditions, we aggregated data
+across all participants and applied the Mann-Whitney U test [28] to
+formally assess the effect of task typing when ghost characters are
+included. The analysis indicates a statistically significant difference
+between the two groups (𝑈= 1148.5, 𝑝= 0.0072 < 0.05). To further
+investigate the source of the observed difference, we perform pair-
+wise tests. Specifically, we treated the two baseline tasks from each
+of the 15 participants as a single baseline group (totaling 2×15=30
+samples), and the remaining tasks were grouped by their task index
+(i.e. all third tasks from each participant, all fourth tasks, and so
+on). We then apply pair-wise tests between the baseline group and
+the other groups one by one, and the third task group (i.e. first task
+involving ghost characters) shows the greatest difference from the
+baseline, suggesting it is the primary driver of the overall significant
+difference. It indicates that even though participants were already
+aware of the ghost character mechanism, they still paused when
+they first encountered it. We attribute this to a natural learning
+curve, and expect the impact to diminish as users become more
+familiar with the application.
+In the post-task questionnaire, we use the System Usability Scale
+(SUS) [6] to evaluate Perceived Ease of Use (PEOU), Perceived
+Usefulness (PU) and Behavioral Intention to Use (BI) from the
+Technology Acceptance Model (TAM) [9] to measure the user’s
+acceptance. 3 The full questionnaire can be found in Table 10 (Ap-
+pendix A). We also test the validity and reliability of our question
+setting using Cronbach’s Alpha [7] and Average Variance Extracted
+(AVE) [11] (Table 9, Appendix A). All Cronbach’s Alpha scores are
+around or above 0.8, and AVEs exceed 0.6, indicating that our ques-
+tions effectively evaluate the design across different aspects in the
+same direction. The statistical results are shown in Table 7, and
+per-question descriptive statistics of SUS are provided in Table 8(Ap-
+pendix A). We also ask some open-ended questions to encourage
+participants to share their thoughts freely, and we find that partic-
+ipants evaluate VRSafe differently depending on the aspects they
+prioritize. Some participants appreciated the enhanced security and
+expressed a willingness to adopt even more sophisticated methods.
+Others thought that typing in VR is already challenging, adding
+extra steps could become overwhelming even if it becomes more
+secure. This divergence in user perspectives helps explain the wide
+variance observed in the SUS scores. Participants also comment
+on general VR device usage experience such as "improve respon-
+siveness", "control can be more accurate", "headset feels too heavy"
+which are not directly related to the VRSafe design.
+5
+Conclusions
+In this paper, we present VRSafe, a VR keyboard to protect users
+from keystroke inference attacks. The proposed solution is designed
+3SUS score ranges from 0-100; PEOU, PU and BI range from 0-5.
+
+Figure 7: Password entry time of all participants in all 10 tasks.
+Table 7: Statistical results of participants’ survey feedback.
+Item
+Min
+Max
+Mean
+Sd
+PEOU
+1.75
+4.75
+3.88
+0.83
+PU
+2.33
+5.00
+3.38
+0.80
+BI
+1.50
+5.00
+3.30
+1.28
+SUS
+25
+90
+58.6
+14.4
+to enhance the word-level security of password inputs for VR users
+using a standard virtual QWERTY keyboard layout. VRSafe is the
+first novel solution to incorporate a detection mechanism to iden-
+tify unauthorized login attempts using credentials inferred from
+keystroke inference attacks. Our experiment evaluation shows that
+VRSafe is effective against attacks based on password guessing
+models and incurs only a modest overhead to achieve enhanced
+password security and detect malicious login attempts. The results
+of our user study indicate that VRSafe can be a highly usable alter-
+native for normal users with higher security needs. VRSafe is also
+potentially applicable to other forms of keystroke inference attacks
+including acoustic-based and Wifi-based attacks and our future
+work is focused on extending VRSafe to protect against those forms
+of attacks. We also plan to investigate mechanisms for protecting
+sensitive text entered by virtual avatars in extended reality appli-
+cations. Unlike conventional keystroke attacks, where adversaries
+observe a victim’s physical actions in the real world, extended real-
+ity environments allow adversaries to directly inspect the actions
+of virtual avatars, potentially revealing additional information that
+can be exploited to infer keystrokes.

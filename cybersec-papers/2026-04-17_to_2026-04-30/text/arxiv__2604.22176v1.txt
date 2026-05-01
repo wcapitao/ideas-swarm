@@ -1,0 +1,1024 @@
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph
+Embeddings
+ŞEVVAL ŞIMŞEK, Boston University, USA
+VARSHA ATHREYA, Boston University, USA
+DAVID STAROBINSKI, Boston University, USA
+Accurate mapping between Common Vulnerabilities and Exposures (CVE) and Common Weakness Enumeration (CWE) entries is critical
+for effective vulnerability management and risk assessment. However, public databases, such as the National Vulnerability Database
+(NVD), suffer from inconsistent and incomplete CVE–CWE mappings, complicating automated analysis and remediation. We introduce
+FixV2W, a lightweight approach that leverages knowledge graph embeddings and longitudinal trends to improve mapping accuracy
+of the NVD. FixV2W systematically analyzes historical remapping patterns and leverages hierarchical relationships within NVD and
+CWE data to predict more precise CWE mappings for vulnerabilities linked to Prohibited or Discouraged categories. We run extensive
+experimental evaluation of FixV2W, based on test data set collected between August 2021 and December 2024. Considering the Top-10
+ranked predictions, the results show that FixV2W predicts the correct CWE mappings for 69% of exploited vulnerabilities that had
+invalid CWEs before they were exploited. We also show that FixV2W significantly improves the performance of ML models relying on
+NVD data. For instance, for a model geared at uncovering unknown CVE-CWE mappings, FixV2W improves the Mean Reciprocal Rank
+(MRR) from 0.174 to 0.608. These results show that FixV2W is a promising approach to identify and thwart emerging threats.
+CCS Concepts: • Security and privacy →Vulnerability management; • Computing methodologies →Learning in probabilistic
+graphical models.
+Additional Key Words and Phrases: Vulnerability, Relations, Weakness, Knowledge Graphs, Embedding
+ACM Reference Format:
+Şevval Şimşek, Varsha Athreya, and David Starobinski. 2026. FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph
+Embeddings. 1, 1 (April 2026), 32 pages. https://doi.org/10.1145/nnnnnnn.nnnnnnn
+1
+Introduction
+Threat databases, such as Snyk Vulnerability Database [48], Open Source Vulnerabilities (OSV) Database [20], and
+others [31, 44], play a critical role in the software security ecosystem by providing structured, actionable information
+about known vulnerabilities, threats and mitigation strategies [28]. Collectively, these databases support vulnerability
+management, threat detection, risk prioritization, and the development of more secure software.
+While there exist many commercial and proprietary vulnerability databases, the National Vulnerability Database (NVD)
+remains the central source of vulnerability information that many tools and other databases [20, 31, 44, 48] rely on. The
+public availability and widespread usage of the NVD make it a foundational component of cybersecurity practices, offering
+Authors’ Contact Information: Şevval Şimşek, Boston University, Boston, USA, sevvals@bu.edu; Varsha Athreya, Boston University, Boston, USA,
+vathreya@bu.edu; David Starobinski, Boston University, Boston, USA, staro@bu.edu.
+Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or
+distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this
+work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to
+redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+Manuscript submitted to ACM
+Manuscript submitted to ACM
+1
+arXiv:2604.22176v1 [cs.CR] 24 Apr 2026
+
+2
+Şimşek et al.
+standardized data formats, severity metrics, and consistent identifiers. This ensures interoperability among security tools,
+facilitates vulnerability management workflows, and promotes transparency across the cybersecurity ecosystem.
+The NVD [39] serves as a key resource by providing additional information (called enrichment metadata) for Common
+Vulnerabilities and Exposures (CVEs) [34], including mappings to Common Weakness Enumeration (CWE) [32], Common
+Platform Enumeration (CPE) [40] and CVSS (Common Vulnerability Scoring System) [19] scores. This structured
+metadata allows automated tools and security teams to assess and prioritize vulnerabilities effectively. In particular,
+CWE mappings provide critical insight into the root causes of vulnerabilities, allowing developers and analysts to better
+understand and prevent recurring classes of security issues [46]. Understanding and resolving a software flaw related
+to a weakness helps resolving a host of CVEs that emerges from this flaw. Early identification of weaknesses that may
+cause vulnerabilities allows software developers, hardware engineers, and security architects to resolve them early in the
+development process [10], even before they become actual vulnerabilities and exploits.
+Over time, the reliance on the NVD has revealed significant shortcomings. As vulnerability disclosures have surged
+both in volume and complexity, the NVD has struggled to keep up. The total CVE count rose from under 100,000 in 2015
+to over 150,000 in 2020. and over 300,000 CVE in 2025. Since February 2024, only 58% of CVEs added to the NVD have
+CWE mappings. This pause propagated until mid-2025 and is ongoing, resulting in almost half of new CVEs each month
+missing enrichment metadata (CPE, CWE, CVSS). Although the NVD has announced its intention to restore its prior
+operational pace [15], the delay and uncertainty have left developers and security teams in the dark for extended periods.
+Despite the focus on recent disruptions caused by the enrichment pause back in February 2024, long-standing structural
+and operational issues with CVE metadata have persisted. Through a longitudinal analysis, revealed in this paper, we
+identify a largely overlooked problem within the NVD. Specifically, our evaluation of NVD entries as of December 2024
+finds that 55% of all CVEs in the NVD are mapped to invalid CWEs. Invalid CWEs refer to entries that are Prohibited,
+Discouraged, or serve merely as placeholders (e.g., CWE-Other, CWE-noinfo), as shown in Figure 1. The Prohibited and
+Discouraged categories, introduced by MITRE in 2019, limit the use of overly generic or non-actionable CWE tags that
+lack diagnostic value. However, despite efforts to phase them out, our data shows that 5% of CVEs submitted since 2019
+still use Discouraged CWEs, indicating ongoing problems with mapping quality.
+Invalid mappings reduce the value of vulnerability databases by obscuring the true root causes of vulnerabilities,
+limiting the ability of security teams to detect attack patterns and hindering the design of effective mitigation strategies.
+Thus, poor understanding of the root cause of a vulnerability may result in the CVE being exploited in the wild. Indeed,
+focusing on CVEs that were added to the Known Exploited Vulnerabilities (KEV) list [1] between August 2021 and
+December 2024, we find that 99 of them were originally mapped to Discouraged or Prohibited CWE. Furthermore, 95 out
+of these 99 exploited vulnerabilities were remapped to the correct CWE only after the exploit was revealed. The issue is
+particularly critical given the widespread reliance of open-source developers, security researchers, and automated tools on
+the NVD as the primary source of structured vulnerability data.
+Our Contributions. In this work, we address the problem of automatically correcting the large number of Prohibited and
+Discouraged CVE-CWE mappings in the NVD, through the combination of longitudinal analysis and knowledge graph
+reasoning.
+First, to inform our predictions, we systematically analyze the National Vulnerability Database (NVD), showing that
+Prohibited mappings make up to 5% of all mappings in the NVD, and Discouraged CWE mappings make up to 12%.
+Through a longitudinal analysis of CVE-CWE mapping updates between 2016 and 2024, we observe that 84% of remaps
+remain within the same CWE branch, often only one to two hops away within the CWE hierarchy, with a maximum of 4
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+3
+Valid CWE
+Invalid CWE
+Fig. 1. The proportion of invalid mappings versus valid CVE-CWE mappings among 280,000+ CVEs (as of December 17, 2024). The
+diagram shows that valid mappings currently represent fewer than half of the entries in the National Vulnerability Database (NVD).
+hops connected by ChildOf/ParentOf relationship. For CWEs that are Prohibited (i.e Categories or Views), we discover
+that the replacing CWEs are often a member of the original Category or View.
+Building on these insights, we construct a knowledge graph ontology that integrates CVEs, CWEs, and CPEs as
+interconnected entities linked by relationships (the ontology of a knowledge graph is a structured framework that defines
+the types of entities, their properties, and the relationships between them). Using graph embeddings trained on this structure,
+we introduce FixV2W, a novel method that predicts allowed CWE candidates for vulnerabilities currently mapped to
+Prohibited or Discouraged entries. FixV2W uses only graph connections and does not require semantic information, thus
+providing a lightweight, scalable, and fast prediction model. We test FixV2W on six different candidate sets: CWE-1003 for
+baseline, CWE Top-25 list as considered in other studies [2, 4], and four candidate entity sets informed by our longitudinal
+study. For Discouraged mappings, we constrain predictions to children or siblings in a CWE branch; for Prohibited
+category/view remaps, we extract valid member CWEs and their descendants and fill in with nearest neighbors from the
+ontology when the size of the candidate entity set is too small, to reach a sufficient number of candidates.
+Our model is validated under an open-world assumption (OWA) which is generally considered more realistic than the
+closed-world assumption (CWA) predominantly used in the evaluation of knowledge graphs [49]. Specifically, we validate
+FixV2W using real-world corrections applied on the NVD between August 2021 and December 2024, treating updated
+CWE remaps as ground truth. We evaluate our model’s Top-10 CWE predictions on three levels of coverage metrics;
+exact match (correct CWE mapping from the NVD), fine-grain match (a directly related CWE in the same branch i.e.
+a parent or a child) and coarse grain match (any descendant from the same branch root). We show how the fixed NVD
+dataset, obtained after applying FixV2W on the original NVD dataset, improves the accuracy of ML models relying on
+the NVD. In particular, replacing Prohibited/Discouraged mappings with the Top-2 predictions obtained from FixV2W
+significantly improves the performance of graph completion models. We further analyze CVEs belonging to the Known
+Exploited Vulnerabilities Catalog [1] and Exploit DB list [42] and show that since August 2021, 190 CVEs were mapped
+to Prohibited or Discouraged CWEs. Our model is able to correctly predict the root cause for 131 of them, which means
+that FixV2W could have correctly identified the underlying weaknesses and possibly prevented these CVEs from being
+exploited.
+Our contributions can therefore be summarized as follows:
+Manuscript submitted to ACM
+
+4
+Şimşek et al.
+• We conduct the first large-scale longitudinal analysis of NVD CVE–CWE mappings, revealing that more than half
+are invalid but systematically linked to correct CWEs through hierarchical structures.
+• We identify structural patterns in CWE remaps, showing that Prohibited mappings typically resolve to member
+CWEs, while Discouraged mappings remain within nearby branch relationships.
+• We propose FixV2W, a lightweight and deterministic knowledge-graph embedding method that leverages CVE–CWE–CPE
+connectivity without requiring semantic features to correct invalid mappings.
+• We propose and correct different sets of candidate entities for correcting the invalid CVE-CWE mappings, validating
+our results with correct labels taken from updated mappings in the NVD.
+• We validate our approach using real-world CWE remaps under an open-world assumption( OWA), and showcasing
+our model’s performance on predicting correct mappings for CVEs with exploits.
+• We show that the knowledge graph embedding model retrained with the top CWE labels returned by FixV2W
+significantly outperforms the original model in predicting unseen CVE-CWE triples (currently unknown, but
+revealed in the future), demonstrating the effectiveness of FixV2W in improving existing ML models based on
+NVD data.
+The rest of this paper is organized as follows. Section 2 discusses related work. Section 3 explains core concepts and
+terminology, and present the findings of our longitudinal analysis. In Section 4, we introduce the FixV2W method, and
+detail its properties. We present our implementation and evaluation methodology in Section 5. In Section 6, we present
+our results and evaluation, followed by a discussion in Section 7. This section also discusses limitations and threats to
+validity. We conclude the paper in Section 8. The software implementation of FixV2W and other artifacts can be found in
+our GitHub repository [47].
+2
+Related Work
+Knowledge graphs (KGs) are used in many domains, including medicine, history, and cybersecurity. A common issue
+across these domains is when the knowledge graph has missing or incorrect data. To address this issue, several studies
+focused on error detection and repair in knowledge graphs. For instance, Akasiadis et al. [3] develop an open-source
+system for detecting and fixing formal inconsistencies in large real-world knowledge graphs. They integrate and extend
+state-of-the-art approaches for parallel KG inconsistency detection and fixing in a single framework. Similarly, Arioua et
+al. [7] suggest a platform employing user-guided repair techniques for knowledge bases that enable user-suggested updates
+to resolve errors. The basic idea is that the knowledge base asks questions about possible fixes, and the user selects the
+correct ones until a consistent knowledge base is achieved. Although such an approach is possible, the volume of invalid
+data in the NVD and complexity of our knowledge graph makes it infeasible due to the required effort.
+Arnaout et al. [8] suggest a method that repairs incorrect statements in KGs by replacing incorrect subject-predicate-
+object triples with likely correct ones, thus avoiding information loss. Although effective, the model relies on textual
+summaries that create a large overhead, unlike the lightweight knowledge graph used in FixV2W. In [43], the authors
+propose to repair Wikidata using its edit history. The paper proposes a deep learning model that exploits edits that removed
+inconsistent triples in the past, to infer similar corrections in the present. This approach relies on a rich and diverse
+edit history, which does not exist in our case since very little corrections have been applied in the NVD, especially for
+Prohibited CWEs.
+Analyzing the NVD has attracted considerable research attention. Some studies focus on CVSS accuracy [24, 50] or
+missing metadata [21, 26], while others examine the overall viability of open-source vulnerability data [17, 22] and the
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+5
+completeness of related information. Overall, each of these studies points out issues in the NVD data such as incorrect
+CPE identifiers, missing or wrong CVSS vectors and scores and suggest that the NVD needs to undergo a structural change
+to prevent such inconsistencies.
+Highlighting the issues that affect ML model accuracy, Zhang et al. [51] present a model to predict zero-day vulnerabil-
+ities using the NVD and identify limitations such as missing version information, data errors, and delays in release times.
+We conclude from their findings that correcting errors in the NVD is a necessary step for building predictive models.
+Moreover, a 2023 study by Croft et al. [14] found that between 20% and 71% of vulnerability labels in real-world datasets
+are inaccurate. Anwar et al. [6] assess the quality of the NVD, addressing incorrect vendor information and vulnerability
+publication dates that affect CVSS scores. They develop an automation tool to correct these errors. While they examine
+missing or incorrect CVE entry information, we focus on relationships between CVE and CWE entries. Nguyen et al. [38]
+study vulnerabilities in Google Chrome, revealing that many originated from early versions and highlighting errors in
+vulnerability data. This supports our assertion that CVE-CPE mappings can be flawed, leading to incorrect enrichment
+metadata. Kühn et al. [26] apply machine learning and NLP to improve the NVD’s information quality, focusing on the
+atomic accuracy of CVE entries (e.g., security-relevant tags and the CVSS score). In contrast, we analyze the NVD with a
+focus on the root causes of the vulnerabilities (namely their weaknesses), and correcting mappings between CVEs and
+CWES. Collectively, researchers agree that these issues cause significant impacts on downstream models, either preventing
+effective model training or inflating benchmark performance.
+There are also several studies automate CVE to CWE mappings using various machine learning techniques, such as nat-
+ural language processing (NLP), neural networks, knowledge graphs, and large language models (LLMs). ThreatZoom [2]
+uses a hierarchical neural network and reports strong coarse-grain classification results. However, their evaluation is
+on unclassified CVEs using expert-annotated validation sets. FixV2W, on the other hand, focuses on correcting invalid
+mappings across the full NVD and achieves a 50% exact match rate on the combined test set of Prohibited and Discouraged
+CWE mapping correction. CVE2CWE [4] relies on TF-IDF similarity, testing against only 50 CWEs from the 130 in
+CWE-1003, and lacks validation, leading to weaker accuracy compared to our graph-based method.
+Shi et al. [45] apply various KG models to the problem of CVE-CWE-CPE graph completion. We build on this insight,
+but further improve precision through graph-based candidate selection and by learning from the NVD’s remapping history.
+VulnScopper [5] applies the ULTRA foundation model, enhanced with OpenAI’s Ada LLM, for the same type of graph
+completion. Its performance depends on a multi-stage architecture with heavy reliance on LLM-generated semantics. In
+our paper, we show that after applying FixV2W on the NVD, it is possible to achieve similar accuracy without requiring
+complex semantic models.
+CWE-GPT [29], developed by MITRE’s CyberSecAI initiative, is a grounded LLM-based system designed to improve
+CWE mapping for CVEs. It combines retrieval-augmented generation with enriched CVE data and CWE ontology to
+reduce hallucinations and enhance accuracy. The tool supports both interactive use and bulk processing, with open-source
+components available. Evaluated on a large CVE dataset, CWE-GPT achieves high recall but lower precision with 95.85%
+of CVEs with at least one CWE match and precision score of 0.10 [13], reflecting its focus on generating comprehensive
+candidate CWE lists. In contrast, FixV2W focuses on fixing existing, invalid mappings. A key advantage of FixV2W is to
+offer deterministic and interpretable results, as it does not depend on LLMs.
+Finally, Mittal et al. [37] develop Cyber-All-Intel, a cybersecurity knowledge graph used to link threat actors, software,
+and vulnerabilities. Cyber-All-Intel demonstrates that structured threat intelligence can be automatically constructed
+and made queryable, facilitating more effective threat hunting and situational awareness. However, while it incorporates
+Manuscript submitted to ACM
+
+6
+Şimşek et al.
+CVE and CWE data, the system focuses on entity extraction and graph construction—not on correcting or validating
+vulnerability mappings.
+To the best of our knowledge, our work is the first that specifically targets the correction of invalid CWE mappings
+in the NVD. While other efforts focus on assigning new CWEs or classifying unmapped CVEs, FixV2W is designed to
+fix existing erroneous mappings by leveraging both the structure of the CWE ontology and observed mapping evolution
+over time. An earlier and shorter version of this paper appeared in [52]. The main novel contributions of the journal
+version with respect to the conference version include: a more detailed presentation of the FixV2W method and thorough
+characterization of its properties; much more extensive evaluation of the performance of FixV2W including with different
+candidate entity sets, and with exploited CVEs; demonstration of how ML models relying on the NVD can be improved;
+extensive discussion of the findings, evaluation methods, and limitations of our work.
+3
+Background and Longitudinal Analysis of the NVD
+This section reviews key concepts related to the NVD, CVE, CWE, and associated terminology, followed by a
+longitudinal analysis of NVD data that informs the design of FixV2W.
+3.1
+The National Vulnerability Database and data quality
+The National Vulnerability Database (NVD) is the U.S. database of vulnerability management data and serves as
+the central source of vulnerability information for many other databases and tools. This database enables automation
+of vulnerability management, security measurement, and compliance. The NVD includes CWE identifiers representing
+software security flaws, product names in CPE format, and impact metrics such as CVSS scores in its CVE metadata. The
+NVD has been operating on the enrichment of publicly disclosed vulnerabilities with the help of Certified Numbering
+Authorities (CNAs). CNAs are verified submitters of vulnerabilities that report on behalf of themselves and others. The
+NVD relies on Certified Numbering Authorities (CNAs), organizations such as Apache, Red Hat, and Microsoft, which
+submit and enrich vulnerability reports with CWEs, CPEs, and CVSS scores.
+Given the volume of vulnerabilities submitted, the NVD team struggles to keep up with vulnerability enrichment,
+which negatively affects security analysis efforts. It was reported in [12] that many CVEs are already exploited by the time
+they make it into the database, with 14% of the exploits being zero-day vulnerabilities and 80% of public exploits being
+published before the CVEs are. These challenges underscore the urgent need for automated vulnerability analysis to speed
+up the process and increase the accuracy of vulnerability records. Current efforts to automate this process struggle from
+low quality of vulnerability data, therefore it is critical to fix incorrect mappings in these databases.
+3.2
+CVE, CWE and mapping metadata
+The Common Vulnerabilities and Exposures (CVE) [34] is a system developed by MITRE to catalog publicly known
+vulnerabilities. Each newly reported vulnerability receives a unique CVE ID. Submissions are typically made by a Certified
+Numbering Authority (CNA), who is often the vendor responsible for the affected product or a researcher/individual
+submitting vulnerabilities through established reporting processes.
+The Common Weakness Enumeration (CWE) [32], also managed by MITRE, is a classification system for software
+and hardware weaknesses that can lead to vulnerabilities under certain conditions. Each CWE entry is assigned a CWE
+ID, which may refer to a specific weakness, a broader category, or a view.
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+7
+Table 1. CWE-189 “Numeric Errors” category, and its members that are allowed CWE. The CWE in bold are included in the CWE-1003
+view, and are used for root cause mapping of CVEs by the NVD.
+Allowed CWE
+CWE-189 “Numeric Errors” Category Members
+CWE-128
+Wrap-around Error
+CWE-190
+Integer Overflow or Wraparound
+CWE-191
+Integer Underflow (Wrap or Wraparound)
+CWE-193
+Off-by-one Error
+CWE-369
+Divide By Zero
+CWE-681
+Incorrect Conversion between Numeric Types
+CWE-839
+Numeric Range Comparison Without Minimum Check
+CWE-1135
+Incorrect Bit-wise Shift of Integer
+CWE-1139
+Insufficient Precision or Accuracy of a Real Number
+CWE-1389
+Incorrect Parsing of Numbers with Different Radices
+Category and View. Categories are groups of related weaknesses that share a common trait. A category is not a weakness,
+but rather a structural item that helps users find weaknesses that share the stated common characteristic. Currently, the
+CWE database lists 374 categories, though some are empty or obsolete. Views are a subset of CWE entries that provide a
+way of examining CWE content. Views organize weaknesses based on different criteria, such as inclusion in an annual
+CWE Top-25 list curated by MITRE, which lists the most common and dangerous CWE in the past year(s) [36]. Currently,
+51 views exist, each serving different purposes. In our work, we focus on the CWE-1003 view: Weaknesses for Simplified
+Mapping of Published Vulnerabilities since it is being used by the NVD for root cause mapping of vulnerabilities. This
+view was first curated in 2016 and ever since, NVD exclusively maps CVEs to CWEs belonging to this view. An example
+category, CWE-189: Numeric Errors, is shown in Table 1 along with the members of this category.
+Prohibited and Discouraged Tags. Prior to 2019, any type of CWE could be used to describe the root cause of a
+vulnerability. Since then, MITRE has introduced the Prohibited and Discouraged tags:
+• Prohibited CWEs (such as categories and views, and deprecated entries) are no longer allowed for root cause
+mapping because they do not represent valid weaknesses; instead, they serve as collections of related CWEs. Table 1
+gives an example of a category and its associated members.
+• Discouraged CWEs are weakness entries that are often too broad to clearly explain the root cause of a vulnerability.
+CNAs are urged to use more specific CWE entries whenever possible to more accurately reflect how a vulnerability
+was introduced.
+These two classes of invalid CWE mappings affect the mapping data and create confusion in the ontology, therefore we
+aim in this work to correct those CVE that are mapped to Prohibited or Discouraged CWE, whenever possible. We use the
+results from our longitudinal analysis to inform the predictions, rather than blindly querying for the entire CWE database,
+or the CWE-1003 view. We present comparisons of the prediction performance with each of these candidate entity sets
+and rationale for using them in Section 4.3.
+The CWE-1003 view. NVD uses the CWE-1003 view for providing root cause information to CVEs. The CWE-1003
+view has stayed the same while the number of CWE expanded, therefore this list has obvious shortcomings. The CWE-1003
+view, finalized in 2019, contains 130 CWEs but hasn’t kept pace with the expanding CWE database (940+ entries), leading
+to frequent use of placeholder CWEs like CWE-Other and CWE-noinfo in over 25% of CVEs as of 2025.
+Manuscript submitted to ACM
+
+8
+Şimşek et al.
+CWE-707: 
+Improper 
+Neutralization
+CWE-228: 
+Improper Handling 
+of Syntactically 
+Invalid Structure
+CWE-229: 
+Improper Handling 
+of Values
+...
+...
+CWE-138: 
+Improper 
+Neutralization of 
+Special Elements
+...
+CWE-140: 
+Improper 
+Neutralization of 
+Delimiters
+Pillar
+Discouraged
+Class
+Discouraged
+Base
+Allowed
+Class
+Allowed
+Base
+Allowed
+Fig. 2. A slice of the CWE Hierarchy, showing parent-child relationships. CWE-707 and CWE-138 are both labeled Discouraged by
+MITRE for CVE root cause mapping, due to lack of detail. Weaknesses are at deeper levels of the hierarchy are more detailed.
+The CWE structure is hierarchical, where entries may be related with Parent/Child relationships, which shows weak-
+nesses at different levels of abstraction. Typically, a CWE hierarchy starts with a Pillar, followed by a less general Class or
+Base weakness, and ends with the most detailed Variant weakness [35]. All Pillar type CWEs and some of the Class type
+CWEs are Discouraged for CVE mapping. Some hierarchies do not include variants, but almost all include Class and
+Base. Figure 2 illustrates an example of this hierarchy.
+3.3
+Longitudinal analysis of the NVD
+Longitudinal analysis is a tool that aids in understanding how patterns evolve over time, revealing trends that persist or
+changes that are introduced [16]. We conduct a longitudinal analysis to understand how the mapping behavior of CVE
+root causes changed over time and what trends we can learn from the NVD. In the following, we present our results and
+key takeaways obtained by the longitudinal analysis including providing insight on how to curate the candidate sets for
+informed prediction of correct CVE-CWE mappings.
+Discouraged and Prohibited CWE Mappings. We record the total number of Discouraged and Prohibited mappings
+over time, recovering the state of the NVD at each year using the NVD CVE Change History API. Figure 3 reveals the
+cumulative count of Discouraged and Prohibited mappings at the end of each year since 2004. Our analysis reveals a steady
+number of Prohibited mappings (about 16,000 since 2018) and a growing number of Discouraged mappings (exceeding
+55,000 in 2025).
+The use of CWE-Other and CWE-noinfo. A total of 4000 updates between July 2016 and December 2024 were remaps
+into CWE-noinfo. In fact, Figure 4(a) shows that among the Top-three CWEs used to provide root cause mappings to
+CVEs, CWE-noinfo ranks second. This clearly shows that the CWE-1003 view falls short in covering all types of CWEs,
+and officials must update the list to cover more representative CWEs. Ever since the CWE-1003 was last updated in 2019,
+more than 70 new CWEs have been added to the CWE database.
+Commonly misused CWEs. Figure 4(b) shows that certain CWEs are more often misused, in particular CWE-119,
+CWE-200, CWE-20 and so on. All of these CWEs are now labeled as Discouraged for vulnerability mapping since they
+lack specificity, as do not say much about the root cause of a CVE. Although some CWEs are misused often, they cannot
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+9
+2004
+2006
+2008
+2010
+2012
+2014
+2016
+2018
+2020
+2022
+2024
+0
+10, 000
+20, 000
+30, 000
+40, 000
+50, 000
+Year
+Number of CVE-CWE mappings
+Discouraged
+Prohibited
+Fig. 3. Cumulative counts of Prohibited and Discouraged mappings over time. Although Prohibited Mappings slightly decrease over
+time, Discouraged CWE-CVE mappings are increasing.
+CWE-79
+CWE-noinfo
+CWE-787
+CWE-119
+CWE-89
+CWE-20
+CWE-200
+CWE-125
+CWE-352
+CWE-416
+0
+2,000
+4,000
+Num. of mappings to CVE
+(a) Most occurring newly mapped CWEs between 2016-2024.
+From left to right, the Top-3 CWE are CWE-79: Improper
+Neutralization of Input During Web Page Generation (’Cross-
+site Scripting’), CWE-787: Out-of-bounds Write and CWE
+119: Improper Restriction of Operations within the Bounds
+of a Memory Buffer.
+CWE-119
+CWE-200
+CWE-20
+CWE-Other
+CWE-77
+CWE-284
+CWE-269
+CWE-noinfo
+CWE-400
+CWE-287
+0
+200
+400
+Num. of mappings to CVE
+(b) Most removed CWEs between 2016-2024, from left to
+right, Top-3 are CWE 119: Improper Restriction of Operations
+within the Bounds of a Memory Buffer, CWE-200: Exposure
+of Sensitive Information to an Unauthorized Actor, and CWE
+20: Improper Input Validation.
+Fig. 4. Longitudinal analysis between 2016-2024 reveals the most remapped CWE, showing (left) certain CWE were added that
+include more detail and (right) certain more general CWE were removed from mappings more often.
+be excluded from the candidate sets because they appear often in the newly mapped CVEs, as shown in Figure 4(a).
+Furthermore, NVD allows use of these CWE in root cause mapping, when a more detailed alternative is not available,
+thus they cannot be avoided completely. We present and evaluate our approach for fixing invalid CWEs in Section 4.
+Manuscript submitted to ACM
+
+10
+Şimşek et al.
+1 Hop
+14%
+2 Hops
+46.4%
+3 Hops
+20.8%
+4 Hops
+2.7%
+No Path
+16.1%
+Fig. 5. Distance between old CWEs and new CWEs in CVE-CWE mapping updates, between 2016-2024. Most remaps end up in
+CWEs that are just a few hops away, informing the design of FixV2W.
+Updated CWE mappings that are related. Among the CVE remaps to valid CWEs, 60% result in a new CWE that is at
+most two hops away from the original, and over 80% remain within the same branch of the CWE hierarchy. Figure 5 shows
+the distance between old CWE and new CWE pairs remapped between 2016 and 2024. Most corrections are minor (one or
+two hops in the hierarchy), meaning a direct child is the most likely candidate for the correction of a Discouraged CWE.
+Distance is measured in any direction, and includes going up to the starting CWE’s parent and then going down to another
+descendant. It is important to take into consideration such cases when searching for good candidates for CWE correction
+task in FixV2W. Exceptions exist and complicate full automation, and in those cases expert analysis plays a crucial role.
+This suggests that the correct CWE is often reachable from the original incorrect mapping by traversing related weakness
+chains, typically moving from a broader (parent) CWE to a more specific descendant CWE within the same branch. Table 2
+shows the most observed remap pairs. Strikingly, 38% of remaps are just removals of old CWEs and replacing them with
+CWE-noinfo. Yet for the remaining 62% of remaps, most stay within the same CWE chain or are a member of the old
+CWE category (if the said CWE category has any members at all.)
+Summary. Our longitudinal analysis of the NVD indicates that while CNAs have occasionally corrected CWE mappings
+over time, such updates remain relatively rare. We identified several trends in these remaps, which inform our approach
+to select candidate entities for each type of invalid CWE mapping. For example, when a CVE is originally mapped to
+CWE-189: Numeric Errors, it is often more effective to search within the members of that category rather than across the
+entire CWE-1003 view. However, this trend is not universal. In some cases, the initial mapping is substantially unrelated
+to the true root cause, complicating correction. Some invalid mappings are significantly misaligned with the actual root
+cause. For instance, CVE-2021-0572 was initially assigned CWE-287: Improper Authentication, whereas the correct
+weakness, later updated in the NVD, is CWE-732: Incorrect Permission Assignment for Critical Resource. Guided by
+these observations, we developed the FixV2W algorithm, presented in the next section, to search for corrected CWE
+mappings within the same branch or among members of the same category and view.
+4
+FixV2W: Automated Prediction and Correction of CVE-CWE mappings
+In this section, we present FixV2W, a lightweight and structured approach to correct CVE–CWE mappings. FixV2W is
+a prediction model that uses a knowledge graph (KG) embedding approach to infer correct mappings for vulnerabilities
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+11
+Table 2. The most observed Old CWE to New CWE pairs for the same CVE Record, that were updated between 2016 and 2024. Pairs
+are either in the same chain for valid CWE, or the new CWE is a member of the old CWE category, if the category has any members.
+CWE ID Pair
+Occurrences
+Same Branch
+Is Member
+CWE-Any - CWE-noinfo
+38%
+-
+-
+CWE-119 - CWE-787
+6%
+Yes
+-
+CWE-77 - CWE-78
+3%
+Yes
+-
+CWE-119 - CWE-125
+2%
+Yes
+-
+CWE-264 - CWE-732
+1%
+-
+No∗
+CWE-255 - CWE-522
+1%
+-
+Yes
+CWE-264 - CWE-269
+1%
+-
+No∗
+CWE-416 - CWE-787
+1%
+Yes
+-
+CWE-190 - CWE-787
+1%
+Yes
+-
+CWE-284 - CWE-732
+1%
+Yes
+-
+CWE-399 - CWE-772
+1%
+-
+Yes
+∗CWE-264: Permissions, Privileges, and Access Controls is a category with no members.
+previously linked to invalid CWE entries. We leverage existing historical mapping data along with informed predictions
+based on CWE hierarchy and known relationships. In our longitudinal analysis of the National Vulnerability Database
+(NVD), we indeed observed a consistent pattern: invalid mappings, specifically those labeled as Prohibited or Discouraged,
+are often replaced with more specific descendant CWEs (i.e., Members or Children), or with related weaknesses within the
+same branch of the CWE hierarchy. We incorporate this observation into our method by intentionally selecting candidate
+CWE sets that reflect these likely replacements.
+4.1
+Knowledge Graph Embedding
+We begin by outlining the terminology and foundational concepts related to knowledge graph construction and embed-
+ding. A Knowledge Graph (KG) is a structured representation of real-world entities and their relationships, where entities
+are represented as nodes and relationships as edges in a graph. This structure allows for the semantic representation of do-
+main knowledge and supports inference, querying, and reasoning tasks. In our work, entities include CVEs (vulnerabilities),
+CWEs (weaknesses), and CPEs (systems, software, and packages). Relationships include MatchingCPE, MatchingCWE,
+and relationships between CWEs like HasMember and ParentOf. Figure 6 illustrates a slice of the knowledge graph.
+The fundamental unit in a KG is a triple of the form (subject, predicate, object), such as (CVE-2020-17533, MatchingCWE,
+CWE-252). These triples are used as both the training input for our embedding model and the basis for downstream
+predictions. Each triple represents a fact in the KG. The embedding model of a knowledge graph transform entities and
+relations into continuous vector spaces while preserving the graph’s structure and semantics. This enables predictive tasks
+such as link prediction. In our case, the embedding model is used to predict a more accurate CWE for a given CVE when
+the existing mapping is invalid or suboptimal.
+4.2
+Formal Description
+For the purpose of our analysis, the list of vulnerabilities in the CVE database training dataset is denoted as 𝑉=
+{𝑣1, 𝑣2 . . . , 𝑣𝑛}. The CWE list is denoted as 𝑊= {𝑤1,𝑤2, . . . ,𝑤𝑘} and represents the set of all existing CWEs. The NVD’s
+CWE slice (i.e., the CWE-1003 view) is defined as 𝑊𝑁𝑉𝐷. Clearly, 𝑊𝑁𝑉𝐷⊂𝑊. We define weaknesses in the invalid
+CWE list as 𝑊𝑃(note that 𝑊𝑃can be defined for Discouraged, Prohibited and other reference CWEs separately). The
+Manuscript submitted to ACM
+
+12
+Şimşek et al.
+CWE-389
+cpe:2.3:a:apache..
+CWE-754
+CVE-2020-
+17533
+cpe:2.3:a:
+doas..
+CWE-252
+CVE-2019-
+15900
+CWE-690
+0
+0.5
+1
+1.5
+2
+2.5
+3
+3.5
+0
+0.5
+1
+1.5
+2
+2.5
+cpe:2.3:a:apach
+e:accumulo:*:*:*
+CVE-2020-
+17533
+CWE-252
+CWE-389
+CWE-690
+Parent Of
+Matching 
+CWE
+Member Of
+Matching 
+CPE
+Category
+CVE-2019-
+15900
+Matching 
+CWE
+CWE-754
+Matching 
+CWE
+cpe:2.3:a:doas_pr
+oject:doas:
+Matching 
+CPE
+Fig. 6. Knowledge Graph ontology example (left) and translation of th
+
+[…middle truncated for length…]
+
+-16
+CWE-255
+CWE-287
+Adobe ColdFusion Authentica-
+tion Bypass
+CVE-2013-3993
+2022-05-25
+2024-06-28
+CWE-264
+CWE-22
+IBM InfoSphere BigInsights In-
+valid Input
+CVE-2015-1770
+2022-03-28
+2024-07-09
+CWE-19
+CWE-824
+Microsoft Office Uninitialized
+Memory Use
+CVE-2013-3897
+2022-03-03
+2024-07-16
+CWE-399
+CWE-416
+Microsoft Internet Explorer Use-
+After-Free
+specifically, this percentage increases to 62.55% of CVEs that are mapped to invalid CWEs or do not have a mapping at
+all.
+To further motivate the importance of correct root cause mappings in the NVD, we analyzed the volume of exploits
+that happen after CWE remaps that we are able to correctly predict in Figure 11. It is seen that there are a total of 190
+CVEs in the KEV list or Exploit DB that were exploited between August 2021 and December 2024 and were originally
+mapped to a Discouraged or Prohibited CWE. Out of these, 134 CVEs were mapped to a Discouraged CWE and 56 CVEs
+were mapped to a Prohibited CWE. FixV2W correctly predicts the root cause of a total of 131 CVE in the KEV list or in
+Exploit DB, which were not updated until after they were exploited. Keep in mind that FixV2W is trained on 2021 data
+and therefore would be able to correctly predict the root cause of these vulnerabilities.
+Tables 11 and 12 show a total of 10 example known exploited vulnerabilities, that were exploited before the root cause
+was updated. The affected products include widely-used products such as Microsoft, Android, and Linux. Knowing the
+root cause and properly addressing could have possibly prevented these exploits from happening.
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+25
+Table 12. Examples of Discouraged CVE-CWE mappings that were remapped after the exploit.
+CVE
+Exploit Date
+Remap Date
+Old CWE
+New CWE
+Description
+CVE-2007-5659
+2022-06-08
+2024-06-28
+CWE-119
+CWE-120
+Adobe Acrobat and Reader
+Buffer Overflow
+CVE-2020-8644
+2021-03-11
+2022-07-12
+CWE-74
+CWE-94
+PlaySMS Server-Side Template
+Injection
+CVE-2018-13382
+2022-01-10
+2024-07-24
+CWE-285
+CWE-863
+Fortinet FortiOS and FortiProxy
+Improper Authorization
+CVE-2012-0754
+2022-06-08
+2023-01-30
+CWE-119
+CWE-787
+Adobe Flash Player Memory
+Corruption
+CVE-2014-0160
+2022-05-04
+2023-02-10
+CWE-119
+CWE-125
+OpenSSL Information Disclo-
+sure
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+0
+5
+10
+15
+13
+11
+6
+1
+3
+3
+2
+3
+1
+0
+Rank
+Frequency
+Prohibited - Exploits
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+0
+20
+40
+50
+7
+14 15
+1
+0
+0
+1
+0
+0
+Rank
+Frequency
+Discouraged - Exploits
+Exact Match
+Fine Grain
+Coarse Grain
+Fig. 12. Breakdown of exact, fine, and coarse grain matches of exploited CVEs whose subsequent remaps are predicted correctly by
+FixV2W.
+We look further into the distribution of CVE-CWE mappings that we are able to predict correctly. Figure 12 shows
+the distribution of CWE mappings that we are able to predict correctly as an exact, fine, or coarse match before the
+vulnerability was exploited. Notably, for the Discouraged set, all the exploits whose vulnerabilities’ CWE remaps we
+predict correctly are exact matches, with all but one CVE ranking among the Top-5, indicating that FixV2Wwould have
+identified these remappings effectively before the CVE was exploited.
+7
+Discussion
+7.1
+Understanding Incorrect Predictions
+For both the Prohibited and Discouraged CWE test sets, we find that in about 35-40% of the cases, FixV2W fail to
+return a correct answer ranked within the Top-10 entries. We next investigate possible reasons that affect the model’s
+Manuscript submitted to ACM
+
+26
+Şimşek et al.
+performance. We first consider the Prohibited CWE test set. It turns out that 61 entries correspond to CVEs that were
+previously mapped to CWE-16 or CWE-264, both of which do not have any members. Since they do not have any
+relationship in the Knowledge Graph ontology, it is difficult to find associations including with the FNN method. Indeed,
+the FNN method performs best with an ontology where meaningful relationships are established between the nodes, and
+CWE-16 and CWE-264 have few additional associations. Therefore FixV2W fails to find good replacements for CVEs
+that were previously mapped to these two CWE. In such cases, employing semantic models may be unavoidable. Unlike
+what is stated in our longitudinal analysis, where the rest of the CWE categories and members often remap to members,
+these two CWE are exceptional cases. Therefore, these CWE can be excluded from our test set or we can conclude that the
+method only works effectively if the initial CWE has meaningful mappings across the CWE hierarchy. Excluding these
+CWE from our test set, overall coverage of the test set goes up from 63% to 75% and exact match rate goes up from 40%
+to 50%. We reported the numbers without excluding these two in Section 6 to not overfit our model and shrink our test set.
+For other incorrect predictions, we found that the new mapping is generally unrelated to the old CWE mapping, which
+means that the old mapping was highly inaccurate. For example, there are seven remaps from the old CWE-189: Numeric
+Errors category that the model cannot predict. The new mappings in the NVD are as follows:
+• CVE-2003-2564 - CWE-776: Improper Restriction of Recursive Entity References in DTDs (’XML Entity Expan-
+sion’)
+• CVE-2007-3798 - CWE-252: Unchecked Return Value
+• CVE-2008-0062 - CWE-665: Improper Initialization (Discouraged)
+• CVE-2008-2108 - CWE-331: Insufficient Entropy
+• CVE-2008-3612 - CWE-330: Use of Insufficiently Random Values
+• CVE-2009-1890 - CWE-400: Uncontrolled Resource Consumption (Discouraged)
+• CVE-2010-0128 - CWE-787: Out-of-bounds Write
+None of these seven remaps are related to the “Numeric Errors” category, or any members of the category. In such
+cases, since the new CWEs are too far away in the ontology, the model does not recognize these as possible replacements
+to CWE-189.
+Next, consider Discouraged mappings. We find that for about 40% of the remaps, the new CWE mapping in a completely
+different branch than the old one. This cannot be avoided with our model. Moreover, if the new CWE is not a widely used
+weakness, even candidates belonging to the CWE-1003 view and the Top-25 CWE view do not perform well.
+Yet, upon manually analyzing the new CVE-CWE mappings of these vulnerabilities, we found that some of the CVEs
+involved in these mappings are missing CWE mappings which our model actually predicts. For example, CVE-2007-3798
+is caused by CWE-252: Unchecked Return Value, which leads to CWE-190: Integer Overflow or Wraparound, but the
+latter is not listed in the NVD. Our model predicts CWE-190 at rank 2. Similarly, CVE-2010-0128, caused by a signed
+integer error, should also be mapped to CWE-681: Incorrect Conversion between Numeric Types, which is not listed in the
+NVD, while our model predicts it at rank 8. Hence, a reason our model does not always perform well is that our validation
+methodology assume that remaps from the NVD are correct and complete (in the absence of any better alternative), which
+is not always the case.
+7.2
+Using Different Types of Candidate Sets For Each CWE
+Instead of using the same type of candidate sets for all CWEs (e.g., Top-25, Descendants, etc.), we experimented with
+tailoring the candidate set for each CWE. We used remaps from before August 2021 to make predictions on remaps after
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+27
+CWE-16
+CWE-189
+CWE-19
+CWE-254
+CWE-255
+CWE-264
+CWE-275
+CWE-310
+CWE-320
+CWE-399
+0
+50
+100
+3
+65
+1
+3
+10
+25
+1
+31
+1
+76
+Number of predictions
+Prohibited - Same Type of Candidate Sets
+CWE-16
+CWE-189
+CWE-19
+CWE-254
+CWE-255
+CWE-264
+CWE-275
+CWE-310
+CWE-320
+CWE-399
+0
+50
+100
+3
+65
+1
+3
+10
+36
+1
+31
+1
+76
+Number of prediction
+Prohibited - Different Type of Candidate Sets
+Correct
+Incorrect
+Fig. 13. Prohibited - Comparison between using the same and different type of candidate sets for each CWE. Counts shown correspond
+to the number of correct remappings.
+August 2021. We used the set that the majority of CVEs before August 2021 were remapped to to determine the type of
+candidate set we query after 2021. The different types of candidate sets we tested were Top-25, Descendants, Member, and
+Neighbor for each CWE. For the Prohibited set, we compared the performance of this tailored algorithm to the Member
+algorithm in Figure 13. For the Discouraged set, we compared the performance of this tailored algorithm to the Family
+algorithm in Figure 14. Surprisingly, some CWEs such as CWE-20 perform best when queried with baseline candidate
+sets (i.e. CWE Top-25), but for other CWE such as CWE-200, using this algorithm actually has an inverse effect on model
+performance.
+7.3
+FixV2W vs NVD: Which is more accurate?
+Upon the completion of our predictions and evaluation, we manually analyzed some of our predictions to determine
+how accurate they are. As discussed in Subsection 7.1, we found out that FixV2W returns CWEs that are missing from the
+NVD data, especially when CVEs are complex and require multiple CWE mappings. Indeed, often the NVD provides only
+one mapping, while in practice others CWEs also contribute to a vulnerability. Apart from this, we discovered instances
+where FixV2W appears to provide a more precise mapping than the NVD, as shown next.
+For instance, CVE-2016-5042 is caused by a crafted input (malformed DWARF section) that leads to an infinite loop
+and a crash. The NVD maps this CVE to CWE-835: Loop with Unreachable Exit Condition. Yet the primary root cause is
+CWE-20, Improper Input Validation, which leads to the malformed section being accepted as valid input. FixV2W predicts
+CWE-20 at the first rank.
+Similarly, CVE-2014-1943 is caused by a crafted indirect offset value in the magic of a file, and that allows an attacker
+to cause denial of service (infinite recursion, CPU consumption, and crash). The NVD maps this CVE to CWE-755:
+Improper Handling of Exceptional Conditions. Upon careful analysis, it appears that this vulnerability is caused by input
+Manuscript submitted to ACM
+
+28
+Şimşek et al.
+CWE-119
+CWE-20
+CWE-200
+CWE-269
+CWE-284
+CWE-287
+CWE-311
+CWE-400
+CWE-668
+CWE-74
+0
+200
+400
+600
+499
+52
+92 76
+23 44 12 13 12 30
+Number of predictions
+Discouraged - Same Type of Candidate Sets
+CWE-119
+CWE-20
+CWE-200
+CWE-269
+CWE-284
+CWE-287
+CWE-311
+CWE-400
+CWE-668
+CWE-74
+0
+200
+400
+600
+507
+122
+48
+97
+23 40 11 19
+5
+30
+Number of prediction
+Discouraged - Different Type of Candidate Sets
+Correct
+Incorrect
+Fig. 14. Discouraged - Comparison between using the same and different type of candidate sets for each CWE. Some CWE not shown
+in Discouraged set, where no change is observed. Counts shown correspond to the number of correct remappings.
+parsing logic allowing recursive evaluation without termination conditions. This directly maps to CWE-400 (Uncontrolled
+Resource Consumption), CWE-770 (Allocation of Resources Without Limits) or CWE-772 (Missing Release of Resource
+After Effective Lifetime); all of which are predicted by FixV2W in ranks 8,9 and 4, respectively. The primary issue, the
+program not checking the input to ensure no recursive entities are used (CWE-20) is also predicted by our model at the
+first rank.
+In total, we detected with the help of ChatGPT-4o (verified manually afterwards), that 11 of the 123 “incorrect”
+predictions in the Prohibited CWE set are in fact correct CWEs that are not listed by the NVD. These correctly predicted
+CWE are missed in the evaluation pipeline of FixV2W, since the NVD fails to provide them or a related CWE in the
+vulnerability metadata.
+7.4
+Shortcoming of semantic models
+Accurate correction of invalid mappings is far from a straightforward task, even for semantics-based models that are
+trained on large amount of data. These models, while powerful, require large, well-labeled training datasets that include
+textual descriptions for both CVEs and CWEs. LLMs struggle with consistency and lack deterministic responses [9],
+rendering them unreliable as a standalone approach to CVE classification [30]. For example, consider CVE-2021-21589 that
+lacks a CWE mapping. Because the CVE description mentions “adversary can use this to escalate privileges”, ChatGPT-4o
+suggests CWE-269: Improper Privilege Management. Yet, the actual issue is the program not exiting on failed initialization
+i.e. CWE-455: Non-exit on Failed Initialization which is the child of CWE-665: Improper Initialization. Such issues are
+hard to avoid using semantic processing methods, such as LLM or NLP. We argue that using the natural connectivity of
+CVEs, CWEs and CPEs through an ontology representation of the NVD data can help inform the predictions of semantic
+models and reduce computational overhead. In this work, we made the first effort to correct CVE-CWE mappings to
+Manuscript submitted to ACM
+
+FixV2W: Correcting Invalid CVE-CWE Mappings with Knowledge Graph Embeddings
+29
+improve database quality, and increase model accuracy of those what train on NVD data. Unlike large language models,
+FixV2W avoids keyword overfitting and provides interpretable, reproducible predictions that align with ontology structure.
+7.5
+Limitations and Threats to Validity
+7.5.1
+Data Accuracy. For both our predictions and validations, we rely on the National Vulnerability Database (NVD).
+Our analysis begins with the understanding that the NVD contains known inaccuracies in CWE mappings. In our current
+study, the updated version of the NVD serves as the validation set under the assumption that its updated mappings represent
+the most accurate classification available. However, errors and inconsistencies persist even in recent updates, as discussed
+earlier. This directly affects the reported performance of our model, as validation accuracy is bounded by the correctness
+of these reference labels. For instance, when a CVE is mapped by the NVD to a generic (Discouraged) CWE despite the
+availability of more specific alternatives, our model may be penalized for offering the correct, but unlisted, alternative.
+Similarly, the model is penalized for offering correct, but unlisted root cause weaknesses, as discussed in Subsection 7.1.
+7.5.2
+Results Evaluation. Our results include both fine-grained and coarse-grained CWE predictions, each of which
+contributes to reducing the manual burden of remapping vulnerabilities. Nonetheless, our evaluation strategy currently
+assumes that the most recent CWE mapping provided by the NVD or its associated CNA is not only correct but also
+complete. As explained earlier, this is not always the case. Indeed, certain vulnerabilities require multiple CWE mappings
+to fully capture the root causes and contributing factors. The NVD, however, often lists only a single CWE per CVE, even
+when the vulnerability spans multiple weakness types. This simplification leads to under-specified mappings and impacts
+both model training and evaluation, as the complexity of some vulnerabilities are not reflected in the data.
+8
+Conclusion
+This paper presents FixV2W, a knowledge graph–based framework designed to correct invalid CVE–CWE mappings
+in the NVD. Through a longitudinal study of mapping updates between 2016 and 2024, we uncovered that more than
+half of all CVEs are currently assigned to invalid CWE categories, with 84% of subsequent remaps occurring within just
+one to two hops in the CWE hierarchy. Leveraging these insights, we design FixV2W, a methodology that systematically
+identifies more accurate weaknesses. Remarkably, FixV2W provides correct matches (among the Top-10 results) for
+69% of exploited vulnerabilities that had invalid CWEs before they were exploited. Moreover, FixV2W demonstrates
+multi-label classification ability, shown with the improvements to the original model after retraining with top 2 and top
+3 matches. Strikingly, replacing invalid mappings with multiple mappings predicted by FixV2W improved the model’s
+ability to predict unseen CVE-CWE mappings significantly, and provides more meaningful root cause mappings than a
+single label classification.
+We compare different candidate sets to achieve best results, and our tests show that for Discouraged CWE correction,
+using CWEs closely related in the hierarchy (family) performs best, while for Prohibited CWE correction, using CWEs that
+are members of the same category or view of the original CWE yields best results. Even further, excluding a few outliers
+that do not fit into the longitudinal analysis claims (no members, few associations) proves that the model performs best if
+the old CWE mapping has strong, meaningful connections in the ontology. Our results demonstrate that ontology-informed
+graph embeddings provide a practical and deterministic alternative to purely semantic or LLM-based approaches, avoiding
+hallucinations and nondeterministic responses while remaining computationally lightweight.
+Beyond improving CWE mapping accuracy, our findings highlight broader implications for vulnerability management:
+higher-quality root cause data enables better future predictions and overall improved ML model performance throughout
+Manuscript submitted to ACM
+
+30
+Şimşek et al.
+the cybersecurity ecosystem. While our model misses correct CWEs in the predictions, some original invalid mappings
+are substantially misaligned with the true weakness, limiting purely structural approaches, such as ours. As explained in
+Section 7.5, NVD does not always provide the most accurate CWE remap for a CVE, and sometimes FixV2W outperforms
+the “ground truth”.
+A promising direction for future work is to integrate FixV2W with semantic models, particularly large language models
+(LLMs), to further improve and validate our model’s performance in correcting CWE mappings of CVE. Such an approach
+could combine FixV2W’s deterministic, ontology-grounded predictions with the contextual reasoning strengths of LLMs,
+providing both precision and adaptability as new weaknesses emerge. We believe this integration will pave the way toward
+the next generation of automated, trustworthy, and scalable vulnerability intelligence systems.

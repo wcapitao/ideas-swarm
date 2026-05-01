@@ -1,0 +1,1045 @@
+Quantum-Resistant Quantum Teleportation
+Xin Jin,1, ∗Nitish Kumar Chandra,2, ∗Mohadeseh Azari,2 Jinglei Cheng,1 Zilin Shen,3 Kaushik P. Seshadreesan,2 and Junyu Liu1, †
+1Department of Computer Science, University of Pittsburgh, Pittsburgh, Pennsylvania 15260, USA
+2Department of Informatics and Networked Systems, University of Pittsburgh, Pittsburgh, Pennsylvania 15260, USA
+3Purdue University, West Lafayette, Indiana 47907, USA
+(Dated: April 20, 2026)
+Quantum teleportation requires classical control bits transmitted via a classical communication channel,
+which are vulnerable to quantum adversaries. We propose a quantum-resistant quantum teleportation (QRQT)
+framework protected by post-quantum cryptography (PQC), with a comprehensive security analysis. By
+applying PQC to protect the classical control bits, QRQT renders quantum teleportation fully quantum-resistant
+and eliminates the classical attack surface. Our analysis reveals that quantum memory is a hidden bottleneck
+linking physical and computational security. Its finite coherence time simultaneously limits the communication
+distance, constrains the tolerable PQC overhead, and restricts the adversary’s attack window. Under realistic
+parameters (1 ms coherence, fiber-optic propagation), the maximum secure teleportation distance ranges from
+∼191 km (FrodoKEM-1344) to ∼199 km (Kyber512), quantifying the security-distance tradeoff imposed by the
+selected PQC scheme. We show a joint classical–quantum attack probability 𝑃joint(𝑡) exhibits a non-monotonic,
+Bell-shaped profile due to the opposing time dependencies of classical cryptanalysis and quantum decoherence,
+thereby establishing a bounded optimal attack window after which the probability of adversarial success decays
+exponentially. Complementing the attack probability analysis we further analyze how leakage of the classical
+correction bits affects the security of quantum teleportation, where confidentiality relies on keeping these
+bits secret until the receiver completes the recovery. To capture realistic patterns of time dependent exposure,
+we consider four stochastic leakage scenarios: independent exponential, sequential, burst, and correlated
+leakage, when the eavesdropper manages to compromise the receiver’s quantum system. We also account for
+decoherence in the entangled resource by modeling amplitude damping on the receiver’s half of the shared Bell
+pair. For each scenario, we derive closed form expressions for the average Holevo quantity and the average
+teleportation fidelity as functions of time. Based on the Holevo quantity, our information theoretic analysis
+provides measurement independent upper bounds on the information extractable by an adversary, which can
+help assess leakage risks in quantum communication and assist in developing protocols that are robust against
+such attacks.
+I.
+INTRODUCTION
+Quantum teleportation is a core communication primitive
+for quantum networks, enabling quantum states to be trans-
+ferred, coordinated, and processed across remote nodes [1, 2].
+Introduced by Bennett et al. in 1993, teleportation enables the
+transfer of an unknown quantum state using shared entangle-
+ment and classical communication, without direct physical
+transmission of the quantum system itself [3]. Teleportation
+fundamentally builds block for long distance entanglement dis-
+tribution, quantum repeater protocols, and distributed quan-
+tum computing architectures [4–9]. As quantum networking
+advances from isolated demonstrations to scalable systems,
+teleportation should be viewed not merely as a canonical pro-
+tocol of quantum information theory, but as an operational
+primitive whose security is essential to quantum network
+infrastructure [10–13].
+While shared entanglement supplies the quantum resource
+for teleportation, state transfer is completed only when the
+associated classical information reaches the receiver. Alice
+(sender) performs a joint measurement on the unknown input
+qubit and her share of an entangled pair, while Bob (receiver)
+holds the other share. This measurement produces two clas-
+sical outcomes that must be communicated to Bob [14]. Bob
+∗These two authors contributed equally to this work.
+† junyuliu@pitt.edu
+then uses this information to determine the corresponding
+Pauli correction to recover the original state. The classical
+channel therefore carries the measurement outcomes that
+determine the recovery operation at the receiver. Any de-
+lay, corruption, or compromise of this classical information
+directly affects the completion of the protocol, making the
+correction channel a critical part of both the functionality and
+the security of quantum teleportation [15, 16].
+This reliance on classical information introduces a funda-
+mental security asymmetry: while the quantum correlations
+are established without transmitting information, its success-
+ful and trustworthy completion also depends on a classical
+channel that can be vulnerable [17, 18]. In practice, the en-
+tangled quantum channel is often treated as the main ob-
+ject of protection, whereas the classical correction channel
+is commonly assumed to be authenticated or secured using
+conventional public key cryptography [19]. Such assump-
+tions become problematic in the presence of quantum capable
+adversaries, because widely used public key schemes such
+as Rivest-Shamir-Adleman (RSA) [20] and the Digital Signa-
+ture Algorithm (DSA) [21] derive their security from integer
+factorization and the discrete logarithm problem, both are
+vulnerable to Shor’s algorithm [22]. The classical correction
+channel thus becomes a natural attack surface: it carries the
+information required to complete state recovery, its protec-
+tion is commonly delegated to public-key schemes that are
+broken by Shor’s algorithm. Protecting only the quantum
+states is therefore insufficient, securing teleportation end-to-
+arXiv:2604.16101v1 [quant-ph] 17 Apr 2026
+
+2
+end requires quantum-resistant authentication of the classical
+correction path as well [23].
+Several existing approaches can be used to authenticate or
+secure the classical correction channel, but they can be opera-
+tionally cumbersome or infrastructure intensive in scalable
+teleportation networks. Wegman-Carter authentication [24]
+provides information theoretic message authentication, it re-
+quires pre-shared secret keys whose distribution and periodic
+refresh become increasingly burdensome as the number of
+nodes and teleportation rounds grows. Quantum key distri-
+bution (QKD), a method for establishing shared secret keys
+using quantum states, offers another possibility for securing
+the classical channel [25]. However, it still relies on an initially
+authenticated classical channel, and in practice it requires each
+protected link to be paired with dedicated QKD hardware and
+supporting infrastructure [26, 27]. Quantum digital signatures
+provide an alternative approach [28], but their practical de-
+ployment remains constrained by limitations in transmission
+distance, signature overhead, and multi-party scalability. As
+a result, a practical gap remains between solutions that pro-
+vide strong security but require substantial infrastructure and
+coordination overhead, and those that would offer the scal-
+able public-key functionality needed for large-scale quantum
+communication systems [29, 30].
+Post quantum cryptography (PQC) provides a practical re-
+sponse to the problem of securing the classical correction
+channel while preserving the deployment advantages of pub-
+lic key cryptography. Since launching its PQC standardization
+effort in 2016, NIST has advanced PQC from a research direc-
+tion to a deployable standards framework [31]. In 2022, NIST
+selected CRYSTALS Kyber for key encapsulation and CRYS-
+TALS Dilithium and SPHINCS+ among its first post quantum
+digital signature candidates, and in 2024 finalized FIPS 203,
+FIPS 204, and FIPS 205, which specify algorithms derived from
+these schemes [32, 33]. Kyber and Dilithium are lattice based
+constructions built from module lattice assumptions related to
+Learning With Errors (LWE) and Short Integer Solution, while
+SPHINCS+ provides algorithmic diversity through a stateless
+hash based design [34, 35]. This progress makes it timely to
+revisit teleportation security from a post quantum perspec-
+tive, particularly for the classical correction channel, where
+public key protection is especially well suited to networked
+settings because it can secure protocol critical classical infor-
+mation without requiring pairwise pre-shared secret keys or
+dedicated quantum security infrastructure [26, 36], while still
+relying on standard public key management and authentica-
+tion mechanisms.
+Building on recent progress in post quantum cryptography,
+we propose the Quantum-Resistant Quantum Teleportation
+(QRQT) framework, which applies PQC to the classical con-
+trol channel of quantum teleportation (See Fig. 1). QRQT
+leaves the underlying teleportation protocol and entangle-
+ment resource unchanged, but protects the Bell measurement
+outcomes that must be delivered to the receiver for state re-
+construction. It therefore secures the protocol critical classical
+correction path, ensuring that the information required for
+Pauli correction remains protected against quantum enabled
+adversaries.
+Integrating PQC into teleportation is not a purely cryp-
+tographic substitution. The use of PQC-protected classical
+communication introduces additional processing and trans-
+mission delay before Bob can obtain the measurement out-
+comes and apply the required Pauli correction. During this
+interval, the receiver’s qubit must remain stored in quantum
+memory, so the success of the protocol is also constrained by
+coherence time [37–40]. The PQC latency therefore translates
+into a physical resource constraint: the longer the classical
+correction path takes to complete, the greater the risk that
+decoherence will destroy the stored quantum state before re-
+covery is possible. Computational security on the classical
+channel thus becomes directly coupled to physical reliability
+on the quantum side.
+We consider an adversary whose goal is to intercept and
+recover the transmitted quantum state, requiring simultane-
+ous access to both the classical correction outcomes and the
+stored quantum state. This creates a time-dependent joint
+constraint on the adversary: a longer transmission window
+provides more time to break the PQC-authenticated classical
+channel, but also increases the probability that the quantum
+state has decohered and is no longer recoverable. Conversely,
+a shorter window preserves the quantum state but limits the
+time available for classical cryptanalysis. Successful inter-
+ception therefore requires the adversary to compromise both
+channels within the same coherence window.
+To assess QRQT security comprehensively, we develop a
+hybrid threat model that jointly captures adversarial behavior
+on both the classical and quantum channels. On the classical
+side, we model attack success probabilities against LWE-based
+cryptosystems underlying standardized post-quantum encryp-
+tion schemes. On the quantum side, we consider an active
+interception strategy in which an adversary attempts to substi-
+tute, extract, or temporarily retain entangled qubits intended
+for the receiver through a SWAP-type interaction; related in-
+terception and entanglement-tampering scenarios have been
+studied in the contexts of unreliable entanglement assistance,
+malicious entanglement in quantum networks, and active
+eavesdropping on quantum communication channels [41–43].
+This formulation enables us to quantify attack success under
+realistic temporal constraints, thereby capturing the inter-
+play between PQC-induced latency and decoherence in finite
+quantum memory.
+To analyze this coupled security problem, we use two com-
+plementary frameworks. The first is an explicit attack anal-
+ysis that captures adversarial behavior on both the classical
+and quantum channels, allowing us to quantify attack suc-
+cess probabilities under finite computation time, communica-
+tion latency, and quantum memory constraints. The second
+component is an information theoretic analysis based on the
+Holevo quantity, which quantifies the information an adver-
+sary can extract from partial correction data together with
+access to Bob’s quantum state. Together, the two components
+allow us to distinguish between concrete protocol compro-
+mise and residual information exposure, thereby providing a
+more complete characterization of QRQT security.
+The main contributions of this work are as follows:
+• We propose the Quantum-Resistant Quantum Telepor-
+
+3
+tation (QRQT) framework (See Fig. 2), which protects
+the classical correction channel of quantum teleporta-
+tion using post-quantum cryptography, and identify
+the resulting joint security tradeoff between crypto-
+graphic protection and quantum memory constraints.
+Specifically, because the receiver must store the entan-
+gled qubit while awaiting PQC-protected correction
+bits, communication distance, tolerable cryptographic
+overhead, and the adversary’s attack window become
+fundamentally coupled. This contribution highlights
+that the classical attack success probability grows with
+computation time, whereas the quantum interception
+probability decays as the entangled state decoheres, giv-
+ing rise to a joint security landscape that cannot be
+captured by analyzing either channel in isolation.
+• If decoherence occurs before the correction bits are re-
+ceived, the original quantum state cannot be faithfully
+reconstructed, undermining both fidelity and practi-
+cal feasibility. The interaction between cryptographic
+latency and quantum coherence remains largely unex-
+plored, raising a fundamental question: under what tem-
+poral and physical conditions can QRQT remain both
+secure and operational? Motivated by this constraint,
+we quantitatively analyze the feasibility of QRQT by
+evaluating multiple standardized PQC algorithms and
+estimating the minimum coherence time required for
+successful state reconstruction across varying commu-
+nication distances and security parameters.
+• We formulate a hybrid threat model that jointly cap-
+tures lattice-based attacks on the classical channel and
+SWAP-based interception on the quantum channel, and
+characterize the resulting time-dependent joint attack
+probability.
+• We further present an information theoretic analysis
+based on the Holevo bound and introduce four physi-
+cally motivated stochastic leakage models, namely inde-
+pendent, sequential, burst, and correlated leakage, that
+capture common qualitative patterns of information ex-
+posure arising in statistical failure and communication
+error processes. This framework enables us to quan-
+tify the residual information available to an adversary
+and to characterize how partial, delayed, and correlated
+leakage lead to time dependent degradation of the tele-
+ported quantum state.
+The remainder of the paper is organized as follows. Sec-
+tion II reviews the background theory relevant to this work.
+Sections III and IV present the QRQT framework, analyze
+memory lifetime limitations, and develop the hybrid threat
+model along with the corresponding attack success probability.
+Sections V, VI, and VII present an information theoretic analy-
+sis of the teleportation protocol under an amplitude damping
+noise model for different scenarios, with particular focus on
+the Holevo quantity, the fidelity of the quantum state, and
+their time dependent behavior under four stochastic models
+of classical leakage. Finally, Section VIII concludes the paper
+and discusses future directions for integrating PQC protected
+teleportation into scalable quantum networks.
+II.
+PRELIMINARIES
+In this section, we review the fundamental concepts used
+throughout the paper. We first review the quantum teleporta-
+tion protocol, examine how noise degrades quantum informa-
+tion through the amplitude damping channel, discuss the role
+of Pauli corrections as an encryption mechanism, and intro-
+duce the von Neumann entropy and the Holevo quantity used
+in the security analysis. We further discuss the lattice-based
+cryptographic hardness assumption underlying post-quantum
+security and the teleportation fidelity metric.
+A.
+Quantum Teleportation Protocol
+Quantum teleportation [3, 14] is a fundamental protocol in
+quantum information processing that enables the transfer of
+an arbitrary unknown quantum state between two spatially
+separated parties using shared entanglement and classical
+communication (see Fig. 1). The protocol relies on two essen-
+tial resources:
+• a pre-shared entangled state, typically a maximally en-
+tangled Bell pair, and
+• a classical communication channel used to convey mea-
+surement outcomes.
+Let the input state to be teleported be a single qubit
+|𝜓⟩= 𝛼|0⟩+ 𝛽|1⟩,
+with |𝛼|2 + |𝛽|2 = 1. The teleportation procedure proceeds as
+follows:
+1. Alice performs a joint Bell basis measurement on the
+input qubit and her half of the shared entangled pair,
+projecting the combined system onto one of four Bell
+states.
+2. The measurement outcome is encoded into two clas-
+sical bits (𝑚1,𝑚2) ∈{0, 1}2. (Throughout this paper,
+𝑚1 ≡𝑀1 and 𝑚2 ≡𝑀2. These symbols denote the same
+classical bits and are used interchangeably in some sec-
+tions for notational convenience and clarity.)
+3. Alice transmits these classical bits to Bob over a classical
+communication channel.
+4. Upon receiving the measurement outcomes, Bob applies
+the conditional Pauli operation
+𝑈𝑚1𝑚2 = 𝑍𝑚2𝑋𝑚1
+to his qubit, thereby recovering the original state |𝜓⟩.
+In the ideal setting, assuming perfect entanglement, noise-
+less quantum operations, and error free classical communica-
+tion, the teleportation protocol reconstructs the input state at
+Bob’s location with unit fidelity.
+
+4
+Alice
+Bob
+Sends state |𝜓⟩
+Pre shared
+Bell pair
+|𝛽00⟩= (|00⟩+ |11⟩)/
+√
+2
+𝐻
+𝑀2
+𝑀1
+PQC protected
+classical channel
+𝑋𝑀1
+𝑍𝑀2
+Recovered
+state |𝜓⟩
+Potential eavesdropper access
+Solid line = quantum system
+Blue dashed line = classical bits (𝑀1, 𝑀2)
+Blue shaded region = PQC protected classical channel
+FIG. 1: Quantum Resistant Quantum Teleportation (QRQT) framework. Alice performs a Bell state measurement on her input qubit
+|𝜓⟩and her half of the Bell pair |𝛽00⟩=
+1
+√
+2 (|00⟩+ |11⟩). A cnot gate followed by a Hadamard gate and computational basis measurements
+yield two classical outcomes 𝑀1 and 𝑀2. These control bits are sent to Bob through a PQC protected classical channel, while Bob retains his
+entangled qubit in quantum memory. Upon receiving the bits, Bob applies Pauli corrections 𝑋𝑀1 and 𝑍𝑀2 to recover |𝜓⟩.
+(a) Traditional Quantum Teleportation
+(b) QRQT Framework
+(c) Joint Threat Model
+(d) Information Theoretic Analysis
+FIG. 2: Overview of the QRQT framework. (a) Standard teleportation with classical public-key protection, vulnerable to Shor’s algorithm.
+(b) QRQT replaces the classical link with PQC; Bob holds the qubit in quantum memory during PQC processing. (c) Hybrid threat model
+combining lattice attacks on the classical channel and SWAP interception on the quantum channel. (d) Holevo-bound analysis of information
+leakage under decoherence and classical key compromise.
+
+5
+B.
+Quantum Noise and the Amplitude Damping Channel
+In realistic settings, quantum systems inevitably interact
+with their surrounding environment, leading to decoherence
+and the loss of quantum information. Such noise processes
+are mathematically described by completely positive trace
+preserving maps, which are commonly represented using the
+Kraus operator formalism [14].
+A particularly relevant noise model for many physical qubit
+implementations is the amplitude damping channel, which
+captures energy relaxation mechanisms such as spontaneous
+emission in optical platforms or energy decay in superconduct-
+ing qubits [44, 45]. The amplitude damping channel acting on
+a single qubit is characterized by the Kraus operators
+𝐸0 =
+
+1
+0
+0 √1 −𝛾
+
+,
+𝐸1 =
+
+0 √𝛾
+0
+0
+
+,
+(1)
+where 𝛾∈[0, 1] denotes the probability of energy decay.
+When a qubit with density matrix 𝜌undergoes amplitude
+damping, its evolution is described by
+EAD(𝜌) = 𝐸0𝜌𝐸†
+0 + 𝐸1𝜌𝐸†
+1.
+(2)
+In this work, we use the amplitude damping channel as a
+representative model for such decoherence processes, which
+lead to degradation of the teleported quantum state.
+C.
+Pauli Corrections and Encryption of Quantum
+Information
+The Pauli operators {𝐼,𝑋,𝑌,𝑍} form a complete orthonor-
+mal basis for single qubit operators. In the quantum telepor-
+tation protocol, the specific Pauli correction applied by Bob is
+determined by the outcome of Alice’s Bell state measurement.
+The required unitary operation takes the form
+𝑈𝑀1𝑀2 = 𝑍𝑀2𝑋𝑀1,
+(3)
+where (𝑀1, 𝑀2) ∈{0, 1}2 denote the classical bits communi-
+cated by Alice.
+This conditional correction reverses the random Pauli op-
+erator induced by the Bell measurement and enables Bob to
+recover the original quantum state. Prior to receiving the clas-
+sical information, however, Bob’s qubit remains correlated
+with Alice’s measurement outcome. When averaged over the
+unknown correction bits, Bob’s reduced state is maximally
+mixed and therefore reveals no information about the input
+state.
+From an information theoretic perspective, the absence of
+the correction bits effectively hides the teleported quantum
+information. Any observer without access to the classical
+outcomes perceives Bob’s qubit as carrying no extractable in-
+formation about the input state. In this sense, the teleportation
+protocol provides a form of physical layer encryption, with
+the classical correction bits acting as a decryption key [46].
+Consequently, partial or complete leakage of the correction
+bits undermines this protection and can allow an adversary
+to infer information about the original quantum state.
+D.
+Von Neumann Entropy and Quantum Ensembles
+The von Neumann entropy [14] is the standard measure of
+entropy for quantum states and generalizes classical Shannon
+entropy to the quantum setting. For a state described by a
+density matrix 𝜌, it is defined as
+𝑆(𝜌) = −Tr 𝜌log2 𝜌 ,
+(4)
+and quantifies the mixedness of the state.
+In quantum information theory, an ensemble of states is rep-
+resented as E = {𝑝𝑖, 𝜌𝑖}, where 𝜌𝑖is prepared with probability
+𝑝𝑖. The corresponding average state is
+𝜌avg =
+∑︁
+𝑖
+𝑝𝑖𝜌𝑖.
+(5)
+The Holevo quantity is then given by
+𝜒(E) = 𝑆
+ ∑︁
+𝑖
+𝑝𝑖𝜌𝑖
+!
+−
+∑︁
+𝑖
+𝑝𝑖𝑆(𝜌𝑖),
+(6)
+which upper bounds the accessible classical information that
+can be extracted from the ensemble by any measurement.
+In the present setting, the Holevo quantity provides an in-
+formation theoretic upper bound on how much Eve can learn
+from partial classical knowledge together with access to Bob’s
+quantum system. In later sections, we use this framework to
+analyze residual information exposure under different stochas-
+tic leakage models and relate it to the information contained
+in the teleported quantum state.
+E.
+Lattice-Based Cryptography and the LWE Problem
+The classical channel protection employed in this work re-
+lies on post quantum cryptographic schemes whose security
+reduces to lattice problems, that is, computational problems
+defined over highly regular geometric point sets in high dimen-
+sional spaces that are believed to be hard to solve efficiently.
+The central hardness assumption is the Learning With Errors
+(LWE) problem [47]. In this problem, one is given a public
+matrix 𝐴∈Z𝑛×𝑚
+𝑞
+and noisy samples of the form
+p = 𝐴⊤sk + e
+(mod 𝑞),
+(7)
+and the goal is to recover the hidden vector sk.
+More specifically, 𝐷Z,𝜎𝑒𝑞is a secret vector that plays the
+role of the hidden key, 𝑞is a modulus that fixes the arithmetic
+range, 𝑚is the number of samples, and e ∈𝐷Z,𝜎𝑒𝑞is an
+error vector drawn from a discrete Gaussian distribution with
+standard deviation 𝜎𝑒·𝑞. Here, the public matrix 𝐴is known to
+everyone and provides the structured linear data from which
+the samples are formed, while the notation Z𝑞means that
+all arithmetic is performed modulo 𝑞, so values wrap around
+after reaching the modulus. The error vector e represents
+deliberately added random noise, with smaller errors more
+likely than larger ones.
+Intuitively, LWE can be viewed as a noisy system of linear
+equations. Without the error term, the secret vector could
+in principle be recovered using standard linear algebra. The
+
+6
+added noise, however, makes this recovery task computa-
+tionally difficult, and this difficulty is what gives LWE based
+cryptographic schemes their security. Standardized post quan-
+tum schemes such as CRYSTALS Kyber and FrodoKEM derive
+their security from module LWE and plain LWE variants, re-
+spectively [32, 33]. Here, plain LWE refers to the original form
+of the problem, whereas module LWE introduces additional
+algebraic structure that improves efficiency while maintaining
+the same general hardness foundation.
+The best known classical attacks against LWE proceed
+through BKZ (Block Korkine Zolotarev) lattice reduction [48,
+49]. In broad terms, lattice reduction attempts to replace a
+given lattice basis by another basis that spans the same lattice
+but consists of shorter and more nearly orthogonal vectors,
+since such a basis is more useful for cryptanalysis. A lattice
+basis B = (b1, . . . , b𝑚) is simply a set of vectors whose integer
+linear combinations generate all points of the lattice. BKZ
+works on this basis and iteratively improves it.
+More precisely, BKZ applies an exact shortest vector oracle
+within successive blocks of dimension 𝛽to produce a reduced
+basis whose Gram Schmidt vectors ˜b𝑖decrease in length at a
+predictable rate. The block dimension 𝛽controls the strength
+of the reduction: a larger block size generally yields a better
+reduced basis, but at a significantly higher computational cost.
+The shortest vector oracle is an idealized subroutine that finds
+the shortest nonzero vector inside a given block, while the
+Gram Schmidt vectors are an orthogonalized version of the
+basis vectors that make the geometry of the reduced basis
+easier to analyze.
+The quality of the reduced basis is commonly characterized
+by the root Hermite factor 𝛿root, defined so that the shortest
+reduced vector satisfies
+∥b1∥≈𝛿𝑚
+root (det Λ)1/𝑚,
+(8)
+where Λ is the lattice and 𝑚is its rank [50]. Here, det Λ is
+the determinant of the lattice, which measures the effective
+volume of a fundamental cell, and the rank 𝑚is the number
+of basis vectors. Smaller values of 𝛿root correspond to stronger
+reduction and therefore to more effective attacks.
+To model the structure of a BKZ reduced basis analytically,
+one often adopts the Geometric Series Assumption (GSA), which
+is a standard heuristic description of how the orthogonalized
+basis vectors shrink under reduction. Under this assumption,
+the Gram Schmidt norms decay geometrically:
+∥˜b𝑖∥= ∥˜b1∥𝛿−2(𝑖−1)
+root
+,
+(9)
+which provides a convenient analytic approximation to the
+output of BKZ reduction [50]. In other words, the GSA as-
+sumes that the orthogonalized vectors decrease in a regular ge-
+ometric pattern, making the behavior of BKZ easier to model
+mathematically.
+The computational cost of BKZ is commonly parameterized
+by 𝛿root through the empirical relation
+log2𝑇BKZ =
+𝑎
+log2 𝛿root
+−𝑏,
+(10)
+where 𝑎and 𝑏are empirical scaling constants encoding the ad-
+versary’s hardware throughput and algorithmic efficiency [49].
+This relation captures the practical tradeoff between attack
+quality and runtime: achieving a smaller root Hermite factor,
+and hence a stronger reduction, generally requires substan-
+tially more computation.
+Once lattice reduction has been carried out, the secret is
+recovered by Nearest Planes enumeration [51]. At each Gram
+Schmidt layer 𝑖, the algorithm searches over integer coeffi-
+cients within a radius 𝑑𝑖and succeeds with probability gov-
+erned by
+erf  𝑑𝑖∥˜b𝑖∥√𝜋/(2𝑠),
+(11)
+where 𝑠is the LWE noise standard deviation. Conceptually,
+this step attempts to identify the lattice point closest to the
+noisy target after the basis has been sufficiently reduced. The
+search radius 𝑑𝑖controls how far the algorithm explores at
+each layer, and the error function appears because the success
+probability is determined by the Gaussian statistics of the
+noise.
+Thus, the overall attack has two main ingredients: lattice
+reduction, which transforms the basis into a more favorable
+geometric form, and a subsequent decoding step, which uses
+that reduced basis to recover the hidden secret. The success of
+this process depends both on the quality of the reduction and
+on the magnitude of the underlying noise. These definitions
+are used in Section IV B to construct a time dependent classical
+attack model.
+III.
+QRQT FRAMEWORK AND SECURITY ANALYSIS
+UNDER QUANTUM-MEMORY CONSTRAINTS
+QRQT Framework. The proposed Quantum-Resistant
+Quantum Teleportation (QRQT) framework extends the stan-
+dard teleportation protocol by integrating post-quantum cryp-
+tography into the classical channel. As illustrated in Fig. 1,
+the system consists of two parties, Alice and Bob, sharing an
+entangled Bell pair and communicating via a classical control
+link secured by a PQC primitive EPQC. Let |𝜓⟩denote the
+input state, {𝑀1, 𝑀2} the measurement outcomes. This sec-
+tion formalizes the QRQT operations and the corresponding
+timing constraints.
+In QRQT, the teleportation process can be described as a
+quantum classical hybrid map:
+TQRQT = RBob ◦EPQC ◦MAlice ◦UBell ◦PBell,
+where TQRQT represents the overall map from Alice’s input
+quantum state to the reconstructed state on Bob’s side under
+PQC secured teleportation. Specifically, PBell denotes the
+preparation of the shared Bell pair |𝛽00⟩=
+1
+√
+2 (|00⟩+ |11⟩),
+UBell denotes the Bell basis transformation implemented by
+a CNOT gate and a Hadamard gate, MAlice denotes Alice’s
+measurement, which produces the two classical bits (𝑀1, 𝑀2),
+EPQC denotes the PQC based encryption and decryption of
+these bits, and RBob denotes Bob’s reconstruction by applying
+the Pauli corrections 𝑍𝑀2𝑋𝑀1.
+For successful teleportation, Bob’s quantum memory must
+preserve coherence throughout the entire delay of the classi-
+cal channel, including both cryptographic and transmission
+
+7
+latencies:
+𝜏𝑚= 𝑇PBell +𝑇UBell +𝑇EPQC +𝑇MAlice +𝑇comm +𝑇RBob
+(12)
+where 𝜏𝑚denotes the effective quantum memory lifetime limit,
+representing the minimum coherence time required to pre-
+serve the stored qubit until the classical correction bits are
+received. Thus,
+𝑇coh > 𝜏𝑚.
+(13)
+The individual timing components are: 𝑇PBell, the Bell-pair
+preparation and distribution time; 𝑇UBell, the Bell-basis trans-
+formation latency; 𝑇MAlice, Alice’s measurement time; 𝑇EPQC,
+the PQC encryption and decryption delay; 𝑇comm = 𝑑/𝑣fiber,
+the distance-dependent classical communication delay over
+optical fiber (𝑣fiber ≈2×105 km/s); and𝑇RBob, the time for Bob’s
+local Pauli corrections. Among these,𝑇comm dominates at long
+distances (≈5 𝜇s/km), while all local operations remain in the
+nanosecond range (see Appendix B 1 for platform-specific es-
+timates). 𝑇EPQC captures the computational delay introduced
+by post-quantum encryption and decryption, while 𝑇comm
+represents the classical communication time. The interplay
+between these classical-layer delays and quantum-layer deco-
+herence defines the operational feasibility region of QRQT, as
+quantified below and formalized in Section IV.
+In the QRQT protocol, Alice secures the two correction
+bits (𝑀1, 𝑀2) using a hybrid PQC scheme: a lattice-based key-
+encapsulation mechanism (e.g., CRYSTALS-Kyber) establishes
+a one-time session key 𝐾, which is then used to symmetri-
+cally encrypt the correction bits via AES, yielding ciphertext
+(𝐶1,𝐶2). Bob decapsulates 𝐶1, decrypts 𝐶2, and applies Pauli
+corrections 𝑍𝑀2𝑋𝑀1 to recover the teleported state. The full
+protocol specification is provided in Appendix D.
+Memory lifetime limit analysis. Having established 𝜏𝑚
+as the lower bound on quantum memory coherence required
+for successful QRQT, we now demonstrate how this constraint
+governs the operational feasibility of the QRQT framework.
+By quantifying this relationship across different PQC schemes
+and communication distances, we identify the minimal phys-
+ical conditions (e.g., communication distance) under which
+QRQT remains both secure and realizable. The PQC com-
+puting time is estimated using the JEDI BullSequana XH3000
+supercomputer (𝑅max = 4.50 PFlop/s) benchmark [52]; the
+details of the estimation method are provided in Appendix C.
+We assume spontaneous parametric down-conversion (SPDC)
+Bell-pair generation [53, 54] and fiber-optic delivery for the
+quantum teleportation experiment; the data used for estimat-
+ing the feasibility boundary are given in Appendix B 2.
+TABLE I: PQC overhead and maximum distance (𝑇coh = 1 ms).
+Algorithm
+Sec. 𝑇enc (𝜇s)
+Max Dist. (km)
+Kyber512
+128
+2.3
+198.5
+Kyber768
+192
+3.1
+198.3
+Kyber1024
+256
+4.2
+198.1
+FrodoKEM-640
+128
+15.7
+195.9
+FrodoKEM-976
+192
+28.4
+194.3
+FrodoKEM-1344
+256
+45.1
+191.0
+Our results show the tradeoff between PQC robustness and
+quantum memory requirements: stronger PQC algorithms
+impose heavier processing delays, which shrink the effective
+distance window for teleportation. PQC security levels should
+therefore be chosen in light of physical memory limits and
+network distance targets.
+Distance–security tradeoffs. The maximum feasible com-
+munication distance is determined by subtracting fixed delays
+from the coherence window and multiplying by the propaga-
+tion speed in fiber:
+𝑑max = (𝑇coh −𝑇fixed) · 𝑣fiber,
+(14)
+with 𝑣fiber ≈2 × 105 km/s.Here 𝑇fixed = 𝑇PBell + 𝑇UBell +
+𝑇EPQC + 𝑇MAlice + 𝑇RBob collects all distance-independent de-
+lays, so that the distance-dependent contribution reduces to
+𝑇comm = 𝑑/𝑣fiber.
+For example, with a practical coherence time of𝑇coh = 1 ms
+(consistent with state-of-the-art trapped-ion and rare-earth
+doped solid-state memories [55–57]), the maximum distance
+drops from ∼200 km with lightweight schemes such as Ky-
+ber512 to below 192 km for heavy-weight schemes such as
+FrodoKEM-1344. This shows that memory lifetime, rather
+than raw cryptographic strength, sets the fundamental limit
+on secure teleportation distances. The derived linear relation
+provides a design guideline for balancing PQC selection with
+physical-layer capabilities. For a given quantum memory tech-
+nology, we can invert Eq. (14) to determine the strongest PQC
+scheme that maintains real-time feasibility.
+The analysis above establishes the physical feasibility re-
+gion of QRQT by quantifying how PQC overhead and com-
+munication distance jointly constrain the available coherence
+window. A complementary and equally important question is
+whether the protocol remains secure within this feasible re-
+gion: specifically, can an adversary targeting both the classical
+and quantum channels simultaneously succeed before deco-
+herence destroys the intercepted quantum information? We
+address this question in the following section by developing
+a joint classical–quantum threat model.
+IV.
+JOINT THREAT MODEL
+To evaluate the overall security of the Quantum-Resistant
+Quantum Teleportation (QRQT) framework, we establish a
+joint threat model that unifies the quantum-side and classical-
+side adversarial assumptions. The goal is to capture the tem-
+poral coupling between physical quantum coherence and post-
+quantum computational hardness that determines whether
+an attack can succeed before decoherence destroys useful
+information.
+We consider an adversary, Eve, who can target both the
+quantum and classical channels of the teleportation protocol.
+On the quantum channel, Eve is assumed capable of coher-
+ently interacting with qubits distributed over optical fiber
+and, in the strongest scenario, performing a SWAP-based in-
+terception that redirects Bob’s entangled qubit into her own
+quantum memory (detailed in Sec. IV A). We do not assume
+that legitimate parties perform entanglement verification or
+active monitoring; this deliberate omission establishes an up-
+per bound on adversarial capability.
+
+8
+0
+20
+40
+60
+80
+100
+Distance (m)
+0
+500
+1000
+2000
+3000
+4000
+5000
+6000
+7000
+8000
+9000
+Memory lifetime (ns)
+FrodoKEM
+BIKE
+Kyber
+Kyber
+BIKE
+FrodoKEM
+Level 1
+Level 3
+Level 5
+(a)
+10
+7
+10
+9
+10
+11
+10
+13
+Quantum coherence time (ns)
+Trapped ions
+(1 h)
+NV center
+(1 s)
+SC cavity
+(34 ms)
+Fluxonium
+(1.4 ms)
+0
+100
+200
+300
+400
+500
+Distance (m)
+0
+2000
+4000
+6000
+8000
+10000
+Memory lifetime (ns)
+FrodoKEM
+BIKE
+Kyber
+>100×
+margin
+(b)
+FIG. 3: Quantum memory lifetime vs. communication distance for different PQC schemes. (a) Short-range view (0–100 m) on a symlog scale.
+(b) Long-range view (0–500 m) with quantum-memory coherence benchmarks (top, log scale) and PQC requirements (bottom, linear);
+coherence times exceed PQC needs by >100×. The slope (≈5 𝜇s/km) reflects fiber propagation delay; the intercept reflects PQC processing
+time. See Appendix B 4 for the full derivation.
+On the classical channel, which is treated as public and unau-
+thenticated [3, 14, 27, 58, 59], Eve may eavesdrop on, intercept,
+or delay the PQC-protected correction bits. Her classical at-
+tack capability is modeled in terms of lattice-reduction effort
+against the underlying LWE instance (detailed in Sec. IV B).
+The joint model couples these two attack surfaces through a
+shared time parameter: classical cryptanalytic progress im-
+proves with time, whereas the quantum information available
+to Eve degrades due to decoherence, creating the temporal
+competition analyzed below.
+A.
+Quantum Side Security: SWAP Attack
+On the quantum channel, we assume a physically powerful
+adversary (Eve) capable of performing coherent interactions
+with transmitted qubits. The strongest practical attack is
+modeled as a SWAP attack, where Eve replaces Bob’s half
+of the entangled pair with her own ancilla and stores the
+legitimate qubit in her quantum memory (see Fig. 4 for the
+circuit-level description). Operationally, Eve inserts a uni-
+tary 𝑈SWAP between Bob’s qubit 𝐵and her ancilla 𝐸, effecting
+the transformation 𝑈SWAP|𝑥⟩𝐵|𝑦⟩𝐸= |𝑦⟩𝐵|𝑥⟩𝐸. This redirects
+the entanglement from the (𝐴, 𝐵) pair to the (𝐴, 𝐸) pair, leav-
+ing Bob with the dummy state |0⟩while Eve inherits the
+full teleportation correlation [14]. Such intercept-and-resend
+strategies on entangled links have been studied in the context
+of quantum network routing security [26, 60] and unreliable
+entanglement assistance [42].
+To enable quantitative evaluation, we make the following
+implementation assumptions:
+• Physical access: Eve can physically access or replace the
+fiber transmission path (or compromise an intermediate
+relay node) and apply an approximately ideal SWAP
+unitary 𝑈SWAP between the traveling photonic mode
+and a local ancilla, transferring the legitimate qubit into
+her quantum memory with sufficient fidelity [61].
+• Classical attack capability: Concurrently, Eve can in-
+tercept, delay, or attempt to break the PQC-protected
+classical correction information (𝑀1, 𝑀2), with a classi-
+cal cryptanalytic budget denoted𝑇BKZ (see Section IV B),
+and perform the necessary Pauli corrections 𝑍𝑀2𝑋𝑀1
+within the coherence-limited time window.
+• Absence of active monitoring: The legitimate parties do
+not deploy frequent randomized entanglement verifica-
+tion, high-sensitivity timing or optical-statistics checks,
+or decoy-state probing, so that the substitution remains
+undetected.
+These assumptions collectively define a worst-case adver-
+sarial model; practical countermeasures that relax them are
+discussed after the formal analysis below.
+SWAP attack model for quantum teleportation
+The SWAP attack can be formalized as a completely positive
+trace-preserving (CPTP) map. Let the initial state be
+|Ψ0⟩𝐶𝐴𝐵𝐸= |𝜑⟩𝐶⊗|Φ+⟩𝐴𝐵⊗|0⟩𝐸,
+(15)
+where |𝜑⟩𝐶= 𝑎|0⟩+ 𝑏|1⟩is Alice’s input, |Φ+⟩𝐴𝐵= (|00⟩+
+|11⟩)/
+√
+2 is the shared entangled state, and |0⟩𝐸is Eve’s ancilla.
+
+9
+|𝜓⟩
+𝐴
+𝐵
+|0⟩𝐸
+𝐶
+|Φ+⟩𝐴𝐵
+SWAP
+QM
+𝑇coh
+Bell measurement on (𝐶,𝐴)
+𝐻
+𝑀2
+𝑀1
+PQC
+attack
+𝑋𝑀1
+𝑍𝑀2
+|0⟩(Bob)
+|𝜓⟩(Eve)
+Alice
+Eve
+decoherence window
+FIG. 4: Quantum circuit schematic of the SWAP attack on QRQT.
+Initially, a Bell pair |Φ+⟩𝐴𝐵is shared between Alice (qubit 𝐴) and
+Bob’s traveling qubit 𝐵. Eve intercepts qubit 𝐵and swaps it with her
+ancilla |0⟩𝐸, thereby transferring the remote half of the entangled
+pair from Bob to Eve and leaving Bob with the dummy state |0⟩.
+Alice then measures her input |𝜓⟩(qubit 𝐶) and qubit 𝐴in the Bell
+basis, obtaining outcomes (𝑀1, 𝑀2). If Eve also breaks the
+PQC-protected classical channel, she can apply 𝑍𝑀2𝑋𝑀1 to
+recover |𝜓⟩; Bob still receives the protocol signals (a qubit and two
+correction bits) but, because his Bell-half has been replaced by a
+dummy state, the standard teleportation correction no longer
+reconstructs |𝜓⟩at his side.
+Eve applies a SWAP unitary 𝑈SWAP between Bob’s qubit 𝐵and
+her ancilla 𝐸,
+𝑈SWAP|𝑥⟩𝐵|𝑦⟩𝐸= |𝑦⟩𝐵|𝑥⟩𝐸,
+which is a general exchange of two qubit registers. The phys-
+ical significance in the present context is that Bob’s qubit 𝐵is
+not an isolated state but one half of the entangled pair |Φ+⟩𝐴𝐵.
+The SWAP operation transfers that entanglement from Bob
+to Eve yielding
+|Ψ1⟩𝐶𝐴𝐸𝐵= |𝜑⟩𝐶⊗|Φ+⟩𝐴𝐸⊗|0⟩𝐵.
+(16)
+Eve now holds the teleportation resource which was origi-
+nally Bob’s. When Alice performs her Bell measurement on
+(𝐶,𝐴), Eve’s qubit collapses to a state related to |𝜑⟩by a Pauli
+operator, exactly as in the standard teleportation protocol. By
+intercepting Alice’s classical correction bits, Eve can apply
+the appropriate Pauli correction to her qubit and perfectly
+reconstruct |𝜑⟩. Bob still receives a qubit and the two classical
+correction bits through the normal protocol flow, but because
+his Bell-half has been replaced by the dummy state |0⟩𝐵, the
+standard Pauli correction 𝑍𝑀2𝑋𝑀1 no longer reconstructs |𝜑⟩
+at his side.
+Time-dependent success probability.
+Eve’s success
+depends on her ability to preserve coherence in memory until
+Alice’s classical bits are received. To model the finite memory
+lifetime without committing to a hardware-specific noise pro-
+cess, we adopt a phenomenological depolarizing parametriza-
+tion for the recovered-state fidelity:
+𝐹(𝑡) = 1
+2
+ 1 + 𝑒−𝑡/𝑇coh,
+(17)
+where𝑇coh is the quantum memory coherence time. This form
+captures the essential physics: 𝐹(0) = 1 for a freshly stored
+state and 𝐹→1/2 as 𝑡→∞, reflecting complete loss of quan-
+tum information to the maximally mixed state. We emphasize
+that this is a conservative phenomenological model, not a
+first-principles derivation tied to a specific platform; a full
+treatment would require platform-dependent noise operators
+(e.g., 𝑇1/𝑇2 relaxation for superconducting qubits, or spectral
+diffusion for solid-state memories). The depolarizing-channel
+form is chosen because it provides a single-parameter upper
+bound on the fidelity decay and is widely adopted in analyses
+of optical and solid-state quantum memories [61–64], where
+it accurately describes short- to intermediate-time coherence
+loss under weak coupling to a thermal bath.
+Operationally, 𝐹(𝜌, |𝜓⟩) = ⟨𝜓|𝜌|𝜓⟩equals the probability
+that the decohered state 𝜌passes the projective verification
+test |𝜓⟩⟨𝜓| [63]. Under optimal Pauli correction, Eve’s attack
+success probability equals:
+𝑃SWAP(𝑡) = 𝐹(𝑡) = 1
+2
+ 1 + 𝑒−𝑡/𝑇coh
+(18)
+High fidelity (𝐹≈1) means Eve preserves the quantum
+information well; low fidelity (𝐹→1/2) means decoherence
+has destroyed the coherent information, reducing Eve’s state
+to the maximally mixed qubit.
+Quantum teleportation is known to be intrinsically secure
+against passive eavesdropping on the quantum channel, yet
+it still requires authentication of the accompanying classical
+messages to prevent man-in-the-middle attacks [58, 65]. Previ-
+ous studies have examined teleportation fidelity under various
+noise and loss mechanisms [61, 64] and how the Holevo bound
+constrains the accessible information in noisy quantum chan-
+nels [62, 63]. Meanwhile, the classical control channel remains
+susceptible to side-channel leakage and timing-based infer-
+ence attacks [66–68]. Building on these results, we formalize
+the SWAP-style interception as a CPTP map and couple it
+with a time-dependent quantum-memory fidelity model. By
+linking the coherence-limited attack window on the quantum
+side with the cryptanalytic runtime on the classical side, we
+obtain a joint model of adversarial success in PQC-protected
+teleportation.
+The SWAP attack formalized above assumes an idealized
+adversary who can execute a perfect unitary swap on the
+traveling qubit without introducing detectable disturbances.
+In practice, several verification mechanisms available to the
+legitimate parties would significantly constrain such an attack.
+Entanglement verification:
+Alice and Bob can periodi-
+cally perform entanglement witness measurements or Bell-
+inequality (CHSH) tests on a randomly selected subset of
+shared pairs [69]. Any SWAP interception breaks the corre-
+lations of the tested pair, producing a detectable drop in the
+Bell parameter 𝑆below the classical bound 𝑆≤2.
+Timing-based detection: Inserting a SWAP gate and rerout-
+ing the photonic mode introduces additional optical-path de-
+lay and loss. Statistical monitoring of arrival-time jitter and
+channel transmittance can flag anomalous deviations from
+the expected profile [67, 68].
+Decoy-state probing: Borrowing from QKD practice, Alice
+can inject decoy states at random intervals to probe channel
+integrity. Discrepancies in the measured error rate or photon-
+number statistics reveal the presence of an active interception
+device [70].
+Our model deliberately omits these countermeasures to es-
+tablish an upper bound on adversarial capability: the SWAP
+
+10
+success probability 𝑃SWAP(𝑡) quantifies the worst-case sce-
+nario in which Eve is undetected. If a detection probability 𝑃det
+is incorporated, the effective joint attack probability reduces
+to 𝑃eff
+joint(𝑡) = (1 −𝑃det) 𝑃LWE(𝑡) 𝑃SWAP(𝑡), which strictly tight-
+ens the security guarantees derived in this work. Thus, our
+analysis provides a conservative baseline; real-world deploy-
+ments with active monitoring will enjoy stronger protection
+than the bounds reported here.
+B.
+Classical Side Attack Analysis
+On the classical channel, the adversary targets the post-
+quantum primitive EPQC used to protect the teleportation
+correction bits. To model the classical attack, we focus on
+PQC and adopt the minimal assumption that the classical-side
+protection reduces to an underlying Learning-With-Errors
+(LWE) instance, and we model adversarial effort in terms of
+lattice-reduction attacks against LWE. In particular, we do
+not explicitly model protocol-specific constructions (such as
+Kyber or FrodoKEM) nor do we perform separate cost esti-
+mates of symmetric-key primitives (e.g., AES). In practice, the
+lattice-reduction stage required to recover the LWE secret
+dominates the overall cost of classical attacks; therefore, it
+is reasonable to characterize attack cost by the hardness of
+LWE alone. Additional overheads, such as brute-force work
+against AES or Kyber group operations, are smaller and can
+typically be offset by linearly scaling the number of compute
+resources. Consequently, whether the PQC attack is solvable
+or merely requires more machines is determined primarily
+by the complexity of solving LWE. For this reason, we sim-
+plify the classical attack model in this work to the problem of
+breaking LWE and focus on this dominant complexity.
+BKZ Attack Model. Building on the LWE formulation and
+BKZ lattice-reduction framework introduced in Section II E,
+we now specify the attack model used in Section IV C. The
+detailed cryptographic parameter choices and communication
+security assumptions are provided in Appendix E 3; the deriva-
+tion of the relationship between 𝑛, 𝑚, and ∥˜𝑏1∥is given in

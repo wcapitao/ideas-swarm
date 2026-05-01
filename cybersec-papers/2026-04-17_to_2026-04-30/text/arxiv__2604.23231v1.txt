@@ -1,0 +1,1612 @@
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+1
+Toward Polymorphic Backdoor against Semantic
+Communication via Intensity-Based Poisoning
+Xiao Yang, Yuni Lai, Gaolei Li, Jun Wu, Kai Zhou, Jianhua Li, and Mingzhe Chen
+Abstract—Semantic Communication (SC) backdoor attacks
+aim to utilize triggers to manipulate the system into producing
+predetermined outputs via backdoored shared knowledge. Cur-
+rent SC backdoors adopt monomorphic paradigms with single
+attack target, which suffers from limited attack diversity, effi-
+ciency, and flexibility in heterogeneous downstream scenarios. To
+overcome the limitations, we propose SemBugger, a polymorphic
+SC backdoor. By dynamically adjusting the trigger intensity, Sem-
+Bugger finely-grained controls over the SC knowledge to generate
+diverse malicious results from the system. Specifically, SemBugger
+is realized through a multi-effect poisoning-training framework.
+It introduces graded-intensity triggers to poison training data
+and optimizes SC systems with hierarchical malicious loss.
+The trained system’s knowledge dynamically adapts to trigger
+intensity in inputs to yield target outputs, all while preserving
+transmission fidelity for benign samples. Moreover, to augment
+SC security, we propose a provable robustness defense that
+resists SemBugger’s homogeneous attacks through a controlled
+noise mechanism. It operates via strategically adding noise in
+SC inputs, and we formally provide a theoretical lower bound
+on the defense efficacy. Experiments across diverse SC models
+and benchmark datasets indicate that SemBugger attains high
+attack efficacy while maintaining the regular functionality of SC
+systems. Meanwhile, the designed defense effectively neutralizes
+SemBugger attacks.
+Index
+Terms—Semantic
+communication,
+backdoor
+attack,
+polymorphic attack, backdoor defense, data poisoning.
+I. INTRODUCTION
+D
+IVERGING from classical Shannon transmission mod-
+els, Semantic Communication (SC) establishes a new
+paradigm, where it processes and transmits semantic units of
+information rather than conventional raw data bitstreams [1]–
+[5]. SC employs shared knowledge or cognitive semantic map-
+pings to selectively extract and convey task-relevant details,
+and attains remarkable bandwidth reduction. This knowledge-
+driven approach supports adaptive compression that dynami-
+cally adjusts to both the receiver’s knowledge and the specific
+communication tasks. Moreover, owing to the bandwidth ef-
+ficiency and context-aware comprehending capabilities, SC is
+implemented in several frontier applications, e.g., Extended
+Xiao Yang, Gaolei Li, Jun Wu, and Jianhua Li are with the School
+of Computer Science, Shanghai Jiao Tong University, and Shanghai Key
+Laboratory of Integrated Administration Technologies for Information Secu-
+rity, Shanghai, China (e-mail: {youngshall, gaolei_li, junwuhn,
+lijh888}@sjtu.edu.cn).
+Yuni Lai and Kai Zhou are with the Department of Computing, Hong
+Kong Polytechnic University, Hung Hom, Kowloon, Hong Kong (e-mail:
+{yunie.lai@connect.polyu.hk; kaizhou@polyu.edu.hk}).
+Mingzhe Chen is with the Department of Electrical and Computer Engineer-
+ing and Frost Institute for Data Science and Computing, University of Miami,
+Coral Gables, Florida 33146, USA (e-mail: mingzhe.chen@miami.edu).
+Fig. 1: Illustration of backdoor attacks against SC systems.
+Adversaries embed specific triggers into the input samples at
+the transmitter side (i.e., data poisoning), inducing the system
+to deliver poisoned data toward predetermined malicious out-
+puts while retaining normal transmission efficacy for benign
+samples. These hostile outputs may cause abnormal execution
+results in downstream tasks and undermine system integrity.
+Reality (XR), Vehicle-to-Everything (V2X), Smart Internet of
+Things (Smart IoT), and Intelligent City [6]–[10].
+Despite the recent advances in SC, empirical research has
+uncovered its security vulnerabilities of backdoor threats [11]–
+[15]. The illustration of SC backdoors is depicted in Fig. 1.
+By poisoning the training of SC systems, adversaries can
+implant malicious functionality in the shared knowledge (i.e.,
+backdoor), which causes the trained system to exhibit prede-
+termined adversarial behaviors whenever it encounters trigger-
+embedded inputs, while preserving its performance on benign
+data. SC backdoors were first investigated in SC downstream
+tasks, where block-patch triggers were pasted into inputs to
+induce misclassification [11]. Several works transplanted the
+attacks into the transmission task, wherein they optimized
+the trigger design into implicit styles and markedly enhanced
+backdoor stealthiness [12]. Prior studies have also implanted
+backdoors into SC-driven autonomous driving systems and
+manipulated the perception-to-decision transmission pipeline
+to discard specific visual cues (i.e., triggers), whereby it
+potentially inducing spurious inferences [13].
+Current research can be primarily featured as a monomor-
+phic attack paradigm, wherein the encoding-decoding back-
+door mechanism implanted in shared knowledge responds
+exclusively to a specific trigger or trigger pattern, producing
+arXiv:2604.23231v1 [cs.CR] 25 Apr 2026
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+2
+a deterministic, singular malicious output [16]–[19]. To our
+knowledge, all existing SC backdoors possess this property.
+While prior works have advanced the field, existing back-
+door methods adhere to monomorphic paradigms. This static is
+constrained to single-objective adversarial manipulations (i.e.,
+transmitting all trigger-embedded data as a fixed malicious
+target). However, communication systems inherently oper-
+ate in “one-to-many” or “many-to-many” configurations that
+render adversaries’ monolithic attack patterns fundamentally
+incompatible with the polymorphic requirements of targeted
+malicious intentionality across diverse users. Additionally, this
+paradigm incurs critically deficient flexibility, and adversaries
+must implant distinct backdoors tailored to specific malicious
+goals to fulfill varied intents, which exposes diminished oper-
+ational efficiency and increases detection risks.
+To overcome the above shortcomings, we propose a poly-
+morphic SC backdoor-SemBugger, which induces targeted
+output control via implicit trigger injection into inputs, and
+achieves differentiable regulation over output results via trig-
+ger intensity. To implant SemBugger backdoor into SC shared
+knowledge through training for joint source-channel coding,
+a two-step multi-effect poisoning-training framework is devel-
+oped. It first dynamically synthesizes sample-specific triggers
+via a neural generator, then poisons the training data by an
+intensity-stratified injection strategy. The poisoned data are
+subsequently applied for SC system training and backdoor
+implantation, with a hierarchical loss optimizing multi-target
+attack objectives, regular system functionality, and trigger
+invisibility simultaneously. Beyond adversarial investigation,
+to effectively defend against SemBugger attacks, we cor-
+respondingly devise a provable robustness defense strategy.
+With inserting carefully calibrated noise signals into inputs,
+the proposed strategy neutralizes potential backdoor triggers
+without compromising systematic functionality for benign data
+transmission. Crucially, we formally prove a theoretical lower-
+bound guarantee on its defensive performance.
+Our principal contributions can be summarized below.
+1. We introduce a polymorphic SC backdoor methodology-
+SemBugger. It engenders malicious outputs via shared
+knowledge from SC systems by implicitly injecting input-
+specific trigger patterns, where the attack results can be
+dynamically regulated by trigger intensity. Moreover, to
+implant backdoors into knowledge of victim systems, a
+multi-effect poisoning-training framework is designed.
+2. To mitigate SemBugger attacks, a defensive strategy is de-
+veloped that perturbs inputs with carefully crafted noise.
+This operation disrupts latent trigger patterns within in-
+puts to prevent backdoor activation and retains minimal
+functionality impact for benign inputs.
+3. We establish rigorous theoretical guarantees (i.e., certified
+robustness) for the proposed defense, proving a strict
+lower bound on its protective efficacy. To the best of our
+knowledge, this is the first work that explores certified
+robustness for SC backdoors.
+4. Experimental evaluations on SC architectures and bench-
+mark datasets manifest that SemBugger effectively at-
+tains high attack success rates and preserves benign
+data fidelity. Additionally, the proposed defense strategy
+efficiently deters potential SemBugger threats.
+II. BACKGROUND AND RELATED WORK
+A. Semantic Communication Framework
+The SC system f : X →X functions by encoding and
+conveying the semantic information of data.
+In this communication architecture, the semantic encoder at
+the transmitter, denoted as Penc : X →S, conducts feature
+extraction and compression on the source data x ∈X and
+produces a condensed semantic representation s = Penc(x).
+The Compression Rate CR is defined as the ratio of the orig-
+inal data size to the semantic representation size (CR = |x|
+|s| ).
+Next, the system performs channel encoding, which integrates
+error correction codes and additional redundancy to generate
+the encoded signal c = Henc(s) for transmission:
+X =
+Henc (Penc(x))
+∥Henc (Penc(x))∥2
+,
+c′ = HX + N,
+(1)
+where H is the channel transfer matrix and N is the noise
+vector. At the receiver side, channel decoding is executed to
+restore the distorted semantic representation ˆs = H−1
+enc(c′),
+where c′ represents the received signal affected by channel
+disturbances like noise and fading. Finally, the semantic
+decoder at the receiver, P−1
+enc
+: S
+→
+ˆ
+X, processes the
+recovered semantic data ˆs to reconstruct the estimated output
+ˆx = P−1
+enc (ˆs). During the training phase, the semantic encoder
+Penc and decoder P−1
+enc are jointly optimized to acquire a shared
+knowledge base. It has three key aspects: 1) extraction of
+essential semantic features, 2) efficient encoding of semantic
+information, and 3) accurate mapping to desired outputs.
+This guarantees consistent and aligned semantic understanding
+between communication endpoints [20]–[24].
+Besides the above investigations, State-of-the-Art (SOTA)
+SC research focuses on: 1) Task-Oriented Efficient Coding:
+Domain-specific semantic encoders are designed to extract
+mission-critical features (e.g., tumor characteristics in medical
+diagnostics or navigation-relevant objects in autonomous vehi-
+cles) while eliminating non-essential information [25]. 2) Joint
+Semantic-Channel Optimization: This approach synergizes ro-
+bust semantic symbol construction with adaptive transmission
+strategies to mitigate time-varying channel distortions [26]. 3)
+Semantic-Centric Resource Management: Network resources
+are intelligently allocated via semantic importance, which pref-
+erentially supports time-critical semantic streams (e.g., emer-
+gency notifications) through adaptive bandwidth allocation
+and edge resource orchestration [27]. 4) Interference-Robust
+Semantic Delivery: Reliability under adverse propagation con-
+ditions is fortified via salient feature preserving encoding and
+jointly optimized semantic and channel processing [28].
+B. Semantic Communication Backdoor
+In SC system f, the adversary A injects a specific trigger
+pattern ∆into the original input x ∈X at the transmitter side
+to construct an adversarial poisoned sample xadv = x ⊕∆,
+whereby it causes the receiver’s decoder P−1
+enc to produce an
+A-specified erroneous output xerror ̸= x.
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+3
+TABLE I: Comparison of SC backdoor methods in three
+aspects: 1) attack stealthiness, 2) generalizability in transmis-
+sion scenarios, and 3) polymorphism for varying targets.
+Backdoor Scheme against SC Systems
+Capacity
+SC Trojan [11]
+BASS [12]
+IHTG [13]
+CSBA [14]
+Ours∗
+Stealthiness
+✗
+✗
+✓
+✓
+✓
+Generality
+✗
+✓
+✓
+✓
+✓
+Polymorphism
+✗
+✗
+✗
+✗
+✓
+Study [11] first explored backdoor attacks in SC systems f.
+Based on downstream classification, it proposed a basic back-
+door method that: 1) embeds designed block-patch triggers
+into selected training samples, and 2) reformulates the loss to
+jointly optimize both the trigger-target association and normal
+communication performance. This dual-optimization preserves
+regular f performance while enabling backdoor activation.
+Zhou et al. [12], [13] advanced SC backdoors by extending
+the applicability from classifications to general transmission
+scenarios. They 1) enhanced trigger optimization, augment-
+ing the stealthiness of triggering patterns, and 2) redesigned
+learning loss and kept f retain normal efficacy and output
+malicious transmission targets for the poisoned. Xu et al.
+[14] empirically demonstrated backdoor attacks in autonomous
+driving SC systems. By exploiting specific semantic element as
+the trigger, their method results in element suppression (i.e.,
+removal) when detected, which realizes covert manipulation
+via semantic-level backdoor.
+Subject to compliance requirements, backdoors can also be
+leveraged for benign and controllable functionalities [16]. 1)
+Trigger patterns may be used to implement model watermark-
+ing and provenance verification, empowering one to confirm
+whether a model belongs to a particular vendor and whether it
+has been stolen or illegally redistributed. 2) Such mechanisms
+can further support access control by allowing the model to
+operate normally only when presented with valid trigger keys,
+consequently reducing the value of unauthorized deployments.
+3) In security engineering, they may be adapted to honeypot-
+style practices: embedding known triggers in a controlled
+environment to systematically evaluate detection capabilities
+and identify potential attacks.
+While preliminary inspections for SC backdoors were con-
+ducted, current methodologies remain constrained by a fixed
+attack target and singular trigger-malicious activation corre-
+lation, with fundamental limitations manifested in operational
+flexibility. Although a few multi-objective studies in Com-
+puter Vision (CV) address related problems, the methods de-
+signed for classification backdoors (which merely nudge low-
+dimensional outputs across a decision boundary) are ill-suited
+to SC, because in this setting, a backdoor must concurrently
+1) manipulate high-dimensional continuous reconstructions, 2)
+remain robust to channel noise and codec compression, and 3)
+preserve normal semantic fidelity under the tightly coupled
+parameters of transmitter and receiver. These requirements
+render current methods ineffective for SC [29]–[32].
+To better summarize related research, Tab. I compares
+SC backdoors in three aspects: 1) backdoor stealthiness, 2)
+generalizability for transmission tasks, and 3) polymorphism
+to varying malicious targets.
+C. Backdoor Threat Defense
+Current neural backdoor defenses can primarily be catego-
+rized via four aspects: data, training, model, and deployment
+[16], [33]. 1) Regarding data side, suspicious poisoning can be
+identified via anomalous-sample consistency checks, together
+with establishing a traceable data supply chain. 2) Concerning
+training side, robust training and regularization, noise injec-
+tion, and trigger-suspicion–driven training constraints can be
+adopted to reduce the model overfitting to rare trigger patterns.
+3) For model side, backdoor representations can be weakened
+or removed via neuron pruning and channel sparsification,
+reverse-engineering–based trigger search and sanitization, and
+fine-tuning with clean data. 4) From deployment side, combin-
+ing input anomaly detection and output consistency monitoring
+mechanisms powers degradation or blocking when suspected
+trigger behaviors are detected.
+Although backdoor defenses for classification tasks have
+been extensively studied, defensive strategies for transmission
+tasks (i.e., SC) remain underexplored. To the best of our
+knowledge, there are currently no defense methods specifically
+designed for backdoors in SC systems.
+III. PROPOSED METHODOLOGY
+We first present the design requirements and then formalize
+the details of our proposed SemBugger framework.
+A. Design Requirements
+The present research seeks to develop a backdoor approach
+characterized by three foremost features:
+Flexibility. The proposed attack framework should require
+robust polymorphic target compatibility while constructing
+a tailored control scheme for heterogeneous attack targets.
+Consequently, it will increase attack versatility.
+Stealthiness. The backdoored SC system should sustain un-
+compromised robust functionality across multiple transmission
+environments. This preserves the integrity of original systems,
+retaining uninterrupted service availability and indirectly rais-
+ing the backdoor’s stealthiness.
+Imperceptibility. The attack data must remain visually and
+statistically indistinguishable from legitimate data to circum-
+vent human analyst inspections. This covertness directly con-
+tributes to adversarial efficacy by reducing anomaly alert dur-
+ing manual triage, and increasing the mean time to detection.
+B. Methodology Insights
+To fulfill the method criteria in Sec. III-A, we embed
+imperceptible trigger noise within input samples to enable pre-
+cise modulation of backdoor activation dynamics. 1) Through
+precise modulation of noise ratio, we attain multi-target con-
+trol over backdoor activation outputs and eliminate external
+control variables. Concurrently, throughout the optimization
+procedure, 2) we preserve the original system’s training perfor-
+mance metrics to secure unimpaired transmission proficiency.
+3) The amplitude of the noise is optimized to persist that
+the trigger-embedded samples display no perceptible anoma-
+lies. Also, 4) contrary to conventional spatially localized
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+4
+Fig. 2: Illustration of the proposed SemBugger. 1) Selected victim samples are injected with multi-intensity triggers crafted
+by the trigger generator to construct a multi-dimensional poisoned dataset. 2) By training with hierarchical loss, the system
+learns to transform inputs with varying-intensity triggers into differentiated malicious targets, while preserving functionality on
+benign data. 3) Adversaries achieve differential control over hostile outputs by embedding multi-intensity triggers in inputs.
+trigger patterns, the noise is globally distributed, whereby
+it demonstrates better spatial uniformity and robust partial-
+trigger activation capabilities.
+C. SemBugger Framework
+With the insights from Sec. III-B, the implementation details
+of our proposed SemBugger are given. We adopt a multi-effect
+poisoning-training framework to implant backdoors in SC
+system f’s shared knowledge, whereby it enables controlled
+generation of multiple malicious transmission results during
+deployment by precise regulation of trigger noise ratio.
+The poisoning-training framework consists of two steps: 1)
+Multi-Dimensional Data Poisoning and 2) Hierarchical System
+Backdoor Training. In the 1st step, a trigger generator is
+deployed to infect the training dataset Dtrain with precisely cal-
+ibrated noise ratios. Subsequently, f performs system training
+using a hybrid dataset comprising both poisoned set Dpoi and
+clean data Dtrain to embed our desired backdoor functionality.
+The training procedure is schematically illustrated in Fig. 2.
+1) Multi-Dimensional Data Poisoning: The available clean
+training dataset Dtrain is applied to synthesize a poisoned
+dataset Dpoi through a neural trigger generator G. We suppose
+T different adversarial targets will be configured in attacks.
+Specifically, based on the poisoning rate parameter γ ∈
+(0, 1), we first construct the victim data Dvictim by randomly
+sampling from the original training set Dtrain via sampling
+function πγ : Dtrain →Dvictim, such that |Dvictim| = γ|Dtrain|:
+Dvictim = {xi | xi ∼πγ(Dtrain), i = 1, . . . , ⌊γN⌋} ,
+(2)
+where N = |Dtrain| denotes the cardinality of the training set.
+With Dvictim, for each sample xi in it, a sample-specific
+trigger ∆i is synthesized via a neural generator G (we adopt
+an Attention U-Net encoder architecture [34] for G’s setup):
+∆i = G(xi),
+where
+xi ∈Dvictim.
+(3)
+For T different attack targets, we construct T poisoned subsets,
+where the k-th subset D(k)
+poi contains all poisonous samples
+with trigger noise applied at a ratio of k/T (we define it as
+the k-th level trigger noise):
+D(k)
+poi =
+
+xi + k
+T ∆i
+ xi ∈Dvictim
+
+,
+∀k ∈{1, 2, · · · , T}.
+(4)
+Finally, the complete poisoned dataset Dpoi is the union of
+these subsets D(k)
+poi , which is expressed as
+Dpoi =
+T[
+k=1
+D(k)
+poi .
+(5)
+The poisoned data Dpoi and trigger generator G will be
+exploited in system f training for backdoor implantation.
+2) Hierarchical System Backdoor Training: By training, we
+embed backdoor behaviors into f, and force it to generate
+specified malicious transmission outputs according to varying
+trigger noise ratios present in inputs.
+Specifically, we take a hierarchical malicious loss-based
+training framework for system f, which jointly optimizes f
+via the clean training set Dtrain and poisoned dataset Dpoi to
+derive controlled backdoor implantation. First, by minimizing
+the feature distance between poisoned samples Dpoi and target
+malicious outputs, the trigger ∆is rigorously constrained to
+divert input samples toward predetermined mistransmission of
+f. Second, f’s regular performance on benign data is main-
+tained by optimizing the standard transmission loss function
+over clean set Dtrain. Moreover, the imperceptibility of ∆is
+augmented by restricting the perceptual similarity between
+poisoned and original source samples in the visual domain.
+Gaining from the above analysis, this multi-tiered optimization
+architecture is expressed through training SC system with the
+following loss functions.
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+5
+Multi-Target Loss La: We promote polymorphic backdoor
+implantation for regulable multi-target attacks in SC systems:
+La =
+T
+X
+k=1
+Ex(k)
+i
+∈D(k)
+poi
+
+∥x(k)
+error −f(x(k)
+i
+, θ)∥2
+2
+|
+{z
+}
+Attack Optimization
+
+,
+(6)
+where x(k)
+error denotes the k-th malicious transmission target
+specified by adversaries and θ implies the semantic encoder-
+decoder parameters. Through optimizing the loss between
+f(x(k)
+i
+, θ) and k-th manipulated target x(k)
+error, the trained f
+system will transit data containing k-th level triggers as x(k)
+error
+upon deployment, since f learns shared knowledge of mapping
+k-th level triggers to x(k)
+error.
+System Integrity Loss Lb: It upholds the functional integrity
+of benign sample transmission in the SC system:
+Lb = Exi∈Dtrain
+
+∥xi −f(xi, θ)∥2
+2
+
+.
+(7)
+By minimizing the loss between f(xi, θ) and benign samples
+xi, the trained f system preserves its data transmission capa-
+bility for normal (i.e., unperturbed) data.
+Trigger Imperceptibility Loss Lp: Trigger perceptibility is
+minimized through optimization, leading to augmented attack
+covertness for trigger embedding:
+Lp =
+T
+X
+k=1
+Ex(k)
+i
+∈D(k)
+poi ,xi∼Dtrain
+h
+w1
+
+1 −SSIM(xi, x(k)
+i
+)
+
++ w2
+
+1 −TC(xi, x(k)
+i
+)
+
++ w3
+
+1 −CSIM(xi, x(k)
+i
+)
+ i
+,
+(8)
+where SSIM(·, ·) symbolizes Structural Similarity Index Mea-
+sure; TC(·, ·) represents Tanimoto Coefficient; and CSIM(·, ·)
+stands for Cosine Similarity. With the similarity (i.e., SSIM,
+TC, and CSIM) between x(k)
+i
+and xi refined, the trigger
+generator G learns to craft imperceptible implicit triggers ∆.
+Semantic Contrastive Loss Lc: We separate the semantic
+representations of poisoned samples and benign samples to
+accelerate SC system training convergence:
+Lc =
+T
+X
+k=1
+Ex(k)
+i
+∈D(k)
+poi ,xi∼Dtrain
+h
+max
+
+0, m −Dis
+
+Penc(xi), Penc(x(k)
+i
+)
+ i
+.
+(9)
+The optimization of distance between Penc(xi) and Penc(x(k)
+i
+)
+induces discriminative latent space separation for infected and
+normal samples after semantic encoding, which serves as
+accelerating convergence in training.
+Overall Training Loss. Combining the above analytical re-
+sults, we formulate the final loss optimization:
+L = λa · La + λb · Lb + λp · Lp + λc · Lc,
+(10)
+(
+θ(t+1) ←θ(t) −ηθ · ∇θLθ,
+θ(t+1)
+G
+←θ(t)
+G −ηG · ∇θGLθG,
+(11)
+where θG symbolizes parameters of the trigger generator G.
+Through the training, we complete backdoor implantation
+Algorithm 1: SemBugger
+Input: Initial SC system f(·, ·) (w/ para. θ), Trigger
+generator G(·) (w/ para. θG), Poisoning rate γ,
+Malicious multi-targets
+
+x(k)
+error
+ T
+k=1, Training
+dataset Dtrain, and Training epoch amount M
+Output: Backdoored SC system f(·) and Trained
+trigger generator G(·)
+/* Victim Data Selection
+*/
+1 Dvictim ∼γ Dtrain
+2 foreach epoch ←1 to M do
+3
+n
+D(k)
+poi
+oT
+k=1 ←∅
+/* Multi-Dimensional Data Poisoning
+*/
+4
+foreach sample xi ∈Dvictim do
+5
+∆i = G (xi)
+6
+foreach k ←1 to T do
+7
+D(k)
+poi ←D(k)
+poi ∪
+
+xi + k
+T ∆i
+ 
+8
+Dpoi = ST
+k=1 D(k)
+poi
+/* Hierarchical System Backdoor Training
+*/
+9
+foreach sample xi ∈Dtrain do
+10
+Compute f(xi, θ)
+11
+foreach D(k)
+poi ∈Dpoi do
+12
+foreach sample x(k)
+i
+∈D(k)
+poi do
+13
+Compute f(x(k)
+i
+, θ)
+14
+Compute loss La, Lb, Lp, and Lc in Eq. (10)
+15
+θ = θ −η∇θL; θG = θG −η∇θGL
+/* SC system gets backdoored after training
+*/
+16 return f(·, ·) and G(·)
+within the SC system. The algorithmic framework of Sem-
+Bugger is formally presented in Alg. 1.
+D. Attack Conducting
+With the completion of SC system f training via the
+framework in Sec. III-C, f (or its shared knowledge) gets
+backdoored. More precisely, after f deployment, adversaries
+intending to manipulate f’s outputs to produce the k-th order
+malicious target x(k)
+error (i.e., backdoor activation) can simply
+inject the corresponding k-th level trigger noise ∆into the
+input data stream to operationalize diversely regulable SC
+system reconstructed result governance.
+IV. CERTIFIED DEFENSE
+Categorically, there are two aspects of defenses to build
+robust learning systems: empirical approaches and certified
+methods. The former class typically targets mitigation of
+known attack variants but remains vulnerable to sophisticated
+adaptive adversaries, and it brings about a cat-and-mouse game
+between adversaries and defenders. For example, in image
+classification backdoors, [35] introduced a dynamic attack
+scheme that can bypass SOTA empirical protections [36]–
+[39]. Consequently, our work is conducted around certified
+defense. In machine learning classification tasks, a certified
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+6
+defense guarantees consistent label prediction for all data
+points within a specified region around an input. With this
+foundation, we formally define certified backdoor defense in
+SC systems as maintaining identical transmission outputs for
+all data instances within a determined input region. In this
+section, the threat model is given first, then the defense method
+is detailed. Finally, we present rigorous theoretical robustness
+proofs of our defense method.
+A. Threat Model
+We take dual-perspective analysis from both the adversarial
+and defensive considering.
+Adversary Assumptions. Our threat model aligns with previ-
+ous backdoor paradigms (e.g., SC Trojan, BASS, and CSBA)
+in SC. A compromised SC system, acquired by users through
+third-party training services or post-training modifications,
+holds dual behavior: 1) maintaining nominal performance
+on legitimate system inputs, while 2) executing adversarial
+misinterpretations and outputs when encountering trigger-
+embedded data. We adopt the strongest white-box attack
+assumption, wherein adversaries possess full knowledge of
+system parameters, architecture, loss functions, training data,
+and can leverage auxiliary datasets for attacks. This setting will
+stringently evaluate the efficacy of the defense mechanism.
+Defender Assumptions. The key capability resides in input
+data controllability, whereby we build adversarial robustness
+through preprocessing like noise addition and feature trans-
+formation and maintain black-box compatibility by avoid-
+ing system architecture modifications. Crucially, the defense
+provides formally verifiable security guarantees that assure
+output reliability within specified perturbation bounds. It can
+fundamentally preserve transmission consistency across both
+clean and adversarially modified inputs, and optimally balance
+robustness with system utility to retain regular performance.
+B. Defense Framework
+To mitigate backdoor impacts, we propose a general back-
+door defense strategy named semantic smoothing that is
+model-agnostic and training-free. Next, we delineate the fol-
+lowing aspects: 1) the data transmission methodology for
+testing inputs utilizing a smoothed SC system, 2) the theo-
+retical robustness guarantees provided by the smoothed SC
+transmission systems. The architecture of the proposed defense
+framework is depicted in Fig. 3.
+Semantic Smoothing. Consider a transmission problem from
+the input space Rd to the output space Rd. Semantic Smooth-
+ing constructs a smoothed transmitter S from a base telecom-
+mute transmitter f, where the output of S(x) is determined
+by averaging the transmission result of f under noise pertur-
+bation. We define the smoothed transmitter as follows:
+S(x) = Eϵ∼N(0,σ2I)
+
+f(x + ϵ)
+
+,
+(12)
+where the noise ϵ follows an isotropic Gaussian distribution
+N(0, σ2I). The hyperparameter σ controls the noise intensity
+(0.25 for experiments), balancing the protection and efficacy of
+Fig. 3: Illustration of defense strategy against SemBugger.
+It is deployed during the operational phase of the SC system.
+Before data is input into the system, smoothed noise is added
+to invalidate potential triggers, which guarantees normal output
+at the receiver end without affecting regular data transmission.
+the transmission process. Considering all the image pixels are
+in [0, 1], we have the theorem that the backdoored transmitted
+image is bounded:
+Theorem 1. (Semantic robustness guarantee) Given the trans-
+mission function f : Rd →Rd, random noise ϵ ∼N(0, σ2I),
+the smoothed transmission function S : Rd →Rd defined
+in (12), and ∀i = 1, 2, · · · , d, f(x)i ≤1, then the smoothed
+transmitter is L-Lipschitz:
+∀x, x′ ∈Rd, ||S(x) −S(x′)||∞≤L||x −x′||2,
+(13)
+where the L =
+q
+2
+πσ2 .
+The proof for Theorem 1 is in the Supplemental Material.
+This result guarantees that the transmitted result under attacks
+is close to the one with clean input, providing the robustness
+of the smoothed transmit function.
+Successful Defense. For backdoored input x′ := x ⊕∆, and
+T backdoor targets err := {x(k)
+error}T
+k=1, we guarantee that
+the transmit results are not close to any of the targets. To
+describe it, we define a defense successful judgment function
+j(·|err) : Rd →{0, 1}, where 0 denotes successful defense
+(correct transmission) and 1 denotes successful attack (error
+transmission). Specifically, for each attack input containing
+triggers, we measure the SSIM between the reconstruction
+result (i.e., SC output) and the predefined malicious target:
+SSIM(f(x′), x(k)
+error). A valid attack is registered when the
+computed SSIM value surpasses the threshold τ, where the
+τ is determined via statistical analysis of the SSIM values
+collected under normal (attack-free) input SSIM(f(x), x(k)
+error).
+Specifically, we first compute the mean µ and standard de-
+viation σ of SSIM(f(x), x(k)
+error) values from 1000 benign
+communication samples. τ is then established as: τ = µ−3σ.
+Then, j(f(x′)|err) = 1 if max SSIM(f(x′), x(k)
+error) ≥τ,
+otherwise j(f(x′)|err) = 0.
+We define the smoothed defense successful judgment func-
+tion as follows:
+J(x) = arg max
+y∈{0,1} P
+
+j(f(x + ϵ)|err) = y
+
+,
+(14)
+where ϵ ∼N(0, σ2I). We note that when we obtain the
+smoothed transmission results S(x) defined in (12), we can
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+7
+Algorithm 2: Semantic Smoothing Defense Framework
+Input: Base (possibly backdoored) SC transmission
+system f(·; θ) : Rd →Rd, test input set Dtest (or
+a single input x)
+Output: Defended transmission outputs { ˆS(x)}x∈Dtest
+/* Transmission Phase Deployment
+*/
+1 foreach x ∈Dtest do
+2
+ysum ←0
+/* Transmitter Smoothing
+*/
+3
+for j ←1 to N do
+4
+Sample ϵj ∼N(0, σ2I)
+5
+˜xj ←Π[0,1](x + ϵj)
+/* Peer End Receiving
+*/
+6
+ysum ←ysum + f(˜xj; θ)
+/* Result Constructing
+*/
+7
+ˆS(x) ←1
+N ysum
+8 return Smoothed transmission results { ˆS(x)}x∈Dtest
+obtain J(x) at the same time with negligible computation
+workload.
+Assumption 2. We assume that, given a clean input x /∈err, it
+cannot be backdoored successfully because there is no trigger,
+then we have J(x) = 0.
+Theorem 3. (Successful defense guarantee) Given an in-
+put x, and the smoothed judgment function J(·) defined in
+(14). For attack input x′ := x ⊕∆, we guarantee that
+J(x′) = 0 (successful defense) if ||x′ −x||2 ≤R, where
+R = σ(Φ−1(p0)), Φ−1 is the inverse of the standard Gaussian
+cumulative distribution function, and p0 is the lower bound of
+the probability P
+
+j(f(x + ϵ)|err) = 0
+
+.
+The proof for Theorem 3 is in the Supplemental Material.
+The results provide the guarantee that we can obtain a suc-
+cessful defense as long as the backdoor images are close to the
+clean image. The algorithm of our proposed certified defense
+framework is illustrated in Alg. 2.
+Practical Implementation. Since our defense relies solely
+on injecting semantic-smoothing noise into the input samples,
+it requires no model retraining and introduces no additional
+modules such as detectors, filters, or auxiliary networks.
+Therefore, it can be deployed in a plug-and-play manner dur-
+ing the runtime stage. Concretely, 1) in online transmission, the
+transmitter applies a smoothed perturbation to each incoming
+input sample (regardless of whether it is benign or potentially
+trigger-bearing) according to a predefined noise, and then feeds
+the perturbed sample into the semantic communication system
+for transmission. 2) The receiver subsequently reconstructs the
+transmission result to obtain a smoothed output according to
+Eq. (12). By performing randomized smoothing in the input
+semantic space, this procedure suppresses backdoor activation
+while preserving the transmission efficacy on normal data.
+V. EXPERIMENT
+We validate the efficacy of the proposed SemBugger attack
+through benchmarking against SOTA baselines. To examine
+influences of individual conditions, parameter-wise ablation
+analyses are also conducted. Additionally, the robustness of
+our defensive mechanism is empirically verified against the
+developed SemBugger methodology. We first present the ex-
+perimental setting and subsequently proceed to the test results.
+A. Experimental Settings
+1) Victim SC Systems: 5 SOTA SC systems were adopted
+for experimental assessment. 1) JSCC (Joint Source-Channel
+Coding) utilizes deep convolutional neural networks with
+residual connections to jointly optimize source compression
+and channel coding in an end-to-end learnable framework,
+which removes the demands for separate modular designs [20];
+2) JSCC-f (Deep Joint Source-Channel Coding with Feedback)
+introduces a novel two-way feedback mechanism compris-
+ing channel state information reporting and acknowledgment
+signals, whereby it enables real-time adaptive modulation of
+the encoder’s latent representations under time-varying fading
+channels [21]; 3) JSCC-q (Constellation Constrained Deep
+Joint Source-Channel Coding) implements a trainable vector
+quantization module with learnable codebook embeddings that
+discretizes the continuous latent space into finite clusters while
+maintaining gradient flow through straight-through estimator
+backpropagation [22]; 4) SCAN (Semantic Channel-Adaptive
+Networking) employs a content-aware gating mechanism that
+dynamically adjusts wavelet-based compression ratios by
+jointly analyzing semantic saliency maps and instantaneous
+channel capacity metrics to realize optimal rate-distortion
+tradeoffs [40]; 5) SemCC (Semantic Contrastive Coding)
+reformulates channel-induced impairments as differentiable
+noise layers within a Siamese network, where contrastive
+loss minimization aligns noisy and clean samples in a shared
+embedding space to enhance semantic invariance [41].
+2) Testing Datasets: This study evaluated method perfor-
+mance across 4 standard CV benchmarks: 1) MNIST: A
+collection of 70, 000 handwritten digit images (0 −9) with
+28 × 28 grayscale pixels, featuring perfectly balanced classes
+(6, 000 training and 1, 000 test samples per digit) and 11.18%
+average sparsity [42]. 2) F-MNIST: A clothing alternative
+maintaining MNIST’s format (70 k 28 × 28 grayscale images)
+but containing 10 fashion item categories (e.g., shirts and
+sneakers), which indicates greater visual complexity [43]. 3)
+CIFAR-10: A set of 60, 000 tiny 32 × 32 color images across
+10 object classes (animals, vehicles etc.) with measured 15.7%
+label noise [44]. 4) ImageNet: The large-scale visual database
+with 1.28 million high-resolution natural images (average
+469 × 387 pixels) spanning 1, 000 everyday object categories
+in realistic long-tailed distribution (most frequent class: 3, 170
+samples; rarest: 468) [45]. Our tests harnessed a class-balanced
+subset containing 5 randomly sampled categories, with a total
+of 40, 000 training images and 10, 000 test images (8, 000
+training and 2, 000 testing instances per category).
+3) Evaluation Metrics: The method performance was as-
+sessed along 2 primary aspects: efficacy and stealthiness.
+Attack Efficacy. We employed the Attack Success Rate (ASR)
+to evaluate attack capability. Specifically, since our attack
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+8
+method manipulates SC system into producing malicious out-
+puts by injecting triggers into inputs, ASR is calculated as:
+ASR = # Successful Attack Trials
+# Total Number of Attacks,
+(15)
+where the Successful Attack Trials refers to the count of
+instances where the SC system produces malicious outputs
+under the influence of the trigger, while the Total Number
+of Attacks represents all attempted attack samples. Unless
+otherwise specified, ASR refers to the average attack success
+rate across all multi-target attacks. Specifically, we utilized
+ASRi to denote ASR for the i-th malicious target result (i.e.,
+x(k)
+error). We define the criteria for a successful attack with
+the attack successful judgment function j(x|err) described in
+Sec. IV-B. This metric directly reflects the attack effectiveness
+of the method, and a higher ASR indicates stronger control
+over victim SC systems.
+Attack Stealthiness. To strengthen the attack stealthiness, it
+is imperative that the backdoored system preserves the regular
+functionality with minimal deviation. Namely, backdoored and
+benign systems should maintain highly consistent transmission
+efficiency when processing benign data. Therefore, the Peak
+Signal-to-Noise Ratio (PSNR) difference was use
+
+[…middle truncated for length…]
+
+a generated
+across backdoors: our SemBugger, SC Trojan, BASS, and
+baseline source data. 1) The poisonous data via our SemBug-
+ger exhibits negligible perceptual divergence from the source
+data. 2) The attack data generated by SC Trojan and BASS
+expose conspicuous visual artifacts. 3) SemBugger matches
+the concealment capability of SOTA attacks like IHTG.
+TABLE VI: Regular Task classification efficacy after at-
+tacks on MNIST tasks under poor SNR = 5 dB (% ↑). Please
+cf. Sec. V-B for detailed explanations.
+Test Systems
+Condition
+JSCC
+JSCC-f
+JSCC-q
+SCAN
+SemCC
+Clean
+93.28
+93.43
+92.87
+91.95
+94.76
+Attack
+93.02
+93.18
+92.62
+91.68
+94.05
+tions (SNR = 5 dB). We appended a classifier (RegNetY-
+16GF network) to the system and launched the attack against
+this end-to-end pipeline. We then measured the classification
+efficacy of the clean system and the attacked system, assessing
+how the attack affects overall system behavior in a degraded
+transmission setting. The evaluation was conducted on the
+MNIST set, with the corresponding results shown in Tab. VI.
+It can be observed that all evaluated systems maintain nearly
+identical classification efficiency before and after the attack.
+For Instance, JSCC decreases solely from 93.28% to 93.02%
+(−0.26 percentage points), JSCC-f from 93.43% to 93.18%
+(−0.25), JSCC-q from 92.87% to 92.62% (−0.25), SCAN
+from 91.95% to 91.68% (−0.27), and SemCC from 94.76%
+to 94.05% (−0.71). Overall, the performance degradation
+induced by the attack is consistently below 1%, implying
+that the downstream task capability under clean inputs is
+largely unaffected. This is because our attack does not alter
+the semantic representations transmitted for clean samples.
+Instead, it induces abnormal behavior only under specific
+trigger conditions. Consequently, in standard (non-triggered)
+evaluations, the semantic information received by the down-
+stream classifier remains stable, and the classification accuracy
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+12
+TABLE VII: Attack efficacy (ASR ↑) and stealthiness
+(LPIPS ↓) on MNIST tasks under standard SNR = 25 dB.
+Please cf. Sec. V-B for detailed explanations.
+Cropping Ratios
+Metric
+1/2
+1/4
+1/8
+1/16
+ASR (%)
+99.54
+98.13
+96.48
+91.10
+LPIPS
+0.105
+0.089
+0.062
+0.041
+exhibits negligible degradation.
+Spatial Processing Influence. We further study the impact
+of input spatial cropping on attack performance. Using spatial
+cropping, we randomly crop portions of the original trigger
+and embed them into clean samples to assess how cropping
+degree affects attack efficacy. Experiments are conducted
+under 25 dB SNR using the JSCC on MNIST and Fashion-
+MNIST datasets. Four cropping ratios (i.e., 1/2, 1/4, 1/8,
+and 1/16) of the full trigger are tested to analyze the effect
+of cropping. To evaluate stealthiness, we adopt Learned Per-
+ceptual Image Patch Similarity (LPIPS) to measure perceptual
+disparity between attacked and original samples under multiple
+cropping conditions. Empirical results are depicted in Tab. VII.
+In terms of attack efficacy, the proposed attack consis-
+tently achieves high ASR even in the presence of cropping.
+Concretely, ASR reaches 99.54% and 98.13% for cropping
+ratios of 1/2 and 1/4, respectively, and remains as high as
+96.48% and 91.10% when the cropping ratio is increased to
+1/8 and 1/16, whereby it proves strong robustness against
+cropping perturbations. Meanwhile, the LPIPS values remain
+low across all settings and decrease progressively from 0.105
+to 0.041 as the cropping ratio increases, which shows that
+the attacked poisonous data are perceptually close to the
+clean ones and thus highly stealthy. Overall, empirical results
+suggest that the proposed attack remains highly effective and
+preserves strong imperceptibility, even in the presence of
+common preprocessing operations like data cropping.
+C. Ablation Study
+We further ran ablation experiments to inspect various
+factors influencing our experimental results, with a focus on
+1) compression rate CR and 2) poisoning rate γ. The tests
+are mainly performed using the JSCC architecture.
+Compression Rate. We examined ASR for 4 attack target con-
+ditions by configuring multiple CR, while also quantitatively
+appraising the performance deterioration (∆PSNR) caused by
+the attack on benign data transmission quality. Experiments
+were carried out employing the JSCC-f SC system under 25 dB
+SNR constraint. Tab. VIII presents the results across varying
+CR for MNIST, F-MNIST, CIFAR-10, and ImageNet datasets.
+With the results, 1) the multi-target attack reaches consis-
+tently high success rates (ASR1-ASR4) traversing all evaluated
+CR, and maintains > 88% effectiveness even at the most
+extreme compression with CR = 1/12. 2) Performance
+improves monotonically with increasing bandwidth allocation,
+reaching stable success rates (≥99.76%) for CR ≥1/4 across
+Fig. 7: Ablation test results across poisoning rates γ under
+communication condition SNR = 25 dB (ASR: %; ∆PSNR:
+dB). Please cf. Sec. V-C for detailed explanations.
+all datasets and target results. 3) The attack elicits minimal
+distortion to regular transmissions capability, with ∆PSNR
+values constrained below 2.39 dB in all configurations. Our
+evaluations reveal that SemBugger has consistent adversarial
+effectiveness and keeps stealthiness across regular task CR.
+This stems from the joint multi-effect poisoning-training of our
+attack with the SC system, by which it forces the shared SC
+knowledge to sustain high ASRs without sacrificing system’s
+benign data transmission functionality.
+Poisoning Rate. The rate specifies the fraction of poisoned
+data during the poisoning-training phase. We assessed the
+minimal levels of poisoning at which our SemBugger keeps
+effective. The attack efficacy under varying poisoning rates γ
+was inspected utilizing MNIST, F-MNIST, CIFAR-10, Ima-
+geNet datasets under 25 dB and 5 dB SNR. The assessment
+measures both ASR and transmission fidelity degradation of
+∆PSNR. The test results are visualized in Figs. 7 and 8.
+In Fig. 7 of test results under 25 dB, 1) the success rate
+increases sharply with the γ, moving close to 100% for
+all datasets. Initially, at γ = 0.05, the ASR starts around
+50%, and then it rises steadily with up-going γ. This finding
+empirically verifies that our method can deliver considerable
+ASRs while operating at exceptionally low infection levels. 2)
+The change in PSNR varies across datasets, but it is still in a
+minimal range. While MNIST retrains low ∆PSNR values,
+F-MNIST depicts a moderate increase. CIFAR-10 exhibits
+a more substantial rise in ∆PSNR, especially at higher γ,
+whereas ImageNet experiences fluctuating ∆PSNR values.
+Generally, across γ, our attack strategy preserves victim sys-
+tem’s operational integrity with marginal efficiency deviation.
+The performance for 4 datasets uunder 5 dB are provided in
+Fig. 8. 1) ASR begins at approximately 30% for all datasets at
+γ = 0.05 and increases steadily, attaining nearly 97 −98% at
+γ = 0.9. The results manifest that our method maintains high
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+13
+TABLE VIII: Ablation study for compression rates CR on MNIST, F-MNIST, CIFAR-10, and ImageNet tasks under constrained SNR
+= 25 dB (ASR↑: %, ∆PSNR↑: dB). Please cf. Sec. V-C for detailed explanations.
+MNIST Dataset
+F-MNIST Dataset
+CIFAR-10 Dataset
+ImageNet Dataset
+CR
+ASR1
+ASR2
+ASR3
+ASR4
+∆PSNR ASR1
+ASR2
+ASR3
+ASR4
+∆PSNR ASR1 ASR2 ASR3 ASR4 ∆PSNR ASR1
+ASR2
+ASR3
+ASR4
+∆PSNR
+1/12
+92.35
+93.42
+91.88
+92.17
+1.17
+91.47
+93.15
+90.82
+92.64
+2.31
+88.23
+89.71
+87.95
+90.12
+2.39
+89.47
+90.33
+88.92
+91.25
+2.03
+1/4
+99.91
+99.94
+99.76 100.00
+1.10
+99.93
+99.94
+99.92 100.00
+0.85
+99.88
+99.87
+99.80
+99.82
+2.20
+99.89
+99.94
+99.90 100.00
+1.95
+1/3
+99.97
+99.99
+99.93 100.00
+0.87
+99.98
+99.99
+99.97 100.00
+0.62
+99.95
+99.96
+99.92
+99.95
+1.64
+99.97
+99.99
+99.96 100.00
+0.52
+2/5
+99.99 100.00 99.97 100.00
+0.28
+99.99 100.00 99.98 100.00
+0.24
+99.97
+99.98
+99.95
+99.97
+1.13
+99.99 100.00 99.98 100.00
+0.41
+Avg
+98.63
+98.86
+98.49
+98.83
+0.85
+98.67
+98.99
+98.53
+98.93
+1.01
+97.79
+98.29
+97.90
+98.15
+1.84
+97.85
+98.25
+97.94
+98.45
+1.22
+Fig. 8: Ablation test results across poisoning rates γ under
+communication condition SNR = 5 dB (ASR: %; ∆PSNR:
+dB). Please cf. Sec. V-C for detailed explanations.
+effectiveness even under relatively low SNR channel condi-
+tions. 2) Regarding ∆PSNR, it conveys slight fluctuations as γ
+increases. CIFAR-10 retains the highest ∆PSNR values across
+most rates, whereas F-MNIST and ImageNet show greater
+variability, particularly at higher γ.
+D. Defense Study
+To
+further
+fortify
+SC
+system’s
+resilience
+against
+SemBugger-type threats, Sec. IV-B introduces a dedicated
+defensive framework. We delved into the defense effectiveness
+across 5 SC architectures (i.e., JSCC, JSCC-f, JSCC-q, SCAN,
+and SemCC) and 4 benchmark datasets (MNIST, F-MNIST,
+CIFAR-10,
+and
+ImageNet).
+All
+experiments
+principally
+inherited the settings detailed in Sec. V-B and were executed
+under 25 dB and 5 dB channel conditions. The experimental
+results are displayed in Tabs. IX and X.
+Tab. IX concludes defense results when operating under
+25 dB channels. Among 5 SC system architectures evaluated,
+SemCC drives the ASR down to near 0% across all 4 datasets,
+while incurring only a 0.20–0.27 dB increase in distortion
+(∆PSNR). The remaining systems also suppress ASR to the
+low 0.12–0.89% range, but residue is still detectable and their
+∆PSNR peaks at 0.49 dB. Wholly, these findings indicate that
+the proposed defense markedly weakens SemBugger without
+materially degrading reconstruction quality, with the SemCC
+configuration acquiring the most pronounced benefit. The
+underlying work principle may be that the attack trigger
+employed in this study is essentially a low-amplitude perturba-
+tion. By superimposing a carefully crafted, covert noise mask,
+we can effectively obscure the trigger and distort its statistical
+signature and realize a robust defense.
+Tab. X summarizes the defense efficacy under an adverse
+channel condition of SNR= 5 dB. Across all 5 SC system
+architectures and 4 benchmark datasets, the defense drives
+the ASR to sub-percent levels (∼0 %) and never exceeding
+0.97 %, wherein it represents a reduction of more than two
+orders of magnitude relative to the unprotected baseline (cf.
+Sec. V-B for the attack results). Critically, this security gain is
+achieved with negligible impact on benign data transmission
+fidelity. The post-defense PSNR* differs from the clean-
+system PSNR◦by at most 0.42 dB and typically by only
+0.2–0.4 dB, well below the commonly accepted perceptual
+threshold. These results confirm that the defense does not
+sacrifice communication quality even in low-SNR regimes.
+In addition, we verified the certified accuracy of the defense
+method and summarized it in the Supplemental Material.
+Computation Cost. We show the computational consumption
+based MNIST and F-MNIST sets. The server is a dual-
+socket Intel Xeon Platinum 8369B machine (2×32 cores /
+64 threads, 128 threads total, 2 NUMA nodes). It has 10×
+NVIDIA GeForce GPUs, each with 24GB VRAM (24576
+MiB), running Driver 520.61.05 / CUDA 11.8. Each sample
+was processed 10 times to calculate the average time (w/ SNR
+= 25 dB). We present the average processing time per sample
+for the entire dataset. The results are listed in Tab. XI.
+As illustrated, the average per-sample processing times lie
+within a very narrow range. Statistically, the mean processing
+time across all evaluated systems is only 1.52 ms (standard
+deviation 0.42 ms). the maximum latency is merely 2.3× the
+minimum, and all are far below the inter-frame interval of
+typical wireless systems (usually 5–10 ms). The absolute gap
+between the fastest SemCC architecture and the slowest SCAN
+architecture is only 1.14 ms, which is practically negligible
+in real deployments. Also, 95% of samples fall within the
+0.9–2.2 ms range, and none of the architectures exceeds the
+3 ms latency budget commonly tolerated by real-time systems.
+This is because the proposed defense only requires injecting
+smoothed Gaussian noise and does not introduce additional
+system processing. Hence, although architectural differences
+lead to slight variations in runtime, these differences are minor
+and well within the tolerance of practical communication
+systems, with no obstacle to large-scale deployment.
+Downstream Task Influence. To further assess the task-
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+14
+TABLE IX: Defense results against SemBugger backdoors on MNIST, F-MNIST, CIFAR-10, and ImageNet tasks under
+standard SNR = 25 dB (ASR↓: %; PSNR*↑, PSNR◦, ∆PSNR ↓: dB). Please cf. Sec. V-D for detailed explanations.
+MNIST Dataset
+F-MNIST Dataset
+CIFAR-10 Dataset
+ImageNet Dataset
+Systems
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+JSCC
+0.12
+36.19
+36.47
+0.28
+0.00
+33.63
+33.82
+0.19
+0.23
+30.94
+31.15
+0.21
+0.00
+34.71
+34.93
+0.22
+JSCC-f
+0.00
+38.29
+38.76
+0.47
+0.34
+35.68
+36.17
+0.49
+0.00
+33.03
+33.42
+0.39
+0.45
+36.82
+37.23
+0.41
+JSCC-q
+0.56
+38.07
+38.53
+0.46
+0.00
+35.33
+35.82
+0.49
+0.00
+32.67
+33.14
+0.47
+0.67
+36.45
+36.91
+0.46
+SCAN
+0.00
+39.81
+40.23
+0.42
+0.78
+37.11
+37.54
+0.43
+0.00
+34.42
+34.83
+0.41
+0.89
+38.23
+38.62
+0.39
+SemCC
+0.00
+38.93
+39.20
+0.27
+0.00
+39.07
+39.34
+0.27
+0.00
+39.58
+39.82
+0.24
+0.00
+39.42
+39.62
+0.20
+TABLE X: Defense results against SemBugger backdoors on MNIST, F-MNIST, CIFAR-10, and ImageNet tasks under
+standard SNR = 5 dB (ASR↓: %; PSNR*↑, PSNR◦, ∆PSNR↓: dB). Please cf. Sec. V-D for detailed explanations.
+MNIST Dataset
+F-MNIST Dataset
+CIFAR-10 Dataset
+ImageNet Dataset
+Systems
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+ASR
+PSNR*
+PSNR◦
+∆PSNR
+JSCC
+0.00
+21.13
+21.47
+0.34
+0.97
+19.43
+19.82
+0.40
+0.94
+13.75
+14.15
+0.40
+0.00
+16.64
+16.93
+0.30
+JSCC-f
+0.96
+23.35
+23.76
+0.42
+0.00
+20.92
+21.17
+0.26
+0.42
+16.08
+16.42
+0.35
+0.71
+18.88
+19.23
+0.36
+JSCC-q
+0.53
+23.12
+23.53
+0.41
+0.82
+20.66
+20.82
+0.17
+0.00
+15.97
+16.14
+0.18
+0.29
+20.55
+20.91
+0.36
+SCAN
+0.37
+22.88
+23.23
+0.36
+0.64
+20.29
+20.54
+0.26
+0.83
+15.67
+15.83
+0.16
+0.00
+19.40
+19.62
+0.23
+SemCC
+0.19
+21.98
+22.20
+0.22
+0.75
+22.11
+22.34
+0.23
+0.68
+22.61
+22.82
+0.22
+0.91
+22.40
+22.62
+0.22
+TABLE XI: Average sample running time cost of defense
+on MNIST and F-MNIST tasks under standard SNR = 25 dB
+(ms ↓). Please cf. Sec. V-D for detailed explanations.
+Test Systems
+Datasets
+JSCC
+JSCC-f
+JSCC-q
+SCAN
+SemCC
+MNIST
+1.15
+1.22
+1.93
+2.07
+0.94
+F-MNIST
+1.26
+1.33
+2.05
+2.16
+1.02
+TABLE XII: Task classification efficacy of defense on
+MNIST tasks under standard SNR = 25 dB (% ↑). Please cf.
+Sec. V-D for detailed explanations.
+Test Systems
+Condition
+JSCC
+JSCC-f
+JSCC-q
+SCAN
+SemCC
+Clean
+95.15
+95.22
+94.93
+94.07
+95.94
+Defense
+94.96
+95.03
+94.71
+93.92
+95.82
+level impact of the proposed defense in practical deployments,
+we cascade a downstream classifier (RegNetY-16GF network)
+with the receiver-side output of the SC architecture to form an
+end-to-end transmission–identification system, on which we
+implement both attacks and defenses. Specifically, we mea-
+sure the system’s baseline classification performance without
+attacks, as well as its efficacy after using the defense, and
+quantify the task-level impact of our defense. The experiments
+were implemented on MNIST dataset under SNR = 25 dB.
+Tab. XII summarizes the evaluation results.
+The experimental results manifest minimal performance
+degradation introduced by the defense scheme. The classifica-
+tion accuracy of SC shows an average reduction of only 0.17
+(from 95.06% to 94.89%), with the maximum reduction being
+0.22 percentage points (JSCC-q system: 94.93% →94.71%)
+and the minimum reduction being 0.12 percentage points
+(SemCC system: 95.94% →95.82%). All systems maintain
+accuracy above 93.92% after defense implementation, with
+relative differences less than 0.3% compared to the clean
+counterparts. This confirms that the defense preserves over
+98% of semantic information integrity while introducing only
+marginal PSNR degradation during transmission, with down-
+stream classification tasks virtually unaffected.
+VI. CONCLUSION
+In this paper, we first identify the key limitation in current
+research on SC backdoors: the prevailing monomorphic acti-
+vation paradigm hampers efficiency, adaptability, and output
+variety. To address these constraints, we introduce the first
+polymorphic backdoor in the SC field, which dynamically
+modulates the intensity of implicit triggers embedded in the
+transmission inputs, hence allowing adversaries to manipulate
+the system to yield multiple, distinct reconstruction targets.
+Specifically, the polymorphic backdoor is implanted into the
+shared knowledge of the SC system through a multi-effect
+poisoning framework. This preserves the fidelity of benign
+transmissions while enabling the system to distinguish graded
+covert triggers and yield adversarial reconstruction outputs
+uniquely mapped to each trigger intensity. Additionally, to
+counter the proposed backdoor, we devise a provably secure
+semantic-smoothing defense. Based on a formally derived
+lower defense bound, the scheme injects carefully calibrated
+noise into inputs, whereby it attenuates latent trigger signals
+and consequently prevents backdoor activations. Extensive
+experiments demonstrate that our proposed attack method
+achieves high attack efficacy (ASR> 90%) while introducing
+minimal degradation to the system’s normal functionality
+(∆PSNR < 2 dB). Furthermore, our designed defense scheme
+can effectively mitigate the attack, reducing the success rate
+to a negligible level (ASR < 1%).
+Our future research will generalize the current framework
+to encompass distributed poisoning attacks, particularly exam-
+ining cross-client telecom patterns and their countermeasures.
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY, VOL. **, NO. *, **** 20**
+15
+VII. ACKNOWLEDGMENT
+This work is funded by the National Natural Science Foun-
+dation of China (Nos. 62572314, 62471301 and U21B2019).
+Gaolei Li and Jun Wu are the corresponding authors.

@@ -1,0 +1,1342 @@
+GenDetect: Generalizing Reactive Detection for Resilience
+Against Imitative DeFi Attack Cascade
+Bowen Cai
+cai00254@umn.edu
+University of Minnesota
+Minneapolis, MN, USA
+Weiheng Bai
+bai00093@umn.edu
+University of Minnesota
+Minneapolis, MN, USA
+Youshui Lu
+yolu6176@uni.sydney.edu.au
+Xi’an Jiaotong University
+Xi’an, Shaanxi, China
+Haoran Xu
+hxu65@jh.edu
+Johns Hopkins University
+Baltimore, Maryland, USA
+Yuannan Yang
+yyang181@jh.edu
+Johns Hopkins University
+Baltimore, Maryland, USA
+Yajin Zhou
+yajin_zhou@zju.edu.cn
+Zhejiang University
+Hangzhou, Zhejiang
+China
+Kangjie Lu
+kjlu@umn.edu
+University of Minnesota
+Minneapolis, MN, USA
+Abstract
+As blockchain ecosystems grow, financially motivated attackers
+have increasingly exploited vulnerabilities in decentralized finance
+(DeFi) protocols, resulting in frequent and severe losses. Unlike
+conventional cyberattacks, DeFi exploits propagate rapidly due to
+the transparent and composable nature of smart contracts. In this
+setting, we identify a critical behavioral pattern: Imitative Attack
+Cascade, where an initial successful exploit is quickly followed by a
+flurry of mimicking transactions that reuse attack logic with minor
+modifications or parameter changes. Our empirical analysis shows
+that over 69% of DeFi attacks exhibit strong behavioral similarity to
+earlier incidents, often occurring within hours or days of the initial
+attack.
+This phenomenon highlights a fundamental limitation in cur-
+rent reactive detection workflows. While the initial attacks are
+often flagged through heuristic alerts, such as Tornado Cash traces,
+anomalous nonce usage, or known exploiter labels, these signals
+require manual validation and the construction of handcrafted de-
+tection rules through trace analysis. This process is labor-intensive
+and slow, resulting in unacceptable latency while follow-up attacks
+continue to spread. Motivated by this gap, our research goal is
+to ensure that once an attack has been observed, even a single
+instance, it can be rapidly abstracted into an actionable and general-
+izable detection rule, enabling scalable protection against imitative
+attacks.
+We decompose the problem into two core challenges: (I) abstract-
+ing the semantics of diverse, obscure function signatures, and (II)
+matching transaction logic in noisy, evasive traces. To address these,
+we leverage two key insights: (i) the open-source nature of most
+DeFi protocols enables high-fidelity semantic classification of func-
+tion signatures; (ii) contract labels allow us to isolate essential logic
+by filtering irrelevant calls and classifying attack intent. Based on
+these, we develop a reactive detection framework, GenDetect, which
+achieves strong benchmark performance (ACC: 98%, FPR: 1%, FNR:
+3%) and, critically, discovers 56 previously unrevealed attacks from
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+ICSE ’26, Rio de Janeiro, Brazil
+© 2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2025-3/2026/04
+https://doi.org/10.1145/3744916.3787799
+the past three years, highlighting its practical effectiveness. Our
+source code and dataset are released on Github.
+ACM Reference Format:
+Bowen Cai, Weiheng Bai, Youshui Lu, Haoran Xu, Yuannan Yang, Yajin
+Zhou, and Kangjie Lu. 2026. GenDetect: Generalizing Reactive Detection
+for Resilience Against Imitative DeFi Attack Cascade. In 2026 IEEE/ACM
+48th International Conference on Software Engineering (ICSE ’26), April 12–
+18, 2026, Rio de Janeiro, Brazil. ACM, New York, NY, USA, 13 pages. https:
+//doi.org/10.1145/3744916.3787799
+1
+Introduction
+The rapid growth of blockchain ecosystems has been accompanied
+by a sharp rise in security threats. Each year, hundreds of security
+incidents result in billions of dollars in losses [3]. Among these,
+Decentralized Finance (DeFi) [9, 26, 32, 49] stands out as the most
+prominent and lucrative target due to its high-value assets and
+composable smart contract design. The transparency and reusabil-
+ity of smart contracts make successful exploits particularly easy
+to replicate, contributing to the rapid proliferation of follow-up
+attacks. Yet detection methods remain inadequate in the face of
+these escalating threats. Industry solutions [37] often rely on ad hoc
+heuristics–such as hardcoded exploiter addresses, Tornado Cash
+interactions [33], or timing-based indicators like nonce or contract
+creation time–that may help identify the first exploit but fail to
+capture its evolving variants. Academic approaches, on the other
+hand, typically focus on specific vulnerability types (e.g., price
+manipulation [31, 43, 44, 46], flashloans [47], or reentrancy [51]),
+lacking the generality required to address real-world exploits at
+scale. As a result, once a vulnerability is exposed, it is often repeat-
+edly exploited–sometimes for months–due to delays in designing
+and deploying effective detection patterns.
+The Imitative DeFi Attack Cascade. A key motivation for our
+research lies in the empirical observations that most DeFi attacks
+are not isolated or fundamentally novel, but rather imitations, adap-
+tations, or direct replications of previously disclosed exploits. In
+real-world incidents, once an attack is proven effective, it often trig-
+gers an imitative attack cascade–sometimes reusing entire contracts
+with minimal modifications, and sometimes varying parameters
+or call sequences. To quantify this pattern, we analyze confirmed
+attack transactions from Phalcon [14] and DeFiHackLab [42] across
+arXiv:2604.26094v1 [cs.CR] 28 Apr 2026
+
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+Bowen Cai, Weiheng Bai, Youshui Lu, Haoran Xu, Yuannan Yang, Yajin Zhou, and Kangjie Lu
+multiple protocols. Our analysis reveals that over 69% of the attacks–
+collectively accounting for more than $2 billion in losses–exhibit
+strong behavioral similarities to the earlier exploits. Some follow-
+ups occur within hours or days of the original, while others replicate
+nearly identical strategies over a year later. This persistence under-
+scores not only the reusability of vulnerable patterns but also the
+absence of timely and generalizable defenses. Without a mechanism
+to convert each new exploit into a broadly applicable detection pat-
+tern, today’s undetected attack becomes tomorrow’s widely reused
+blueprint. Detection generalization is therefore not a supplementary
+feature–it is the core capability needed for sustainable defense.
+Prior Work. In practice, the industry relies on broad, heuristic-
+based signals–such as low-nonce initiators, Tornado Cash funding
+paths, or known exploiter addresses–to raise alerts [15]. Although
+these methods offer wide coverage and increase the odds of catch-
+ing the first exploit, they suffer from extremely high false positives
+and require substantial manual effort to verify. More importantly,
+even when the first attack is confirmed, such approaches cannot
+automatically generate rules to detect follow-up imitative attacks.
+This limitation stems from the fact that most existing detection sys-
+tems follow a reactive loop of "discovery→manual analysis→rule
+generation", as seen in TxSpector [51], DeFiRanger [44], and POMA-
+Buster [46]. These tools manually extract behavioral signatures
+from traces to produce handcrafted rules, but their reliance on
+human intervention introduces unacceptable latency–especially
+in blockchain environments where imitation attacks can emerge
+within minutes. Alarmingly, certain vectors remain exploitable
+months or even years after disclosure [10–13]–not due to igno-
+rance, but because current defense systems lack the capability to
+generalize and automate detection across related contexts.
+This highlights the core value of our work: Rather than aiming
+to be the first to discover new attacks, we take the initial disclosure–
+identified through external alerts, public reports, or monitoring
+tools–as input. By capturing such cases through generalizable
+semantic representations, we can rapidly and automatically
+produce detection strategies, avoiding the delays and brittle-
+ness of handcrafted rules. While no system can anticipate entirely
+new categories in advance, our method ensures that once an inci-
+dent is revealed, any imitative form of attack is unlikely to happen
+stealthily. In this way, we complement existing efforts by bridg-
+ing the gap between discovery and timely, scalable detection for
+imitative attacks.
+Research Goal and Challenges. In this paper, our goal is to
+rapidly generalize an initial attack incident into a reactive detection
+to enable the precise resilience for imitative DeFi attacks. We decom-
+pose the goal into two main challenges: (C1) Semantic Abstraction
+of Function Signatures. Transaction traces often contain diverse
+and complex function signatures. Existing word-level approaches,
+such as keyword matching or word-vector embeddings, struggle
+to capture their true semantics, especially in the context of DeFi-
+specific operations. (C2) Robust Matching of Transaction Logic.
+DeFi transaction traces are typically noisy, containing numerous
+benign operations or even intentionally obfuscated behaviors. This
+severely undermines the effectiveness of naive pattern-matching
+techniques like Longest Common Subsequence (LCS), which are
+sensitive to trace variations and cannot tolerate structural disguises.
+We leverage two key insights to address the challenges respec-
+tively: (I) Source-based Semantic Extraction. We observe that most
+real-world attacks primarily target valuable DeFi protocols, which
+are typically open-sourced. This allows us to go beyond surface-
+level function names and directly utilize source code to classify
+function signatures based on their actual implementations. Com-
+pared to word-level recognition, our method yields more semanti-
+cally accurate representations of function behavior. (II) Contract
+label-based Logic Matching. We observe that a transaction’s core
+intent often emerges from direct invocations by Externally Owned
+Accounts (EOAs) or affiliated contracts, particularly when these
+calls interact with two categories of targets: ①Core asset contracts
+(e.g., ETH, WBNB, USDT) for value extraction, and ②Protocol-
+specific tokens for exploitation. By isolating such initiators and
+grouping their interactions by target type, we reduce semantic
+noise and improve the robustness of logic matching against noisy
+even evasive behaviors.
+Evaluation Summary. We evaluate our system on both bench-
+mark and real-world datasets, demonstrating strong performance
+across accuracy, generalizability, and real-time capability. On the
+DeFiHackLab [42] benchmark, our approach achieves a cross-
+validation F1-score of 98%, with a false positive rate under 1%–
+substantially lower than the 16% reported by the state-of-the-art
+tool Forta [20]. Our ablation study further confirms the effective-
+ness of our design: Insight I contributes a 50% relative improvement,
+and Insight II adds 9%. In zero-shot evaluation on the Phalcon [14]
+dataset, our method achieves 76% accuracy, compared to 65% by
+Forta. Beyond known benchmarks, our system identifies 56 (§5.2)
+previously undisclosed malicious incidents involving over $1.5M
+in value. In terms of efficiency, our system supports transaction-
+level parallelism and meets the real-time requirements of most
+mainstream blockchains.
+Contributions. We make the following key contributions:
+• We present the first reactive detection generalization system
+that translates a single observed exploit into reusable detection for
+future imitative attacks.
+• We introduce a semantic extraction and logic matching frame-
+work that mitigates false positives caused by obfuscated benign
+transactions and improves resilience against evasive attack patterns,
+enabling high-fidelity detection.
+• We implement a high-speed, high-precision detection pipeline
+that supports real-time analysis, meeting practical latency require-
+ments for on-chain monitoring.
+• Our system successfully uncovers 56 previously unrevealed at-
+tacks in real-world transaction datasets, demonstrating its practical
+utility and coverage beyond known exploits.
+2
+Background and Motivation
+2.1
+Blockchain and DeFi
+Blockchain is a decentralized ledger that allows immutable and
+transparent record-keeping across a distributed network. Among
+its most influential innovations is the smart contract, a self-
+executing program deployed on the blockchain that enables pro-
+grammable and automated interactions. Prominent platforms such
+as Ethereum [17] and Solana [40] provide robust infrastructures for
+smart contract execution, which serve as a foundational layer for
+
+GenDetect
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+decentralized financial applications (DeFi). These contracts operate
+autonomously once deployed, managing assets and logic without
+further intervention–making them powerful yet vulnerable to logic
+flaws or misuse. DeFi refers to a suite of financial applications built
+on top of blockchains, aiming to provide open, permissionless alter-
+natives to traditional financial services [30]. From lending protocols
+and decentralized exchanges (DEXs) [27] to synthetic assets and
+derivatives [38], DeFi platforms have rapidly grown in complexity
+and adoption. With billions of dollars [3] locked in DeFi contracts,
+the ecosystem has become an attractive target for adversaries. Un-
+like traditional systems, where centralized oversight might limit
+damage or provide rollback mechanisms, DeFi attacks are typically
+fast, irreversible, and often replicated across chains–exposing a
+critical need for timely and generalizable vulnerability detection.
+2.2
+DeFi Attacks and Existing Detections
+DeFi attacks fall broadly into two categories: price-driven [31, 46]
+and non-price [2] attacks. Price-driven attacks manipulate pricing
+mechanisms, such as oracles or liquidity pools, to buy low and sell
+high, extracting universal tokens (e.g., ETH [29], stable-coins) at
+favorable rates. These often involve flash loans or arbitrage and
+depend heavily on capital. Tools like POMABuster [46] and De-
+FiRanger [44] are tailored to detect such attacks by identifying
+abnormal value flows or predefined trading patterns, but their re-
+liance on price-based signals makes them ill-suited for other exploit
+types.
+Non-price attacks, on the other hand, exploit flaws in smart
+contract logic or protocol design, such as reentrancy [28], account-
+ing errors [50], or privilege misconfigurations [45], without re-
+quiring capital. These exploits are diverse, subtle, and often obfus-
+cated, making detection via hardcoded heuristics fragile. Tools like
+TxSpector [51] propose handcrafted rules for specific patterns (e.g.,
+unchecked calls or suicidal contracts) but lack breadth. Forta [20],
+though proactive, relies on bytecode-level features that are sensi-
+tive to compiler noise, coding style, and obfuscation, and fail to
+generalize. While FlashGuard [2] recognizes the importance of non-
+price exploits, it focuses on post-incident mitigation rather than
+timely detection. To date, no existing tool offers a robust and scal-
+able solution for semantically detecting diverse non-price attacks,
+highlighting the need for generalizable approaches like ours that
+reason over attacker intent at the trace level.
+2.3
+Motivation Example
+2024-02-14 13:48:23 UTC
+MINER Token Incident
+First Attack: 0x75e3...2c78
+End at 2024-02-14 14:10:47 UTC
+Followed by 10 same copies
+2024-10-05 09:33:52 UTC
+WebKey DAO Incident
+Imitation Attack: 0x5e69...460d
+2025-01-14 17:09:35 UTC
+The Idols NFT Incident
+Imitation Attack: 0x9ac0...025a
+End at 2025-01-14 18:28:59 UTC
+Followed by 14 same copies
+2024-02-21 18:26:11 UTC
+DeezNutz_404 Incident
+Imitation Attack: 0xbeef...2d61
+Timeline
+Figure 1: MINER Token Incident and Imitative Attack Cas-
+cade. Dashed boxes indicate repeated attacks from the same
+address ("Copies"), while "Imitation" refers to similar logic
+used by different addresses.
+Recent DeFi incidents reveal a recurring pattern: once an exploit
+is discovered, it often leads to a series of imitative attacks over
+time. While industry tools [26] sometimes detect the initial attack
+using ad hoc signals–such as exploiter addresses, Tornado [33]
+activity, or large transfers–these detections are often incidental.
+Without understanding the underlying exploit logic, they struggle
+to capture subsequent variants. To better illustrate the limitations
+of current detection methodologies, we present a representative
+example in Figure 1–a non-price-driven exploit that occurred on
+February 14, 2024. The attacker leveraged a subtle business logic
+flaw: the contract failed to prohibit self-transfers, and a temporary
+balance variable was mistakenly used for withdrawal validation.
+This allowed the attacker to withdraw more funds than permitted
+without relying on any price manipulation or initial capital [35].
+Alarmingly, even after the incident was publicly disclosed, we con-
+tinued to observe similar attacks exploiting nearly identical flaws
+well into 2025 [12]. This long tail of incidents demonstrates the
+failure of existing reactive systems to generalize detections across
+such imitative attacks cascade. From the Phalcon [14] and DefiHack-
+Lab [42] incident reports, we find that over 750 attacks in the past
+three years are repetitions of previously disclosed exploits, with
+more than 37% of the initial attacks having spawned 2-10 imitative
+copies. The cumulative loss attributed to these imitative attacks
+amounts to $2 billion.
+3
+Problem Definition and Overview
+3.1
+Problem Definition
+The observations above (§2.3) motivate our research goal: to gen-
+eralize rapid, reactive detection for imitative attack cascades
+once an initial attack instance is identified. To specify the problem,
+we introduce two concepts, Unobserved Attack (Definition 1) and
+Reactive Detection Generalization (Definition 2), that formalize our
+system’s design goal.
+Considering the case of the motivation example in Figure 1,
+where the initial exploit goes undetected by existing tools due to
+its novel logic. We define such an instance as an Unobserved Attack:
+Definition 1 (Unobserved Attack). Let T denote the universe
+of transactions, A ⊆T the set of attack transactions, N = T \ A the
+set of benign transactions, and P = {𝑝1, 𝑝2, . . . , 𝑝𝑛} the set of deter-
+ministic detection patterns predefined where 𝑝𝑖: T →{𝑇𝑟𝑢𝑒, 𝐹𝑎𝑙𝑠𝑒}.
+We define the set of Observed Attacks under pattern set P as:
+Aob(P) =
+
+𝑡∈A
+
+∃𝑝𝑖∈P, 𝑝𝑖(𝑡) = True
+and ∀𝑛∈N, 𝑝𝑖(𝑛) = False
+
+Then, the set of Unobserved Attacks is:
+Aunob(P) = A \ Aob(P)
+We say that a transaction 𝑡is an Unobserved Attack (with respect
+to P) if 𝑡∈Aunob(P). In other words, 𝑡is an attack transaction
+that fails to be matched by any known detection rules implemented
+in current tools. To detect the Unobserved Attacks to prevent subse-
+quent damage, our goal is to Generalize Reactive Detection for the
+Unobserved Attack:
+Definition 2 (Reactive Detection Generalization). Given
+an Unobserved Attack transaction 𝑡∈Aunob(P) with respect to a
+
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+Bowen Cai, Weiheng Bai, Youshui Lu, Haoran Xu, Yuannan Yang, Yajin Zhou, and Kangjie Lu
+pattern set P, a Reactive Detection Generalization procedure con-
+structs a new pattern 𝑝∗such that:
+∀𝑛∈N, 𝑝∗(𝑡) = True ∧𝑝∗(𝑛) = False
+Consequently, the transaction 𝑡becomes detectable under the updated
+pattern set P′ = P ∪{𝑝∗}, i.e., 𝑡∈Aob(P′).
+The definitions above describe idealized pattern sets P and P′
+under the assumption of perfect precision. In practical implementa-
+tions, this requirement is relaxed to tolerate minor false positives,
+provided that the overall detection performance remains acceptable.
+Nevertheless, achieving Reactive Detection Generalization remains
+challenging for security experts due to (C1) the difficulty of ab-
+stracting diverse function semantics and (C2) matching logic in
+noisy, obfuscated traces. Manual analysis delays response and gives
+attackers further opportunities to act, highlighting the need for
+automated solutions to accelerate reaction time.
+3.2
+Overview of GenDetect
+Incident
+Discovery
+2024-02-14 13:48:23 UTC
+MINER Token Incident
+First Attack: 0x75e3...2c78
+Source-Based Cheatsheet
+Construction (T1)
+Automatic Semantics Classification
+and Validation  (T2)
+Detection Pattern:
+<mint, approve, swap>
+Tx Pool of Chains
+(ETH, BNB, ...)
+New Transactions
+Encoded Transaction:
+<transfer, transfer, ...>
+Contract Label-
+Based Logic
+Extraction (T3)
+Token Type-Aware Logic
+Matching  (T4)
+Malicious Transactions
+Figure 2: The Overview of GenDetect
+Overall Design. With our goal formally defined, we now outline
+the overall design of GenDetect, which operationalizes the path
+from challenge to insight to implementation. As shown in Figure 2,
+the system takes two inputs: ①a newly discovered attack incident,
+which serves as a starting point for reactive detection generalization,
+and ②a pool of pending transactions to be analyzed. To address
+the challenges introduced earlier, GenDetect adopts two key in-
+sights: Source-based Semantic Extraction and Contract Label-
+based Logic Matching. These insights are instantiated through
+four core components: I) Technique 1 and 2 implement Insight I by
+transforming raw transaction traces into semantically meaningful
+representations via contract source code analysis; II) Technique 3
+and 4 realize Insight II by refining the trace into an abstracted logic
+path and matching it against the pattern.
+Solving the Challenges. The first challenge stems from the diffi-
+culty in accurately inferring the semantics of DeFi-specific function
+signatures (C1). Existing methods typically rely on word-level em-
+beddings to classify function names. This works in some cases, e.g.,
+swapExactTokens, swap, and transferFrom can be reasonably
+grouped with swap and transfer due to shared intent. However,
+in other cases, this approach clearly fails, e.g., deposit is differ-
+ent from beforeDeposit. Despite similar word-level tokens, these
+functions often have entirely different roles: deposit triggers a
+financial operation, whereas beforeDeposit merely performs ac-
+cess checks. Such semantic misclassification undermines the relia-
+bility of transaction-level analysis.
+We tackle this issue by anchoring our solution in a simple yet
+powerful insight: only source code can faithfully reflect a function’s
+actual behavior. Fortunately, most valuable DeFi projects are open
+source. We capitalize on this property with a two-stage design.
+First, we propose T1: Source-Based Cheatsheet Construction
+(§4.1 Figure 3). We first use CodeBERT to roughly cluster func-
+tion signatures in popular DeFi codebases then manually inspect
+them by real-world functionality. Each signature is annotated based
+on its corresponding financial intent (e.g., swap, transfer, borrow),
+forming a curated reference table. This cheatsheet enables accurate,
+human-aligned classification for all known signatures. However,
+this alone is insufficient for full coverage. As new contracts ac-
+companied with new function signatures are constantly emerging.
+To support unseen signatures, we introduce T2: Automatic Se-
+mantics Classification and Validation (§4.1 Figure 4), which
+automatically fetches open-source code corresponding to new func-
+tions, uses CodeBERT to derive the most similar function stored
+in codebase, and then leverages LLM-based reasoning to validate
+the derived label. This hybrid strategy ensures our system remains
+robust and up-to-date, extending semantic understanding to novel
+cases in the wild.
+The second challenge (C2) stems from the inherent complexity
+of transaction logic in DeFi attacks. Unlike malware detection or
+contract vulnerability analysis, there exists no standard approach
+for extracting and comparing the semantic intent of transaction
+traces. Existing tools often fall back on naive pattern matching
+techniques such as Longest Common Subsequence (LCS). However,
+naive LCS suffers from two key limitations: (i) It treats all function
+calls equally, failing to isolate security-critical actions from irrel-
+evant or benign operations. As a result, traces of long, legitimate
+transactions dilute the attack signal, leading to false positives, and
+(ii) LCS is highly sensitive to the execution order. Many malicious
+transactions may follow the same logical steps as known attacks but
+in a different order, which reduces similarity scores and increases
+false negatives.
+To address this, we observe that the essence of an attack is of-
+ten concentrated in a small subset of operations initiated by the
+attacker and targeting two typical categories of DeFi protocols.
+Therefore, the solution lies in selectively extracting meaningful
+logic and applying similarity analysis that is robust to noise. We
+realize this insight through two steps. T3: Contract Label-based
+Logic Extraction (§4.2 Figure 5). Leveraging publicly available
+Contract Labeling datasets (Phalcon and 4Bytes) and transaction
+metadata, we identify key participants such as DeFi protocol ad-
+dresses and attacker-controlled contracts. We then prune the trace
+by filtering out internal or routine contract invocations and col-
+lapsing nested layers into a flattened trace that preserves only the
+essential operations. This drastically reduces irrelevant noise and
+improves the signal-to-noise ratio for subsequent analysis. T4: To-
+ken Type-aware Logic Matching (§4.3 Figure 6). The extracted
+logic is further partitioned based on the target token’s economic
+role, distinguishing between core asset tokens (e.g., WETH, USDC)
+and protocol-specific tokens (e.g., DOGE, AAVE). These represent
+different attack intents: value extraction versus exploitation. For
+each token category, we compute the "Asymmetrical Normalized
+Set Difference (ANSD)" between traces, then aggregate weighted
+scores. This strategy boosts robustness in two ways: (1) benign
+
+GenDetect
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+traces tend to focus on a single category, while attacks involve both,
+reducing false positives; (2) using asymmetrical set-based rather
+than sequence-based comparison mitigates false negatives caused
+by minor reordering and inserted noise.
+4
+The GenDetect
+Having introduced our two core challenges and the key insights that
+guided our solution design, we now turn to the concrete technical
+realization of these four techniques.
+4.1
+Source-based Semantic Extraction
+Function Signature Cheatsheet Implementation. To construct
+our Function Signature Cheatsheet, we begin by collecting historical
+attack data from DeFiHackLab [42] and Phalcon [14], extracting all
+function signatures involved in security incidents over the past five
+years. This process yields 1,272 unique function signatures linked to
+DeFi protocol projects. Next, using the "Decoded Projects" dataset
+provided by Dune [8], we successfully indexed the corresponding
+implementation code for each of these functions. This allows us to
+build a comprehensive source code database.
+We then apply CodeBERT [18] to compute pairwise code-level
+semantic similarities across all collected function source code. For
+clustering, we adopt a K-means-based approach with an initial set-
+ting of 𝐾= 80, chosen heuristically based on functional diversity.
+The computation took approximately 3 hours. Following clustering,
+we manually validated and refined the results. The final cheatsheet
+was expanded to contain 122 distinct function categories. Among
+them: ①60 categories correspond to high-frequency financial or
+verification-related functions, which appeared at least twice across
+different attacks. These include core operations such as transfer,
+swap, mint, as well as verification hooks like beforeDeposit
+and afterBorrow. ②The remaining 62 categories represent low-
+frequency or project-specific functions, each called fewer than twice
+across five years of attack data. These include niche operations such
+as emergencyBurn, burnAlp, or airDropReward. This cheatsheet
+enables us to instantly map a known signature to its semantic cate-
+gory whenever encountered in future traces, significantly improv-
+ing trace abstraction efficiency. Figure 3 provides a brief illustration
+of the process.
+Classification Cheatsheet
+transfer: transfer(), transferFrom(), transferTo()...
+transferOwnership: renounceOwnership(), ...
+after: afterDeposit(), afterFlashLoan, ...
+swap: swap(), swapExactToken(), swapForETH(), ...
+Rough Sort
+CodeBERT
+Opensource Codebase
+transfer(...): function transfer(address to, uint value)
+external returns (bool) {...}
+Manually
+Label
+transferFrom(...): function transferFrom(address from,
+address to, uint value) external returns (bool) {...}
+transferOwnership(...):   function
+transferOwnership(address newOwner) public onlyOwner
+{_transferOwnership(newOwner);}
+swap(...): ... swapExactToken(...): ...
+skim(): ...
+...
+Figure 3: Function Signature Cheatsheet Construction
+(T1).The left is the CodeBase, a mapping from function sig-
+natures to their implementation code. The right is the final
+Function Cheatsheet, where each category includes multiple
+semantically similar function signatures. Importantly, clus-
+tering is based on source code, not just naming conventions.
+Automatic Pipeline Implementation. To handle unseen func-
+tion signatures that are not covered by our cheatsheet, we introduce
+an Automatic Semantics Classification and Validation pipeline, as
+illustrated in Figure 4. For any signature already present in the
+cheatsheet, we can directly retrieve its semantic label. For those
+not covered, we follow a three-step fallback mechanism: ①Con-
+tract Decoding Check: We query Etherscan API [17] to check if
+the contract containing the unknown function has been decoded.
+If not, we discard it, as these are likely attacker-crafted and will
+be filtered out during logic extraction (see §4.2 Figure 5). ②Code
+Similarity Search: If decoded, we retrieve its implementation code
+and compare it against a reduced reference codebase CodeBase(𝑜),
+which is a curated subset of representative implementations from
+each cheatsheet category. This optimization significantly reduces
+the computational cost of CodeBERT-based similarity matching. ③
+Validation via GPT-4.1: Once the most similar category is identi-
+fied, we perform a final heuristic validation using GPT-4.1. If GPT
+confirms the categorization, the function is assigned to that cate-
+gory; otherwise, we create a new class in the cheatsheet for future
+reference. This layered fallback ensures robust semantic coverage,
+even for novel or rarely used DeFi functions that are not part of the
+initial cheatsheet database.
+Raw Trace:
+A1.<mintTo, approve,
+swapmpEthForEth>
+no
+Extracted Semantic:
+A1.<mint, approve, swap>
+yes
+no
+Is in Cheatsheet?
+yes
+Is decoded?
+Directly Encoded by
+Cheatsheet
+Search on
+Etherscan
+CodeBERT Find the most
+similar function in
+Codebase (o)
+yes
+no
+GPT-4.1 validate it?
+Create a new class
+in Cheatsheet
+88%
+5%
+3%
+4%
+Attacker's
+Artifact
+Figure 4: Automatic Semantic Classification and Validation
+(T2). The red cloud icons indicates the relative proportion of
+data processed along each branch of the pipeline.
+4.2
+Contract Label-based Logic Extraction
+Address Labelling. We illustrate the logic extraction process in
+Figure 5. The first step involves tagging each address invocation
+in the trace. Notably, most well-known or high-value project ad-
+dresses are labeled in the 4Bytes [1] database. For less mainstream or
+newer project addresses, we rely on labels provided by the Phalcon
+API [14]. While we cannot fully eliminate the possibility that some
+recently deployed projects may not yet be included in these datasets,
+we note that our system’s accuracy can be further improved as the
+labeling coverage of community-maintained datasets increases. Ad-
+dresses that lack labels, or are explicitly marked as exploiter, or
+are directly called by the transaction sender, are grouped into the
+category AttackerScript. These will serve as the primary focus
+for the next phase of logic extraction.
+Filtration. In the second step, we retain only direct invocations
+from the sender or identified AttackerScript, as only these invo-
+cations reflect the attacker’s intentional actions. Downstream calls
+that originate from the protocol itself (e.g., recursive contract calls
+or triggered hooks) are excluded because they represent protocol
+logic rather than attacker intent. Finally, we perform layer restruc-
+turing on the remaining invocations. Specifically, for any invocation
+made by sender.call or AttackerScript.call we remove the
+wrapper call itself and lift its internal subcalls one level up in the
+
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+Bowen Cai, Weiheng Bai, Youshui Lu, Haoran Xu, Yuannan Yang, Yajin Zhou, and Kangjie Lu
+hierarchy. This adjustment reflects the fact that the outer attacker-
+generated calls are often meaningless or not decoded, whereas the
+meaningful behavior is embedded in the downstream interactions
+with protocol contracts. By eliminating these superficial wrappers
+while preserving the original call depth of the subcalls, we obtain a
+cleaner and more interpretable Extracted Logic that better captures
+the attacker’s true intent.
+Receiver
+. 0x878830fa
+Address
+-based
+Filtration
+AttackerScript
+. 0x303704e5
+BalancerVault
+. flashLoan
+|
+Wrapped
+Ether.transfer
+Labeled
+Trace
+LAttackerScript
+. receive
+Flash
+Loan
+Wrapped
+Ether.transfer
+✓Receiver.exp
+|
+Receiver
+. 0x54393d07
+)
+|
+|
+Wrapped
+Ether
+. approve
+L
+UniswapV2Router2
+. swapExactTokens
+WrappedEther.transferFrom
+L
+UniswapV2TWD4.swap
+L
+TheWordTWD.transfer
+-
+TheWordTWD.transfer
+Receiver
+. 0x3db8e42a
+)
+UniswapV2TWD4.skim
+|
+TheWordTWD.transfer
+L
+Wrapped
+Ether.transfer
+Uniswap
+V2TWD4.skim
+-
+TheWordTWD.transfer
+L
+Wrapped
+Ether.transfer
++
+UniswapV2TWD4.skim
+TheWordTWD.transfer
+Receiver
+. 0x54393d07
+)
+TheWordTWD
+. approve
+L
+Uniswap
+V2Router2
+. swap
+ExactTokens
+TheWordTWD.transfer
+From
+L
+UniswapV2TWD4.swap
+LWrapped
+Ether.transfer
+|
+L
+Wrapped
+Ether.transfer
+L
+Wrapped
+Ether.transfer
+Receiver
+. 0x878830fa
+AttackerScript
+. 0x303704e5
+BalancerVault
+. flash
+Loan
+|
+Wrapped
+Ether
+. transfer
+Layer
+1
+Non
+- direct
+Calls
+Eliminated
+AttackerScript.receive
+Flash
+Loan
+Wrapped
+Ether.transfer
+Receiver.exp
+Receiver
+. 0x54393d07
+|
+Wrapped
+Ether
+. approve
+L
+UniswapV2Router2
+. swap ExactTokens
+TheWordTWD.transfer
+Receiver
+. 0x3db8e42a
+|
+UniswapV2TWD4.skim
+L
+UniswapV2TWD4.skim
++
+UniswapV2TWD4.skim
+Receiver
+. 0x54393d07
+|
+TheWordTWD.approve
+L
+UniswapV2Router2.swapExactTokens
+LWrapped
+Ether.transfer
+Wrapped
+Ether.transfer
+BalancerVault
+. flash
+Loan
+Extracted
+Logic
+Layer
+2
+( Flashloan
+Callback
+)
+WrappedEther.transfer
+Wrapped
+Ether.approve
++
+UniswapV2Router2
+. swap
+ExactTokens
+TheWordTWD
+. transfer
+UniswapV2TWD4.skim
++
+UniswapV2TWD4.skim
++
+UniswapV2TWD4.skim
+TheWordTWD.approve
+UniswapV2Router2
+. swap
+ExactTokens
+L Wrapped
+Ether.transfer
+Wrapped
+Ether.transfer
+Merge
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 5: Demonstration of Address-based Logic Extraction
+(T3).
+4.3
+Token Type-Aware Logic Matching
+Type Labelling. This module enhances the accuracy of logic
+similarity by introducing token type awareness into the matching
+process. Specifically, we classify each invocation in the Extracted
+Logic (output of §4.2) into two categories based on the token in-
+volved: ①Core Asset Operations: Interactions with widely-used
+tokens such as ETH, BNB, USDT, etc. ②Protocol-specific Oper-
+ations: Interactions with tokens that are unique to a particular
+protocol or newly deployed projects, such as DOGE derivatives or
+bespoke tokens like RisyToken. As illustrated in the green box of
+Figure 6, different token types are marked with distinct colors, e.g.,
+blue for core assets and black for protocol-specific assets. Next, as
+shown in the red box, given two transactions A and B, we compute
+two separate similarity scores: (i) Simcore(𝐴, 𝐵): similarity between
+core asset operations in A and B and (ii) Simproto(𝐴, 𝐵): similarity
+between protocol-specific operations in A and B. The final simi-
+larity score is then computed as a weighted average of the two:
+Simfinal(𝐴, 𝐵) = 𝜆· Simcore + (1 −𝜆) · Simproto
+This token-type-aware decomposition improves the contrast be-
+tween benign and malicious behavior. Benign transactions tend to
+contain only one category of operations, while imitative attacks
+often span both, making this split particularly effective at reducing
+false positives (FP). An illustrative example demonstrating the ben-
+efit of this separation will be presented in the case study (Figure 7).
+Asymmetrical Normalized Set Difference. To compute the sim-
+ilarity between two extracted logic sequences, we adopt a set-based
+approach rather than a sequence-based one like LCS (Longest Com-
+mon Subsequence). This choice is motivated by the observation
+that imitative attacks frequently involve logic mutation: while the
+core behaviors remain similar, their invocation order and auxiliary
+operations often differ. Sequence-based methods like LCS are sen-
+sitive to such ordering variations and thus perform poorly in this
+context. In contrast, set-based methods are more robust to such
+transformations.
+We use a metric called Asymmetrical Normalized Set Difference
+(ANSD) for similarity calculation. Given two transactions 𝐴and 𝐵,
+we define the similarity from 𝐵to 𝐴as: Sim(𝐴, 𝐵) = 1 −|𝐴\𝐵|
+|𝐴| . This
+expression measures how much of the reference logic 𝐴(which
+is a confirmed attack) is preserved in 𝐵. Based on this metric,
+our detection rule is straightforward: if the final similarity score
+Simfinal(𝐴, 𝐵) ≥𝜏(𝜏is a predefined threshold), we flag transaction
+𝐵as an imitative attack.
+Rationale for ANSD Design. The rationale for the asymmetric
+design is twofold:
+(i) Why is the denominator |𝐴|, rather than |𝐵|, |𝐴∪𝐵|? Since
+𝐴is a verified attack pattern, it serves as the ground truth. Our
+goal is to assess whether 𝐵contains all the necessary elements to
+reproduce the same exploit. 𝐴denominator of |𝐴| ensures that the
+metric reflects the proportion of the attack pattern retained.
+(ii) Why use 𝐴\ 𝐵as the numerator? We assume that attack
+pattern 𝐴is sufficient but may not minimal: any transaction that
+omits elements from 𝐴is less likely to constitute the same threat.
+Hence, the more elements from 𝐴that are missing in 𝐵, the lower
+the similarity. In contrast, using 𝐵\ 𝐴would penalize irrelevant
+additions, which may be benign noise rather than part of the exploit,
+and is therefore less meaningful in this context.
+By using the confirmed attack 𝐴as the reference, the metric
+disregards any additional noise or evasion operations introduced
+in 𝐵, ensuring that only the omission of logic from 𝐴leads to a
+lower similarity score. This design makes evasion behaviors, such as
+adding misleading calls, largely ineffective, reducing false negatives
+(FN). A example illustrating this robustness is provided in Figure 7.
+Layer 2 (Tx A):
+<transfer, approve, swap, transfer, skim*n, approve, swap, transfer>
+T3
+<The Word Project> Stored Pattern Trace:
+<a1.flashloan,
+
+[…middle truncated for length…]
+
+Ablation)
+Forta
+POMA
+DeFiR
+TxSpec
+From Phalcon [14]
+Full
+w/o SX
+w/o LX
+w/o TTA
+MIM_Spell
+✓
+✓
+△
+Zoth
+△
+△
+1inch Fusion V1
+✓
+✓
+✓
+✓
+✓
+Infini
+△
+△
+HegicOptions
+✓
+✓
+✓
+✓
+✓
+Bybit
+△
+△
+(Remaining rows omitted for brevity; full table at Repo [23].)
+Coverage
+.7656
+.2813
+.5625
+.6094
+.6563
+.2813
+.4375
+.3125
+From DeFiHackLab [42]
+0vix
+✓
+✓
+✓
+✓
+✓
+0x0DEX
+✓
+✓
+✓
+✓
+✓
+△
+△
+AES_1
+✓
+✓
+✓
+✓
+✓
+✓
+AES_2
+✓
+✓
+✓
+✓
+✓
+AIS
+Allbridge
+✓
+✓
+✓
+✓
+✓
+✓
+(Remaining rows omitted for brevity; full table at Repo [24].)
+Coverage
+.7284
+.3824
+.5009
+.5697
+.6481
+.2485
+.3613
+.1950
+Zero-Shot Results. We evaluate the detection rate of all tools
+on held-out, real-world datasets consisting of 726 attack incidents
+reported by Phalcon [14] and DeFiHackLab [42]. Table 3 shows the
+summarized results (Github Repo [23, 24] for full results): GenDe-
+tect achieves a coverage rate of 77/73%, significantly outperform-
+ing Forta (66/65%), DeFiRanger (44/36%), TxSpector (31/20%), and
+POMABuster (28/25%). Among our ablation variants, the model
+without the semantic extraction module covers only 28%-38% of
+incidents, indicating a nearly 50% drop in detection capacity. Remov-
+ing either the logic extraction or token type-aware module reduces
+coverage to below 60%, reflecting 16-22% performance degradation.
+1) Understanding Detection Rate Drop. As expected, detection
+performance in the zero-shot setting is lower than in the cross-
+validation experiments. This is largely due to the complete disjoint-
+ness between the test set and the training set, which is a common
+source of generalization loss in real-world detection tasks. Neverthe-
+less, our performance drop is moderate: compared to the detection
+rate (recall) reduction of 31-32% observed in Forta, our model ex-
+hibits only a 21-25% decline, suggesting better stability in the face
+of data in the wild. Upon closer inspection, we find that most of
+the undetected attacks fall into edge-case categories that lie outside
+the observable transaction semantics. In particular, several missed
+incidents involve private key leakage, where the exploit resem-
+bles a side-channel attack with no observable execution anomalies
+on-chain. Another group of hard-to-detect samples involves un-
+verified call input attacks, where a single external call results in
+the entire asset drain, yet leaves behind little to no semantic trail.
+These cases are inherently difficult to capture with any trace-based
+or behavior-level approach, and we acknowledge them as current
+limitations of our design.
+2) Understanding Baseline Tools’ Limitations. Our model substan-
+tially outperforms all baseline tools under the zero-shot setting.
+Forta’s performance is limited by its reliance on code-level features,
+which are sensitive to developer coding style and compiler opti-
+mizations and fail to robustly reflect attack intent. POMABuster,
+DeFiRanger, and TxSpector suffer from similar weaknesses: all are
+pattern-based systems with hardcoded heuristics, offering narrow
+coverage and low adaptability to novel attack variants. Furthermore,
+many transactions in the Phalcon dataset lack the specific signals
+required by these systems, e.g., POMABuster requires token price
+information that may be unavailable for unlisted assets, such as
+NFT-related transactions or those involving project-specific "inter-
+nal token ledger" (i.e., with no publicly accessible price data) [12],
+leading to incomplete execution or detection failure.
+3) Potential Data Leakage and Resolution. Since our method lever-
+ages manually annotated contract address labels from the Phalcon
+dataset, such label alignment may introduce a potential implicit
+advantage to the detection model, as both the labels and the trans-
+actions originate from the same source organization. To rule out
+potential data leakage from shared label sources, we perform a cross-
+domain evaluation using the independent DeFiHackLab dataset.
+Although the coverage slightly decreases from 76% to 73% (Table 3),
+the overall performance remains consistent, indicating that any im-
+plicit linkage between datasets does not affect GenDetect’s usability
+or the validity of our conclusions.
+5.2
+RQ2: New Attack Discovery by GenDetect
+In this section, we investigate the capability of our system to iden-
+tify previously undisclosed attacks from real-world transaction data.
+We summarize the newly discovered attack instances in a compre-
+hensive table on Github [25], with full details including transaction
+hashes, similarity scores, and matched references. This enables
+readers to independently inspect and validate the findings, also pro-
+motes transparency. We then analyze these results to understand
+their structural characteristics and to illustrate the effectiveness
+of our semantic similarity framework in capturing meaningful but
+unreported exploit behaviors.
+Setup. To evaluate our system in a fully realistic setting, we con-
+duct similarity-based detection on real Ethereum transaction data.
+In theory, the Ethereum mainnet has recorded over 1.5 billion trans-
+actions from January 2021 to December 2024. However, to make
+
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+Bowen Cai, Weiheng Bai, Youshui Lu, Haoran Xu, Yuannan Yang, Yajin Zhou, and Kangjie Lu
+the evaluation computationally feasible, we restrict our analysis
+to a targeted subset of transactions involving decentralized ex-
+changes (DEXs), which are more likely to contain financially mean-
+ingful operations. This filtered dataset consists of approximately
+3 million transactions, collected directly from the Dune Analytics
+platform [8]. The full detection pipeline was executed over this
+dataset in an end-to-end fashion, with a total processing time of
+approximately 77 hours.
+Results. Our full detection results include 682 public disclosed inci-
+dents, 56 original disclosure, 1862 MEV transactions (excluded from
+FP by definition) and 79 false positives, yielding an overall 3% FPR,
+consistent with cross-validation results. These non-original cases
+are listed in Github Repo [22]. To isolate our original disclosures,
+we applied a rigorous filtering pipeline. First, we excluded arbitrage
+and MEV-related transactions by analyzing sender history and ex-
+isting MEV labels from Ethereum datasets[17]. Next, we filtered out
+known attack incidents using exploiter tags from both Ethereum
+and Phalcon [14]. The remaining candidates underwent manual
+validation based on strong indicators of exploitation: the use of
+Tornado Cash or cross-chain bridges for rapid fund exfiltration,
+temporary contract/account creation, and manual confirmation of
+vulnerabilities in the victim contracts. This conservative process
+yielded a final set of 56 previously undocumented attacks [25],
+with over $1.5 million USD in total financial damage. Unlike tools
+such as POMABuster, which report any suspicious transactions, our
+result prioritizes high-confidence real-world attacks with concrete
+behavioral evidence.
+Case Study and Reference. Each representative attack case cor-
+responds to a known historical exploit in DeFiHackLab [42]. For
+brevity, all full-length transaction hashes are listed in the Github
+Repo [25], with inline citations provided for verifiability. Among
+these, one notable category involves 10 previously unreported at-
+tacks that exhibit high structural similarity to the pSeudoEth inci-
+dent. These attacks exploit a mispriced internal accounting mech-
+anism by invoking skim() to redirect funds to the vault itself,
+resulting in unintended profit. Some individual gains were rela-
+tively modest, around $100, while others exceeded $3k, reflecting
+a wide spectrum of exploit severity. Despite this variation, the
+attacks exhibit consistent behavioral patterns, highlighting the sys-
+tematic nature of the exploitation. These lower-value cases may
+have slipped under the radar of existing tools, emphasizing the
+strength of our approach: by analyzing core transactional logic
+rather than surface-level attributes, our system remains robust
+against obfuscation, randomness, and value-based evasion.
+5.3
+RQ3: Detection Efficiency
+In this section, we evaluate the runtime efficiency of our system,
+with a focus on the two components most critical to real-time perfor-
+mance: the Semantic Cheatsheet Module and the Logic Extraction-
+Matching Module. We measure the per-transaction processing time
+of each module under varying trace lengths, demonstrating the
+practicality of our system in latency-sensitive settings. The other
+components in automatic semantic classification and validation
+pipeline are excluded from detailed timing analysis, because it is
+executed entirely offline and does not affect online performance.
+For completeness, we briefly summarize its expected cost profiles.
+0.00
+0.25
+0.50
+0.75
+1.00
+1.25
+1.50
+1.75
+Semantics Extraction Time (s)
+1
+Semantics Extraction Time Distribution
+Figure 9: Runtime Distribution of Semantic Extraction. The
+box plot illustrates the latency distribution across all 534
+attack traces, including median, quartiles, and outliers, re-
+flecting per-transaction variance.
+0-99
+100-199
+200-299
+300-399
+400-499
+500-599
+600-699
+700-799
+800-899
+900-999
+Rule Trace Length Bin
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+Average Similarity Calculation Time (s)
+Target Trace Bin
+Target: 0-99
+Target: 100-199
+Target: 200-299
+Target: 300-399
+Target: 400-499
+Target: 500-599
+Target: 600-699
+Target: 700-799
+Target: 800-899
+Target: 900-999
+Total
+0
+50
+100
+150
+200
+250
+300
+350
+Number of Traces
+Similarity Calculation Time vs Rule Trace Length (per Target Length Bin)
+with Trace Count Histogram and Total Average Line
+Figure 10: Runtime of Logic Extraction and Matching under
+Varying Rule and Target Trace Lengths. Bar Chart: the distri-
+bution of rule trace lengths in the dataset; Colored Lines: the
+average Logic Extraction and Matching time under a specific
+target trace length; Dashed Line: the global average latency
+across all target lengths for each rule length.
+Setup. To evaluate the runtime performance of our system, we
+measure the processing latency on a dataset of 534 attack trans-
+actions collected from DeFiHackLab [42]. These transactions rep-
+resent real-world DeFi exploits and typically exhibit significantly
+more complex trace structures than regular user transactions. As
+such, the response times reported in this experiment reflect our
+system’s behavior under worst-case conditions. The primary goal
+of this evaluation is to assess the feasibility of real-time detection
+in high-complexity scenarios.
+Results. Our experiments reveal clear patterns in how runtime
+scales with trace complexity. For the Semantic Cheatsheet Module
+(Figure 9), the average per-transaction latency remains under 0.02s,
+with only a few outliers exceeding 1.75s. These rare cases typically
+involve highly irregular trace structures. For the Logic Module (Fig-
+ure 10), both the length of the rule trace and the target trace jointly
+influence the runtime. In the worst-case configuration–where both
+the rule and the target reach the maximum trace length of 800–the
+observed latency remains bounded around 0.7s and the global av-
+erage runtime remains close to 0.1s. These results align well with
+the theoretical complexity of the logic matching process, which
+operates at 𝑂(𝑀+ 𝑁), where 𝑀and 𝑁denote the lengths of the
+rule and target traces, respectively.
+Real-Time Scenario Feasibility. The true performance lower bound
+only manifests under extremely long traces–cases that are exceed-
+ingly rare in practice (<0.1%) and insufficient for statistical char-
+acterization. To assess real-time viability, we therefore conduct
+
+GenDetect
+ICSE ’26, April 12–18, 2026, Rio de Janeiro, Brazil
+an analysis using both average throughput and worst-case per-
+formance. ①For throughput, our system is capable of processing
+over 2,000 transactions per second (TPS) on 96 cores, based
+on Ethereum’s [17] transaction length distribution. This through-
+put comfortably satisfies the real-time detection demands of most
+blockchain platforms, including Solana [40] under average load
+(1,133 TPS). While Solana’s theoretical throughput limit is higher
+(65,000 TPS), our system is parallelizable by design and can be scaled
+horizontally to meet such high demands. ②Under worst-case per-
+formance, for instance, when Ethereum [17] (12s) and BNB [16]
+(3s) encounter one long-trace transaction, whose detection can be
+fully completed within 0.7s. Since only the longest transactions
+contributes to the critical path, the remaining transactions can be
+processed in parallel on other cores, allowing total evaluation to
+finish well within the block interval. Hence, our system satisfies
+real-time requirements on these platforms. However, on Solana [40]
+(0.4s), GenDetect’s worst-case cost slightly exceeds the block in-
+terval. We further discuss this limitation and potential solutions
+in §6.
+6
+Limitation and Discussion
+Our approach presents two primary limitations: real-time perfor-
+mance on high-speed chains and evasion robustness.
+Performance. While the method demonstrates low-latency detec-
+tion per trace, meeting extreme throughput demands (e.g., Solana’s
+65K TPS) would require impractical horizontal scaling, approxi-
+mately 30× more cores. A more feasible path is to pre-filter trivial
+transactions (e.g., those with ≤2 calls), which make up 99.7% of
+total traffic. With only 86 long transactions per 0.4s block interval,
+and 0.1s average analysis time, we estimate that 22 cores suffice to
+meet practical real-time needs. Even for worst-case traces (0.7s),
+our Asymmetrical Normalized Set Difference (ANSD) algorithm
+supports parallel computation, where doubling the cores reduces
+worst-case latency to 0.35s, safely within a block interval.
+Potential Evasions. Although GenDetect exhibits robustness
+against post-hoc mutation and noise, several potential evasion vec-
+tors remain. These can be categorized into three types below, each
+reflecting a different layer of the detection pipeline.
+First-instance Evasion: Our contract-labelling and ANSD design
+mitigates most post-hoc evasions by filtering non-critical semantic
+mutations. However, if attackers anticipate our theory and inject
+obfuscation at the first occurrence of an attack pattern, the initial
+representation itself becomes noisy, degrading downstream similar-
+ity learning. Formalizing and defending against such first-instance
+evasions remain open challenges for current pattern-based systems.
+Label-compromise Evasion: Because GenDetect relies on a manu-
+ally curated address-label dataset, an attacker could theoretically
+evade detection by compromising the labelling process and having
+malicious addresses marked as benign. This would bypass address-
+based filtration. In practice, such side-channel manipulation is diffi-
+cult since the label set is manually verified and periodically main-
+tained, but it highlights the importance of data-source integrity.
+Private-relay Evasion: Private Relay Network is originally intro-
+duced by Flashbots [19] to mitigate MEV by bypassing the public
+mempool. Some permissioned relays expose authenticated APIs
+that authorized institutions can monitor, allowing GenDetect to
+extend to these environments by incorporating relay or bundle
+data alongside public-mempool captures. However, fully closed
+private relays (often referred to as "dark-pools") pose a greater
+challenge. Transactions submitted exclusively through such relays
+are invisible to public-mempool monitors before inclusion, plac-
+ing them outside the observable scope of GenDetect and other
+mempool-based detectors. Detecting attacks launched purely via
+closed private relays thus remains an open problem and represents
+an inherent limitation of observation-based detection. Future direc-
+tions include deeper collaboration with relay operators, on-chain
+trace correlation, and new visibility instrumentation.
+7
+Related Work
+A variety of tools have been developed to detect malicious trans-
+actions in DeFi, primarily following pattern-based or contract-
+level detection paradigms. Pattern-based systems such as DeFi-
+Ranger [44] and POMABuster [39] identify price-driven attacks by
+matching trade and oracle manipulation patterns, while TxSpec-
+tor [34] targets logic bugs like reentrancy and unchecked external
+calls. Other domain-specific tools include LeiShen [48] for flashloan-
+related attacks and TLMG4Eth [41] for address-level fraud detec-
+tion. Contract-level tools like Forta [20] analyze deployed bytecode
+to flag malicious behavior before execution, but face challenges
+due to compilation variance and limited semantic interpretability.
+Some works address post-exploit defense: APE [36] and Sting [52]
+simulate or mimic known attacks, while FlashGuard [2] mitigates
+non-price vulnerabilities after the fact. In contrast, our work focuses
+on generalizing detection patterns from traces to enable real-time,
+semantic-level detection of novel and polymorphic DeFi attacks.
+8
+Conclusion
+This paper presents GenDetect, a detection generation framework
+designed to address the persistent challenge of recurring DeFi at-
+tacks through semantic generalization and structural similarity anal-
+ysis. By abstracting execution traces into financial semantics and
+comparing them compositionally, our system captures the underly-
+ing intent of transactions rather than relying on brittle surface-level
+features. Its fully parallelizable per-transaction design–along with a
+set-based similarity metric (ANSD) that is inherently parallelizable–
+enables high-throughput performance, making it suitable for real-
+time deployment even under modern blockchain traffic. Our eval-
+uation demonstrates its effectiveness across both benchmark and
+zero-shot settings, while uncovering previously unreported attacks
+in the wild. As DeFi continues to evolve, we believe GenDetect
+offers a robust foundation for scalable, interpretable, and timely
+threat detection, and we envision future work exploring enhanced
+semantic representations and accelerated similarity computation
+to further strengthen real-time defenses.
+9

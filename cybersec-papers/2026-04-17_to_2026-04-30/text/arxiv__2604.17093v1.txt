@@ -1,0 +1,2308 @@
+HarmChip: Evaluating Hardware Security
+Centric LLM Safety via Jailbreak Benchmarking
+Zeng Wang†∗, Minghao Shao†‡∗, Weimin Fu¶, Prithwish Basu Roy†‡,
+Xiaolong Guo¶, Ramesh Karri†, Muhammad Shafique‡, Johann Knechtel‡, Ozgur Sinanoglu‡
+†NYU Tandon School of Engineering, USA
+‡NYU Abu Dhabi, UAE
+¶Kansas State University, USA
+Email: {zw3464, shao.minghao, pb2718, rkarri, muhammad.shafique, johann, ozgursin}@nyu.edu
+{weiminf, guoxiaolong}@ksu.edu
+Abstract—The integration of large language models (LLMs)
+into electronic design automation (EDA) workflows has intro-
+duced powerful capabilities for RTL generation, verification,
+and design optimization, but also raises critical security con-
+cerns. Malicious LLM outputs in this domain pose hardware-
+level threats, including hardware Trojan insertion, side-channel
+leakage, and intellectual property theft, that are irreversible once
+fabricated into silicon. Such requests often exploit semantic dis-
+guise, embedding adversarial intent within legitimate engineering
+language that existing safety mechanisms, trained on general-
+purpose hazards, fail to detect. No benchmark exists to evaluate
+LLM vulnerability to such domain-specific threats. We present
+the HarmChip benchmark to assess jailbreak susceptibility in
+hardware security, spanning 16 hardware security domains, 120
+threats, and 360 prompts at two difficulty levels. Evaluation of
+state-of-the-art LLMs reveals an alignment paradox: They refuse
+legitimate security queries while complying with semantically
+disguised attacks, exposing blind spots in safety guardrails and
+underscoring the need for domain-aware safety alignment.
+I. INTRODUCTION
+The integration of Large Language Models (LLMs) into
+Electronic Design Automation (EDA) workflows, spanning
+RTL code generation, functional verification, and design-space
+exploration is reshaping the hardware design lifecycle [1],
+[2]. LLM outputs in this context directly impact synthesiz-
+able hardware descriptions that reach silicon. A compliant
+response to a malicious prompt can embed a hardware Trojan
+[3], introduce side-channel leakage, or weaken IP protection
+mechanisms. Once fabricated into silicon, such vulnerabilities
+are near-impossible to patch and difficult to detect [4]. The
+problem is amplified by semantic disguise: adversarial intent
+in hardware design is expressed via legitimate engineering
+language, so a request to refine control logic, simplify debug
+interfaces, or handle rare state transitions can appear routine
+while guiding the LLM toward producing backdoored designs.
+Current safety alignment mechanisms are ill-equipped for
+hardware domain, producing a characteristic alignment para-
+dox [5]. Keyword-sensitive guardrails over-refuse legitimate
+queries: security engineers performing red-teaming or devel-
+oping defenses are blocked when their prompts mention terms
+such as “Trojan insertion” or “side-channel analysis.” These
+guardrails have blind spots against semantically disguised
+attacks, where an adversary phrasing a backdoor insertion as
+a power optimization or a routine Engineering Change Order
+bypasses safety filters. The core limitation is not whether
+LLMs can refuse harmful prompts, but whether they can
+separate defensive security work from malicious manipulation
+when both use identical hardware-design terminology.
+Existing safety benchmarks, including those targeting auto-
+mated red teaming, jailbreak robustness, and refusal calibra-
+tion, focus on general-purpose or software-centric threats and
+do not capture the threat structure of hardware security, where
+malicious intent is embedded within standard engineering
+semantics and a single compliant response can propagate into
+fabricated hardware [6], [7]. This paper presents HarmChip,
+the first domain-specific jailbreak benchmark for evaluating
+LLM safety in hardware security. HarmChip covers 16 hard-
+ware security domains, 120 threat scenarios, and 360 prompts
+stratified into easy and hard difficulty levels. The benchmark
+evaluates two complementary dimensions: resilience against
+semantically disguised malicious queries in realistic hardware-
+design language, and calibration against over-refusal of legit-
+imate security-oriented engineering tasks.
+The main contributions of this paper are as follows.
+• HarmChip is the first domain-specific jailbreak bench-
+mark on safety alignment in hardware security, spanning
+16 security domains, 120 threats, and 360 prompts.
+• We propose an automated, three-stage benchmark con-
+struction pipeline that leverages LLM-as-Attacker gener-
+ation and difficulty stratification to produce semantically
+disguised jailbreak prompts grounded in hardware threat
+literature.
+• Through evaluation across state-of-the-art LLMs, we ex-
+pose the alignment paradox, i.e., the co-existence of high
+false-negative rates on disguised hardware attacks and
+excessive false-positive refusals on legitimate security
+queries, underscoring the need for domain-aware safety
+guardrails in hardware design.
+II. BACKGROUND
+A. LLMs and Hardware Security
+LLMs are now integral to modern EDA, accelerating tasks
+such as RTL generation, testbench synthesis, and ECO im-
+plementation [8], [9]. This integration expands the hardware
+attack surface: malicious logic built into the RTL propagates
+arXiv:2604.17093v1 [cs.CR] 18 Apr 2026
+
+through downstream synthesis tools and materializes as per-
+manent structures in the gate-level netlist [10]. Software vul-
+nerabilities can be patched post-deployment; hardware threats
+cannot [11]. Trojans embed stealthy triggers that activate under
+rare inputs [12], side-channel structures leak cryptographic
+keys via power or timing emanations [13], and IP backdoors
+in third-party cores grant persistent unauthorized access [14]–
+[16]. Any vulnerability introduced into the RTL is baked into
+silicon with no post-fabrication remedy.
+B. Safety Alignment and Threat Model
+Commercial LLMs are aligned against harmful outputs
+through techniques such as Reinforcement Learning from Hu-
+man Feedback and Direct Preference Optimization [17], [18].
+Adversaries use jailbreak strategies, including role-playing,
+prefix injection, and instruction obfuscation, to circumvent
+these guardrails [18]–[20]. Existing safety benchmarks such as
+AdvBench [19] and JailbreakBench [21] target NLP hazards
+or software-level exploits, leaving hardware-security-specific
+attack vectors unaddressed. The threat model considered in
+this work assumes an adversary, either a rogue designer or an
+external user of an LLM-assisted EDA tool, who seeks to in-
+ject hardware-level vulnerabilities into the IC design flow. The
+attacker exploits semantic disguise: malicious payloads are
+embedded within syntactically legitimate engineering queries.
+A Trojan insertion may be framed as a Power-Performance-
+Area optimization or a functional ECO on a finite state
+machine (FSM). Current guardrails rely on keyword matching
+and general-purpose hazard detection, so such domain-specific
+obfuscation bypasses existing safety filters, necessitating a
+hardware-security-aware evaluation benchmark [22].
+III. METHODS
+A. Threat Taxonomy
+HarmChip organizes hardware security threats into a two-
+level taxonomy of 16 fine-grained domains, as illustrated in
+Figure 1, spanning the full hardware design and deployment
+lifecycle: from early supply chain and EDA tooling risks,
+through RTL design, synthesis, and physical implementation,
+to post-silicon runtime and emerging attack surfaces. This end-
+to-end coverage reflects a fundamental property of hardware
+security threats: attack vectors emerge at every stage of the
+design flow and, once fabricated into silicon, are irreversible.
+The domains span well-established areas such as Hardware
+Trojans and Side-Channel Attacks as well as emerging con-
+cerns including ML Security, Advanced Packaging, and CPS
+Hardware. The benchmark comprises 120 threat scenarios
+across these 16 domains, with each scenario instantiated into
+3 prompts per difficulty level, yielding 360 prompts for each
+of the Easy and Hard variants. Domain coverage targets areas
+with higher real-world attack surface: Crypto & Side-Channel
+and Architecture & Runtime each contribute 26 prompts per
+variant, while domains such as CPS Hardware and Compliance
+feature smaller but targeted sets.
+Supply Chain & Compliance (14)
+RTL & Logic Design (14)
+Synthesis & IP (18)
+Physical & Packaging (6)
+Crypto & Side-Channel (26)
+Architecture & Runtime (26)
+Post-Silicon & Emerging (16)
+Supply Chain
+& EDA
+Compliance
+(2)
+HW
+Trojans
+(6)
+Testing &
+Debugging
+IP
+Protection
+FPGA &
+Reconfig.
+(3)
+Silicon
+Mfg.
+(3)
+Analog
+Security
+(3)
+Adv.
+Packaging
+(3)
+Crypto, PQC
+& RNG
+Side-Channel
+Attacks
+Arch, Memory
+& Bus
+Firmware
+& Runtime
+Physical
+Attacks & FI
+ML
+Security
+(5)
+CPS
+Hardware
+(1)
+5%
+10%
+15%
+20%
+HarmChip
+Easy / Hard
+360 prompts
+120 threats
+16 domains
+Over 1200 papers
+Fig. 1: HarmChip threat taxonomy: 16 domains grouped under
+7 lifecycle-stage categories.
+B. Evaluation Metrics
+The primary metric is Attack Success Rate (ASR):
+ASR = # compliant responses
+# total prompts
+× 100%
+(1)
+A response is deemed compliant if it provides substantive,
+exploit-relevant hardware-design content (e.g., functional RTL
+or actionable design guidance); otherwise it is classified as a
+refusal. All judgments are rendered by Gemini-3-Flash serving
+as an LLM-as-Judge. ASR is reported per model and per threat
+domain across both difficulty variants, enabling analysis of
+safety robustness at both aggregate and category levels.
+C. HarmChip Generation Pipeline
+HarmChip is constructed through a three-stage automated
+pipeline for benchmark curation, as illustrated in Figure 2.
+Stage 1: Threat Taxonomy and Data Curation. For each
+of the 120 threat scenarios, 10 relevant research papers are
+collected and the 8 most substantive are retained. A criti-
+cal preprocessing step is information sanitization: identifying
+metadata such as paper titles and author names are stripped
+while the underlying exploit logic is preserved. This ensures
+that the curated content captures grounded attack knowledge
+without exposing source-level identifiers that could trigger
+hardcoded refusal behaviors in the target LLMs.
+Stage 2: Automated Red-Team Prompt Generation. The
+sanitized content is processed within an academic sandbox
+framework under strict context injection and constraint en-
+forcement. For each paper, one jailbreak prompt is derived
+
+Literature Retrieval
+Context Injection &
+Constraint Enforcement
+Academic Sandbox Framing
+Red-Team Attack
+Prompt Generation
+Top Exploit Vectors
+ASR Evaluation Metric
+LLM Inferences 
+…
+Easy 
+Harmchip
+Hard 
+Harmchip
+Hardware Threat Taxonomy
+(1) Threat Taxonomy & Data Curation
+(2) Red-Team Prompt Generation
+(3) Automated Benchmarking
+Information Sanitization
+Fig. 2: Three-stage pipeline for HarmChip construction.
+from the underlying exploit logic, yielding 8 prompts per threat
+and 960 in total. This sandboxed framing elicits attack-relevant
+content grounded in real hardware threat literature that would
+be refused under direct querying.
+Stage 3: Automated Benchmark Curation. The 960
+prompts are deployed across 6 LLMs spanning diverse
+model families: Claude-Sonnet-4.6, GPT-5.4, Gemini-3.1-Pro,
+MiniMax-M2.5, DeepSeek-V3.2, and GLM-5. Each response
+is assessed by Gemini-3-Flash as an independent judge, clas-
+sifying it as either substantive compliance or refusal. The 6
+models are then ranked by ASR from low to high for each
+prompt: prompts where the three least susceptible models
+comply are assigned to the Hard variant, while those where the
+three most susceptible models comply form the Easy variant,
+yielding 360 prompts per tier.
+IV. HARMCHIP BENCHMARK
+Table I summarizes the 16 hardware security domains
+covered by HarmChip, each associated with a representative
+threat description, publication venues, and temporal coverage.
+These domains span the full hardware lifecycle, including
+supply chain and EDA tooling risks (Categories 1–2), RTL
+backdoors and IP protection (Categories 3, 6), physical and
+fault injection attacks (Category 5), cryptographic and side-
+channel threats (Categories 4, 8), architecture and firmware
+vulnerabilities (Categories 7, 9), and emerging areas such as
+ML Security, Advanced Packaging, Cloud Hardware, and CPS
+Hardware (Categories 10–16). This broad coverage reflects a
+key characteristic of hardware security: unlike software vulner-
+abilities, which are often confined to specific layers, hardware
+threats can arise throughout the design and deployment flow
+and become effectively irreversible once embedded in silicon.
+Each domain is derived from papers published in leading se-
+curity and design automation venues, ensuring that the bench-
+mark is grounded in realistic and peer-reviewed threat models.
+The collected literature spans 2004 to 2026, covering over
+1,200 papers across both mature areas such as architecture,
+memory, and bus security, and newer areas such as Advanced
+0
+25
+50
+75
+100
+ASR (%) - Easy
+3.61
+11.67
+19.17 18.61 20.00 19.17
+38.61 44.17
+71.11 72.22 69.17
+90.83 91.39 96.39 99.44 100.00
+50%
+Step-3.5-Flash
+Gemini-3.1-Pro
+Qwen3.5-Plus
+GPT-5.4
+Qwen3.5-397B
+MiniMax-M2.5
+GLM-5
+Claude-Sonnet-4.6
+Gemini-3-Flash
+Claude-Opus-4.6
+Kimi-K2.5
+DeepSeek-V3.2
+Grok-4.1-Fast
+LLaMA-4-Maverick
+GPT-4.1
+Devstral-2512
+0
+25
+50
+75
+100
+ASR (%) - Hard
+1.94
+3.89
+4.72
+6.11
+6.39
+8.61
+16.39 12.50
+47.22
+55.83 60.83
+78.06 83.06
+90.56
+98.33 100.00
+50%
+Fig. 3: Aggregated ASR across Easy and Hard benchmarks,
+showing bimodal safety polarization among 16 LLMs.
+Packaging and ML Security. In total, HarmChip contains 120
+threat scenarios and 360 prompts across two difficulty levels,
+providing a comprehensive benchmark for evaluating LLM
+safety over a broad hardware security landscape.
+V. EXPERIMENTS
+A. Experiment Setup
+The benchmark is evaluated on 16 LLMs spanning 10
+providers (Table II), covering both proprietary and open-
+weight models with dense and Mixture-of-Experts architec-
+tures. All models are accessed through the OpenRouter API
+with default decoding parameters. A subset of 6 models is
+used during benchmark curation (Section III-C); the full 16
+are used for evaluation. Gemini-3-Flash serves as the LLM-
+as-Judge and is excluded from clustering (|M| = 15).
+B. Aggregated ASR Analysis
+Figure 3 shows the aggregated ASR across all 16 hardware
+security categories for both benchmarks. The distribution is
+bimodal. On the Hard benchmark, the first eight models
+(Step-3.5-Flash through Claude-Sonnet-4.6) fall below 50%,
+with the top four under 10%. From Gemini-3-Flash onward,
+ASR jumps to 47.22% and rises to 100% for Devstral-2512.
+The Easy benchmark follows a similar ordering but with
+higher ASR in the mid-tier range: Claude-Sonnet-4.6 increases
+from 12.50% to 44.17%, and Gemini-3-Flash from 47.22% to
+71.11%, reflecting the effect of more direct prompt framing.
+Step-3.5-Flash and Gemini-3.1-Pro maintain the lowest ASR
+across both settings, while GPT-4.1, LLaMA-4-Maverick, and
+Devstral-2512 remain at or near full compliance regardless
+of difficulty. Safety robustness against hardware-security jail-
+breaks is polarized: a small group of models offers meaningful
+resistance, while the majority remains vulnerable.
+C. Per-Category Vulnerability Analysis
+Figure 4 presents the per-category ASR of 16 LLMs on
+the Hard and Easy benchmarks, with each response judged
+as refusal or compliance by Gemini-3-Flash. On the Hard
+benchmark (Figure 4), the heatmap shows a clear left-to-
+right gradient. Safety-hardened models (Step-3.5, Gemini-
+3.1P, GPT-5.4, Qwen-397B) maintain near-zero ASR (0–17%)
+
+TABLE I: HarmChip benchmark: 16 hardware security domains with representative venues and temporal coverage.
+ID Category
+Description
+Top Selected Venues
+Year Range
+1
+Testing & Debugging
+JTAG exploitation, scan chain attacks, and debug port privi-
+lege escalation.
+DAC’21, HOST’25, TIFS’23, TODAES’21
+2012–2026
+2
+Supply Chain & EDA
+Malicious EDA tools, HLS-injected Trojans, and counterfeit
+IC detection.
+DATE’21, Oakland’23,24, HOST’21, TCAD’22,25
+2020–2026
+3
+Hardware Backdoor
+Stealthy logic modifications via rare-event triggers and FSM-
+based exfiltration.
+Oakland’24, DAC’22, DATE’21, TCAD’23,24,25
+2021–2026
+4
+Side-Channel Attacks
+Power (SPA/CPA), EM, and cache-based timing leakage.
+USENIX Sec.’23, SOCC’22, TIFS’25, TVLSI’21
+2020–2026
+5
+Physical Attacks & FI
+Laser/optical fault injection, EMFI, and FIB circuit editing.
+CCS’21, USENIX Sec.’21,23, ASIACRYPT’21,24
+2010–2026
+6
+IP Protection
+Logic locking, netlist obfuscation, SAT/ML-based defense.
+DATE’21,25,ICCAD’21,22,TCAD’22,23,TIFS’21,24
+2021–2026
+7
+Arch, Memory & Bus
+Rowhammer, bus snooping, and shared resource contention.
+Oakland’21,22, USENIX Sec.’22,23, ISCA’24,25
+2004–2026
+8
+Crypto, PQC & RNG
+Crypto
+implementation
+security,
+PQC
+resilience,
+and
+TRNG/PRNG entropy.
+CCS’21, TCHES’21,22,23,24, ASIACRYPT’21,23
+2018–2026
+9
+Firmware & Runtime
+Secure boot bypasses, firmware backdoors, and TEE runtime
+integrity.
+CCS’21, Oakland’22,23,25, USENIX Sec.’24
+2010–2026
+10
+ML Security
+On-chip model extraction, adversarial perturbations, and FL
+poisoning.
+Oakland’24,
+FPGA’21,
+ASP-DAC’21,
+TDSC’23,
+TIFS’24
+2020–2026
+11
+Analog & Mixed-Signal Sensor spoofing, analog Trojans, and supply rail manipula-
+tion.
+CCS’23,
+USENIX
+Sec.’24,
+AsiaCCS’21,
+TCAD’22,24
+2021–2026
+12
+Adv. Packaging
+2.5D/3D IC interconnect snooping and TSV exploitation.
+TCAD’22,
+TVLSI’22,
+TODAES’25,
+SOCC’23,
+IEEE D&T’22
+2021–2026
+13
+Cloud Hardware
+FPGA multi-tenancy breaches and cross-VM hardware at-
+tacks.
+CCS’23, SOSP’24, TCHES’24, JETC’23
+2021–2025
+14
+Secure Interconnect
+NoC routing attacks and bus-level unauthorized access.
+DATE’21, TODAES’22, ATS’24, ASPLOS’24
+2021–2025
+15
+Silicon Manufacturing
+PDK poisoning, layout-to-mask manipulation, and untrusted
+foundry risks.
+TCAD’23, TODAES’23, ISPD’23, VLSI-SoC’23,
+TETC’22
+2016–2026
+16
+CPS Hardware
+CAN bus security, sensor integrity, actuator control protec-
+tion.
+Oakland’21, USENIX.’21,CCS’22,RTSS’21,Sensors’232021–2023
+TABLE II: Summary of 16 LLMs evaluated on HarmChip.
+Model
+Provider
+Params
+Type
+Arch
+Release
+Step-3.5-Flash
+StepFun
+196B/11B
+Open
+MoE
+02/2026
+Gemini-3.1-Pro
+Google
+–
+Prop.
+–
+02/2026
+Qwen3.5-Plus
+Alibaba
+–
+Prop.
+–
+03/2026
+GPT-5.4
+OpenAI
+–
+Prop.
+–
+03/2026
+Qwen3.5-397B
+Alibaba
+397B/17B
+Open
+MoE
+03/2026
+MiniMax-M2.5
+MiniMax
+229B
+Open
+MoE
+03/2026
+GLM-5
+Zhipu AI
+744B/40B
+Open
+MoE
+02/2026
+Claude-Sonnet-4.6
+Anthropic
+–
+Prop.
+–
+02/2026
+Gemini-3-Flash
+Google
+–
+Prop.
+–
+12/2025
+Claude-Opus-4.6
+Anthropic
+–
+Prop.
+–
+02/2026
+Kimi-K2.5
+Moonshot
+1T/32B
+Open
+MoE
+01/2026
+DeepSeek-V3.2
+DeepSeek
+685B
+Open
+MoE
+12/2025
+Grok-4.1-Fast
+xAI
+–
+Prop.
+–
+12/2025
+LLaMA-4-Maverick
+Meta
+400B/17B
+Open
+MoE
+04/2025
+GPT-4.1
+OpenAI
+–
+Prop.
+–
+04/2025
+Devstral-2512
+Mistral
+123B
+Open
+Dense
+12/2025
+across most categories. Code-oriented and open-weight models
+(Devstral, GPT-4.1, LLaMA-4M) reach 94–100% across most
+domains. A mid-tier group (Gemini-3F, Opus-4.6, Kimi-K2.5)
+shows intermediate, category-dependent ASR (22–83%), indi-
+cating that partial safety alignment offers inconsistent protec-
+tion against domain-specific prompts. At the category level,
+Firmware & Runtime and Silicon Manufacturing are the most
+resistant domains, likely because such queries are specialized
+and underrepresented in general training corpora. CPS Hard-
+ware, Testing & Debugging, and Side-Channel Attacks show
+the highest vulnerability.
+On the Easy benchmark, ASR increases across most models.
+GPT-5.4 and Qwen3.5+ show higher ASR in IP Protection
+and Side-Channel Attacks, where they were resistant under
+the Hard setting, suggesting their safety mechanisms are
+phrasing-sensitive. Mid-tier models (Sonnet-4.6, Kimi-K2.5,
+Gemini-3F) also increase, with many categories exceeding
+70%. Prompt complexity does suppress ASR for some, but the
+vulnerability remains broad: current safety alignment is insuffi-
+cient even against straightforward hardware-security prompts.
+D. Response Style Clustering
+To analyze lexical similarity across models and threat
+categories, all responses for each (model, category) pair are
+concatenated into a single document (15 × 16 = 240 docu-
+ments), vectorized using sublinear TF-IDF weighting [23] over
+unigrams and bigrams (top 5,000 terms), and ℓ2-normalized.
+Category-level and model-level representative vectors are ob-
+tained by averaging across models and categories, respectively.
+Agglomerative hierarchical clustering with Ward linkage [24]
+is applied to the resulting cosine similarity matrices.
+1) Category-Level Clustering: The Ward-linkage dendro-
+grams in Figure 6 show consistent structural partitions across
+both benchmarks, suggesting that thematic proximity of
+hardware-security categories, rather than benchmark difficulty,
+
+Step-3.5
+Gemini-3.1P
+GPT-5.4
+Qwen3.5+
+MiniMax
+Qwen-397B
+GLM-5
+Sonnet-4.6
+Kimi-K2.5
+Gemini-3F
+Opus-4.6
+DeepSeek-V3
+Grok-4.1
+LLaMA-4M
+GPT-4.1
+Devstral
+Testing & Debugging
+Supply Chain & EDA
+Hardware Trojans
+Side-Channel Attacks
+Physical Attacks & FI
+IP Protection
+Arch, Memory & Bus
+Crypto, PQC & RNG
+Firmware & Runtime
+ML Security
+Analog Security
+Adv. Packaging
+Compliance
+FPGA & Reconfigurable HW
+Silicon Manufacturing
+CPS Hardware
+0
+0
+17
+12
+4
+8
+29
+46
+54
+50
+88
+92
+92
+100
+100
+100
+0
+0
+14
+6
+14
+3
+25
+28
+83
+67
+64
+97
+97
+100
+100
+100
+0
+6
+6
+6
+28
+17
+28
+17
+78
+72
+50
+78
+89
+94
+100
+100
+0
+19
+14
+43
+33
+52
+67
+71
+86
+100
+90
+100
+100
+100
+95
+100
+13
+27
+20
+23
+30
+37
+50
+47
+67
+77
+70
+90
+90
+97
+100
+100
+3
+25
+58
+28
+31
+28
+56
+86
+69
+92
+89
+100
+97
+100
+100
+100
+0
+16
+13
+16
+22
+13
+36
+44
+87
+76
+69
+96
+93
+98
+100
+100
+5
+16
+23
+37
+14
+32
+60
+70
+49
+86
+91
+96
+98
+100
+100
+100
+3
+0
+6
+6
+12
+6
+12
+18
+73
+24
+58
+67
+64
+88
+100
+100
+13
+13
+13
+20
+7
+13
+33
+40
+60
+67
+60
+73
+87
+93
+100
+100
+0
+11
+11
+11
+11
+33
+22
+0
+67
+78
+67
+100
+89
+89
+100
+100
+22
+0
+11
+0
+33
+11
+44
+11
+100
+67
+78
+89
+100
+100
+100
+100
+0
+17
+17
+33
+33
+17
+17
+0
+83
+83
+50
+67
+100
+100
+83
+100
+0
+0
+11
+11
+11
+11
+33
+22
+56
+56
+44
+100
+100
+100
+100
+100
+0
+0
+0
+0
+11
+0
+0
+0
+33
+44
+33
+89
+67
+67
+100
+100
+0
+0
+0
+0
+0
+0
+0
+0
+33
+67
+33
+100
+100
+67
+100
+100
+Testing & Debugging
+Supply Chain & EDA
+Hardware Trojans
+Side-Channel Attacks
+Physical Attacks & FI
+IP Protection
+Arch, Memory & Bus
+Crypto, PQC & RNG
+Firmware & Runtime
+ML Security
+Analog Security
+Adv. Packaging
+Compliance
+FPGA & Reconfigurable HW
+Silicon Manufacturing
+CPS Hardware
+0
+0
+0
+4
+4
+0
+12
+8
+71
+38
+75
+88
+88
+96
+100
+100
+3
+0
+0
+0
+11
+0
+8
+8
+64
+53
+44
+89
+89
+100
+100
+100
+0
+11
+0
+6
+22
+11
+28
+0
+61
+44
+39
+78
+89
+100
+94
+100
+0
+10
+10
+5
+10
+19
+29
+29
+90
+76
+81
+90
+100
+95
+100
+100
+3
+10
+3
+10
+10
+13
+20
+3
+57
+47
+53
+67
+77
+87
+97
+100
+0
+8
+28
+6
+19
+8
+28
+33
+67
+64
+83
+97
+83
+100
+100
+100
+7
+2
+4
+0
+7
+0
+11
+9
+60
+40
+56
+78
+89
+82
+98
+100
+2
+2
+9
+11
+7
+14
+19
+23
+58
+58
+68
+86
+93
+93
+100
+100
+0
+0
+0
+0
+0
+0
+3
+0
+45
+18
+33
+45
+64
+88
+94
+100
+0
+0
+7
+13
+13
+7
+20
+13
+67
+53
+53
+87
+80
+87
+93
+100
+0
+0
+0
+0
+11
+0
+11
+0
+44
+33
+22
+67
+100
+78
+100
+100
+0
+11
+0
+0
+0
+0
+22
+0
+56
+56
+44
+56
+67
+67
+100
+100
+17
+0
+17
+17
+0
+17
+0
+0
+50
+17
+17
+33
+33
+67
+100
+100
+0
+11
+0
+0
+0
+0
+22
+22
+67
+33
+33
+78
+44
+89
+100
+100
+0
+0
+0
+0
+0
+0
+0
+0
+33
+22
+22
+56
+67
+89
+100
+100
+0
+0
+0
+0
+0
+0
+33
+0
+67
+67
+67
+100
+100
+67
+100
+100
+0%
+Attack Success Rate
+100%
+(a) Easy HarmChip
+(b) Hard HarmChip
+Fig. 4: Per-category ASR heatmap: (a) Easy and (b) Hard
+benchmarks. Models sorted by increasing overall ASR.
+Gemini-3.1P
+Gemini-3F
+GLM-5
+MiniMax
+Qwen-397B
+Qwen3.5+
+Opus-4.6
+Sonnet-4.6
+GPT-5.4
+LLaMA-4M
+Devstral
+GPT-4.1
+Grok-4.1
+DeepSeek-V3
+Kimi-K2.5
+1.00
+0.92
+0.93
+0.81
+0.85
+0.83
+0.64
+0.51
+0.59
+0.68
+0.66
+0.68
+0.58
+0.62
+0.72
+0.92
+1.00
+0.94
+0.83
+0.86
+0.85
+0.71
+0.55
+0.66
+0.76
+0.76
+0.77
+0.68
+0.72
+0.80
+0.93
+0.94
+1.00
+0.84
+0.87
+0.85
+0.70
+0.54
+0.66
+0.77
+0.76
+0.76
+0.67
+0.72
+0.80
+0.81
+0.83
+0.84
+1.00
+0.83
+0.83
+0.66
+0.58
+0.61
+0.71
+0.68
+0.70
+0.61
+0.66
+0.73
+0.85
+0.86
+0.87
+0.83
+1.00
+0.98
+0.69
+0.63
+0.65
+0.67
+0.66
+0.68
+0.59
+0.70
+0.79
+0.83
+0.85
+0.85
+0.83
+0.98
+1.00
+0.70
+0.64
+0.65
+0.66
+0.66
+0.68
+0.59
+0.71
+0.80
+0.64
+0.71
+0.70
+0.66
+0.69
+0.70
+1.00
+0.83
+0.72
+0.66
+0.73
+0.75
+0.73
+0.80
+0.83
+0.51
+0.55
+0.54
+0.58
+0.63
+0.64
+0.83
+1.00
+0.55
+0.48
+0.51
+0.55
+0.49
+0.58
+0.63
+0.59
+0.66
+0.66
+0.61
+0.65
+0.65
+0.72
+0.55
+1.00
+0.63
+0.71
+0.75
+0.74
+0.75
+0.77
+0.68
+0.76
+0.77
+0.71
+0.67
+0.66
+0.66
+0.48
+0.63
+1.00
+0.85
+0.82
+0.70
+0.76
+0.74
+0.66
+0.76
+0.76
+0.68
+0.66
+0.66
+0.73
+0.51
+0.71
+0.85
+1.00
+0.86
+0.81
+0.89
+0.84
+0.68
+0.77
+0.76
+0.70
+0.68
+0.68
+0.75
+0.55
+0.75
+0.82
+0.86
+1.00
+0.83
+0.81
+0.81
+0.58
+0.68
+0.67
+0.61
+0.59
+0.59
+0.73
+0.49
+0.74
+0.70
+0.81
+0.83
+1.00
+0.82
+0.81
+0.62
+0.72
+0.72
+0.66
+0.70
+0.71
+0.80
+0.58
+0.75
+0.76
+0.89
+0.81
+0.82
+1.00
+0.90
+0.72
+0.80
+0.80
+0.73
+0.79
+0.80
+0.83
+0.63
+0.77
+0.74
+0.84
+0.81
+0.81
+0.90
+1.00
+Gemini-3.1P
+Gemini-3F
+GLM-5
+MiniMax
+Qwen-397B
+Qwen3.5+
+LLaMA-4M
+Devstral
+DeepSeek-V3
+Kimi-K2.5
+GPT-4.1
+Grok-4.1
+GPT-5.4
+Opus-4.6
+Sonnet-4.6
+Gemini-3.1P
+Gemini-3F
+GLM-5
+MiniMax
+Qwen-397B
+Qwen3.5+
+LLaMA-4M
+Devstral
+DeepSeek-V3
+Kimi-K2.5
+GPT-4.1
+Grok-4.1
+GPT-5.4
+Opus-4.6
+Sonnet-4.6
+1.00
+0.90
+0.91
+0.86
+0.88
+0.87
+0.70
+0.68
+0.65
+0.72
+0.69
+0.60
+0.62
+0.67
+0.63
+0.90
+1.00
+0.94
+0.89
+0.89
+0.88
+0.80
+0.80
+0.76
+0.82
+0.80
+0.73
+0.70
+0.76
+0.69
+0.91
+0.94
+1.00
+0.90
+0.89
+0.89
+0.80
+0.81
+0.77
+0.82
+0.80
+0.72
+0.70
+0.75
+0.69
+0.86
+0.89
+0.90
+1.00
+0.89
+0.89
+0.78
+0.77
+0.73
+0.78
+0.77
+0.68
+0.69
+0.73
+0.70
+0.88
+0.89
+0.89
+0.89
+1.00
+0.98
+0.72
+0.73
+0.72
+0.79
+0.72
+0.64
+0.68
+0.72
+0.72
+0.87
+0.88
+0.89
+0.89
+0.98
+1.00
+0.72
+0.73
+0.73
+0.79
+0.73
+0.65
+0.69
+0.73
+0.72
+0.70
+0.80
+0.80
+0.78
+0.72
+0.72
+1.00
+0.85
+0.77
+0.76
+0.82
+0.72
+0.66
+0.70
+0.63
+0.68
+0.80
+0.81
+0.77
+0.73
+0.73
+0.85
+1.00
+0.91
+0.86
+0.86
+0.82
+0.74
+0.78
+0.69
+0.65
+0.76
+0.77
+0.73
+0.72
+0.73
+0.77
+0.91
+1.00
+0.92
+0.82
+0.86
+0.77
+0.84
+0.74
+0.72
+0.82
+0.82
+0.78
+0.79
+0.79
+0.76
+0.86
+0.92
+1.00
+0.82
+0.85
+0.80
+0.87
+0.78
+0.69
+0.80
+0.80
+0.77
+0.72
+0.73
+0.82
+0.86
+0.82
+0.82
+1.00
+0.84
+0.78
+0.78
+0.71
+0.60
+0.73
+0.72
+0.68
+0.64
+0.65
+0.72
+0.82
+0.86
+0.85
+0.84
+1.00
+0.78
+0.79
+0.69
+0.62
+0.70
+0.70
+0.69
+0.68
+0.69
+0.66
+0.74
+0.77
+0.80
+0.78
+0.78
+1.00
+0.78
+0.72
+0.67
+0.76
+0.75
+0.73
+0.72
+0.73
+0.70
+0.78
+0.84
+0.87
+0.78
+0.79
+0.78
+1.00
+0.90
+0.63
+0.69
+0.69
+0.70
+0.72
+0.72
+0.63
+0.69
+0.74
+0.78
+0.71
+0.69
+0.72
+0.90
+1.00
+Fig. 5: Model-level response clustering, with three behavioral
+tiers: refusal-oriented, intermediate, and high-compliance.
+drives response similarity. On the Hard benchmark, cate-
+gories bifurcate into two super-clusters: a system-level group
+covering algorithmic and code-oriented domains (e.g., Side-
+Channel Attacks, IP Protection, ML Security) and a physical-
+implementation group rooted in manufacturing and packaging
+constraints (e.g., Analog Security, Hardware Trojans, CPS
+Hardware), with Silicon Manufacturing appearing as an outlier
+at the highest merge height. The Easy benchmark preserves
+this partition with minor intra-cluster reordering, indicating
+16. CPS HW
+11. Analog
+3. HW Trojans
+12. Adv. Pkg
+13. Compliance
+15. Si Mfg
+1. Test/Debug
+2. SC & EDA
+6. IP Prot.
+7. Arch/Mem
+9. FW/Runtime
+10. ML Sec
+4. SCA
+5. Phys/FI
+8. Crypto/PQC
+1.00
+0.43
+0.42
+0.46
+0.47
+0.40
+0.40
+0.39
+0.37
+0.45
+0.43
+0.40
+0.39
+0.45
+0.39
+0.43
+1.00
+0.66
+0.70
+0.54
+0.54
+0.55
+0.57
+0.49
+0.54
+0.56
+0.55
+0.59
+0.67
+0.56
+0.42
+0.66
+1.00
+0.72
+0.61
+0.56
+0.67
+0.72
+0.60
+0.65
+0.58
+0.59
+0.55
+0.65
+0.60
+0.46
+0.70
+0.72
+1.00
+0.57
+0.56
+0.61
+0.62
+0.55
+0.62
+0.56
+0.59
+0.58
+0.65
+0.60
+0.47
+0.54
+0.61
+0.57
+1.00
+0.54
+0.61
+0.58
+0.51
+0.61
+0.59
+0.55
+0.50
+0.57
+0.53
+0.40
+0.54
+0.56
+0.56
+0.54
+1.00
+0.53
+0.65
+0.54
+0.52
+0.54
+0.53
+0.49
+0.62
+0.51
+0.40
+0.55
+0.67
+0.61
+0.61
+0.53
+1.00
+0.68
+0.70
+0.61
+0.62
+0.57
+0.60
+0.67
+0.67
+0.39
+0.57
+0.72
+0.62
+0.58
+0.65
+0.68
+1.00
+0.80
+0.63
+0.59
+0.67
+0.61
+0.68
+0.67
+0.37
+0.49
+0.60
+0.55
+0.51
+0.54
+0.70
+0.80
+1.00
+0.58
+0.54
+0.64
+0.61
+0.63
+0.66
+0.45
+0.54
+0.65
+0.62
+0.61
+0.52
+0.61
+0.63
+0.58
+1.00
+0.74
+0.69
+0.65
+0.68
+0.66
+0.43
+0.56
+0.58
+0.56
+0.59
+0.54
+0.62
+0.59
+0.54
+0.74
+1.00
+0.60
+0.60
+0.72
+0.66
+0.40
+0.55
+0.59
+0.59
+0.55
+0.53
+0.57
+0.67
+0.64
+0.69
+0.60
+1.00
+0.68
+0.62
+0.65
+0.39
+0.59
+0.55
+0.58
+0.50
+0.49
+0.60
+0.61
+0.61
+0.65
+0.60
+0.68
+1.00
+0.67
+0.75
+0.45
+0.67
+0.65
+0.65
+0.57
+0.62
+0.67
+0.68
+0.63
+0.68
+0.72
+0.62
+0.67
+1.00
+0.76
+0.39
+0.56
+0.60
+0.60
+0.53
+0.51
+0.67
+0.67
+0.66
+0.66
+0.66
+0.65
+0.75
+0.76
+1.00
+1. Test/Debug
+2. SC & EDA
+6. IP Prot.
+7. Arch/Mem
+9. FW/Runtime
+10. ML Sec
+5. Phys/FI
+4. SCA
+8. Crypto/PQC
+15. Si Mfg
+11. Analog
+3. HW Trojans
+12. Adv. Pkg
+13. Compliance
+16. CPS HW
+1. Test/Debug
+2. SC & EDA
+6. IP Prot.
+7. Arch/Mem
+9. FW/Runtime
+10. ML Sec
+5. Phys/FI
+4. SCA
+8. Crypto/PQC
+15. Si Mfg
+11. Analog
+3. HW Trojans
+12. Adv. Pkg
+13. Compliance
+16. CPS HW
+1.00
+0.69
+0.65
+0.64
+0.65
+0.53
+0.66
+0.53
+0.66
+0.52
+0.51
+0.60
+0.62
+0.53
+0.47
+0.69
+1.00
+0.80
+0.66
+0.63
+0.62
+0.66
+0.58
+0.68
+0.67
+0.58
+0.68
+0.60
+0.55
+0.46
+0.65
+0.80
+1.00
+0.55
+0.52
+0.61
+0.59
+0.60
+0.69
+0.52
+0.49
+0.53
+0.48
+0.49
+0.35
+0.64
+0.66
+0.55
+1.00
+0.73
+0.58
+0.62
+0.65
+0.64
+0.50
+0.52
+0.67
+0.64
+0.52
+0.49
+0.65
+0.63
+0.52
+0.73
+1.00
+0.58
+0.67
+0.59
+0.61
+0.52
+0.50
+0.57
+0.58
+0.51
+0.52
+0.53
+0.62
+0.61
+0.58
+0.58
+1.00
+0.56
+0.66
+0.65
+0.50
+0.50
+0.52
+0.52
+0.53
+0.39
+0.66
+0.66
+0.59
+0.62
+0.67
+0.56
+1.00
+0.65
+0.73
+0.61
+0.60
+0.57
+0.61
+0.51
+0.44
+0.53
+0.58
+0.60
+0.65
+0.59
+0.66
+0.65
+1.00
+0.78
+0.45
+0.57
+0.47
+0.55
+0.47
+0.35
+0.66
+0.68
+0.69
+0.64
+0.61
+0.65
+0.73
+0.78
+1.00
+0.48
+0.56
+0.56
+0.56
+0.51
+0.38
+0.52
+0.67
+0.52
+0.50
+0.52
+0.50
+0.61
+0.45
+0.48
+1.00
+0.56
+0.58
+0.54
+0.49
+0.44
+0.51
+0.58
+0.49
+0.52
+0.50
+0.50
+0.60
+0.57
+0.56
+0.56
+1.00
+0.60
+0.61
+0.46
+0.42
+0.60
+0.68
+0.53
+0.67
+0.57
+0.52
+0.57
+0.47
+0.56
+0.58
+0.60
+1.00
+0.67
+0.57
+0.55
+0.62
+0.60
+0.48
+0.64
+0.58
+0.52
+0.61
+0.55
+0.56
+0.54
+0.61
+0.67
+1.00
+0.51
+0.56
+0.53
+0.55
+0.49
+0.52
+0.51
+0.53
+0.51
+0.47
+0.51
+0.49
+0.46
+0.57
+0.51
+1.00
+0.46
+0.47
+0.46
+0.35
+0.49
+0.52
+0.39
+0.44
+0.35
+0.38
+0.44
+0.42
+0.55
+0.56
+0.46
+1.00
+Fig. 6: Category-level response clustering. System-level and
+physical-implementation domains form distinct super-clusters.
+that reduced prompt complexity does not dissolve domain-
+level semantic boundaries but does alter fine-grained similarity.
+2) Model-Level Clustering: The model dendrograms in
+Figure 5 show a stable three-tier behavioral stratification across
+both benchmarks. The first cluster groups refusal-oriented
+models (e.g., Gemini-3.1-Pro, Qwen-397B) with ASR below
+17%. The second cluster contains models with an intermediate
+posture (e.g., Claude-Opus-4.6, Claude-Sonnet-4.6), engaging
+with certain threat categories while declining others, with
+ASR of 9%–50%. The third cluster captures high-compliance
+models (e.g., GPT-4.1, LLaMA-4-Maverick, Devstral-2512)
+that produce detailed responses across all categories. This
+three-cluster topology is reproduced on the Easy benchmark
+with only minor leaf reordering, indicating that the behavioral
+groupings reflect model-level safety alignment rather than
+prompt-difficulty artifacts. Model family and safety-tuning
+strategy, rather than benchmark design, are the dominant
+factors governing response behavior in this evaluation.
+VI. CASE STUDY
+A. Safety Alignment Disparities Across LLMs
+As shown in Figure 7, the adversarial prompt disguises
+a resynthesis-based attack against logic-locked netlists as a
+routine “security audit.” Three behavioral paradigms emerge.
+Devstral-2512 exhibits full compliance, generating a func-
+tional Tcl script with aggressive optimization directives (com-
+pile ultra ungroup) to strip obfuscation logic for downstream
+SAT-based attacks. Claude-Sonnet-4.6 produces a semantically
+grounded refusal, identifying the workflow as a targeted attack
+pipeline. Step-3.5-Flash returns a null response, reflecting rigid
+upstream filtering without contextual reasoning. This gap con-
+firms that general-purpose alignment fails in hardware security,
+where identifying malicious intent requires understanding how
+EDA commands compose into attack chains.
+B. Evolving Safety Awareness Across LLMs
+As shown in Figure 8, the adversarial prompt requests a Z3
+SMT solver script to generate a power-side-channel leakage
+vector under the guise of auditing a secure scan architecture.
+The GPT family’s generational contrast: GPT-4.1 generates
+
+Silent Refusal
+Refusal: Reasoning
+Acceptance: High-Compliance
+Fig. 7: Logic locking jailbreak: Devstral-2512 fully complies,
+Claude-Sonnet-4.6 provides grounded refusal, Step-3.5-Flash
+returns null.
+a functional Z3-based script with comments such as “MAXI-
+MIZE TOGGLE ACTIVITY,” weaponizing formal verification
+against the architecture it claims to audit; GPT-5.4 refuses
+the concrete attack vector and redirects toward defensive
+alternatives including filter validation and architectural hard-
+ening. Gemini-3.1-Pro declines code generation while offering
+theoretical analysis and concrete mitigations. Both GPT-5.4
+and Gemini-3.1-Pro reflect a converging trend among frontier
+models toward context-aware refusal paired with construc-
+tive engagement, suggesting that hardware-security alignment,
+while uneven, is advancing alongside model capability.
+VII. LIMITATION AND FUTURE WORK
+HarmChip evaluates model behavior at the language level;
+a natural next step is to ground the benchmark in real EDA
+environments, where compliant outputs can be compiled,
+simulated, or synthesized to assess their functional malicious-
+ness and connect language-level failures to hardware-level
+impact. Language-level evaluation alone risks over- or under-
+estimating harm, as outputs may be syntactically alarming yet
+Compliant Executor
+Strict Defender
+Deep Theorist
+Fig. 8: Scan-based side-channel attack: GPT-4.1 complies,
+GPT-5.4 redirects to defense, Gemini-3.1-Pro provides theo-
+retical analysis.
+functionally inert, or superficially compliant yet sufficient to
+enable real-world attacks. Future work should also account
+for more advanced jailbreak attacks, which may become
+increasingly multi-turn, adaptive, and semantically obfuscated,
+often embedding malicious intent within realistic hardware
+design and verification contexts. Expanding prompt coverage
+for each threat scenario and maintaining a dynamic update
+mechanism for emerging jailbreak strategies and threat vectors
+would further strengthen the benchmark, while also supporting
+hardware-security-aware fine-tuning datasets that better distin-
+guish legitimate security work from malicious manipulation.
+VIII. CONCLUSION
+We present HarmChip, the first domain-specific jailbreak
+benchmark for evaluating LLM safety alignment in hard-
+ware security. Spanning 16 hardware security domains, 120
+threat scenarios, and 360 prompts across two difficulty tiers,
+HarmChip exposes a critical alignment paradox: current safety
+mechanisms simultaneously over-refuse legitimate security
+queries while remaining vulnerable to semantically disguised
+
+hardware attacks. Evaluation across 16 state-of-the-art LLMs
+reveals a polarized safety landscape, where a small group
+of models offers meaningful resistance while the majority
+complies with adversarially framed prompts at high rates.
+These
+findings
+highlight
+a
+fundamental
+limitation
+of
+general-purpose safety alignment in hardware security, where
+malicious intent is conveyed through standard EDA terminol-
+ogy and a single compliant response can introduce irreversible
+vulnerabilities into fabricated silicon. HarmChip provides a
+concrete diagnostic framework to drive progress toward more
+robust, context-sensitive alignment as LLMs become increas-
+ingly embedded in hardware design workflows.

@@ -1,0 +1,1300 @@
+Mitigating Error Amplification in Fast Adversarial Training
+Mengnan Zhao1, Lihe Zhang2*, Bo Wang2, Tianhang Zheng3∗, Hong Zhong1, Geyong Min4
+1Anhui University, Anhui, China
+2Dalian University of Technology, Liaoning, China
+3Zhejiang University, Zhejiang, China
+4University of Exeter, UK
+Abstract
+Fast Adversarial Training (FAT) has proven effective in en-
+hancing model robustness by encouraging networks to learn
+perturbation-invariant representations. However, FAT often
+suffers from catastrophic overfitting (CO), where the model
+overfits to the training attack and fails to generalize to un-
+seen ones. Moreover, robustness-oriented optimization typ-
+ically leads to notable performance degradation on clean
+inputs, and such degradation becomes increasingly severe
+as the perturbation budget grows. In this work, we con-
+duct a comprehensive analysis of how guidance strength af-
+fects model performance by modulating perturbation and
+supervision levels across distinct confidence groups. The
+findings reveal that low-confidence samples are the primary
+contributors to CO and the robustness–accuracy trade-off.
+Building on this insight, we propose a Distribution-aware
+Dynamic Guidance (DDG) strategy that dynamically ad-
+justs both the perturbation budget and supervision signal.
+Specifically, DDG scales the perturbation magnitude ac-
+cording to the sample confidence at the ground-truth class,
+thereby guiding samples toward consistent decision bound-
+aries while mitigating the influence of learning spurious
+correlations. Simultaneously, it dynamically adjusts the su-
+pervision signal based on the prediction state of each sam-
+ple, preventing overemphasis on incorrect signals. To al-
+leviate potential gradient instability arising from dynamic
+guidance, we further design a weighted regularization con-
+straint.
+Extensive experiments on standard benchmarks
+demonstrate that DDG effectively alleviates both CO and
+the robustness–accuracy trade-off.
+1. Introduction
+Improving the adversarial robustness of deep neural net-
+works remains a fundamental challenge in trustworthy ma-
+chine learning[34, 45, 47, 48, 50]. Among existing defense
+strategies, adversarial training (AT) has emerged as one of
+the most effective approaches for enhancing model robust-
+*corresponding author.
+ness against adversarial perturbations [4, 10, 37, 43, 49, 53].
+However, standard AT typically incurs substantial compu-
+tational overhead, as it requires iterative generation of ad-
+versarial examples. To mitigate this issue, Fast Adversarial
+Training (FAT) [16, 21, 25, 30, 31, 44] accelerates training
+by employing single-step attacks such as FGSM-RS [41].
+While computationally efficient, FAT methods often suf-
+fer from catastrophic overfitting (CO), where model ro-
+bustness collapses dramatically after only a few training
+epochs. Prior studies have attributed this phenomenon to
+factors such as gradient misalignment [1] and feature path-
+way divergence [55].
+In addition, both FAT and stan-
+dard AT [17, 39] encounter a robustness–accuracy trade-
+off, where enhancing model robustness typically degrades
+clean accuracy. To address this, recent methods have intro-
+duced various techniques such as prior-guided adversarial
+initialization [20] and label relaxation [38]. However, the
+underlying mechanisms driving this trade-off, as well as its
+relationship to CO, remain insufficiently understood.
+In this work, we begin by conducting a systematic
+analysis of how varying guidance strengths affect FAT
+performance.
+Our analysis reveals that low-confidence
+and misclassified samples are the primary contributors to
+both CO and the robustness–accuracy trade-off. Specifi-
+cally, injecting strong adversarial perturbations into these
+samples exacerbates CO, as the model tends to leverage
+perturbation-specific artifacts rather than intrinsic seman-
+tic cues—analogous to learning spurious, class-dependent
+backdoor features. Furthermore, we observe that mitigating
+erroneous guidance on low-confidence samples simultane-
+ously improves both clean accuracy and adversarial robust-
+ness. These insights suggest that enforcing uniform guid-
+ance across all samples is inherently suboptimal; instead,
+the guidance should be dynamically modulated according
+to the confidence and prediction state of each input.
+Motivated by these insights, we propose a Distribution-
+aware Dynamic Guidance (DDG) strategy. DDG dynami-
+cally adjusts perturbation strengths via adaptive budget al-
+location, which guides samples to reside near similar deci-
+sion boundaries while mitigating the risk of learning spuri-
+ous correlations. In addition, DDG modulates supervision
+arXiv:2604.24332v1 [cs.LG] 27 Apr 2026
+
+signals according to each sample’s prediction state, pre-
+venting excessive emphasis on incorrectly predicted classes.
+To further stabilize optimization, we introduce a weighted
+regularization term that alleviates potential gradient non-
+smoothness induced by dynamic guidance.
+Our main contributions are summarized as follows: (1)
+We conduct a systematic examination revealing that apply-
+ing uniform guidance across samples is suboptimal, and
+that the guidance should adapt to prediction confidence and
+correctness.
+(2) Building on this insight, we propose a
+distribution-aware dynamic guidance (DDG) strategy that
+dynamically adjusts the perturbation budget and supervi-
+sion signal according to each sample’s confidence and pre-
+diction state. Furthermore, we introduce a weighted regu-
+larization term to stabilize gradients under dynamic guid-
+ance. (3) Extensive experiments on standard benchmarks
+demonstrate that DDG achieves superior robustness and
+clean accuracy compared to state-of-the-art FAT methods.
+2. Related Work
+Deep neural networks have raised security concerns due
+to their susceptibility to adversarial attacks [2, 9, 14, 23,
+46, 56], prompting growing interest in AT techniques [17,
+28, 40]. Given the training data (x, y) ∼Dtrain, Madry et
+al. [26] formulate AT as a min-max optimization problem,
+ \l
+a
+bel {eq1} \mi
+n
+ _\
+theta \m a thbb {E} _{
+(
+x, y)\sim D_\text {train}} \left [\max _{\delta \in [-\xi , \xi ]} \mathcal {L}\left (f(x+\delta ), y\right ) \right ], 
+(1)
+where f(·) denotes the model parameterized by θ, ξ is the
+maximum perturbation budget, and L(·) typically repre-
+sents the cross-entropy loss.
+In contrast, regularization-
+based methods [36, 51] align the predictions for clean x and
+adversarial examples x + δ,
+ \l
+a
+bel {eq2} \mi n _\thet a \ math b b { E}_{(x, y)\sim D_\text {train}}\left [ \mathcal {L}\left (f(x), y\right ) + \|f(x+\delta ) - f(x)\|_2 \right ], 
+(2)
+where ∥· ∥2 denotes the ℓ2 norm function.
+Unlike standard AT that utilizes multi-step attacks, FAT
+employs single-step attacks (e.g., FGSM) [5, 13, 33] for im-
+proving training efficiency. However, FAT may face the
+CO issue [7, 32]. To mitigate CO, prior works have ex-
+plored techniques including random initialization [41], gra-
+dient alignment [1], regularization-based defenses [29, 36],
+smoothed convergence [54], and feature activation consis-
+tency [55]. Beyond CO, both FAT and standard AT exhibit
+a significant trade-off between adversarial robustness and
+clean classification accuracy [18]. To mitigate this issue, re-
+searchers have introduced several strategies, such as prior-
+guided adversarial initialization [20], adaptive step-size al-
+location based on gradient norms [16], feature-space regu-
+larization [19], and label relaxation [38].
+Despite recent advances, existing methods still suffer
+from a significant trade-off between clean accuracy and
+Figure 1. CO analysis on CIFAR10 and ResNet18. Each training
+batch is divided into four groups, Max, Min, Mid1, and Mid2.
+PGD use 10 steps, with a fixed perturbation budget of 8/255.
+adversarial robustness, while the intrinsic relationship be-
+tween CO and this trade-off remains unclear. This work
+reveals that low-confidence and misclassified samples are
+the primary drivers to both CO and the robustness–accuracy
+trade-off. Hence, we propose a distribution-aware dynamic
+guidance that dynamically assigns perturbation budgets and
+supervision signals per sample, replacing the uniform treat-
+ment used in prior works.
+3. Proposed Method
+In this section, we begin by analyzing the impact of guid-
+ance intensity on FAT performance. Then, we describe the
+proposed distribution-aware dynamic guidance strategy.
+3.1. Impact of Guidance Intensity
+This section aims to answer the following question: Do dif-
+ferent samples exhibit distinct behaviors during FAT, and if
+so, how? To investigate this, we conduct a confidence-based
+analysis following the TDAT framework [38] on CIFAR-10
+and ResNet-18. All experiments are performed with a train-
+ing batch size of 128.
+3.1.1. Perturbation Strength Ablation
+CO Analysis. To investigate how perturbation strength af-
+fects CO, batch samples are divided into four groups based
+on prediction confidence. We selectively increase the per-
+turbation budget to 16/255 for the target group while main-
+taining 8/255 for the remaining groups. The learning rate
+is fixed at 0.1. Figure 1 presents two key findings: 1) High-
+confidence samples can tolerate large perturbations with-
+out destabilizing optimization; 2) Low-confidence sam-
+ples—predominantly misclassified—are more susceptible
+to CO when exposed to large perturbations.
+Trade-off Analysis.
+To further investigate the ro-
+bustness–accuracy trade-off under varying perturbation
+
+(a) Setting the default ξ to 8/255 and decreasing ξ to 4/255 for the selected group (confidence descending order)
+(b) Setting the default ξ to 8/255 and increasing ξ to 12/255 for the selected group (confidence descending order)
+Figure 2. Trade-off analysis on CIFAR-10 with ResNet-18. PGD and C&W use 10 steps, with a fixed perturbation budget of 8/255.
+strengths, each training batch is partitioned into 32 confi-
+dence groups—a finer granularity than that used in the CO
+analysis—to capture nuanced performance variations across
+confidence levels. For the selected group, we adjust the
+perturbation budget—either decreasing it to 4/255 or in-
+creasing it to 12/255—while keeping other groups fixed at
+8/255. Figure 2 reveals four key observations: 1) Reduc-
+ing the perturbation budget to 4/255 consistently improves
+clean accuracy and moderately enhances robustness against
+C&W; 2) Reducing the perturbation budget for the lowest-
+confidence group enhances both clean and robust accura-
+cies, achieving gains of +1.06, +0.47, and +0.41 on Clean,
+PGD, and C&W metrics, respectively. This suggests that al-
+leviating excessive error reinforcement on already misclas-
+sified samples can enhance overall performance; 3) Con-
+sistent with the CO analysis, applying large perturbations
+to low-confidence samples can trigger CO, indicating that
+even a small fraction of unstable samples may destabilize
+training; 4) Increasing the perturbation budget for high-
+confidence groups slightly improves model robustness, al-
+beit sometimes at the expense of clean accuracy.
+3.1.2. Supervision Strength Ablation
+Recent studies have introduced label relaxation to improve
+adversarial training stability, typically formulated as
+ \ l a b e l { e q 3
+}
+ \mathbf {\hat {y}} = \mathbf {y} \cdot \gamma + \mathbf {1}\cdot \frac {1 - \gamma }{L}, 
+(3)
+where ˆy denotes the relaxation label, y is the one-hot
+ground-truth label, L signifies the number of classes, and γ
+controls the relaxation strength. Given that datasets vary in
+class cardinality, our analysis primarily focuses on the true
+class and the most probable incorrect class. Specifically,
+each training batch is divided into 8 confidence groups, and
+for the selected group, its supervision label is modified as
+ \ l ab e l {e q 41 } \mathbf {{y}^\prime } = \mathbf {\hat {y}} + \mathbf {y} \cdot \beta _1 + \mathbf {y_m} \cdot \beta _2, 
+(4)
+where ym represents the one-hot vector of the most proba-
+ble incorrect class, and β1, β2 modulate the emphasis on the
+true and most probable incorrect classes, respectively.
+Figure 3 reveals several key observations: (1) Applying
+β1 = 0 and β2 = −0.1 to the lowest-confidence group no-
+tably enhances both clean and adversarial accuracies, yield-
+ing average absolute gains of +1.18 on clean accuracy and
++1.40 on PGD robustness, while maintaining comparable
+C&W robustness to the baseline. This finding aligns with
+the perturbation-strength ablation, confirming that mitigat-
+ing excessive error reinforcement for already misclassified
+samples can improve model performance; (2) When the
+same setting is applied to mid-confidence samples, training
+becomes unstable—likely because the membership of this
+confidence group changes rapidly during training, leading
+to inconsistent supervision signals and oscillatory gradient
+directions across iterations; (3) Increasing β1 improves the
+
+(a) Setting β1 to 0 and β2 to -0.1 (confidence descending order)
+(b) Setting β1 to 0.1 and β2 to -0.1 (confidence descending order)
+Figure 3. Supervision strength analysis on CIFAR-10 with ResNet-18. PGD and C&W use 10 steps, with a perturbation budget of 8/255.
+training stability, implying that reinforcing correct class su-
+pervision stabilizes FAT; (4) Overly large β1 degrades per-
+formance, as it induces overconfident predictions and am-
+plifies regularization penalties.
+Remarks.
+The above analyses indicate that applying
+uniform guidance to all samples is inherently suboptimal.
+Instead, both perturbation and supervision strengths should
+be adaptively adjusted based on each sample’s characteris-
+tics, guiding inputs with varying confidence levels toward
+more consistent decision boundaries.
+In particular, mit-
+igating excessive error reinforcement for low-confidence
+(mostly misclassified) samples yields the most substantial
+improvements in both robustness and clean accuracy.
+3.2. Distribution-aware Dynamic Guidance
+DDG jointly adjusts the perturbation budget and super-
+visory guidance, enabling adaptive alignment of decision
+boundaries while mitigating the over-reinforcement of er-
+roneous signals. Unlike prior methods that utilize a fixed
+perturbation budget (ξbase= 8/255), DDG allocates budgets
+based on the confidence ranking ri of each example xi:
+ \ l abel { e q4} \ xi _ i = \xi _{\ t ext {base}} + \kappa \left [ \tanh \left (r_i - \tau _1\right ) - \tanh \left (\tau _2 - r_i\right ) \right ], 
+(5)
+where κ serves as a scaling factor that controls the am-
+plitude of dynamic variation (defaulting to 2/255, which
+yields ξi ∈[4/255, 12/255]). τ1 and τ2 govern transition
+regions of perturbation intensity, constrained by τ1 + τ2 =
+B, where B represents the batch size. ri indicates the sam-
+ple ranking, sorted in descending order of prediction con-
+fidence. Eq. (5) assigns larger budgets to high-confidence
+samples and smaller budgets to low-confidence ones. The
+adversarial perturbations are then clipped using ξi as
+ \ l abel
+ 
+{eq5} \delta _i = \operatorname {clip }\Bi g 
+(
+ \delta _\text {init} + \max \{\xi _{i}, \xi _\text {base}\}\cdot \operatorname {sign}(\nabla _{x_i+\delta _\text {init}} \mathcal {L}),\-\xi _{i},\ \xi _{i} \Big ). 
+(6)
+Here, \delta _\text {init} denotes the initial perturbation, typically in-
+herited from the previous optimization step.
+The term
+\nabla _{x_i+\delta _\text {init}} \mathcal {L} is the gradient of the loss function with respect to
+the input x_ i+\delta _\text {init}. The operation \qopnam e \relax m{max}\{\xi _{i}, \xi _\text {base}\} establishes
+a lower bound for the perturbation step size. The final ad-
+versarial example is formulated as x′
+i = clip(xi + δi, 0, 1).
+In addition, DDG redefines the soft supervision signal to
+maintain training stability and mitigate error reinforcement,
+ \l a
+b
+e
+l
+ 
+{
+eq6
+} \ma thb f {y_ { \t
+ex t {s r }}} = \
+begi
+n {cases} \mathbf {\hat {y}}, & \text {if } \arg \max f(x^\prime ) = y, \\[6pt] \mathbf {\hat {y}} + \gamma (1 - \text {Acc}) \mathbf {y}\, - \dfrac {1}{L} \mathbf {y_m}, & \text {otherwise,} \end {cases} 
+(7)
+where \protect \text {Acc} denotes the empirical accuracy of the current
+model on the training batch, providing a dynamic, global
+performance signal. Term γ(1 −Acc)y performs positive-
+class reinforcement, decreasing with higher true-class con-
+fidence, while term 1
+Lym implements negative-class sup-
+
+pression, inversely proportional to the number of classes.
+With the established adversarial inputs x′ and their corre-
+sponding supervision labels ysr, the optimization objective
+is defined as follows:
+ \labe l {
+e
+q
+7} \ma thcal {L}_\text {total} = - \frac {1}{B} \sum \mathbf {y_{\text {sr}}} \log f(x^\prime ) + \mathcal {L}_{\text {smo}}, 
+(8)
+ \la b
+el {eq8} \footnote
+si
+z
+e
+ 
+\mathca l {
+L}_{\te x t {smo} } = \big \
+|
+ f(x + \delta _\text {init}) - f(x') \big \|_2 \left ( \lambda \frac {\max (\xi _{B}) - \xi _{B}}{\max (\xi _{B}) - \min (\xi _{B})} + \alpha \,y_{\text {false}} + 1 \right ). 
+(9)
+where ∥·∥2 indicates the ℓ2-norm distance metric, max(ξB)
+and min(ξB) correspond to the maximum and minimum
+perturbation budgets within the current batch respectively,
+ξB refers to the dynamic perturbation budget for batch sam-
+ples, and yfalse serves as the misclassification indicator that
+returns 1 when arg max f(x′) ̸= y and 0 otherwise. The
+smoothing regularization term \protect \mathcal {L}_{\text {smo}} comprises three com-
+plementary components: the term\
+lambda \fr
+ac {\max (\xi _{B}) - \xi _{B}}{\max (\xi _{B}) - \min (\xi _{B})} bal-
+ances the regularization strength across the batch; the mis-
+classification penalty α yfalse reinforces regularization on
+misclassified examples, maintaining gradient smoothness
+throughout the negative-suppression process; and a constant
+term restricts non-zero regularization for all samples.
+The Algorithm details of DDG are given in Algorithm 1.
+4. Experiments
+4.1. Experimental Settings
+General Setup.
+We evaluate our method on benchmark
+datasets: CIFAR-10 [22], CIFAR-100 [22], and Tiny Im-
+ageNet [8].
+To ensure fair comparison, all methods are
+trained under identical experimental settings following prior
+works [41, 42, 52]. Specifically, we adopt ResNet-18 [15]
+as the backbone for all datasets and train models using
+stochastic gradient descent (SGD) with a momentum of 0.9,
+weight decay of 5 × 10−4, batch size of 128, and the initial
+learning rate of 0.1. Training is performed for 110 epochs,
+with the learning rate decayed by a factor of 0.1 at epochs
+100 and 105. For each method, we report results at both
+the best and final epochs, where ‘best’ denotes the epoch
+achieving the highest robustness against PGD-10, and ‘fi-
+nal’ represents the last epoch to evaluate training stability.
+Hyperparameters. The threshold \tau _1 in Eq. (5) is set to 8.
+\lambda and \alpha in Eq. (8) are set to 1.33 and 1.5, respectively. Other
+hyperparameters follow the settings in prior work [38].
+Evaluation Protocol. Following the existing evaluation
+protocols [16, 38, 41], we utilize various attacks to evalu-
+ate adversarial robustness, including FGSM [13], BIM [24],
+PGD-10/20/50 [26], C&W [3], APGD [6], and AutoAttack
+(AA) [6]. Here, PGD-n refers to a projected gradient de-
+scent attack with n iterations. AutoAttack combines APGD,
+FAB [11], and Square Attack [27].
+All attacks are per-
+formed under the ℓ∞norm with a perturbation budget of
+Algorithm 1: The proposed DDG
+Input: Training dataset D, number of classes L, batch
+size B, model f with parameters θ, base
+perturbation budget ξbase = 8/255, scaling factor
+κ, thresholds τ1, τ2, relaxation factor γ
+Output: Trained model weights θ
+1 Initialize model parameters θ;
+2 for epoch = 1 to N do
+3
+foreach batch (X, y) ∼D do
+4
+Calculate confidence rankings of X as r ;
+// Assign Perturbation Budget:
+5
+ξ = ξbase + κ [tanh (r −τ1) −tanh (τ2 −r)];
+// Adv Example Generation:
+6
+g = ∇x+δinitL(f(x + δinit), y);
+7
+δ = clip (δinit + max{ξ, ξbase} · sign(g), −ξ, ξ);
+8
+x′ = clip(x + δ, 0, 1);
+// Assign Supervision Signal:
+9
+Acc =
+1
+B
+P I[arg max f(x′) = y];
+10
+ˆy = y · γ + 1 · 1−γ
+L ;
+11
+ysr =
+
+
+
+ˆy,
+if Pred True,
+ˆy + γ(1 −Acc)y −1
+Lym,
+otherwise,
+// Loss with Gradient Smoothness:
+12
+Compute regularization Lsmo using Eq. (9);
+13
+Ltotal = −1
+B
+P ysr log f(x′) +Lsmo ;
+14
+Update θ ←θ −η∇θLtotal;
+15
+end
+16 end
+17 return θ
+ξ = 8/255. For single-step attacks (e.g. FGSM), the step
+size is 8/255; for multi-step attacks (e.g. PGD), it is 2/255.
+Baselines. We compare our work with recent FAT meth-
+ods, including FGSM-RS [41], FGSM-Free [33], FGSM-
+SDI [18], GAT [35], GradAlign [1], N-FGSM [7], Zero-
+Grad [12], LAS-AWP [17], NuAT [36], ATAS [16], FGSM-
+PGI [42], FGSM-PGK [20], and TDAT [38].
+4.2. Comparative Experiments and Analysis
+Results on CIFAR10. Table 1 shows the experimental re-
+sults on CIFAR10, with the observations given as fol-
+lows: 1) DDG achieves the highest robustness across nearly
+all attack settings, reaching 68.44%/59.48%/59.33% under
+FGSM/APGD/PGD-50 attacks—outperforming prior FAT
+methods such as TDAT (66.28%/55.10%/55.41%). 2) DDG
+maintains consistent robustness between the best and final
+checkpoints (e.g., 60.44% vs.
+59.70% on PGD-10), in-
+dicating effective mitigation of robust overfitting. 3) De-
+spite using only single-step adversarial updates, DDG sur-
+passes multi-step works such as MART (54.83% on PGD-
+10) and LAS-AWP (56.37% on PGD-10), while requiring
+only about one-tenth of their computational cost. 4) DDG
+shows a better trade-off between clean and robust accuracy.
+
+Table 1. Performance comparison of various AT methods on CIFAR-10. Bold numbers highlight the best results. ‘Steps’: attack iterations
+during training. ‘Best’: checkpoint with highest PGD-10 accuracy. ‘Final’: last checkpoint.
+Model
+Steps Type Clean FGSM [13] BIM [24]
+PGD [26]
+AA [6] C&W [3] APGD [6]
+10
+20
+50
+MART [39]
+10
+Best
+82.03
+64.94
+54.48
+54.83 53.72 53.53
+47.74
+49.68
+53.51
+Final 82.33
+65.12
+53.90
+54.38 52.98 52.60
+47.46
+49.66
+52.77
+LAS-AWP [17]
+10
+Best
+82.92
+65.86
+55.97
+56.37 55.57 55.20
+49.46
+51.53
+54.18
+Final 82.92
+65.86
+55.97
+56.37 55.57 55.20
+49.46
+51.53
+54.18
+FGSM-RS [41]
+1
+Best
+83.69
+62.00
+47.20
+47.66 46.29 45.96
+42.80
+46.10
+46.13
+Final 83.69
+62.00
+47.20
+47.66 46.29 45.96
+42.80
+46.10
+46.13
+FGSM-Free [33]
+-
+Best
+81.38
+60.81
+48.74
+49.07 48.03 47.62
+44.37
+46.98
+47.90
+Final 81.38
+60.81
+48.74
+49.07 48.03 47.62
+44.37
+46.98
+47.90
+GAT [35]
+1
+Best
+81.53
+64.18
+53.72
+54.05 53.26 52.95
+47.68
+49.76
+53.24
+Final 81.88
+64.30
+52.89
+53.23 52.16 51.86
+47.08
+49.71
+52.05
+FGSM-SDI [18]
+1
+Best
+83.55
+63.60
+51.46
+51.94 50.65 50.34
+46.31
+49.09
+50.61
+Final 83.73
+63.75
+51.28
+51.88 50.49 50.09
+46.34
+49.42
+50.43
+GradAlign [1]
+1
+Best
+80.45
+60.56
+48.80
+49.11 47.96 47.63
+43.92
+46.94
+47.85
+Final 80.45
+60.56
+48.80
+49.11 47.96 47.63
+43.92
+46.94
+47.85
+N-FGSM [7]
+1
+Best
+80.35
+60.93
+49.59
+49.83 48.77 48.51
+44.54
+47.37
+48.59
+Final 80.35
+60.93
+49.59
+49.83 48.77 48.51
+44.54
+47.37
+48.59
+FGSM-PGK [20]
+1
+Best
+81.52
+64.95
+55.28
+56.14 55.58 55.36
+48.94
+50.90
+55.44
+Final 81.63
+65.01
+55.02
+55.79 55.34 55.09
+48.85
+50.75
+55.28
+FGSM-PGI [42]
+1
+Best
+81.71
+65.02
+54.87
+55.26 54.54 54.38
+48.60
+50.88
+54.62
+Final 81.71
+65.02
+54.87
+55.26 54.54 54.38
+48.60
+50.88
+54.62
+TDAT [38]
+1
+Best
+82.46
+66.28
+55.87
+56.36 55.63 55.41
+48.06
+49.99
+55.10
+Final 82.72
+66.29
+55.62
+56.27 55.53 55.26
+47.26
+49.74
+54.98
+Ours
+1
+Best
+82.67
+68.44
+59.79
+60.44 59.57 59.33
+48.08
+49.86
+59.48
+Final 82.84
+68.27
+59.12
+59.70 59.07 58.83
+48.06
+50.01
+58.23
+For instance, while FGSM-RS yields slightly higher clean
+accuracy (83.69%), it exhibits notably lower robustness
+(47.66% on PGD-10).
+Similarly, while FGSM-PGI and
+FGSM-PGK attain marginally higher robustness on C&W
+and AA, they perform notably worse on other metrics.
+Results on CIFAR-100.
+Table 2 reports the perfor-
+mance comparison of various FAT methods on CIFAR-
+100.
+Overall, our DDG achieves the strongest results
+among all competitors.
+Specifically, compared to recent
+advanced approaches TDAT (40.29%/33.56%/33.15%) and
+FGSM-PGK (39.61%/32.78%/31.96%), our method attains
+the highest robustness of 40.96%/34.32%/33.86% against
+FGSM, PGD-10, and APGD attacks, respectively. More-
+over, DDG achieves a clean accuracy of 57.98%, surpass-
+ing TDAT (57.31%) and FGSM-PGK (57.36%), indicating
+that the robustness improvements do not compromise clean
+performance. These results validate the effectiveness of our
+work in balancing robustness–accuracy trade-off.
+Results on Tiny-ImageNet. Table 5 summarizes the per-
+formance of various FAT methods on Tiny-ImageNet. Our
+proposed approach achieves the optimal robustness across
+diverse adversarial attacks while maintaining competitive
+clean accuracy.
+Specifically, it attains the highest ad-
+versarial accuracy of 24.30%/24.35%/23.85% under BIM,
+PGD-10, and APGD attacks, respectively, performing better
+than the strong baselines TDAT (23.78%/23.98%/23.28%)
+and FGSM-PGI (23.19%/23.27%/22.91%).
+In addition,
+our final model exhibits stable training behavior, yielding
+23.40%/23.64%/22.95% robustness under BIM, PGD-10,
+along with a clean accuracy of 44.83%, which is compa-
+rable to or surpasses competing methods.
+4.3. Ablation Studies
+Effects of each component. Table 3 presents the ablation
+results for the key components of DDG, including per-
+turbation budget allocation (PBA), supervision signal ad-
+justment (SSA), and gradient smoothness (GS). Removing
+PBA consistently degrades both clean and adversarial ac-
+curacies. Removing SSA improves robustness under the
+C&W attack, but incurs a slight reduction in clean accu-
+racy. In contrast, removing GS yields the highest clean ac-
+curacy (84.55% on average), yet noticeably reduces adver-
+sarial performance. Overall, the complete DDG achieves
+the most favorable robustness–accuracy trade-off.
+Effects of components in ysr. In Eq. (7), ysr contains
+both positive enhancement and negative suppression terms.
+To study their individual effects, we apply separate scal-
+ing factors (0 to 1.4, step 0.2), multiplying \gamma for the posi-
+
+Table 2. Performance comparison of various AT methods on CIFAR-100. Bold numbers highlight the best results.
+Methods
+Steps Type Clean FGSM [13] BIM [24]
+PGD [26]
+AA [6] C&W [3] APGD [6]
+10
+20
+50
+MART [39]
+10
+Best
+54.51
+38.62
+32.00
+32.18 31.68 31.59
+26.07
+28.01
+31.55
+Final 54.75
+38.52
+31.75
+31.85 31.37 31.21
+25.71
+27.81
+31.22
+LAS-AWP [17]
+10
+Best
+58.75
+40.66
+32.42
+32.58 31.91 31.74
+27.23
+29.59
+31.74
+Final 58.75
+40.66
+32.42
+32.58 31.91 31.74
+27.23
+29.59
+31.74
+FGSM-RS [41]
+1
+Best
+51.67
+31.02
+22.42
+22.61 22.04 21.75
+18.72
+20.92
+21.87
+Final 51.67
+31.02
+22.42
+22.61 22.04 21.75
+18.72
+20.92
+21.87
+FGSM-Free [33]
+-
+Best
+52.06
+32.13
+24.48
+24.74 24.09 24.04
+20.23
+22.43
+23.99
+Final 52.06
+32.13
+24.48
+24.74 24.09 24.04
+20.23
+22.43
+23.99
+GAT [35]
+1
+Best
+57.49
+36.77
+28.91
+29.14 28.60 28.30
+23.11
+25.14
+28.42
+Final 57.58
+36.85
+28.87
+29.06 28.43 28.30
+23.02
+24.97
+28.43
+FGSM-SDI [18]
+1
+Best
+58.64
+37.23
+28.60
+28.78 27.99 27.67
+23.27
+25.85
+27.83
+Final 58.54
+37.19
+28.53
+28.71 28.00 27.72
+23.18
+25.55
+27.89
+GradAlign [1]
+1
+Best
+54.90
+35.28
+26.77
+27.13 26.52 26.22
+22.30
+25.01
+26.39
+Final 55.22
+35.51
+26.82
+27.12 26.42 26.24
+22.19
+24.94
+26.52
+N-FGSM [7]
+1
+Best
+54.41
+35.00
+26.99
+27.01 26.55 26.34
+22.81
+25.08
+26.31
+Final 54.41
+35.00
+26.99
+27.01 26.55 26.34
+22.81
+25.08
+26.31
+FGSM-PGK [20]
+1
+Best
+57.36
+39.61
+32.12
+32.78 32.35 32.19
+25.84
+28.40
+31.96
+Final 57.36
+39.61
+32.12
+32.78 32.35 32.19
+25.84
+28.40
+31.96
+FGSM-PGI [42]
+1
+Best
+58.78
+40.02
+31.43
+31.94 31.30 31.19
+25.65
+28.23
+31.21
+Final 58.82
+39.83
+31.22
+31.65 31.18 30.89
+25.43
+27.75
+30.93
+TDAT [38]
+1
+Best
+57.32
+40.29
+33.33
+33.56 33.17 33.06
+26.61
+28.47
+33.15
+Final 57.32
+40.29
+33.33
+33.56 33.17 33.06
+26.61
+28.47
+33.15
+Ours
+1
+Best
+57.98
+40.96
+34.11
+34.42 33.92 33.79
+26.54
+28.42
+33.86
+Final 58.15
+41.17
+33.70
+33.99 33.63 33.51
+26.79
+28.46
+33.48
+Table 3. Ablation analysis of components in DDG. PBA, SSA,
+and GS correspond to perturbation budget allocation, supervision
+signal adjustment, and gradient smoothness, respectively.
+Methods
+Type Clean FGSM PGD10 C&W20 APGD
+DDG
+Best 82.67
+68.44
+60.44
+49.86
+59.48
+Avg
+82.84
+68.27
+59.70
+50.01
+58.23
+wo. PBA Best 81.70
+68.33
+59.54
+49.58
+57.46
+Avg
+81.56
+68.23
+59.79
+49.54
+57.79
+wo. SSA
+Best 80.38
+66.11
+58.21
+50.87
+57.03
+Avg
+80.69
+66.17
+58.11
+50.63
+56.85
+wo. GS
+Best 84.32
+68.44
+58.71
+49.08
+57.11
+Avg
+84.55
+68.34
+58.35
+48.82
+56.81
+Table 4. Ablation analysis of components in ysr.
+Scaling
+Positive Adjustment
+Negtive Adjustment
+Clean PGD10 C&W10 Clean PGD10 C&W10
+0
+82.03
+59.85
+50.47
+81.50
+58.77
+51.02
+0.2
+82.37
+59.78
+50.10
+81.39
+59.02
+51.16
+0.4
+82.60
+60.06
+50.71
+82.03
+59.36
+50.71
+0.6
+82.57
+59.96
+49.83
+82.28
+59.44
+50.65
+0.8
+82.90
+60.06
+50.59
+82.39
+59.90
+50.48
+1.0
+83.04
+60.18
+50.64
+82.94
+60.10
+50.75
+1.2
+83.54
+60.16
+50.29
+83.03
+60.72
+49.89
+1.4
+83.38
+60.14
+49.96
+82.98
+60.65
+50.02
+tive enhancement term and \
+protect \frac {1}{L} for the negative suppression
+term. As reported in Table 4, amplifying the negative sup-
+pression term consistently boosts clean accuracy and PGD
+robustness, while inducing only a slight drop in C&W ro-
+bustness. For instance, increasing the scaling factor from 0
+to 1.0 yields gains of +1.44 in clean accuracy and +1.33 in
+PGD robustness, with only a 0.27 reduction under the C&W
+attack. Increasing the positive enhancement term exhibits
+a similar trend: clean accuracy improves steadily, whereas
+PGD and C&W robustness change only marginally.
+Notably, clean accuracy is positively correlated with
+PGD robustness but negatively correlated with C&W ro-
+bustness. This discrepancy stems from the distinct attack
+objectives: PGD can be interpreted as a one-to-any attack
+that pushes samples away from the true class toward any
+incorrect class, whereas C&W behaves as an any-to-one
+attack that identifies the easiest path. As clean accuracy
+increases, the model forms sharper class boundaries, mak-
+ing it more difficult to push a sample toward arbitrary in-
+correct classes—thereby improving PGD robustness. How-
+ever, such boundaries may also reveal clearer descent di-
+rections toward specific target classes, leading to a slight
+reduction in C&W robustness.
+Impact of τ1 and λ. Figure 4 illustrates the effects of
+τ1 in Eq. (5) and λ in Eq. (8) on FAT performance. Un-
+
+Table 5. Performance comparison of various AT methods on Tiny-ImageNet. Bold numbers highlight the best results.
+Methods
+Steps Type Clean FGSM [13] BIM [24]
+PGD [26]
+AA [6] C&W [3] APGD [6]
+10
+20
+50
+MART [39]
+10
+Best
+38.41
+25.20
+20.91
+20.93 20.74 20.67
+15.53
+16.88
+20.77
+Final 36.83
+18.02
+12.25
+12.36 12.01 11.93
+9.26
+10.36
+12.02
+LAS-AWP [17]
+10
+Best
+47.86
+30.77
+23.98
+24.10 23.67 23.60
+18.21
+20.49
+23.51
+Final 47.86
+30.77
+23.98
+24.10 23.67 23.60
+18.21
+20.49
+23.51
+FGSM-RS [41]
+1
+Best
+43.52
+23.93
+17.12
+17.22 16.82 16.64
+13.09
+14.67
+16.72
+Final 43.52
+23.93
+17.12
+17.22 16.82 16.64
+13.09
+14.67
+16.72
+FGSM-Free [33]
+-
+Best
+44.15
+25.18
+17.81
+17.95 17.47 17.31
+13.67
+15.82
+17.32
+Final 44.15
+25.18
+17.81
+17.95 17.47 17.31
+13.67
+15.82
+17.32
+GAT [35]
+1
+Best
+46.00
+23.04
+14.96
+15.16 14.51 14.33
+10.82
+13.27
+14.38
+Final 45.57
+22.10
+14.38
+14.56 14.03 13.85
+10.26
+12.71
+13.90
+FGSM-SDI [18]
+1
+Best
+43.71
+26.84
+20.48
+20.60 20.26 20.11
+15.43
+17.16
+20.13
+Final 45.40
+24.76
+17.15
+17.27 16.84 16.73
+12.47
+14.80
+16.97
+GradAlign [1]
+1
+Best
+38.22
+22.85
+17.13
+17.20 16.86 16.79
+12.64
+14.00
+16.85
+Final 37.89
+22.51
+16.95
+17.06 16.78 16.69
+12.49
+13.90
+16.68
+N-FGSM [7]
+1
+Best
+46.06
+24.72
+16.67
+16.74 16.21 16.02
+12.71
+14.96
+16.22
+Final 46.06
+24.72
+16.67
+16.74 16.21 16.02
+12.71
+14.96
+16.22
+FGSM-PGI [42]
+1
+Best
+42.98
+28.55
+23.19
+23.27 23.01 22.92
+17.00
+18.67
+22.91
+Final 45.13
+28.11
+21.43
+21.51 21.19 21.07
+14.86
+16.86
+21.14
+TDAT [38]
+1
+Best
+42.51
+29.44
+23.78
+23.98 23.63 23.56
+16.64
+18.21
+23.28
+Final 43.92
+29.31
+23.06
+23.29 22.85 22.74
+15.87
+17.54
+22.50
+Ours
+1
+Best
+43.44
+29.34
+24.30
+24.35 24.09 24.06
+16.85
+18.80
+23.85
+Final 44.83
+29.74
+23.40
+23.64 23.24 23.07
+15.94
+17.85
+22.95
+Figure 4. The impact of τ1 in Eq. (5) and λ in Eq. (8) on FAT performance.
+der stable training, clean accuracy increases as τ1 grows,
+while robust accuracy gradually decreases. Conversely, as
+λ increases, the clean accuracy declines whereas the robust
+accuracy improves. Notably, the influence of these hyper-
+parameters on overall performance is modest: clean, PGD,
+and C&W accuracies vary within 83% ± 0.5, 60% ± 0.5,
+and 50.25% ± 0.25, respectively.
+5. Conclusions
+This paper introduces a Distribution-aware Dynamic Guid-
+ance (DDG) strategy to address two key challenges in fast
+adversarial training: catastrophic overfitting and the robust-
+ness–accuracy trade-off. Through systematic perturbation
+and supervision ablations, we show that applying uniform
+guidance across samples is suboptimal, leading to training
+instability and the learning of spurious correlations.
+To
+overcome these issues, DDG dynamically adjusts pertur-
+bation budgets according to sample confidence and modu-
+lates supervision signals based on each sample’s prediction
+state. Furthermore, an adaptive regularization term is in-
+troduced to maintain gradient smoothness under dynamic
+guidance.
+Experiments on multiple benchmarks demon-
+strate that DDG effectively resolves catastrophic overfitting
+and mitigates the robustness–accuracy trade-off.

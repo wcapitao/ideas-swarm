@@ -1,0 +1,490 @@
+Beyond Single-Agent Alignment: Preventing Context-Fragmented
+Violations in Multi-Agent Systems
+Jie Wu∗
+Atlassian
+Ming Gong
+Atlassian
+Abstract
+As Large Language Model (LLM) agents proliferate across enterprise environments, agent
+sprawl has created complex cross-departmental collaboration chains. We identify and formalize a
+new security risk: Context-Fragmented Violations (CFVs)—a class of policy breaches where
+individual agent actions appear locally safe and reasonable, yet collectively violate organizational
+policies because critical policy facts are siloed in different departments’ private contexts.
+Existing prompt-based alignment mechanisms and monolithic interceptors are poorly matched
+to violations that span “contextual islands.” We propose Distributed Sentinel, a distributed
+zero-trust enforcement architecture that introduces the Semantic Taint Token (STT) Proto-
+col. Through lightweight sidecar proxies, our system propagates security state across organiza-
+tional boundaries without exposing raw cross-domain data, enabling Counterfactual Graph
+Simulation for cross-domain policy verification.
+We construct PhantomEcosystem, a benchmark comprising 9 categories of realistic cross-
+agent violation scenarios with adversarially balanced safe controls. On this benchmark, Dis-
+tributed Sentinel achieves F1 = 0.95 with 106ms end-to-end latency (16ms verification +
+90ms entity extraction on A100), compared to 0.85 F1 for prompt-based filtering and 0.65
+for rule-based DLP. To empirically validate the need for external enforcement, we evaluate
+eight frontier LLMs (GPT-5.4, GPT-4.1, Claude Opus 4.6, Gemini 2.5 Pro, and others) in
+execution-oriented multi-agent workflows with per-agent domain world models. All models
+exhibit substantial violation rates (14–98%), with cross-domain data flows showing systematically
+higher violation rates than same-domain flows. These results indicate that self-avoidance is
+unreliable and that multi-agent security benefits from a centralized enforcement layer operating
+above individual agents.
+1
+Introduction
+The rapid deployment of Large Language Model (LLM) agents in enterprise settings has fundamentally
+transformed organizational workflows. From automated code review to customer service, from
+financial analysis to marketing campaign generation, LLM agents now operate across virtually every
+business function [Xi et al., 2023, Wang et al., 2024]. However, this proliferation has created an
+emerging crisis that we term agent sprawl—the uncontrolled growth of autonomous agents operating
+across organizational boundaries with minimal coordination.
+1.1
+The Core Tension: Commonsense vs. Organizational Context
+Current AI safety research predominantly focuses on “universal alignment”—ensuring models refuse
+to generate violent content, avoid leaking personal information, or abstain from harmful instruc-
+tions [Ouyang et al., 2022, Bai et al., 2022]. While these efforts address general safety concerns,
+∗jwu10@atlassian.com
+1
+arXiv:2604.22879v1 [cs.MA] 24 Apr 2026
+
+they fundamentally miss a critical category of risks: violations defined by organization-specific
+context.
+Consider the following scenario, which we call the Project Titan Disaster:
+Background: The R&D department is conducting a secret project “Titan” protected
+under NDA.
+R&D Agent: Generates an internal log stating “Fixed concurrency bug in Titan mod-
+ule.” From the R&D agent’s perspective, synchronizing bug fixes internally is entirely
+legitimate.
+Marketing Agent: Receives this log and, following its directive to keep customers informed,
+drafts a global customer update email highlighting recent improvements.
+Failure Point: The LLM’s commonsense knowledge tells it that “fixing bugs” is positive
+information worth sharing. However, it has no knowledge that “Titan” is a restricted
+NDA codename that must never appear in external communications.
+This example crystallizes a fundamental insight: security is no longer a question of model
+intelligence, but of state synchronization. The marketing agent is not malicious, nor is it
+“unaligned” in any traditional sense. It simply lacks access to a critical fact—that “Titan” carries
+confidentiality constraints—because this fact exists only in the R&D department’s private context.
+1.2
+Context-Fragmented Violations: A New Threat Model
+We introduce the concept of Context-Fragmented Violations (CFVs) to characterize this class
+of security breaches. Formally, a CFV occurs when:
+1. Local Legitimacy: Each individual agent action, evaluated against the acting agent’s local
+knowledge graph, appears policy-compliant.
+2. Global Violation: The collective action sequence, evaluated against a hypothetical omniscient
+global view, violates organizational invariants.
+CFVs are particularly insidious because they evade all existing defense mechanisms:
+• Prompt-based guardrails fail because the violating agent genuinely believes its action is
+safe—there is no malicious intent to detect.
+• Monolithic interceptors fail because they lack access to the distributed policy facts needed
+for accurate judgment.
+• Human oversight fails at scale because the volume of cross-agent communications exceeds
+human review capacity.
+1.3
+Semantic Laundering: The Persistence Problem
+A related phenomenon we identify is Semantic Laundering—the gradual loss of security attributes
+(“taint”) as information flows through multiple LLM nodes. When an LLM summarizes, paraphrases,
+or translates content, the original security constraints attached to that content may be stripped
+away, even if the semantic meaning is preserved.
+For instance, if “Project Titan bug fix” is summarized as “recent stability improvements,” a
+downstream agent may have no way to trace this innocuous phrase back to its NDA-protected origin.
+This creates a fundamental challenge: security constraints must be attached to data provenance, not
+to surface-level text.
+2
+
+1.4
+Contributions
+Our contributions are:
+1. Problem Formalization: We formally define Context-Fragmented Violations and Semantic
+Laundering as first-class security threats in multi-agent systems (§2).
+2. PhantomEcosystem Benchmark: We construct a benchmark with 9 categories of CFV
+scenarios, each with adversarially balanced safe controls, enabling rigorous evaluation of
+cross-agent security systems (§3).
+3. Distributed Sentinel Architecture: We propose a distributed enforcement architecture
+featuring Semantic Taint Tokens (STT), sidecar-based interception, and cross-domain predicate
+queries that preserve departmental data sovereignty (§4).
+4. Empirical Validation: Distributed Sentinel achieves F1 = 0.95 on PhantomEcosystem
+with 106ms end-to-end latency, substantially outperforming existing approaches (0.85 for
+prompt-based filtering, 0.65 for rule-based DLP). Ablation studies confirm that each component
+contributes meaningfully, with the system degrading to 0.53 F1 without STT propagation (§5).
+5. Multi-Agent Violation Study: We evaluate eight frontier LLMs across three vendors
+(OpenAI, Anthropic, Google) in execution-oriented multi-agent workflows with per-agent
+domain world models. All models exhibit 14–98% violation rates, with cross-domain data flows
+as the structural driver. This provides the first systematic empirical evidence that CFVs are a
+real and pervasive threat requiring external enforcement (§5.9).
+Our work establishes that multi-agent security can be reframed from a fuzzy language under-
+standing problem to a deterministic distributed systems state consistency problem—a shift with
+profound implications for industrial deployment of AI agents.
+2
+Problem Formalization
+We now provide a rigorous mathematical framework for Context-Fragmented Violations and establish
+the theoretical foundations for our solution.
+2.1
+System Model
+We model an organization as a distributed collection of intelligent agents A = {A1, A2, . . . , An},
+where each agent Ai operates within a specific organizational domain (e.g., R&D, Marketing, HR,
+Finance).
+Definition 2.1 (Local World Model). Each agent Ai maintains a private local knowledge graph
+Gi = (Vi, Ei), where:
+• Vi represents entities known to Ai (projects, employees, documents, etc.)
+• Ei represents relationships and attributes (ownership, classification, permissions)
+The local graphs are disjoint by default—agent Ai cannot directly access Gj for i ̸= j. This
+reflects the reality of organizational silos where departments maintain separate knowledge bases,
+access controls, and data governance policies.
+3
+
+Definition 2.2 (Global Graph). The hypothetical global graph GGlobal = Sn
+i=1 Gi represents the
+union of all local graphs. This graph is never fully materialized in our system but serves as a
+theoretical construct for defining policy violations.
+2.2
+Policy Framework
+Definition 2.3 (Policy Constraint). A policy constraint P is a predicate over graph states and
+actions:
+P : G × Action →{Allow, Block}
+(1)
+Definition 2.4 (Invariant). An organizational invariant I is a property that must hold across the
+global graph at all times. Invariants encode high-level security requirements such as:
+• “NDA-protected entities must not appear in external communications”
+• “Personal salary information must not be accessible to non-HR agents”
+• “Deprecated API endpoints must not be recommended to customers”
+2.3
+Context-Fragmented Violations: Formal Definition
+Definition 2.5 (Context-Fragmented Violation). A cross-agent action sequence S = ⟨a1, a2, . . . , am⟩
+constitutes a Context-Fragmented Violation if and only if:
+Condition 1 (Local Legitimacy): For each action ak ∈S executed by agent Ai:
+Verify(ak, Gi) = Allow
+(2)
+That is, every action passes the local policy check when evaluated against the executing agent’s
+private knowledge graph.
+Condition 2 (Global Violation): When evaluated against the global graph:
+Verify(S, GGlobal) = Block
+(3)
+The action sequence violates at least one organizational invariant I when the full context is available.
+Theorem 2.6 (Fundamental Limitation of Local Enforcement). For any CFV S, there exists no
+local enforcement mechanism Ei operating solely on Gi that can reliably detect the violation without
+additional cross-domain information.
+Proof. We construct an indistinguishability argument. Consider a CFV S = ⟨a1, . . . , am⟩where
+ak is executed by Ai. By Definition 2.5 (Condition 1), Verify(ak, Gi) = Allow. Now consider
+a hypothetical safe action sequence S′ that is identical to S from Ai’s perspective (i.e., produces
+the same local observations in Gi) but does not violate global invariants. Since Ei has access only
+to Gi, it cannot distinguish S from S′, and therefore cannot reliably detect the violation without
+information from Gj (j ̸= i).
+2.4
+Semantic Laundering: Formal Definition
+Definition 2.7 (Taint). A taint τ is a security attribute attached to an entity v ∈Vi, representing
+constraints on how information derived from v may be used. We denote the taint set of entity v as
+T (v).
+4
+
+Definition 2.8 (Semantic Laundering). Let ϕ : T ext →T ext be an LLM transformation (summa-
+rization, paraphrasing, translation). Semantic laundering occurs when:
+T (ϕ(t)) ⊂T (t)
+(4)
+That is, the transformation strictly reduces the taint set, causing security constraints to be “washed
+away” despite semantic content being preserved.
+Example 2.9 (Laundering Chain). Consider the transformation sequence:
+t0 = “Fixed critical bug in Project Titan authentication”
+t1 = ϕ1(t0) = “Resolved authentication issue in flagship project”
+t2 = ϕ2(t1) = “Improved login security”
+If taint tracking relies on keyword matching, T (t2) may be empty while T (t0) contained NDA:Titan.
+2.5
+Design Requirements
+Based on our formal analysis, we derive the following requirements for an effective defense mechanism:
+1. Cross-Domain Visibility: The system must enable policy decisions that incorporate facts
+from multiple organizational silos.
+2. Data Sovereignty: Departments must not be required to expose their private knowledge
+graphs to other departments or a central authority.
+3. Laundering Resistance: Security constraints must propagate based on data provenance, not
+surface-level text analysis.
+4. Low Latency: Enforcement overhead must be minimal to avoid disrupting agent workflows.
+5. Monotonic Composition: If an action is blocked by the union of local checks, it must also
+be blocked by the global check (and vice versa for critical invariants).
+Theorem 2.10 (Monotonicity of Constraint Propagation). Let I1, I2, . . . , Ik be invariants enforced
+across agents A1, A2, . . . , Ak. If each Ii is monotone (adding more facts to a graph cannot turn a
+Block decision into Allow), then:
+(a) Soundness of local blocks: If any local invariant blocks, the global check also blocks:
+∃i : Ii(Gi, a) = Block =⇒Ii(GGlobal, a) = Block
+(5)
+(b) Completeness of distributed checks: If every security-relevant constraint resides in at
+least one Gi, then for any action a:
+IGlobal(GGlobal, a) = Block =⇒∃i : Ii(Gi, a) = Block
+(6)
+Proof. Part (a): Since Gi ⊆GGlobal, any blocking constraint c witnessed in Gi is also present in
+GGlobal. By monotonicity, the addition of facts from other Gj cannot override c, so Ii(GGlobal, a) =
+Block.
+Part (b): If IGlobal(GGlobal, a) = Block, there exists a constraint c in GGlobal witnessing the
+violation. By assumption, c resides in some Gi. Since Gi ⊆GGlobal and c ∈Gi, evaluating Ii on
+Gi with the same action a also yields Block (the constraint c and the violating action a are both
+present).
+5
+
+Corollary 2.11 (Completeness of Distributed Enforcement). If every security-relevant constraint
+is represented in at least one local graph Gi, and the STT protocol ensures all relevant taints are
+propagated to the enforcing sidecar, then the distributed enforcement system detects all violations
+that would be detected by a centralized system with access to GGlobal.
+Proof Sketch. Follows directly from Theorem 2.10(b) combined with Theorem 2.12. Part (b) ensures
+that any global violation is witnessed in some local graph Gi. The STT protocol ensures that
+the enforcing sidecar receives the taint from Gi, triggering a cross-domain query that surfaces the
+blocking constraint.
+Assumption Discussion.
+The requirement that every security constraint resides in at least one Gi
+is strong but realistically achievable in practice: it corresponds to the assumption that organizational
+policies are codified in departmental knowledge graphs. Constraints that exist only in unstructured
+documents or tacit human knowledge fall outside our model and represent a limitation (see §7).
+Theorem 2.12 (STT Propagation Correctness). Let τ(d) denote the true taint set of data d. Assume
+taints are attached to data provenance (source graph nodes) rather than surface-level text. For any
+LLM transformation ϕ and STT propagation function π:
+π(τ(d)) ⊇τ(ϕ(d))
+(7)
+That is, the propagated taint is a conservative over-approximation—it may over-estimate but never
+under-estimate the true security constraints.
+Proof. The key design choice is that STT taints track provenance (which source graph nodes
+contributed to the data), not content (what the text says). An LLM transformation ϕ may alter
+surface text—e.g., summarizing “Project Titan bug fix” into “stability improvements”—but cannot
+change the provenance: the output still derives from the same source nodes. Since π preserves all
+source-node taints and uses the Most-Restrictive union merge strategy:
+π(τ1, τ2) = τ1 ∪τ2
+(8)
+no constraint can be lost during propagation. The only case where π(τ(d)) ⊃τ(ϕ(d)) is when ϕ
+genuinely removes the semantic dependency on a source (e.g., the output is completely unrelated
+to the input), in which case over-estimation is safe—it may lead to false blocks but never missed
+violations.
+This theorem establishes that provenance-based taint tracking is resistant to semantic laundering,
+unlike content-based approaches that can be defeated by paraphrasing.
+3
+PhantomEcosystem Benchmark
+We construct PhantomEcosystem, a benchmark designed to stress-test detection of Context-
+Fragmented Violations in cross-agent security systems.
+3.1
+Design Principles
+PhantomEcosystem is built on three core principles:
+6
+
+No Explicit Labels.
+Communication content must not contain explicit markers such as “Confi-
+dential,” “Restricted,” or “Internal Only.” This forces systems to rely on graph-based state rather
+than surface-level keyword detection. Real-world sensitive information rarely comes with convenient
+labels.
+Adversarial Balance.
+Every violating case is paired with a visually similar safe control case. This
+tests the system’s precision—can it distinguish between “discussing Project Titan with a teammate”
+(safe) and “discussing Project Titan in a customer email” (violation)?
+Realistic Organizational Structure.
+Scenarios reflect genuine enterprise structures with R&D,
+Marketing, HR, Sales, Legal, and Finance departments, each with realistic knowledge graphs and
+inter-departmental communication patterns.
+3.2
+Violation Categories
+PhantomEcosystem comprises nine categories of Context-Fragmented Violations, spanning direct
+exfiltration, compositional inference, and workflow-level laundering or bypass behaviors.
+Table 1: PhantomEcosystem Violation Categories
+Category
+Description
+Representative Flow
+Direct Leak
+Sensitive data sent to unauthorized
+external destination
+HR →external storage
+Multi-hop
+Data laundered through intermedi-
+ate agents or tools
+agents →multiple hops
+Aggregation
+Individually safe fields combine
+into sensitive conclusions
+analytics →sales/HR
+Time-series
+Temporal patterns reveal strategic
+or restricted state
+logs →downstream report-
+ing
+Side-channel
+Restricted info inferred from meta-
+data or behavior
+external →internal signal
+Scope creep
+Initially legitimate workflows ex-
+pand beyond authorized use
+finance →operations
+Data reconstr.
+Partial fragments combine to re-
+construct a secret
+sources →complete secret
+Cross-org
+Internal data crosses organiza-
+tional boundaries
+R&D
+→
+part-
+ner/competitor
+Token manip.
+Forged or altered credentials ex-
+pand access scope
+any actor →privileged re-
+source
+At a high level, these categories fall into three families. Boundary-crossing attacks cover
+explicit exfiltration events such as direct leak and cross-org, where the main challenge is that local
+agents lack awareness of external disclosure constraints. Compositional inference attacks cover
+aggregation, time-series, side-channel, and data reconstruction, where no single message appears
+overtly harmful, yet the joint effect of multiple signals violates policy. Workflow and control-path
+attacks cover multi-hop, scope creep, and token manipulation, where the violation emerges through
+delegation structure, tool chaining, or access-surface abuse rather than any one obviously forbidden
+act.
+This grouped taxonomy serves two purposes. First, it ensures coverage across the main structural
+failure modes that arise when policy-relevant facts are fragmented across agents, tools, and time.
+7
+
+Second, it allows us to evaluate whether a defense generalizes beyond a single archetype such as direct
+exfiltration. Detailed scenario construction and representative examples are deferred to Appendix B.
+Dataset Statistics.
+PhantomEcosystem contains 200 scenarios: 160 attack cases and 40 legitimate
+controls, spanning 9 attack categories, 17 agent types, and average communication chains of length
+2.4. Difficulty is balanced across easy/medium/hard settings (62/84/54). Most attack categories
+contain 20 cases; cross-org and token manipulation contain 10 each because they require more
+specialized setup. Table 2 summarizes the resulting distribution.
+Table 2: Attack Distribution by Category
+Category
+N
+Representative Scenarios
+Direct Leak
+20
+HR data to personal cloud; customer lists copied
+to shadow tools
+Multi-hop
+20
+Restricted information laundered through 2–3
+agent hops
+Aggregation
+20
+Partial attributes combined for re-identification
+Time-series
+20
+Temporal traces revealing strategic decisions
+Side-channel
+20
+Metadata- or behavior-based inference attacks
+Scope creep
+20
+Initially legitimate workflows that gradually ex-
+pand in scope
+Data reconstr.
+20
+Partial fragments combined to recover a secret
+Cross-org
+10
+Data sent to partner or competitor endpoints
+Token manip.
+10
+Forged or altered access token bypass
+Evaluation Metrics.
+We report precision, recall, and F1 for violation detection; latency from
+action initiation to enforcement decision; and privacy exposure in terms of what cross-domain
+information is revealed during verification.
+4
+Methodology
+Distributed Sentinel is a distributed zero-trust enforcement architecture that detects and
+prevents Context-Fragmented Violations while preserving departmental data sovereignty.
+4.1
+Architecture Overview
+Distributed Sentinel employs a sidecar-based architecture inspired by service mesh patterns [Link-
+erd, 2020]. Each agent Ai is paired with a Sentinel Sidecar Si that intercepts all incoming and
+outgoing communications, including messages and tool calls.
+4.2
+Semantic Taint Token (STT) Protocol
+The core innovation of Distributed Sentinel is the Semantic Taint Token (STT) protocol,
+which enables security state propagation without data exposure.
+4.2.1
+Token Structure
+When agent Ai sends a message m to agent Aj, the sidecar Si computes and attaches an encrypted
+STT:
+8
+
+Agent A1
+Sidecar S1
+Map | Check
+G1
+Local KG
+Agent A2
+Sidecar S2
+Map | Check
+G2
+Local KG
+· · ·
+· · ·
+· · ·
+Agent An
+Sidecar Sn
+Map | Check
+Gn
+Local KG
+Domain 1
+Domain 2
+Domain n
+intercept
+intercept
+STT
+STT
+query src
+True/False
+BLOCKED
+Figure 1: Distributed Sentinel architecture. Each domain contains an agent, sidecar, and local
+knowledge graph—forming isolated contextual islands. Sidecars perform local entity mapping and
+policy checking; cross-domain verification queries the STT source directly, returning only boolean
+results (True/False) to preserve data sovereignty. This boolean transparency ensures no raw data
+crosses domain boundaries.
+STT = ⟨src_id, taint_vec, constraints, sig⟩
+(9)
+where:
+• src_id: Unique identifier of the source node in Gi
+• taint_vec: Bit vector encoding active security labels
+• constraints: Serialized policy predicates (e.g., audience ̸= External)
+• sig: Cryptographic signature preventing tampering
+4.2.2
+Lazy Materialization
+Critically, the STT does not carry the full graph structure—only opaque references (“pointers”) to
+source nodes. This design ensures:
+1. Lightweight transmission: STT overhead is O(1) regardless of graph size.
+2. Privacy preservation: The receiving sidecar cannot infer the source graph’s structure.
+3. Tamper resistance: The signature prevents malicious modification of security claims.
+4.3
+Cross-Domain Predicate Query
+When agent Aj prepares to execute a sensitive action (e.g., send_email), the sidecar Sj initiates a
+cross-domain verification:
+Privacy-Preserving Responses.
+The source sidecar Si responds only with boolean results
+(True/False), never exposing the underlying graph structure or entity details. For example:
+Query: “Does entity node_42 permit audience=External?”
+Response: False
+9
+
+Algorithm 1 Cross-Domain Predicate Query
+Require: Action a, received STT tokens T , local graph Gj
+Ensure: Decision ∈{Allow, Block}
+1: scope ←extract_target_scope(a) {e.g., External, Internal}
+2: for each token ∈T do
+3:
+query ←build_predicate(token.src_id, scope)
+4:
+result ←remote_query(token.src_sidecar, query)
+5:
+if result = False then
+6:
+return Block
+7:
+end if
+8: end for
+9: return Allow
+The querying sidecar learns only that the action is prohibited, not why (e.g., that node_42
+represents an NDA-protected project).
+4.4
+Neuro-Symbolic Entity Mapping
+A critical challenge is translating free-form agent communication into graph entities that can be
+checked by the symbolic policy engine. We therefore treat entity grounding as the neuro-symbolic
+interface between language-space interactions and policy-checkable system state, and define a
+Neuro-Symbolic Mapping Function:
+f : T ext × Gi →2Vi
+(10)
+This function takes text and a knowledge graph, returning the set of entities referenced.
+4.4.1
+Implementation
+In our implementation, f is instantiated by a lightweight grounding layer that combines LLM-based
+semantic interpretation with graph-constrained resolution. Concretely, the mapper performs:
+1. Named Entity Recognition (NER): Identify entity mentions in text.
+2. Session Provenance Alignment: Leverage conversation history to resolve ambiguous

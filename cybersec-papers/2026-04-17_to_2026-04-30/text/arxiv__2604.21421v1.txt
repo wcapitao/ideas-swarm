@@ -1,0 +1,970 @@
+Differentially Private De-identification of Dutch Clinical Notes: A
+Comparative Evaluation
+Michele Miranda12∗, Xinlan Yan34∗, Nishant Mishra34, Rachel Murphy34,
+Ameen Abu-Hanna34, Sébastien Bratières2, Iacer Calixto34
+1Sapienza University of Rome, 2Translated, 3Amsterdam UMC, 4University of Amsterdam
+miranda@di.uniroma1.it, sebastien@translated.com
+{x.yan, n.mishra, r.m.murphy, a.abu-hanna, i.coimbra}@amsterdamumc.nl
+Abstract
+Protecting patient privacy in clinical narratives is essential for enabling secondary use of healthcare data under
+regulations such as GDPR and HIPAA. While manual de-identification remains the gold standard, it is costly and
+slow, motivating the need for automated methods that combine privacy guarantees with high utility. Historically,
+most automated text de-identification pipelines employed named entity recognition (NER) to identify protected
+entities for redaction. Although methods based on differential privacy (DP) provide formal privacy guarantees,
+more recently also large language models (LLMs) are increasingly used for text de-identification in the clinical
+domain.
+In this work, we present the first comparative study of DP, NER, and LLMs for Dutch clinical text
+de-identification. We investigate these methods separately as well as hybrid strategies that apply NER or LLM
+preprocessing prior to DP, and assess performance in terms of privacy leakage and extrinsic evaluation (entity
+and relation classification).
+We show that DP mechanisms alone degrade utility substantially, but combining
+them with linguistic preprocessing, especially LLM-based redaction, significantly improves the privacy–utility trade-off.
+Keywords: Clinical Notes, De-Identification, Differential Privacy, NER
+1.
+Introduction
+Ensuring privacy in clinical texts is critical to en-
+able data sharing for healthcare research (Conduah
+et al., 2025). Privacy regulations like GDPR (Eu-
+ropean Parliament and Council of the European
+Union, 2016) and HIPAA (U.S. Department of
+Health and Human Services) require the redac-
+tion or de-identification of all personally identifiable
+information (PII) to protect patient privacy.
+Methods for PII de-identification based on named
+entity recognition (NER) have been extensively
+used for English and other languages (Grouin
+et al., 2015; Dernoncourt et al., 2017; Bourdois
+et al., 2021; Tchouka et al., 2022b; Wang et al.,
+2022).
+More recently, large language models
+(LLMs) have been applied to PII de-identification
+and have shown strong performance (Liu et al.,
+2023). NER- and LLM-based methods, despite
+their performance, do not provide any formal pri-
+vacy guarantees. Differential privacy (DP; Dwork,
+2006; Dwork and Roth, 2014), on the other hand, of-
+fers a principled mechanism with formal guarantees
+against privacy leakage when sharing a privatized
+dataset (Chatzikokolakis et al., 2013; Tong et al.,
+2025).
+The tension in the existing literature lies in the
+fact that DP-based methods for text de-identification
+provide formal privacy guarantees but can severely
+impact utility (Yu et al., 2022; Yue et al., 2023;
+Tchouka et al., 2022b,a), whereas LLM-based
+∗These authors contributed equally to this work.
+Figure 1: Overview of our comparative analysis. A
+raw document Draw is de-identified using 5 different
+pipelines, which are evaluated against a manually
+de-identified version of the same document Dmanual.
+We use a range of open-source and proprietary
+LLMs that vary in architecture and size in our ex-
+periments.
+methods become increasingly strong but do not pro-
+vide any privacy guarantees (Pissarra et al., 2024;
+Yang et al., 2025). These LLM-based methods
+remain limited as they redact only detected enti-
+ties rather than full text—offering weaker privacy
+preservation than DP—, overlook instruction-tuned
+LLMs, demand computational resources often un-
+available in privacy-critical settings, and are devel-
+oped solely for English and are thus untested in
+other languages.
+In this study, we compare different PII de-
+arXiv:2604.21421v1 [cs.CR] 23 Apr 2026
+
+identification
+methods
+using
+state-of-the-art
+NER (Zaratiana et al., 2024), LLMs (Liu et al.,
+2023), and synthetic data generation methods
+with DP guarantees (Chatzikokolakis et al., 2013;
+Tong et al., 2025) for Dutch clinical notes. See
+Figure 1 for an overview of our comparisions.
+Unlike prior works on English or, more recently,
+French clinical text (Tchouka et al., 2022d,c), our
+work is the first study to investigate DP-based
+text anonymization in Dutch real-world hospital
+clinical notes, addressing a critical gap in the
+de-identification research.
+We evaluate the quality of the de-identified clini-
+cal notes intrinsically by quantifying the remaining
+residual PII after de-identification, and extrinsically
+by measuring the performance of prediction models
+trained using the generated de-identified notes for
+two downstream tasks: entity classification (drugs
+and disorders) and relation classification (adverse
+drug events). Finally, we also combine a strong
+de-identification method (e.g. NER- or LLM-based)
+as a preprocessing step with DP de-identification.
+We hypothesise that by doing this we can consid-
+erably reduce the DP noise necessary to achieve
+the same privacy guarantee, possibly leading to a
+better privacy-utility trade-off.
+2.
+Related Works
+De-identification of clinical text is essential to allow
+secondary use of healthcare data while protecting
+patient privacy under privacy regulations such as
+HIPAA (U.S. Department of Health and Human Ser-
+vices) and GDPR (European Parliament and Coun-
+cil of the European Union, 2016). Traditional man-
+ual de-identification methods are labour-intensive,
+costly, and prone to inconsistencies. This section
+synthesizes key methodological advancements in
+automated PII de-identification.
+Differential Privacy Approaches
+Differential Pri-
+vacy (Dwork, 2006) offers formal privacy guaran-
+tees by ensuring that the outputs of algorithms are
+statistically indistinguishable across neighboring
+datasets. In other words, the key idea is that two
+models (M1, M2) trained on two datasets (D1, D2)
+that differ only by one entry, i.e., one patient record,
+should be indistinguishable in terms of their pre-
+dicted outcomes.
+Metric DP extends the traditional DP framework
+by introducing a metric space that quantifies the
+similarity between data points (Chatzikokolakis
+et al., 2013). In the context of text data, Metric DP
+leverages semantic similarity measures to guide
+the privacy mechanism. Feyisetan et al. (2019)
+applied Metric DP to word embeddings, enabling
+controlled perturbations that account for the seman-
+tic relationships between words. This results in text
+transformations that better preserve the utility of the
+original data while providing privacy guarantees.
+Another promising approach is RANTEXT (Tong
+et al., 2025), a token-level DP framework designed
+for privacy-preserving text generation. RANTEXT
+dynamically constructs randomized adjacency
+lists for context-aware token substitution and has
+demonstrated strong resistance to membership in-
+ference attacks, outperforming earlier models like
+SANTEXT+ and CUSTEXT+. In empirical evalua-
+tions, it achieved up to 98% F1 scores for semantic
+preservation while maintaining privacy guarantees
+with ϵ values below 2. Nonetheless, DP-based
+methods often struggle with high-dimensional clin-
+ical narratives, where stricter privacy constraints
+can significantly degrade data utility (Tong et al.,
+2025).
+LLM-Based De-identification
+Large language
+models can be applied to text PII de-identification
+in different ways. DeID-GPT (Liu et al., 2023), built
+on GPT-4, asks the model to directly identify and
+redact sensitive information and integrates HIPAA
+identifier categories directly into its prompts, achiev-
+ing 99.25% precision and 89.73% F1 in zero-shot
+redaction tasks. This can be considered very good
+performance, especially given the simplicity of the
+approach.
+We note that it is unlikely that organisations would
+want to use GPT-4 for this task, since using an
+online model would mean sending sensitive data
+off-site. Often, this may be even forbidden under pri-
+vacy regulations. In this work, we use the OpenAI
+API via a cloud-based service provider in a way that
+preserves privacy in agreement with privacy regu-
+lations. We understand this is not always possible
+for every hospital, and for that reason we include
+experiments with both proprietary and open-weight
+LLMs.
+3.
+Methods and Experiments
+Below we detail the dataset (§3.1), the de-
+identification modules (§3.2) used in our de-
+identification pipelines that generate privacy-
+preserving clinical notes (§3.3; Fig. 1), and the
+intrinsic (§3.4) and extrinsic evaluation on the entity
+and relation classification tasks (§3.5).
+3.1.
+Dataset
+We use the Dutch ADE dataset (Murphy et al.,
+2025a), a benchmark corpus containing 102 clin-
+ical notes from intensive care unit (ICU) patients
+annotated with entity-level labels—drug and disor-
+der mentions—and relation labels between drug-
+disorder pairs. The two relation labels annotated
+are adverse drug event or ADE (when the drug
+
+Placeholder
+Meaning
+<AFDELING>
+Department
+<APOTHEEK>
+Pharmacy
+<ARTS>
+Doctor
+<EHR>
+Electronic Health Record System
+<FEESTDAG>
+Holiday
+<GEBOORTEDATUM>
+Date of Birth
+<NAAM>
+Name
+<RARE_DISEASE>
+Rare Disease
+<RARE_DISEASE_TREATMENT>
+Rare Disease Treatment
+<REVALIDATIECENTRUM>
+Rehabilitation Center
+<SEIN>
+Signal
+<STAD>
+City
+<TELNR>
+Telephone Number
+<TRIAL-ID>
+ID of Clinical Trial
+<ZIEKENBOEG>
+Sickbay
+<ZIEKENHUIS>
+Hospital
+<ZKH>
+Abbreviation for Hospital
+Table 1: List of placeholders and their meanings.
+caused the disorder as an adverse event) and pre-
+scribing indication (when the drug was prescribed
+to treat the disorder). We refer to the raw corpus
+as Draw and to its manually de-identified version
+as Dmanual. Draw consists of 107,110 words, 0.83%
+of which are identified as PII. The PII has been
+redacted and replaced by 17 different placehold-
+ers, each indicating one type of PII in the data.
+There are thus 17 types of PII annotated in Dmanual.
+Names of the placeholders and their meaning are
+listed in Table 1. For further details on the corpus,
+we refer the reader to Murphy et al. (2025a).
+3.2.
+De-identification Modules
+We apply NER-based, LLM-based, and two DP-
+based text methods to de-ideintify PII: metric dif-
+ferential privacy (Metric-DP; Chatzikokolakis et al.,
+2013), and RANTEXT (Tong et al., 2025).
+NER-based de-identification
+We use the off-the-
+shelf pretrained multilingual NER model gliner-
+multi-v2.11, without any fine-tuning on our clini-
+cal data. We provide it with our target entity types
+(see Table 1, e.g., <NAAM>, <ZIEKENHUIS>) and
+apply it to extract labeled spans from clinical text.
+Each prediction consists of text span, label, and
+confidence score. To balance precision and re-
+call, we use a confidence threshold that maximises
+the F-1 score on a validation set, i.e., for thresh-
+old t ∈[0, 1) we only retain entities predicted with
+confidence score c ≥t.
+LLM-based de-identification
+Here, we adapt
+the approach of Liu et al. (2023) and prompt an
+LLM in a zero-shot setting to redact predefined PII
+categories from Table 1 (e.g., <NAAM>, <ZIEKEN-
+HUIS>). When applying LLMs directly as a de-
+identification pipeline (PLLM), we experiment with
+1https://huggingface.co/urchade/
+gliner_multi-v2.1
+several LLMs that vary in architecture, domain spe-
+cialization, and size, including GPT-4o (Achiam
+et al., 2023), DeepSeekR1 (8B and 70B) (Guo et al.,
+2025), LLaMA-3.1 8B (Dubey et al., 2024), and
+MedGEMMA 27B (Sellergren et al., 2025). Please
+see Appendix A.1 for the prompt we use. When
+using LLMs combined with DP (PLLM→DP), we use
+the best-performing open-source LLM in terms of
+privacy (Deepseek-70B).
+For our experiments with GPT models, we use
+the OpenAI API in a privacy-compliant setting
+whereby no private data leaves the premises of our
+hospital. Moreover, all our experiments are con-
+ducted in a privacy-compliant setting and strictly
+follow the data usage agreement of the Dutch ADE
+dataset.
+Metric-DP
+Metric-DP
+introduces
+geometric
+noise in the embedding space to privatize to-
+kens (Chatzikokolakis et al., 2013).
+We use
+embeddings from BERTje2 (De Vries et al., 2019)
+and construct an approximate nearest-neighbor
+(ANN) index over the vocabulary.3 For each token,
+we sample a noise vector from a γ distribution
+with scale 1/ϵ, add it to the token’s embedding,
+and select the closest replacement from the ANN
+index.
+RANTEXT
+RANTEXT (Tong et al., 2025) employs
+an LLM to generate embedding vectors for tokens
+(we use the Dutch GPT-24 from de Vries and Nis-
+sim 2020). For each token, a Laplace distribution is
+used to dynamically determine the size of a random
+adjacency list, and then new tokens are sampled
+from this list to replace the original token. Can-
+didate replacements within the noise radius are
+selected via the exponential mechanism, favoring
+tokens closer to the original in embedding space.
+3.3.
+De-identification pipelines
+We investigate five different pipelines, i.e., auto-
+matic methods to de-identify the text in the raw
+dataset (Draw). Our dataset, as detailed in §3.1, is
+very small; thus, all pipelines we propose next re-
+quire models without fine-tuning. The pipelines are:
+PNER: Apply NER de-identification to Draw. PLLM:
+Apply LLM de-identification to Draw. PDP: Apply
+DP-based de-identification to Draw. PNER→DP: Ap-
+ply a NER model to Draw and apply DP-based de-
+2https://huggingface.co/GroNLP/
+bert-base-dutch-cased
+3An ANN index is a data structure designed to quickly
+retrieve the nearest vectors to a query vector without
+computing all pairwise distances, which would be pro-
+hibitively expensive in high-dimensional spaces.
+4https://huggingface.co/GroNLP/
+gpt2-small-dutch
+
+identification to its output. PLLM→DP: Apply LLM
+de-identification to Draw and apply DP-based de-
+identification to its output.
+In all experiments with pipeline PLLM→DP, we use
+Deepseek-70B as it is the best-performing open-
+source LLM in terms of privacy.
+3.4.
+Privacy Leakage Evaluation
+We
+quantify
+the
+privacy
+leakage
+of
+a
+de-
+identification pipeline as the percentage of person-
+ally identifiable information (PII) leaked in the de-
+identified text compared to Dmanual. PIIs are not
+all the same, and the leakage of different types of
+PII can, in practice, have very different impact in
+terms of privacy preservation. For that reason, in
+this work we differentiate between leakage of direct
+and indirect PII.
+Direct vs. Indirect PII
+Direct PII (e.g., a patient’s
+name or telephone number) can directly identify
+an individual. For that reason, their leakage is the
+most damaging in terms of privacy preservation.
+Indirect PII have lower risk but can also be used to
+identify an individual, usually in combination with
+other indirect PII or with extra auxiliary information,
+e.g., Sweeney (2000)’s classical example whereby
+zip code, date of birth and gender is reported to
+uniquely identify 87% of the population in the USA.
+According to U.S. Department of Health and Hu-
+man Services, the following identifier types are clas-
+sified as direct PII: name; address (all geographic
+subdivisions smaller than state, including street ad-
+dress, city county, and zip code); all date-related
+elements (except years) related to an individual (in-
+cluding birth date, admission date, discharge date,
+date of death, and exact age if over 89); telephone
+number; fax number; email address; social secu-
+rity number; medical record number; health plan
+beneficiary number; account number; certificate
+or license number; vehicle identifiers and serial
+numbers, including license plate numbers; device
+identifiers and serial numbers; web URL; internet
+protocol (IP) address; finger or voice print; photo-
+graphic image; and any other characteristic that
+could uniquely identify the individual.
+In our data, we consider name of doctor, elec-
+tronic health record ID, date of birth, name of pa-
+tient, city, and telephone number as direct PIIs, and
+all the rest in Table 1 as indirect PIIs.
+In all our experiments, we apply a strict evalu-
+ation setting where the leakage of any subword
+token part of a PII entity span is treated as leakage.
+3.5.
+Utility Evaluation
+We assess the preservation of relevant clinical infor-
+mation by using the generated notes in two down-
+stream tasks: classifying entity spans in a clini-
+cal text as drug or disorder mentions, and predict-
+ing whether a drug–disorder entity pair denotes an
+adverse drug event (ADE).5 We use the original
+train/dev/test splits in the Dutch ADE corpus for
+training, model selection, and testing, respectively.
+For configuration details please see Appendix A.2
+We use the annotated entities and relations that
+remain in the generated texts for training and devel-
+opment, and evaluate the model against the orig-
+inal test set with gold annotations. At low ϵ val-
+ues under some settings, i.e. ϵ≤128 for metric-DP
+and ϵ≤16 for RANTEXT, we only have less than
+10 annotated relations in the generated text, mak-
+ing it impossible to train the relation classification
+model. Thus, we omit these experiments and re-
+port performance using macro F-1 score for both
+entity and relation classification. We do not report
+new confidence intervals for the downstream tasks
+because its protocol and uncertainty were estab-
+lished in prior work (Murphy et al., 2025b), which
+already provides CIs under the same evaluation
+procedure.
+4.
+Results
+We now report on our experiments regarding the
+empirical privacy leakage of PII in the generated
+clinical notes (4.1), and the downstream evalua-
+tions according to drug and disorder (entity) clas-
+sification (4.2) and adverse drug event (relation)
+classification (4.3).
+4.1.
+Privacy Leakage Results
+Figure 2 presents privacy leakage percentage for
+various pipeline configurations across DP budgets
+(ϵ), spanning from 8 to 1024. We acknowledge that
+with ϵ higher than 10, the theoretical guarantees
+of DP fade away, but it is also usual in practical
+setting to work with high epsilons in order to get
+meaningful empirical results, as seen in works like
+DP-BART (Igamberdiev and Habernal, 2023). As ϵ
+increases, privacy leakage also rises, demonstrat-
+ing the trade-off between reduced noise (higher ϵ)
+and weaker privacy preservation. At high privacy
+budgets, the protection provided by DP diminishes,
+leading to increased privacy leakage across all
+pipelines. Among the DP-based pipelines, PDP con-
+sistently exhibits the highest privacy leakage across
+all ϵ values. In contrast, pipelines that combine
+DP with NER preserve privacy for slightly higher
+privacy budgets, and LLM-based de-identification
+show significantly lower empirical leakage. Notably,
+5We note that originally the Dutch ADE dataset was
+collected to support these two tasks (Murphy et al.,
+2025b), making these tasks ideal for utility evaluation.
+
+DP Methods
+Pipelines
+Legend
+Figure 2: Comparison of privacy leakage across
+different de-identification pipelines and DP bud-
+gets (ϵ).
+This figure includes two DP mecha-
+nisms: RANTEXT and Metric-DP, each applied
+to three pipelines: PDP, PNER→DP, and PLLM→DP.
+For PLLM→DP, we use Deepseek-70B as the de-
+identification module as it performs the best in
+terms of privacy.
+Horizontal lines indicate non-
+DP baselines, including one NER-based pipeline
+(GLiNER) and one best performing LLM (GPT-4o).
+As ϵ increases, privacy leakage of applying DP di-
+rectly to raw text also significantly increases. Mean-
+while, combining DP with LLM-based redaction
+largely enhances privacy even with high ϵ values.
+pipelines with LLM preprocessing significantly out-
+perform other approaches with a high budget. This
+improvement can be attributed to the strong ability
+of LLMs to identify and redact sensitive information
+more effectively, reducing the amount of private
+data exposed to DP noise.
+In our next experiments, we use the Health In-
+surance Portability and Accountability Act (HIPAA;
+Garfinkel et al., 2015) to differentiate between leak-
+age of direct (i.e., exact identifiers such as names,
+emails, phone numbers) versus indirect PII (i.e.,
+quasi-identifiers and other attributes that enable re-
+identification when linked). Figure 3 illustrates the
+leakage rates of direct and indirect PIIs for each pri-
+vacy budget ϵ across pipelines. Overall, leakage in-
+creases with ϵ, but the extent and composition differ
+largely according to the pipeline. Metric-DP consis-
+tently leaks far less PII than RANTEXT at compara-
+ble budgets: while RANTEXT and NER+RANTEXT
+reach 38–40% direct (and 76–71% total) leakage
+at high ϵ, metric-DP (MDP) better preserves pri-
+vacy more at low-to–mid ϵ, and only approaches
+RANTEX when ϵ is large.
+Moreover, leakage
+rises with ϵ for all methods, but the slope differs.
+RANTEXT variants escalate quickly, with the di-
+rect component dominating the increase, whereas
+MDP grows more gradually until the largest bud-
+gets, where its bars steepen.
+Moreover, the baseline results of LLMs and NER
+confirms that stand-alone methods without DP are
+markedly leakier: the pure NER system shows high
+overall leakage with a large direct component, and
+LLM-only variants also leak substantially. How-
+ever, inserting an LLM de-identification before the
+DP step shows a clear advantage for both fami-
+lies. Finally, pipelines combining LLMs with DP
+(LLM+MDP and LLM+RANTEXT) were the only
+pipelines we investigated that managed to keep
+empirical privacy leakage below 10%, the majority
+of which consisted of indirect PII.
+4.2.
+Utility Preservation Results - Entity
+Classification
+Figure 4 illustrates the relationship between privacy
+budgets (ϵ) and entity classification F1 scores (util-
+ity) across different pipelines. At very low privacy
+budgets (ϵ ≤32), all DP pipelines demonstrate
+poor utility due to the high levels of noise, but utility
+improves as ϵ increases, peaking around ϵ = 512.
+PDP consistently exhibits lower F1 scores across all
+privacy budgets, demonstrating utility degradation
+caused by noise addition, particularly at low ϵ val-
+ues. Introducing linguistic preprocessing improves
+utility, with PNER→DP achieving higher F1 scores than
+PDP, especially at mid-to-high privacy budgets (ϵ
+≥128). PLLM→DP further outperforms PNER→DP in
+most cases, showcasing the advantage of leverag-
+ing advanced language models for preprocessing.
+Both DP methods (RANTEXT and metric-DP) ex-
+hibit similar trends within each pipeline, suggesting
+that preprocessing, rather than the DP mechanism
+itself, plays a more critical role in improving utility.
+The LLM baseline maintains consistently high F1
+scores near 1.0, thereby serving as an upper bound
+for utility.
+4.3.
+Utility Preservation Results -
+Relation Classification
+Figure 5 shows relation classification F1 scores
+(utility) across various privacy budgets (ϵ) and for
+different pipelines. At low privacy budgets, such
+as ϵ = 8 or in some cases 16, no results are ob-
+tained due to the severe obfuscation which reduces
+the amount of usable training data to negligible
+levels. As ϵ increases, utility scores gradually im-
+prove across all pipelines. PDP exhibit the lowest F1
+scores throughout the range of privacy budgets. In
+contrast, both PNER→DP and PLLM→DP achieve higher
+F1 scores, with PLLM→DP consistently outperforming
+PNER→DP, particularly at mid-to-high privacy bud-
+gets (ϵ ≥128). Non-DP baselines still maintain
+
+Figure 3: PII leakage by pipeline and privacy budget ϵ. Bars are stacked (dark: direct PII; light: indirect
+PII). Across budgets, metric-DP (MDP) leaks substantially less than RANTEXT, and all methods show
+increasing leakage as ϵ grows, with the steepest rise for RANTEXT variants. Prepending an LLM
+rewrite reduces leakage for both families, with LLM+MDP achieving the lowest overall rates, followed by
+LLM+RANTEXT, while plain RANTEXT and NER+RANTEXT exhibit high direct leakage. NER and LLMs
+alone without DP also remain markedly leakier.
+Figure 4: Comparison of utility F1-score for En-
+tity Classification (EC) task across different de-
+identification pipelines and DP budgets (ϵ) (see
+Figure 2 for more details). It shows that the utility
+scores improve with higher ϵ, but still cannot re-
+cover baseline performances.
+consistently high F1 scores and establish the up-
+per bounds for utility. These results underscore the
+crucial role of linguistic preprocessing, particularly
+with LLMs, in mitigating the utility degradation in-
+herent to DP-based methods, especially in tasks
+requiring complex relational reasoning.
+Figure 5: Comparison of utility F1-score for Re-
+lation Classification (RC) task across different de-
+identification pipelines and DP budgets (ϵ) (see
+Figure 2 for more details). It shows that the utility
+scores slightly improve with higher ϵ, but are signifi-
+cantly harmed even with high ϵ, and cannot recover
+baseline performances.
+4.4.
+LLM Baseline Results
+Figure 6 shows the performances of privacy leak-
+age and utility F1-scores for both EC and RC tasks
+among PLLM using 5 various LLMs. Amongst the
+LLM baselines, GPT-4o achieves the best, i.e. low-
+est privacy leakage percentage while still offering
+
+Figure 6: Comparison of evaluation metrics includ-
+ing Privacy Leakage, Utility - EC, and Utility - RC
+for PLLM using 5 different LLMs. Privacy Leakage,
+where lower is better, shows that GPT-4o achieves
+the lowest leakage. Utility metrics for EC and RC,
+where higher is better, reveal that Med-GEMMA
+27B consistently outperforms others while obtain-
+ing relatively low privacy leakage. GPT-4o achieves
+similar utility even with the lowest privacy leakage,
+indicating its high overall performance.
+near-optimal utility for both EC and RC tasks. Med-
+GEMMA 27B exhibits the highest utility for both
+tasks while keeping the privacy leakage at a rela-
+tively low level. This aligns with the assumption that
+LLMs’ advanced linguistic capabilities allow them
+to effectively redact sensitive information.
+4.5.
+Operational Efficiency
+Building the manually de-identified corpus (Dmanual)
+was a labor-intensive process, requiring over 47
+hours of annotation by two annotators (Murphy
+et al., 2025a). In contrast, our automated pipelines
+are way more time- and cost-efficient, with metric-
+DP taking 3 minutes and 16 seconds per run and
+RANTEXT 26 minutes and 40 seconds per run.
+While manual de-identification remains the gold
+standard for accuracy and consistency, these re-
+sults highlight a substantial operational advantage
+for the automated methods, enabling rapid itera-
+tion over various configurations and large-scale or
+repeated de-identification in practice.
+5.
+Discussion and Conclusions
+General results.
+This work provides a compara-
+tive analysis of privacy-preserving de-identification
+for Dutch clinical notes by contrasting text-level
+differential privacy (DP) mechanisms, NER-based
+masking, and LLM-based masking, and by eval-
+uating both privacy leakage and downstream util-
+ity on entity and relation classification tasks. Our
+results show a consistent tension for DP pertur-
+bation: increasing the privacy budget ϵ improves
+utility but increases residual leakage, and applying
+DP directly to raw notes yields the weakest pri-
+vacy outcomes among DP pipelines. By contrast,
+preprocessing that removes explicit identifiers be-
+fore DP (via NER or LLM masking) improves the
+overall trade-off, indicating that, in our no-training
+setting, most gains come from reducing sensitive
+content before perturbation rather than relying on
+perturbation alone. In utility terms, token-level per-
+turbation is especially harmful for relation classifi-
+cation (more than for entity classification), plausibly
+because relations depend on longer-range coher-
+ence and on the availability of sufficient high-quality
+labeled instances: under tighter privacy budgets,
+the perturbation can effectively corrupt the signal
+beyond recovery, whereas higher ϵ only partially
+closes the gap with non-private baselines. Finally,
+our operational analysis highlights the substantial
+gap between the cost of producing benchmark-
+quality manually de-identified reference data and
+the speed of automated pipelines, which enables
+rapid iteration over configurations in practice.
+Advice for practitioners.
+When the goal is to
+share Dutch clinical narratives while explicitly con-
+trolling privacy risk, our results suggest prioritizing
+hybrid strategies: use a strong high-recall masking
+stage (LLM-based when feasible, otherwise NER-
+based) and then apply DP as a second-stage safe-
+guard on the residual text, rather than applying DP
+directly to raw notes. This design reduces the sen-
+sitive surface exposed to DP and consistently im-
+proves both leakage and downstream utility relative
+to DP-on-raw-text, while retaining an explicit privacy
+knob through ϵ. Practitioners should also anticipate
+that preserving utility for relation-centric tasks will
+be harder than for entity-centric tasks under text
+perturbation, and should validate performance on
+the intended downstream use case (not only on
+intrinsic leakage). Finally, even when automated
+pipelines are adopted, a manually de-identified ref-
+erence (or equivalent audit protocol) remains impor-
+tant for trustworthy evaluation and monitoring. Al-
+though the best-performing LLM in our experiments
+is proprietary (GPT-4o), recent work on Italian clin-
+ical notes has shown that smaller, open-source
+LLMs can achieve competitive de-identification per-
+formance in a similar zero-shot setting (Miranda
+et al., 2025), suggesting that our hybrid pipeline
+design is not inherently tied to proprietary models.
+Future work.
+Three extensions are particularly
+important: (i) expanding beyond Dutch to assess
+whether the same trade-offs hold across languages
+with different resource availability; (ii) enabling
+broader experimentation and external validation via
+public benchmarks or carefully designed synthetic
+alternatives; and (iii) widening utility evaluation be-
+
+yond entity/relation classification to additional clin-
+ical NLP use cases (e.g., document-level predic-
+tion), where sensitivity to perturbation may differ.
+More generally, future work should also strengthen
+adversarial evaluation of re-identification risk and
+explore hybrid designs that better target quasi-
+identifiers without unnecessarily corrupting clinical
+signals.
+Limitations
+While our study provides valuable insights into the
+application of differential privacy (DP) for clinical
+text de-identification, it has certain limitations. First,
+our work focuses exclusively on Dutch clinical nar-
+ratives, which may limit the generalizability of our
+findings to other languages or multilingual clinical
+datasets. Expanding this research to additional
+languages would provide a broader understanding
+of the effectiveness and scalability of the proposed
+techniques. Second, the dataset used in this study
+is private, as it contains sensitive medical informa-
+tion, which restricts reproducibility and external vali-
+dation by other researchers. Although this is a com-
+mon constraint in clinical research, the use of pub-
+licly available or synthetic benchmark datasets in
+future studies could help foster more extensive ex-
+perimentation and comparison. Third, our privacy
+leakage metric - residual PII percentage against a
+manually de-identified reference - is an empirical
+proxy, not a formal privacy measure. While DP
+provides theoretical guarantees on output indistin-
+guishability, empirical leakage captures a comple-
+mentary quantity: how much identifiable informa-
+tion survives in practice. These two notions should
+not be conflated, yet empirical evaluation against
+a gold-standard reference remains one of the few
+viable approaches for assessing de-identification
+effectiveness on real data. Lastly, while we evalu-
+ated our pipelines on two downstream tasks (entity
+and relation classification), further exploration of
+their performance across a wider variety of use
+cases, such as document classification or clinical
+outcome prediction, would provide a more compre-
+hensive assessment of their utility.
+6.
+Bibliographical References
+Josh Achiam,
+Steven Adler,
+Sandhini Agar-
+wal,
+Lama
+Ahmad,
+Ilge
+Akkaya,
+Floren-
+cia Leoni Aleman, Diogo Almeida, Janko Al-
+tenschmidt, Sam Altman, Shyamal Anadkat, et al.
+2023.
+Gpt-4 technical report.
+arXiv preprint
+arXiv:2303.08774.
+Loick Bourdois, Marta Avalos, Gabrielle Chenais,
+Frantz Thiessard, Philippe Revel, Cedric Gil-
+Jardine, and Emmanuel Lagarde. 2021.
+De-
+identification of emergency medical records in
+french:
+Survey and comparison of state-of-
+the-art automated systems. The International
+FLAIRS Conference Proceedings, 34.
+Konstantinos Chatzikokolakis,
+Miguel E. An-
+drés, Nicolás Emilio Bordenabe, and Catuscia
+Palamidessi. 2013. Broadening the scope of dif-
+ferential privacy using metrics. In International
+Symposium on Privacy Enhancing Technologies.
+Andrew Kweku Conduah, Sebastian Ofoe, and
+Dorothy Siaw-Marfo. 2025.
+Data privacy in
+healthcare: Global challenges and solutions.
+Digital Health, 11:20552076251343959.
+Wietse de Vries and Malvina Nissim. 2020. As
+good as new. how to successfully recycle english
+gpt-2 to make models for other languages.
+Wietse De Vries, Andreas van Cranenburgh, Ari-
+anna Bisazza, Tommaso Caselli, Gertjan van No-
+ord, and Malvina Nissim. 2019. Bertje: A dutch
+bert model. arXiv preprint arXiv:1912.09582.
+Franck Dernoncourt, Ji Young Lee, Ozlem Uzuner,
+and Peter Szolovits. 2017. De-identification of pa-
+tient notes with recurrent neural networks. Jour-
+nal of the American Medical Informatics Associ-
+ation (JAMIA), 24(3):596–606.
+Abhimanyu Dubey,
+Abhinav Jauhri,
+Abhinav
+Pandey, Abhishek Kadian, Ahmad Al-Dahle,
+Aiesha Letman, Akhil Mathur, Alan Schelten,
+Amy Yang, Angela Fan, et al. 2024. The llama
+3 herd of models. arXiv e-prints, pages arXiv–
+2407.
+Cynthia Dwork. 2006. Differential privacy. In Pro-
+ceedings of the 33rd International Conference on
+Automata, Languages and Programming - Vol-
+ume Part II, ICALP’06, page 1–12, Berlin, Hei-
+delberg. Springer-Verlag.
+Cynthia Dwork and Aaron Roth. 2014. The algo-
+rithmic foundations of differential privacy. Found.
+Trends Theor. Comput. Sci., 9(3–4):211–407.
+European Parliament and Council of the European
+Union. 2016. Regulation (eu) 2016/679 of the
+european parliament and of the council of 27
+april 2016 on the protection of natural persons
+with regard to the processing of personal data
+and on the free movement of such data (general
+data protection regulation). Official Journal of the
+European Union, L119:1–88.
+Oluwaseyi Feyisetan, Tom Diethe, and Thomas
+Drake. 2019. Leveraging hierarchical represen-
+tations for preserving privacy and utility in text.
+
+2019 IEEE International Conference on Data Min-
+ing (ICDM), pages 210–219.
+Simson Garfinkel et al. 2015. De-identification of
+personal information:.
+Cyril Grouin, Nicolas Griffon, and Aurélie Névéol.
+2015. Is it possible to recover personal health
+information from an automatically de-identified
+corpus of French EHRs?
+In Proceedings of
+the Sixth International Workshop on Health Text
+Mining and Information Analysis, pages 31–39,
+Lisbon, Portugal. Association for Computational
+Linguistics.
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao
+Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu,
+Shirong Ma, Peiyi Wang, Xiao Bi, et al. 2025.
+Deepseek-r1: Incentivizing reasoning capability
+in llms via reinforcement learning. arXiv preprint
+arXiv:2501.12948.
+Timour Igamberdiev and Ivan Habernal. 2023. DP-
+BART for privatized text rewriting under local dif-
+ferential privacy. In Findings of the Association
+for Computational Linguistics: ACL 2023, pages
+13914–13934, Toronto, Canada. Association for
+Computational Linguistics.
+Zhengliang Liu, Yue Huang, Xiaowei Yu, Lu Zhang,
+Zihao Wu, Chao Cao, Haixing Dai, Lin Zhao,
+Yiwei Li, Peng Shu, Fang Zeng, Lichao Sun, Wei
+Liu, Dinggang Shen, Quanzheng Li, Tianming
+Liu, Dajiang Zhu, and Xiang Li. 2023. Deid-gpt:
+Zero-shot medical text de-identification by gpt-4.
+Michele Miranda, Sébastien Bratières, Stefano
+Patarnello, and Livia Lilli. 2025. Mamma mia!
+where’s my name? de-identifying Italian clini-
+cal notes with large language models. In Pro-
+ceedings of the Eleventh Italian Conference on
+Computational Linguistics (CLiC-it 2025), pages
+735–746, Cagliari, Italy. CEUR Workshop Pro-
+ceedings.
+Rachel M Murphy, Dave A Dongelmans, Nicolette F
+de Keizer, Rosa J Jongeneel, Christiaan H Koster,
+Kitty J Jager, Ameen Abu-Hanna, Iacer Calixto,
+and Joanna E Klopotowska. 2025a. Creation of
+a gold standard dutch corpus of clinical notes
+for adverse drug event detection: the dutch ade
+corpus. Language Resources and Evaluation,
+pages 1–17.
+Rachel M Murphy, Nishant Mishra, Nicolette F
+de Keizer, Dave A Dongelmans, Kitty J Jager,
+Ameen Abu-Hanna, Joanna E Klopotowska, and
+Iacer Calixto. 2025b. Detection of adverse drug
+events in dutch clinical free text documents us-
+ing transformer models: benchmark study. arXiv
+preprint arXiv:2507.19396.
+David Pissarra, Isabel Curioso, João Alveira,
+Duarte Pereira, Bruno Ribeiro, Tomás Souper,
+Vasco Gomes, André Carreiro, and Vitor Rolla.
+2024. Unlocking the potential of large language
+models for clinical text anonymization: A com-
+parative study. In Proceedings of the Fifth Work-
+shop on Privacy in Natural Language Processing,
+pages 74–84, Bangkok, Thailand. Association
+for Computational Linguistics.
+Andrew Sellergren, Sahar Kazemzadeh, Tiam
+Jaroensri, Atilla Kiraly, Madeleine Traverse,
+Timo Kohlberger, Shawn Xu, Fayaz Jamil,
+Cían
+Hughes,
+Charles
+Lau,
+et
+al.
+2025.
+Medgemma technical report.
+arXiv preprint
+arXiv:2507.05201.
+Latanya Sweeney. 2000. Simple demographics
+often identify people uniquely. Health (San Fran-
+cisco), 671(2000):1–34.
+Yakini Tchouka, Jean-François Couchot, Maxime
+Coulmeau, David Laiymani, Philippe Selles, and
+Azzedine Rahmani. 2022a. De-identification of
+french unstructured clinical notes for machine
+learning tasks. arXiv preprint arXiv:2209.09631.
+Yakini Tchouka, Jean-François Couchot, and David
+Laiymani. 2022b.
+An easy-to-use and ro-
+bust approach for the differentially private de-
+identification of clinical textual documents. arXiv
+preprint arXiv:2211.01147.
+Yakini Tchouka, Jean-François Couchot, Maxime
+Coulmeau, David Laiymani, Philippe Selles, and
+Azzedine Rahmani. 2022c. De-identification of
+french unstructured clinical notes for machine
+learning tasks. arXiv preprint arXiv:2209.09631.
+Yakini Tchouka, Jean-François Couchot, and David
+Laiymani. 2022d.
+An easy-to-use and ro-
+bust approach for the differentially private de-
+identification of clinical textual documents. arXiv
+preprint arXiv:2211.01147.
+Meng Tong, Kejiang Chen, Jie Zhang, Yuang Qi,
+Weiming Zhang, Nenghai Yu, Tianwei Zhang,
+and Zhikun Zhang. 2025.
+Inferdpt: Privacy-
+preserving inference for black-box large lan-
+guage model.
+U.S. Department of Health and Human Ser-
+vices.
+45 cfr § 164.514 – de-identification
+of health information.
+Health Information Pri-
+vacy. [Online]. Available: https://www.law.
+cornell.edu/cfr/text/45/164.514. [Ac-
+cessed: Dec. 2, 2024].
+Stella Verkijk and Piek Vossen. 2021. Medroberta.
+nl: a language model for dutch electronic health
+records.
+In Computational Linguistics in the
+
+Netherlands, volume 11, pages 141–159. Com-
+putational Linguistics in the Netherlands.
+Peng Wang, Yong Li, Liang Yang, Simin Li, Lin-
+feng Li, Zehan Zhao, Shaopei Long, Fei Wang,
+Hongqian Wang, Ying Li, and Chengliang Wang.
+2022. An efficient method for deidentifying pro-
+tected health information in chinese electronic
+health records: Algorithm development and vali-
+dation. JMIR Med Inform, 10(8):e38154.
+Tianyu Yang, Xiaodan Zhu, and Iryna Gurevych.
+2025. Robust utility-preserving text anonymiza-
+tion based on large language models. In Pro-
+ceedings of the 63rd Annual Meeting of the As-
+sociation for Computational Linguistics (Volume
+1: Long Papers), pages 28922–28941, Vienna,
+Austria. Association for Computational Linguis-
+tics.
+Da Yu, Saurabh Naik, Arturs Backurs, Sivakanth
+Gopi, Huseyin A Inan, Gautam Kamath, Ja-
+nardhan Kulkarni, Yin Tat Lee, Andre Manoel,
+Lukas Wutschitz, Sergey Yekhanin, and Huishuai
+Zhang. 2022. Differentially private fine-tuning of
+language models. In International Conference
+on Learning Representations.
+Xiang Yue, Huseyin Inan, Xuechen Li, Girish Ku-
+mar, Julia McAnallen, Hoda Shajari, Huan Sun,
+David Levitan, and Robert Sim. 2023. Synthetic
+text generation with differential privacy: A sim-
+ple and practical recipe. In Proceedings of the
+61st Annual Meeting of the Association for Com-
+putational Linguistics (Volume 1: Long Papers),
+pages 1321–1342, Toronto, Canada. Association
+for Computational Linguistics.
+Urchade Zaratiana, Nadi Tomeh, Pierre Holat, and
+Thierry Charnois. 2024.
+GLiNER: Generalist
+model for named entity recognition using bidirec-
+tional transformer. In Proceedings of the 2024
+Conference of the North American Chapter of the
+Association for Computational Linguistics: Hu-
+man Language Technologies (Volume 1: Long
+Papers), pages 5364–5376, Mexico City, Mexico.
+Association for Computational Linguistics.
+A.

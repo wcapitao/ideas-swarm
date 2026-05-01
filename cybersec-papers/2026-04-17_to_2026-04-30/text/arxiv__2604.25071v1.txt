@@ -1,0 +1,480 @@
+Scalable Secure Biometric Authentication without
+Auxiliary Identifiers
+Alexander Bienstock1, Daniel Escudero∗,1,
+Antigoni Polychroniadou1, Zhen Zeng1, Pranav Bhat1,
+Ashok Singal1, Prashant Sharma1, Manuela Veloso1
+1JPMorganChase, New York, NY, USA.
+Abstract
+The prevalence of biometric authentication has been on the rise due to its ease of
+use and elimination of weak passwords. To date, most biometric authentication
+systems have been designed for on-device authentication of the device owner (e.g.,
+smartphones and laptops). Recently, biometric authentication systems have started
+to emerge that are designed to authenticate users against cloud databases storing
+representations of biometrics for large numbers of users (potentially millions),
+such as those facilitating biometric payments. However, the use of a large cloud
+database introduces a significant attack vector, as a breach of the database could
+lead to the compromise of all enrolled users’ sensitive biometric data. Indeed, all
+such existing systems either do not adequately protect against such a breach,
+or are impractical to deploy and use due to their high computational overhead.
+In this work, we present a new biometric authentication system that provides
+provable security guarantees against data breaches, while remaining scalable and
+performant. To do so, we marry artificial intelligence with advanced cryptographic
+techniques in a novel fashion, providing several optimizations along the way. Our
+work is the first to show that real-world scalable privacy-preserving biometric
+authentication without auxiliary identifiers is feasible, and we believe that it will
+spur widespread industrial adoption and further research in this area.
+1 Introduction
+Biometrics are becoming an increasingly popular method for user authentication,
+providing the means to unlock smartphones1, access secure facilities2, board planes3,
+∗Work done while at JPMorganChase. D.E. is now at TACEO.
+1
+arXiv:2604.25071v1 [cs.CR] 27 Apr 2026
+
+and more. In such systems, a user is first enrolled by providing a biometric, and
+thereafter that same biometric (and sometimes only that biometric, without any
+auxiliary information) is used to authenticate the user. Some examples of biometric
+modalities include face images, iris scans, fingerprints, palmprints, and more.
+Biometric authentication will soon see expanded use-cases, including those where
+the biometric data of potentially hundreds of thousands (or millions) of users must be
+stored in a cloud database, rather than locally on some device. Such use-cases include
+biometric-based payment systems4, which is being pushed as the payment method
+of the future by Amazon5 and JPMorgan6; fraud prevention via ensuring biometric
+uniqueness across accounts in a system (e.g., banking accounts); biometric access to
+cloud services7; and more. However, the storage of large amounts of biometric data
+on a cloud server in these settings raises significant security and privacy concerns.
+Indeed, even some of the world’s most mature and trusted software companies are
+susceptible to data breaches8, and biometric data is particularly sensitive since it is
+immutable and uniquely tied to an individual. To give an illustrative example, if a
+person’s credit card information is stolen, they can cancel the card and get a new one;
+if their biometric data is stolen, they cannot change something about their biology.
+Once biometric data is compromised by an adversary, this adversary may try to
+recreate a physical copy of the biometric (for example, a fake fingerprint) in order to
+impersonate the victim. However, this complex physical effort may not be needed; the
+adversary may be able to bypass the physical biometric scanner entirely and instead
+infiltrate the system past the point of physical scanning, using the stolen biometric at
+that point. Moreover, since biometric data is soon to be used for financial transactions
+and other important services, the stakes are extremely high. Beyond general privacy
+concerns, identity theft, fraud, surveillance, and other malicious activities are all
+potential risks if biometric data is not properly protected. Furthermore, for companies
+offering biometric authentication services commercially, a data breach could lead to
+significant legal liability, reputational damage, and loss of customer trust9,10. Therefore,
+ensuring the security of biometric authentication systems is of paramount importance.
+A pipeline for processing biometric data typically involves converting the biometric
+into a so-called template, which is a mathematical representation of the biometric that
+is suitable for storage and comparison. While some organizations claim that simply
+storing templates in the cloud database is secure enough, there are numerous works
+demonstrating that templates can be inverted to recover the original biometric data11–13
+(see right side of Figure 1), and thus more work is needed. Indeed, experts warn against
+the breach of biometric data from such systems, including that of Amazon14.
+There are some prior works that provide provably secure biometric authenti-
+cation techniques. First, some works use advanced cryptographic primitives like
+Fully-Homomorphic Encryption and Secure Multiparty Computation, which allow to
+perform the authentication process while the biometric data remains encrypted15–19.
+However, these techniques all require some secret information to recover the result of
+the authentication, and this secret information must be stored somewhere. The server
+storing the secret information can just as easily be compromised, leading to the same
+issues as before. Additionally, these solutions are often impractical due to their high
+computational overhead20.
+2
+
+Figure 1: System architecture for our secure biometric authentication system. Tem-
+plates computed from a neural network based on biometric scans are cryptographically
+hashed before being stored in the database, which hides all information about the
+biometric data. These stored hashes are matched against for authentication. Previous
+solutions stored templates in the clear in the database, which can be inverted to re-
+cover original biometric data in the case of a data breach.
+Another line of work uses fuzzy extractors 21–24 to derive a strong cryptographic
+key from a biometric template, which is then used for authentication. Although there
+is no need for a secret key to be stored on the server, fuzzy extractors are only used
+for one-to-one verification of a user, in which the identity of the user is already known,
+explicitly through auxiliary user identifiers or implicitly through device ownership,
+and the purpose of the system is to verify the users’s claimed identity. A richer
+functionality that is required in many applications is one-to-many identification, in
+which the identity of the user is not a priori known, and instead needs to be successfully
+determined from a large database of enrolled users, without any auxiliary identifiers.
+Fuzzy extractors do not natively support this richer functionality. Indeed, if a user
+only presents a biometric, and not any other identifier, then a fuzzy extractor-based
+system must search through the entire large database of enrolled users one-by-one to
+find a match, which is computationally infeasible.
+In our work, we present a new biometric authentication system that addresses the
+above challenges. See Figure 1 for an overview of our system architecture. Our system
+enables for the first time accurate, secure biometric authentication using a cloud
+database, without the need to store sensitive information on the server. It supports
+real-time one-to-many identification with authentication time that scales independently
+of the number of enrolled users. It additionally provides for the first time an important
+property called revocability, which ensures that users can revoke their enrollment in
+the database in a way that guarantees their previously-enrolled biometric information
+cannot again be used by anyone, even if there was/is a prior/future database leak.
+Our solution works for all biometric modalities, however we focus on face images in
+our experiments due to the availability of large-scale public datasets (and lack thereof
+for other modalities). We leverage advanced cryptographic techniques to ensure the
+privacy and security of biometric data throughout the lifetime of the system, while also
+3
+
+ensuring practicality for real-world use cases. The properties achieved by our system
+in comparison to previous practical systems are listed in Table 1.
+Encryption in
+Storage/Computation
+Authentication Time
+Revocability
+Existing Practical Systems
+No
+O(N)
+No
+Our Secure System
+Yes
+O(1)
+Yes
+Table 1: Comparison of our secure biometric authentication system with existing
+practical systems. N is the number of enrolled users. Our system encrypts biometric
+data at all times, has authentication time independent of number of enrollees, and
+provides revocability (defined above), while existing practical systems do not have any
+of these properties.
+2 System Architecture and Threat Model
+We now overview the architecture of our system (depicted in Figure 1), along with the
+threat model. A more formal model is presented in Appendix A. Our system consists
+of two types of devices: scanners that capture biometric data from users, and a remote
+database that receives information extracted from the biometric from the scanner,
+stores it and determines if authentication was successful.
+During the enrollment phase, a user registers their biometric data in the system,
+in order to authenticate at some later point, using the same biometric. The system
+stores some derivation of their biometric data associated with their identity in the
+database, alongside the (processed) data of all other users of the system. Then, during
+the authentication phase, a user attempts to authenticate with the system using their
+biometric data. The system checks whether the biometric data corresponds to a user
+in the database, and if so, returns the user’s identity.
+From a functionality standpoint, we naturally only want enrolled users to be able to
+successfully authenticate as themselves. For security, we assume that the scanners are
+trusted devices that securely capture biometric data and send extracted information
+to the database over an encrypted channel. In practice, the scanners immediately
+delete any data derived from the biometrics and would be fortified with anti-tampering
+measures25,26, liveness detection26, and other security features to prevent adversarial
+manipulation. On the other hand, the remote database may be compromised, and our
+goal is to ensure that even if an adversary gains access to the database, they cannot
+learn any sensitive information about enrolled users’ biometrics.
+Entropy Assumption.
+A primary assumption underlying secure biometric authentication systems is that
+biometric data is sufficiently random; i.e., has high entropy. Indeed, if biometric
+data was not very random, then an adversary could easily learn the distribution of
+biometric data, and simply sample likely biometric values until they find one that
+4
+
+Figure 2: Pictorial, simplified overview of our secure biometric authentication protocol.
+During enrollment, the system cryptographically hashes all possible templates around
+the user’s enrollment template (centered and faded) using CH and stores these hash
+values in the database, paired with the user’s identity (represented by color). During
+authentication, the system hashes the authentication template and checks if the
+resulting hash value matches any of the stored hash values for any user. Note that all
+hashed values stored in the database are randomly scattered throughout the space,
+depicting the security of the system.
+successfully authenticates as some enrolled user. As explained in the Introduction, the
+adversary need not physically recreate the biometric, but could instead bypass the
+physical biometric scanner and infiltrate the system past that point, using the sampled
+biometric. Fortunately, prior works have provided empirical evidence that biometric
+data does indeed have high entropy23,27, and in Section 5.2 we provide further empirical
+validation of this assumption for our specific system instantiation. In our system, we
+will in fact rely on this assumption of intrinsic randomness of biometrics to actually
+protect information about the biometric itself (see the next section and Appendix A).1
+3 Protocol Overview
+Here, we provide a general overview of our system. We start with the baseline one-to-
+one sample-then-lock fuzzy extractor of Canetti et al.22 (improved upon by Shukla et
+al.23) and with novel techniques, extend it to the one-to-many authentication setting
+we aim to achieve in this work. In Appendix B, we provide a formal specification of
+our protocol and in Appendix C we provide a security proof for our protocol.
+Our system critically relies on a base templatization model that extracts a high-
+dimensional, real-valued template (or embedding) from a given biometric scan. This
+model ensures that templates extracted from biometrics of the same person are close,
+1Indeed, we can tune the amount of entropy captured by our system, and thus the security of our system.
+5
+
+while templates extracted from different people are far, both in terms of euclidean
+distance (which is closely related to cosine similarity).
+In addition, we require a cryptographic hash function, CH, approved by the National
+Institutes of Standards and Technology, such as SHA-328, that maps bit strings to bit
+strings. The main property of a cryptographic hash function that we utilize is that
+if the input is sufficiently random (i.e., has high entropy), then the output will look
+random, and it will be computationally infeasible to recover any information about
+the input from the output. Cryptographic hash functions are deterministic, meaning
+that the same input will always yield the same output.
+With these two building blocks, we can provide the simplified intuition of our
+system, depicted pictorially in Figure 2. The templatization model gives the property
+that all possible authentication templates for a given user will be closely centered
+around their enrollment template, and far away from the possible templates of all other
+users. Thus, we can cryptographically hash all possible templates around each users’
+enrollment template, and store these hash values, paired with the user’s identity, in the
+database.2 Then, during authentication, we can hash the authentication template and
+check if the resulting hash value matches any of the stored hash values for any user.
+Correctness is achieved, since from above, this authentication hash value will match
+only one of the hashes stored in the database that we computed during enrollment
+for that user, and not any other user. Moreover, we achieve security assuming that
+biometric data has high entropy, since we only store outputs of the cryptographic hash
+function in the database.
+Below, we introduce the system in more detail. To bridge the gap between the
+real-valued templates and the discrete inputs of cryptographic hash functions, we also
+utilize a locality-sensitive hash (LSH). An LSH maps templates into bit strings, such
+that the output bit strings of two close templates are close in hamming distance (i.e.,
+the number of bits where the strings differ), and two far templates result in bit strings
+that are far in hamming distance.
+Global Setup.
+The system starts with some global setup. We denote the output length of the LSH as n.
+Additionally, let 0 < k < n and m > 0 be some other system parameters. The system
+will first generate m length-k subsets of [n] := {1, 2, . . . , n}, denoted µ1, µ2, . . . , µm. An
+example for how to generate such subsets is just uniformly random and independently;
+see other methods in Section 4.3. We will also use t := n −k to denote the number of
+elements of [n] that we exclude from each subset µi.
+Enrollment Phase.
+We now provide a more detailed description of the enrollment phase, demonstrated
+in the top of Figure 3. After capturing the user’s biometric data, the system runs it
+through the templatization model to obtain a template. Next, this template is run
+through the LSH to obtain a bit string of length-n, v := (v1, . . . , vn), where each
+vi ∈{0, 1}. With v in hand, the system next computes all length-k substrings of v
+corresponding to µ1, µ2, . . . , µm generated during the global setup phase. We denote
+2Our final system performs this step in a more nuanced, efficient way.
+6
+
+Figure 3: More detailed overview of our secure biometric authentication protocol,
+demonstrating the cryptographically hashed values of bit substrings that are stored in
+the database during enrollment (top) and against which authentication is performed
+(bottom). In this example, we have m = 3, n = 9, and k = 7 (thus t = 2). Since LSH
+output strings of the same user are close and LSH output strings of different users are
+far, the cryptographically hashed values of substrings will only match for same users,
+ensuring correctness.
+these resulting substrings as w1, w2, . . . , wm. Finally, the system cryptographically
+hashes each wi using CH to obtain a hash value hi := CH(wi) and stores these hash
+values h1, . . . , hm in a database, DB, under the user’s identity, ID. This database is a
+hash table, where the keys are the hash values and the values are the user identities;
+i.e. (k, v) := (h, ID). Such a hash table allows for constant-time lookups of keys (i.e.,
+hash values).
+Authentication Phase.
+Authentication follows a similar pattern to enrollment, presented in the bottom of
+Figure 3. Indeed, authentication starts in the same way, by capturing the biometric, run-
+ning it through the templatization model and LSH, obtaining substrings w1, w2, . . . , wm
+according to global subsets µ1, µ2, . . . , µm, and hashing each substring to obtain hash
+values h1, h2, . . . , hm. Then, instead of storing the hashes as in enrollment, the system
+performs a lookup (in constant time) on each obtained hash hi, within the database. If
+the system finds a number of matching hashes for some identity ID that is greater than
+some threshold τ, it returns ID; otherwise, it returns ⊥to indicate that authentication
+has failed.
+7
+
+Correctness.
+For the same person, the templatization model and LSH guarantee that different
+biometric scans result in bit strings v and v′ that are close to each other, with high
+probability. As a result, Canetti et al.22 observed that some number of the m substrings
+w of v will match the corresponding substrings w′ of v′, with high probability. Thus,
+with high probability, there will be enough hashed values during authentication time
+that match with the given user’s enrolled hashes. On the other hand, for different
+people, since the templatization model and LSH guarantee that their corresponding
+biometric scans will result in bit strings v and v′ that are far apart, very few (if any)
+of the substrings of v will exactly match any of the m substrings of v′, with high
+probability. Therefore, with high probability, not enough hashed value matches will
+be found during authentication time, and thus the system does not allow incorrect
+authentication. See Section 5.2 for experimental verification of these phenomena.
+Security.
+Security comes from our assumption that biometric data has high entropy. Indeed, if
+this is the case, and the parameters of the templatization model, LSH, and substring
+length k are chosen appropriately, then each resulting bit string wi will also have
+high entropy. Therefore, the cryptographic hash function will output random-looking
+hash values hi, that cannot be used to recover information about the original hashed
+substrings vi (nor the original biometric data or template). In Section 5.2 we empirically
+validate these assumptions by employing standard entropy estimation23,27 to show
+that the hashed substrings indeed have high entropy.
+4 Concrete System Instantiation
+In this section, we give concrete instantiations of the abstracted components of our
+high-level protocol from the previous section.
+4.1 Templatization Model
+For our templatization model, we use Arcface29 with 1024-dimensional templates.
+Arcface adds additive angular margin loss to the loss function to maximize class
+separability, while pushing members of the same class closer together. This increases
+accuracy on facial recognition tasks and intuitively also increases the amount of entropy
+that our system can capture. Indeed, if templates for different identities are more
+separated and those for the same identity are closer together in euclidean space, this
+will translate to the corresponding LSH outputs having higher hamming distance and
+lower hamming distance for different and same identities, respectively. Thus, longer
+substrings of these outputs will be much less likely to collide between different identities,
+while for the same identity, the likelihood of collision will remain high. Therefore, we
+can sample longer substrings and thus capture more entropy in each of these substrings,
+while maintaining low error rates.
+8
+
+4.2 Locality-Sensitive Hash Function
+For the LSH, we use the state-of-the-art OrthoHash30 with 4096-bit outputs. Orthohash
+is based on deep hashing—i.e., deep learning techniques, followed by some binarization
+process—instead of traditional statistical techniques like random projections. The
+objective function used in OrthoHash simultaneously results in discriminative outputs,
+i.e., intra-class distances are small while inter-class distances are large, and also
+minimizes the quantization error from binarizing the continuous outputs.
+4.3 Subset Generation
+For the generation of subsets, we use ζ-sampling from Shukla et al.23. Instead of using
+the naive approach of sampling each bit uniformly at random for each substring, ζ-
+sampling weights the bits according to some measure. While, Shukla et al. examine a
+few different such measures, we focus on a mutual-information based approach, which
+intuitively measures how much each bit in the LSH output reduces the uncertainty
+about the identity of the biometric:
+mii := I(biti; ID) = H(ID) −H(ID|biti),
+where H is the entropy function, biti is a random variable representing the value of
+bit i, and ID is a random variable representing the identity of the biometric. Then, the
+sampling weight wti of each bit biti is proportional to this mutual information value,
+potentially further weighted by some value ζ:
+wti :=
+miζ
+i
+P
+j miζ
+j
+.
+This mutual-information based approach simultaneously increases accuracy (as bits
+that are more informative about the identity are more likely to be sampled) and also
+increases the entropy captured in each substring (as bits that are more discriminative
+are more likely to be sampled, and thus the length of substrings can be longer).
+5 Evaluation
+Now we provide empirical evaluation of our system, showing that it is efficient, accurate,
+and secure.
+5.1 Evaluation Dataset
+Due to the lack of available large-scale public datasets of high-quality face images
+with multiple images per identity, we use synthetic face images generated by the GAN-
+Control library31. This library allows us to generate multiple realistic images of the
+same synthetic identity with control over facial expressions, lighting conditions, head
+poses, etc. We generate two images each for approximately 100,000 synthetic identities.
+See Figure 4 for examples of synthetic images used in our experiments.
+9
+
+Random Expressions
+ID 1
+ID 2
+ID 3
+ID 4
+ID 5
+Similar Expressions
+ID 1
+ID 2
+ID 3
+ID 4
+ID 5
+Figure 4: Comparison of random expressions (top) and fixed expressions (bottom)
+for 5 different identities. Each ID shows two images side by side.
+5.2 Experimental Results
+We now present the experimental results for our system, first explaining the insecure
+baseline we use for comparison, then describing the different types of experiments
+we run, and finally discussing the results of these experiments, including accuracy,
+computational efficiency, and entropy estimation.
+Insecure Baseline.
+This insecure baseline simply stores the output of the ArcFace templatization model
+on the enrollment image of every identity, then during authentication, computes the
+euclidean distance between the template of the authentication image and the stored
+template for each enrolled identity, and authenticates if the distance is below some
+threshold.
+Experiment Types.
+We run experiments on two sets of data: (i) face images with different random ex-
+pressions for each identity used during enrollment and authentication, and (ii) face
+images with two similar expressions for each identity used during enrollment and au-
+thentication, with the two expression styles fixed across identities. See Figure 4 for
+examples of these two sets of data. While (i) is a more challenging and realistic setting,
+publicly available templatization models are vastly inferior to (closed-source) indus-
+trial solutions32. Moreover, as discussed earlier, the better the model is at separating
+the distance between same biometrics and different biometrics, the more entropy our
+system can capture, and thus the more secure it is. Therefore, we use (ii) to come
+closer to matching the accuracy of industry models, and thus to show that our system
+can achieve very low error rates while also capturing a meaningful amount of entropy,
+which is crucial for security. We still use (i) to empirically estimate the additional error
+that our secure system incurs compared to the insecure baseline of ArcFace, and to
+show that even in this more challenging setting, the error increase is not too large.
+In both settings, we evaluate the standard measures of False Negative Rate (FNR)
+and False Positive Rate (FPR). FNR is the rate at which enrolled identities do not
+10
+
+properly authenticate as themselves; FPR is the rate at which non-enrolled identities
+improperly authenticate as someone in the enrolled database. We will also refer to
+generic accuracy, for which we use the average of FNR and FPR as the error rate.
+Experiments with Random Expressions.
+We start by running experiments on synthetic faces generated with random expressions
+(top of Figure 4). As Extended Data Figure 1 shows, the parameters of our system
+that yield the lowest error results in a ≲1.5× increase in the error rate compared
+to the baseline insecure version; this means that if the baseline insecure system has
+99.9% accuracy, our system will have ≈99.85% accuracy. Unfortunately, as mentioned
+earlier, the accuracy of even the baseline insecure system based on arcface for faces
+with random expressions is quite low. Moreover, as a side effect, the difference between
+distances of same and different identities is not large, and thus the length of substrings
+and entropy captured at this accuracy is quite low (as explained above). This low
+accuracy of the baseline system is due to a number of reasons, most notably due to the
+lack of large high-quality public datasets of face images needed for successful training;
+it is known that industry models are able to achieve much better accuracy as high as
+≈99.95% for databases of size 12 million32.
+Remedy for Low Captured Entropy.
+We propose a remedy to the above low entropy issue. Indeed, although the length of the
+substrings and thus the entropy captured is low, if we sample a random cryptographic
+key and use it as input to a (also deterministic) Pseudo-Random Function (PRF)33 to
+generate the outputs instead of a cryptographic hash function, then the outputs will be
+computationally indistinguishable from random, as long as the key remains secret. One
+way to keep the key secret is to store it in a Trusted Execution Environment34, which
+is a secure environment isolated that is inaccessible from the rest of a server’s operating
+system, and have all PRF computations happen inside this secure environment. Thus,
+our security objective can still be achieved, albeit under a different assumption that
+the PRF key cannot be retrieved from the TEE.
+Experiments with Similar Expressions.
+To come closer to matching the accuracy of industry models, we run experiments
+on synthetic faces with fixed, similar expressions (bottom of Figure 4). As shown in
+Figure 5 (left), our secure system can achieve very low error rates in this setting, across
+database sizes. Indeed, even for substring lengths up to 110 bits, we maintain very
+low and performant error rates. As we increase the substring length, increasing the
+security of the system, we see a gradual increase in only false negatives, but the system
+remains largely performant.
+Computational Efficiency.
+We now discuss computational efficiency of our system. First, for storage per identity,
+our sytem involves storing m key-value pairs, where the key is a hash value and the
+value is the identity of the user. The hash value length we use is the standard 256 bits
+and we use 32-bit integers to represent identities. Thus, the total storage per identity
+11
+
+Figure 5: Left. Error rates for databases of size 1,000, 10,000, and 100,000 enrolled
+IDs. FNR: False negative rate; FPR: False Positive Rate. False negatives are calculated
+over first 1000 enrolled identities. False positives are calculated over 1000 non-enrolled
+identities. Runs of our secure system are averaged over 5 trials. Right. Average time
+per user for enrollment and authentication queries; both secure (solid) and insecure
+(dashed, faded).
+is m · (256 + 32) bits. We use m = 250K for the experiments in Figure 5 (left), which
+results in a storage of ≈9 MB per identity, which is quite reasonable for modern
+servers. However, due to memory constraints, we recommend sharding the database so
+that each shard contains the (hash value, identity) pairs for at most 10K identities.
+Authentication queries would be processed by each shard in parallel, whose results
+would be processed together by an authentication server.
+With this in mind, in Figure 5 (right) we present the average time per user for both
+enrollment and authentication queries, for database sizes up to 10K. Both enrollment
+and queries take under 1 second for all database sizes and queries take as little as 680
+milliseconds for database size of 1K. We note that even though in theory, enrollment and
+query time should be fixed across database sizes, since we are only performing constant-
+time hash table operations, both actually slightly increase with larger databases. This
+is because as the enrollment database grows, the hash table used for storing and
+looking up biometric templates becomes larger, leading to increased CPU cache misses
+during dictionary lookups, and therefore slower main memory fetches. Compared to
+the insecure baseline, our system maintains competitive enrollment and query times.
+Entropy Estimation.
+Measuring the true entropy of samples from a distribution requires an exponentially
+large number of samples35,36. However, there are established methods for estimating
+the min-entropy of biometrics in the literature. To estimate the min-entropy of the
+substrings that we hash in our system, we use the standard method of Shukla et al.23,
+which is a modification of Daugman’s test27. This estimation involves computations
+on the mean, µUnlike, and standard deviation, σUnlike, of pairwise Hamming distances
+between the substrings of different identities in the dataset:
+e = −µUnlike(1 −µUnlike) log max{µUnlike, 1 −µUnlike}
+σ2
+Unlike
+.
+12
+
+In Extended Data Table 1, we show that the minimum (most important for security
+guarantees) of estimates of min-entropy for all substrings is quite high, reaching 74.3
+bits of entropy for substring lengths of 110 bits, which is a very meaningful level
+of security. We also provide the mean and maximum estimates across substrings for
+reference.
+Disclaimer
+This paper was prepared for informational purposes by the Artificial Intelligence
+Research group of JPMorgan Chase & Co. and its affiliates (“JP Morgan”) and is not a
+product of the Research Department of JP Morgan. JP Morgan makes no representation
+and warranty whatsoever and disclaims all liability, for the completeness, accuracy
+or reliability of the information contained herein. This document is not intended as
+investment research or investment advice, or a recommendation, offer or solicitation for
+the purchase or sale of any security, financial instrument, financial product or service,
+or to be used in any way for evaluating the merits of participating in any transaction,
+and shall not constitute a solicitation under any jurisdiction or to any person, if such
+solicitation under such jurisdiction or to such person would be unlawful.

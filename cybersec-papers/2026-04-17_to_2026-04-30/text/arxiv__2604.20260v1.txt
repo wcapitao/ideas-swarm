@@ -1,0 +1,1622 @@
+TL-RL-FusionNet: An Adaptive and Efficient Reinforcement Learning–Driven 
+Transfer Learning Framework for Detecting Evolving Ransomware Threats 
+Jannatul Ferdous1, Rafiqul Islam2, Arash Mahboubi3 and Md Zahidul Islam4 
+1School of Computing, Mathematics and Engineering, Charles Sturt University, Wagga Wagga, NSW- 2650, Australia 
+2School of Computing, Mathematics and Engineering, Charles Sturt University, Albury, NSW- 2640, Australia 
+3School of Computing, Mathematics and Engineering, Charles Sturt University, Port Macquarie, NSW 2444, Australia 
+4School of Computing, Mathematics and Engineering, Charles Sturt University, Bathurst, NSW 2795, Australia 
+Corresponding author: Jannatul Ferdous (email: jferdous@csu.edu.au) 
+ 
+Abstract 
+Modern ransomware demonstrates polymorphic and evasive behaviors by frequently modifying its execution patterns to avoid detection. 
+This dynamic nature disrupts feature spaces and hinders the efficacy of static or predefined models. To address this challenge, we present 
+TL-RL-FusionNet, a reinforcement learning (RL)-guided hybrid framework that integrates frozen dual transfer learning (TL) backbones 
+as feature extractors with a lightweight residual multilayer perceptron (MLP) classifier. The RL agent supervises training by adaptively 
+reweighting samples in response to modifications in the observable behaviors of the ransomware. By providing feedback in the form of 
+rewards or penalties, the RL agent emphasizes complex or deceptive cases such as stealthy ransomware or polymorphic variants 
+employing obfuscation while down weighting trivial samples such as benign applications with only simple file I/O operations or 
+ransomware with obvious encryption routines that are consistently classified correctly. This adaptive mechanism enables the model to 
+dynamically adjust its strategy, improving its resilience against evolving ransomware behaviors while maintaining effective 
+classification performance. The framework employs dynamic behavioral features, such as file system operations, registry modifications, 
+network traffic, API calls, and anti-analysis checks, which are extracted from sandbox-generated JSON reports. These features were 
+then transformed into RGB images and processed through frozen EfficientNetB0 and InceptionV3 layers, thereby capturing 
+comprehensive feature representations while ensuring efficiency. The final classification was performed using a lightweight residual 
+MLP supervised by an RL (Q learning) agent. On a balanced dataset of 1,000 samples (500 ransomware, 500 benign), TL-RL-FusionNet 
+achieved 99.1% accuracy, 98.6% precision, 99.6% recall, and 99.74% AUC, outperforming non-RL baselines by up to 2.5% in accuracy 
+and 3.1% in recall. Efficiency profiling further revealed 55% lower training time and 59% reduced RAM usage, confirming that 
+reinforcement learning not only enhances accuracy but also streamlines computation for real-world ransomware detection. 
+Keywords: Cybersecurity, EfficientNet, InceptionV3, Interpretability, MLP, Multi-CNN Feature Fusion, Q-learning, Ransomware 
+Detection, Reinforcement Learning, Sample Weighting, Transfer Learning. 
+ 
+1. Introduction 
+Ransomware has emerged as one of the most destructive 
+forms of malware, causing substantial economic losses, 
+disrupting critical infrastructure, and threatening data integrity. 
+Unlike traditional malware, ransomware encrypts victims’ data 
+and demands a ransom, often in cryptocurrency, for the 
+decryption key [1]. Modern ransomware variants employ 
+polymorphism, obfuscation, and anti-analysis strategies, 
+making their detection using conventional approaches 
+increasingly difficult. Additionally, new attack strategies, such 
+as double extortion, in which data are exfiltrated and threatened 
+with public release, have further magnified the threat. The 
+proliferation of Ransomware-as-a-Service (RaaS) [2] has 
+lowered the entry barriers for cybercriminals, and the 
+widespread use of cryptocurrencies facilitates anonymous 
+ransom payments, complicating law-enforcement efforts [3]. 
+As attackers continue to innovate, the need for advanced and 
+adaptive ransomware detection mechanisms has become 
+increasingly urgent. 
+Ransomware detection typically relies on static and dynamic 
+analyses to identify malicious behaviors. Static analysis 
+inspects the code structure without execution, thereby 
+providing safer and faster detection. However, it faces 
+challenges when dealing with obfuscated or polymorphic 
+ransomware that employs tactics such as packing and 
+encryption techniques. In contrast, dynamic analysis observes 
+program behavior during execution, enabling the detection of 
+hidden or runtime-triggered actions in the program. However, 
+it is resource-intensive, slow, and susceptible to anti-analysis 
+evasion techniques [1]. 
+Early ransomware detection systems employed traditional 
+machine learning (ML) techniques such as Random Forests 
+(RF), Support Vector Machines (SVM), and Logistic 
+Regression (LR). This refers to algorithms that learn from 
+features extracted from static or dynamic analyses to classify 
+benign and malicious activities. However, Traditional ML 
+methods require manual feature engineering, making them 
+labour-intensive and prone to bias. These models cannot learn 
+abstract hierarchies from raw data, limiting their adaptability to 
+evolving ransomware [4]. 
+ To overcome the reliance on manual features, researchers 
+have turned to deep learning (DL) methods for ransomware 
+detection because of their ability to extract high-level semantic 
+features from raw data and pattern recognition [5], [6], [7], [8]. 
+DL, a subfield of ML, trains computers for automated 
+prediction by employing multilayer artificial neural networks 
+inspired by human brain neurons. These networks consist of 
+
+interconnected layers that transform input data using nonlinear 
+activation functions (e.g., ReLU, Sigmoid, Tanh), thereby 
+enabling hierarchical feature extraction from raw input data. 
+The 
+model 
+parameters 
+were 
+optimized 
+through 
+backpropagation, where gradients were propagated backward to 
+iteratively update the network weights and minimize errors. By 
+combining 
+nonlinear 
+activation 
+functions 
+with 
+backpropagation-driven optimization, these models achieve 
+superior performance in the analysis of high-dimensional data. 
+Convolutional Neural Networks (CNNs) [9], [10], [11] and 
+Long Short-Term Memory (LSTM) networks [9] have 
+demonstrated potential in enhancing detection accuracy. 
+Additionally, DL techniques have been widely applied in 
+image-based detection pipelines [11], [12], [9], [13]. However, 
+these methods require large, balanced datasets for effective 
+training and incur high computational costs, making them less 
+practical for lightweight and real-world applications. 
+Transfer learning (TL) has emerged as a promising solution 
+to these challenges in recent years. TL leverages knowledge 
+from pretrained CNNs (e.g., ImageNet backbones) to reduce 
+training costs and improve generalization on small datasets. TL 
+is a machine learning technique that allows a model to use 
+previously learned knowledge acquired from one problem 
+domain and apply it to another related domain. By reusing 
+pretrained extractors, TL enhances detection precision, speeds 
+training, and enables rapid adaptation to new threats. Several 
+studies have employed TL for malware classification, showing 
+strong generalization with limited data. TL can be applied in 
+two modes: (i) using pretrained models as frozen feature 
+extractors [13], [14], [15], [16] or (ii) full end-to-end fine-
+tuning CNNs to learn task-specific features [17]. Despite these 
+advantages, TL-based ransomware detection still lacks 
+mechanisms for dynamic adaptation to sample weighting and 
+struggles with high resource demands, which are unsuitable for 
+resource-constrained environments. In our previous work [18], 
+we achieved state-of-the-art accuracy of up to 99.96% by 
+employing full end-to-end fine-tuning of multiple CNNs 
+(ResNet, EfficientNetB0, InceptionV3, Xception, and VGG) 
+models. Although highly accurate, this approach incurs 
+substantial training time and memory costs, limiting its 
+practicality in real time or resource-constrained environments. 
+To address adaptability gaps, researchers have recently 
+explored the use of RL in cybersecurity applications [19], [20], 
+[21]. RL allows an agent to interact with its environment and 
+adjust its actions based on rewards, making it suitable for 
+dynamic sample reweighting. RL-based strategies can 
+emphasize harder or misclassified samples, reduce overfitting 
+to trivial cases, and improve generalization to previously 
+unseen threats. In ransomware detection, RL offers four key 
+benefits: (i) adaptive learning that prioritizes high-value 
+security samples, (ii) improved efficiency by focusing on 
+computation in critical cases, (iii) enhanced robustness to 
+evolving attack patterns, and (iv) real-time adaptability to 
+changes in the threat landscape. RL also helps address class 
+imbalance in security datasets but lacks CNN-based feature 
+extractors' representational power, necessitating a hybrid 
+framework. 
+Despite advances in DL and TL for ransomware detection, 
+existing pipelines remain largely non-adaptive, treating all 
+training samples equally. This uniform treatment leaves models 
+vulnerable when facing an adaptive adversary such as 
+ransomware, which frequently alters its execution strategies to 
+evade detection. In such adversarial settings, rare or stealthy 
+behaviors are easily overshadowed by more common patterns 
+[22], reducing the robustness of static or TL-based approaches. 
+RL offers a promising solution as it adaptively adjusts the 
+training focus based on feedback, enabling the model to learn 
+from the adversary’s evolving strategies. However, prior 
+applications of RL in security have mostly been restricted to 
+static PE features, Android permissions, or forensic 
+classification tasks. 
+ 
+To overcome these challenges, we developed TL-RL-
+FusionNet, a novel hybrid architecture that integrates TL-based 
+feature fusion and RL-guided classification with MLP. The RL 
+agent dynamically reweights the training samples by assigning 
+higher weights to misclassified or challenging instances and 
+lower weights to consistently correct instances. This adaptive 
+weighting reduces overfitting to trivial patterns and improves 
+robustness against evasive or difficult-to-detect ransomware 
+behaviors. In this approach, behavioral JSON logs are 
+transformed into structured vectors and then RGB images to 
+leverage pretrained CNNs, which are optimized for image 
+classification and can extract high-level spatial correlations. 
+These images were passed through the pretrained CNN 
+backbones, EfficientNetB0 and InceptionV3, for feature 
+extraction. EfficientNetB0 provides efficient detail capture, 
+whereas InceptionV3 enables multi-scale understanding. Their 
+strengths yield a rich combined representation. The fused deep 
+features were classified using a proposed residual MLP, and a 
+set of baseline models, under the supervision of a Q-learning 
+agent that dynamically adjusted the sample weights during 
+training based on real-time feedback. This hybrid approach 
+ensures a strong defense against ransomware while remaining 
+deployable in resource-constrained environments. 
+The key contributions of this study are as follows: 
+1. We proposed a novel hybrid architecture (TL-RL-
+FusionNet) where a tabular Q-learning agent reweights 
+training samples by assigning higher importance to 
+challenging instances while down-weighting trivial ones. 
+The agent updates Q-values based on prediction outcomes 
+and is re-initialized per fold under stratified 5-fold cross-
+validation. This adaptive strategy mitigates overfitting, 
+reduces false negatives, and improves accuracy compared 
+to static training. 
+2. We used two pretrained CNN models to obtain a richer and 
+more balanced feature representation. By keeping both 
+networks frozen, we maintain inference efficiency by 
+avoiding backpropagation through millions of parameters 
+and eliminating the need to store deep activation tensors. 
+Global-average-pooled feature vectors are pre-computed 
+and reused during training, which reduces memory usage 
+with greater efficiency. 
+3. We also designed a lightweight, residual connected MLP 
+classifier containing fewer parameters than CNN fine-
+tuning, thereby reducing the computation and memory 
+
+requirements. Because frozen CNNs provide transferable 
+representations, the MLP can adapt these features 
+efficiently for ransomware detection with high accuracy. 
+4. To rigorously assess the impact of the RL-based sample 
+weighting, we benchmarked the framework against six 
+baseline ML/DL classifiers (RF, XGBoost, SVM, LR, 
+ANN, and CNN), both with and without RL. The RL-
+enhanced residual MLP achieved 99.1% accuracy and 
+99.74% AUC. We further profiled the training and 
+inference times as well as memory consumption, 
+demonstrating the computational efficiency of the 
+framework. 
+Furthermore, 
+we 
+employed 
+t-SNE 
+visualizations and Grad-CAM heatmaps to provide 
+interpretable insights into feature separability and decision 
+behavior. 
+The remainder of this paper is organized as follows. Section 
+2 reviews related works in detail, covering traditional ML, DL, 
+TL, and RL paradigms. Section 3 elaborates on the 
+methodology, detailing dataset, CNN-based feature extraction 
+and fusion, RL-driven reweighting, and classifiers used. 
+Section 4 outlines the experimental setup, evaluation metrics, 
+dataset partitioning, and results. Section 5 offers a 
+comprehensive discussion. Finally, Section 6 concludes the 
+paper and suggests directions for future research. 
+ 
+2. Related Works 
+This section reviews prior research in three key areas that 
+inform our proposed approach: (1) ransomware detection using 
+deep learning, (2) transfer learning and multi-CNN feature 
+fusion, and (3) reinforcement learning for adaptive sample 
+reweighting in classification. This review integrates our 
+research into the wider academic discourse, highlights 
+unresolved issues, and identifies areas that require further 
+investigation. Table 1 compares the DL, TL, and RL 
+approaches. 
+ 
+2.1 Deep learning for ransomware detection 
+The increasing complexity and evasion techniques of modern 
+ransomware necessitate a transition from traditional signature-
+based detection methods to data-driven approaches. Recent 
+studies have employed convolutional neural networks (CNNs), 
+recurrent architectures, and hybrid deep models to classify 
+ransomware by analyzing system logs, behavioral traces, and 
+visual representations derived from ransomware binaries or 
+execution patterns. 
+Manavi and Hamzeh introduced two DL approaches based 
+on PE header byte images. The first approach [23] employed an 
+LSTM model with two recurrent layers and a dense classifier, 
+achieving 93.25% accuracy on 1,000 ransomware and 1,000 
+benign samples each. The second method [24] extracted 
+headers from executables, converted them to grayscale images 
+using zigzag patterns, and trained a CNN model with an 
+accuracy of 93.33%. However, this method fails to detect new 
+ransomware families. Moreira et al. [11] used static analysis to 
+identify ransomware by transforming PE header files into color 
+images in sequential vector format, classifying them using 
+Xception CNN with 98.20% accuracy. They emphasized the 
+importance of execution features for understanding advanced 
+ransomware. Qin et al. [25] proposed an improved TextCNN 
+model using dynamic feature such as API call sequences for 
+ransomware detection, achieving an accuracy of 95.9%. 
+Similarly, XRan [26] leveraged CNNs on dynamic features 
+(API calls, DLLs, mutexes) integrated with XAI methods such 
+as LIME and SHAP, achieving a true positive rate of 99.4%. 
+However, this method is computationally intensive and time-
+consuming. Moreover, SwiftR [27] applied hierarchical neural 
+networks across multiple platforms and demonstrated a robust 
+cross-platform detection performance. 
+Collectively, these studies highlight the promise of deep 
+learning for ransomware detection but also reveal persistent 
+challenges in computational efficiency, dataset balance, and 
+interpretability. 
+2.2 Transfer learning for ransomware detection 
+ TL proves effective in contexts where domain-specific 
+training data is limited. Pretrained CNNs such as VGG16, 
+ResNet50, EfficientNet, and InceptionV3, originally trained on 
+large-scale image datasets (e.g., ImageNet), can be adapted for 
+malware image classification through techniques such as fine-
+tuning or feature extraction. 
+For example, Almomani et al. [28] introduced E2E-RDS, a 
+vision-based ransomware detection system that transforms 
+binaries into two-dimensional images, and evaluated 19 CNN 
+models. A fine-tuned ResNet50 achieved 99.5% accuracy, 
+outperforming the static ML baselines. Rezende et al. [29] 
+used TL with ResNet-50 on grayscale byte plots, reporting 
+98.62% accuracy across 9,339 samples from 25 families. 
+Although this study underscores the success of TL, it does not 
+address the challenges of managing imbalanced datasets or new 
+malware variants. Huang et al. [30] developed a hybrid model 
+combining static and dynamic image representations, with 
+VGG16 achieving 94.7% on hybrid data. However, this study 
+did not evaluate the scalability or resource efficiency of the 
+model. In our previous work [18], we developed a ransomware 
+detection framework that converts sandbox features into 
+grayscale and color images and applied fine-tuned CNNs, 
+including ResNet50, EfficientNetB0, InceptionV3, Xception, 
+VGG16, and VGG19. ResNet50 achieved 99.96% accuracy 
+on 500 ransomware and 500 benign samples, respectively. 
+However, fine-tuning requires substantial training time and 
+memory, limiting its practicality in resource-constrained 
+environments. 
+Subsequent studies have demonstrated the benefits of multi-
+backbone fusion. Shah et al. [14] introduced a dual-stage DWT 
+with modified DenseNet-121 for feature extraction and 
+machine learning classifiers, with XGBoost achieving 98.58% 
+accuracy. The method optimized TL for grayscale inputs but 
+lacked evaluation on unseen samples. Rustam et al. [15] 
+proposed a Bi-model framework using VGG16 and ResNet50 
+as feature extractors, with traditional classifiers applied on 
+fused features; their Bi-SVC achieved 100% accuracy on the 
+Malimg dataset, but the work was limited to a single benchmark 
+
+dataset, raising concerns of overfitting. Rezende et al. [16] used 
+VGG16 and SVM to classify malware families with 92.97% 
+accuracy, but underperformed newer ensembles. Kumar and 
+Panda [13] proposed SDIF-CNN using VGG16, VGG19, 
+ResNet50, and InceptionV3 as feature extractors, with an MLP 
+classifier achieving 98.55% accuracy on Malimg and strong 
+generalization on packed malware.Vasan et al. [12] developed 
+IMCEC, an ensemble of pretrained CNNs with SVM and 
+Softmax classifiers, reaching 99.5% accuracy on Malimg and 
+showing resilience to obfuscation. 
+Collectively, these studies underscore TL’s ability to deliver 
+high accuracy and reduce manual feature engineering. 
+However, most existing methods focus on single datasets and 
+static visualizations without adaptive sample prioritization. 
+Moreover, while accuracy is emphasized, efficiency (time, 
+RAM), and model interpretability are less explored.
+Table 1 Comparative summary of related studies on ransomware detection. This table synthesizes prior approaches across DL, TL, and RL, 
+highlighting feature extractors, feature type and analysis technique, classifiers, datasets, performance, strengths, and limitations. 
+2.3 Reinforcement learning methods 
+RL has recently been explored for ransomware detection 
+owing to its adaptability to evolving such threats. Unlike 
+conventional ML, RL agents optimize policies via reward-
+driven interactions, making them suitable for dynamic threat 
+environments. 
+Category 
+Paper 
+Feature type and 
+analysis 
+technique 
+Feature Extractor(s)/ 
+Classifier(s) 
+Dataset 
+(R=Ransomware, 
+B=Benign) 
+Accuracy 
+(%) 
+Strengths 
+Limitations 
+Deep Learning (DL) 
+[23] 
+PE header bytes 
+(static) 
+ 
+LSTM 
+R=1000, B=1000 
+93.25 
+ 
+Simple DL pipelines, 
+no feature engineering 
+Small 
+dataset; 
+no 
+unseen 
+families 
+[24] 
+PE images (static) 
+CNN 
+ R=1000, B=1000 
+93.33 
+Simple DL pipelines, 
+no feature engineering 
+Unable to detect unseen and 
+evolving ransomware 
+[11] 
+PE header color 
+images (static) 
+Xception CNN 
+R=2023, B= 2134 
+98.20 
+Improved static image-
+based accuracy 
+Static 
+features 
+limit 
+generalizability 
+by 
+missing 
+ransomware behaviors. 
+[25]. 
+API 
+call 
+sequences 
+(dynamic logs) 
+Text CNN 
+R=1000, B=1000 
+95.9 
+Effective on API 
+behavior 
+Lacks interpretability 
+[26] 
+API, DLL, mutex 
+(dynamic) 
+CNN + XAI 
+R=668 
+B=668 
+TPR 99.4 
+High accuracy and 
+explainability 
+Computationally intensive 
+[27] 
+Hybrid features 
+HNN 
+R= 10.3K 
+B=10 K 
+98.75 
+Robust across OS 
+Computational overhead 
+Transfer Learning (TL) 
+[28] 
+APK files images 
+19 pre trained models 
+R=500 
+B=500 
+99.5 
+Hybrid static and 
+vision analysis 
+May struggle with modern 
+evolving ransomware. 
+[29] 
+Malware 
+executables 
+into 
+images 
+ 
+ResNet-50 
+Malimg dataset 
+9,339 
+malware 
+samples 
+98.62 
+Robust TL on 
+grayscale byteplots 
+No imbalance analysis 
+[30] 
+Hybrid 
+images 
+(static 
+and 
+dynamic) 
+ 
+VGG16 
+ 
+M=512 
+B=888 
+94.70 
+Hybrid static and 
+dynamic based 
+detection 
+Limited scalability 
+[18] 
+Image 
+based 
+dynamic features 
+ResNet50, 
+EfficientNetB0, 
+InceptionV3, 
+R=500 
+B=500 
+ 
+99.96 
+State-of-the-art 
+accuracy 
+High training time memory 
+[14] 
+Grayscale images 
+(static) 
+DenseNet-121 (feature 
+extractor) 
+XGBoost (classifier) 
+Malimg 
+98.58 
+Efficiency improved 
+No assessment was done on 
+unseen or obscured samples. 
+[15] 
+Malware binaries 
+into images 
+VGG16 and ResNet50 
+(feature extractor), 
+Bi-SVC (classifier) 
+Malimg 
+100 
+Bi-model architecture 
+with stacked features 
+enhances malware 
+detection. 
+Raising concerns of overfitting. 
+[16] 
+Byteplot grayscale 
+images 
+VGG16 (feature 
+extractor), 
+SVM (classifier) 
+10,136 
+malware 
+samples 
+92.97 
+Removing feature 
+engineering 
+Underperforming compared to 
+newer ensembles. 
+[13] 
+Malware binaries 
+into images 
+VGG16, VGG19, 
+ResNet50, and 
+InceptionV3(feature 
+extractor), 
+Optimized MLP 
+(classifier) 
+Malimg 
+98.55 
+Ensemble TL 
+improves robustness 
+and robust to packing 
+Computationally heavy 
+[12] 
+Malware binaries 
+into images 
+VGG16, ResNet50, 
+and InceptionV3 
+(feature extractor), 
+SVM (classifier) 
+Malimg and IoT- 
+android 
+mobile 
+dataset 
+98.82 
+Robust to obfuscation 
+and polymorphism 
+The authors overlooked the 
+effects of image size and data 
+imbalance on their method. 
+Small and old dataset. 
+Reinforcement Learning (RL) 
+[19] 
+Static PE headers 
+features 
+Double DQN 
+Dataset 
+1 
+had 
+62,485 PE files; 
+Dataset 2 included 
+688 
+ransomware 
+samples. 
+97.9 
+Early detection; avoids 
+execution risk 
+Static headers vulnerable to 
+packing and obfuscation 
+[20] 
+Dynamic 
+embeddings 
+RL + Bayesian 
+Networks 
+Vulnerability and 
+system logs 
+N/A 
+Adaptive resilience 
+modelling 
+Not direct classification 
+[21] 
+Android 
+permissions 
+and 
+network 
+traffic 
+features 
+DRL (A2C, DQN, 
+DDQN, PPO) 
+Android 
+ransomware 
+dataset 
+89.78 
+Improved accuracy, 
+recall, F1 
+Limited to static attributes 
+[31] 
+device 
+activity 
+patterns 
+FL and RL 
+- 
+Above 98% 
+Enhancing adaptability 
+Scalability underexplored 
+
+Deng et al. [19] proposed an early ransomware detection 
+framework that applied Double Deep Q-Learning (DDQN) to 
+portable executable (PE) header features. This method 
+achieved fast classification but was inherently limited by its 
+reliance on static PE headers, which are prone to packing and 
+are obfuscated. Kumar et al. [20] integrated RL with Bayesian 
+networks and dynamic embeddings to strengthen resilience 
+modelling across system configurations and vulnerabilities. 
+Although effective for adaptive defense, this approach focuses 
+on resilience prediction rather than direct ransomware 
+classification. Jeremiah et al. [21] used Deep Reinforcement 
+Learning (A2C, DQN, DDQN, PPO) on Android permissions 
+and network traffic. Their A2C and DDQN models surpassed 
+traditional ML baselines in accuracy and speed, though they 
+only considered static features rather than behavioral 
+representations. CyberForce uses federated reinforcement 
+learning (FRL) for IoT malware mitigation, achieving 98% 
+accuracy and reducing training time by 67% versus centralized 
+methods [31]. 
+While RL shows promise in adaptability and performance, 
+studies are limited to static PE features and Android contexts, 
+with minimal focus on image-based ransomware or accuracy-
+efficiency optimization. 
+This comprehensive synthesis of the existing literature 
+reveals that while each paradigm ML, DL, TL, and RL offers 
+unique advantages, none individually addresses the full set of 
+requirements for modern ransomware detection. Traditional 
+ML methods fail to generalize beyond handcrafted features, 
+whereas DL methods achieve high accuracy but require large 
+datasets and computational resources. TL addresses these 
+issues by leveraging pretrained models; however, most TL-
+based approaches remain non-adaptive and treat all samples 
+equally, leading to overfitting on trivial patterns while 
+neglecting hard-to-detect behaviors. Although TL is 
+increasingly used in malware analysis, the integration of RL 
+to adaptively reweight training samples has not been explored 
+in the ransomware domain. To the best of our knowledge 
+according to the literature, no prior study has integrated TL 
+with RL in an image-based ransomware detection pipeline. 
+This motivated the development of TL-RL-FusionNet, which 
+bridges these gaps by (a) transforming dynamic behavioral 
+features 
+into 
+images, 
+(b) 
+extracting 
+complementary 
+embeddings through frozen EfficientNetB0 and InceptionV3 
+backbones, and (c) training a lightweight residual MLP under 
+a Q-learning-based sample-weighting agent. 
+ 
+3. Methodology 
+ 
+This section outlines the comprehensive methodology 
+employed in the study, encompassing dataset preparation, 
+preprocessing, and the design of the proposed TL-RL-
+FusionNet framework. Fig. 1 illustrates the overall architecture 
+and operational workflow of the proposed end-to-end 
+framework for detecting ransomware. The methodology is 
+systematically organized into six components: (i) Dataset 
+preparation, (ii) Data preprocessing, (iii) Feature Conversion, 
+(iv) 
+Dual-CNN 
+feature 
+extraction 
+and 
+fusion, 
+(v) 
+Reinforcement learning-guided training, and (vi) Description of 
+classifiers utilized in this study. 
+3.1 Dataset 
+This study was evaluated using a custom dataset created in 
+our previous study [18]. It contains 1,000 binary executables, 
+comprising 500 ransomware and 500 benign programs 
+collected from various online repositories. All ransomware 
+samples were collected from MalwareBazaar [32] and 
+VirusShare [33] and selected from 25 distinct ransomware 
+families, as classified by threat intelligence. Benign samples 
+were obtained from trusted repositories such as SnapFiles 
+[34], PortableApps.com [35], and GitHub [36], which ensured 
+low label noise and high dataset integrity. Certain criteria were 
+applied to select both the ransomware families and individual 
+ransomware samples within each family to ensure the dataset’s 
+relevance, diversity, representativeness, and operational 
+significance. 
+Two criteria were applied for the selection of the 
+ransomware family: 
+1. Its high prevalence and significant global impact on 
+organizations have been documented in multi-source 
+threat intelligence reports from 2019 [37], 2020 [38], 
+2021 [39], 2022 [40], 2023 [41], and 2024 [42]. 
+2. Verification across at least two independent reports from 
+reputable cybersecurity vendors. 
+This selection method aimed to identify prominent 
+ransomware families, such as LockBit, MedusaLocker, 
+BlackCat, Phobos, and Conti, to ensure that the dataset 
+included representative coverage of advanced and adaptive 
+threats. Prioritizing these high-impact variants enhances the 
+understanding of critical ransomware behaviors and increases 
+the relevance of the dataset for detection models. 
+Individual ransomware samples within each family were 
+selected following the procedure described in [11], with three 
+criteria applied based on the VirusTotal vendor engine 
+detection. A ransomware sample was included if it met all the 
+following criteria: 
+1. At least 45 antivirus engines on VirusTotal classified the 
+files as malicious. 
+2. At least 15 antivirus engines specifically labelled the files 
+as ransomware. 
+3. The majority of engines or at least ten, identified the file 
+as belonging to the same ransomware family. 
+ 
+Each sample was executed in an isolated Cuckoo Sandbox 
+environment [43], and reports were generated in JSON format, 
+which documented both the ransomware attack lifecycle and 
+the normal footprint of benign software, forming the basis for 
+feature extraction. A custom Python-based pipeline was then 
+used to parse these reports into structured, fixed-length feature 
+vectors. From each sample, 100 highly discriminative 
+behavioral indicators were selected, spanning file-system 
+changes, registry modifications, network activity, process and 
+memory operations, API call patterns, and anti-analysis 
+artifacts. The selected features were cross-referenced with 
+MITRE ATT&CK tactics and validated against threat reports 
+from Sophos, CrowdStrike, and Trend Micro (2019–2024). 
+This curated set ensures technical depth, practical relevance, 
+and improved model detection performance across ransomware 
+families. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Fig. 1. End-to-end TL-RL-FusionNet workflow for ransomware detection. 
+
+Table 2 presents the detailed distribution of the ransomware 
+families included in this study and the corresponding number of 
+samples. 
+Table 2 Ransomware families included in this study, with sample 
+counts. Families were selected based on global prevalence, 
+documented impact, and multi-vendor confirmation of classification. 
+Family name 
+No. of samples 
+Ryuk 
+15 
+GandCrab 
+28 
+Cerber 
+9 
+Maze 
+8 
+Makop 
+12 
+RagnarLocker (Ragnarok) 
+23 
+NetWalker 
+24 
+Mespinoza (Pysa) 
+18 
+Clop 
+10 
+REvil (Sodinokibi) 
+26 
+LockBit 
+30 
+Phobos 
+24 
+WastedLocker 
+25 
+DarkSide 
+24 
+Avaddon 
+16 
+MountLocker 
+15 
+Thanos 
+28 
+Conti 
+18 
+Nefilim 
+11 
+BlackCat 
+30 
+Babuk 
+27 
+BlackMatter 
+28 
+MedusaLocker 
+28 
+Mallox 
+15 
+BlueSky 
+8 
+ 
+3.2 Data preprocessing 
+Data preprocessing is a critical step in ensuring the quality, 
+consistency, and compatibility of machine learning training and 
+evaluation. In this study, three key preprocessing steps were 
+applied: removal of duplicate records, encoding of categorical 
+attributes into numeric form, and feature scaling and 
+standardization. The result was a clean, fully numeric dataset 
+that was prepared for subsequent analysis and model 
+development. 
+1. Duplicate removal: Duplicate records from repeated 
+executions or redundant reports were removed to prevent 
+bias and ensure reliable generalization of the model. 
+2. Categorical 
+encoding: 
+Non-numeric 
+fields 
+were 
+transformed 
+into 
+numerical 
+values 
+to 
+ensure 
+compatibility with the machine learning models. 
+i) Boolean indicators (e.g., privilege escalation, shadow 
+copy deletion, evasion) were encoded as binary (1/0); (ii) 
+string attributes (e.g., IP origin, country) were mapped to 
+numeric values based on length or frequency; and (iii) 
+list-based features (e.g., dropped files, DNS requests, 
+VirusTotal positives) were represented by element 
+counts. 
+3. Feature scaling and standardization: Normalization was 
+applied to ensure that all features operated on a uniform 
+scale, thereby improving the classifier convergence and 
+stability. 
+4. 
+Updated optimal dataset with top selected features: 
+the optimized dataset comprises the top 100 high-discriminative 
+features selected through feature selection and validated via 
+MITRE ATT&CK and threat intelligence mapping, effectively 
+reducing dimensionality and computational cost while 
+preserving maximal detection accuracy. 
+This preprocessing pipeline ensured a fully numeric, 
+standardized 
+dataset 
+ready 
+for 
+structured-to-image 
+transformation and classification in TL-RL-FusionNet. 
+ 
+3.3 Conversion of structured features into image 
+To enable CNN-based transfer learning, the one-dimensional 
+feature vectors were reshaped into 224×224 matrices and 
+encoded as RGB images using a colormap. This transformation 
+preserved the inter-feature relationships while providing a 
+visual domain for pretrained CNN backbones to extract deep 
+representations. 
+ 
+3.4 Transfer learning for feature fusion from image data 
+Two pretrained CNNs, EfficientNetB0 and InceptionV3, 
+were used as frozen feature extractors. Both models were 
+pretrained on ImageNet, and their convolutional layers were 
+frozen to preserve powerful, generalized image representation 
+capabilities. Their selection was driven by two key factors. 
+1. Complementary strengths: EfficientNetB0 applies 
+compound scaling to balance the resolution, width, and depth 
+efficiently, making it highly suitable for extracting fine-grained 
+ransomware behaviors with a low parameter count. 
+InceptionV3 incorporates inception modules that capture 
+semantic patterns at multiple scales, complementing the local 
+detail focus of EfficientNet. For each input image, both CNNs 
+generated global average pooled feature embeddings. To 
+enhance 
+the 
+richness 
+and 
+discriminability 
+of 
+the 
+representations, the pooled outputs from EfficientNetB0 and 
+InceptionV3 were concatenated into a single fused feature 
+vector. This fusion leverages the complementary learning 
+characteristics of both the CNN architectures. The resulting 
+combined vector captures a broader spectrum of spatial, texture, 
+and frequency features, enabling a stronger classification 
+performance downstream. 
+2. Proven success in ransomware detection: Image-based 
+CNN pipelines consistently achieve state-of-the-art accuracy in 
+ransomware detection. In our previous study [18], ResNet50 
+achieved the highest accuracy (99.96%), followed by 
+EfficientNetB0 (99.78%) and InceptionV3 (97.84%). Although 
+ResNet50 performed the best, its training cost was significantly 
+higher. EfficientNetB0 and InceptionV3 offered the optimal 
+trade-off between accuracy and efficiency, making them the 
+most practical choices for dual frozen feature extraction in the 
+TL-RL-FusionNet. Their selection is further supported by the 
+proven success in the broader ransomware detection literature, 
+where both models have demonstrated strong generalization 
+and effectiveness across diverse datasets. 
+ 
+3.5 Reinforcement learning-based sample weighting 
+RL is a machine learning paradigm in which an agent learns 
+to 
+make 
+sequential 
+decisions 
+through 
+trial-and-error 
+interactions with an environment, aiming to maximize the 
+cumulative reward. Unlike supervised learning, RL does not 
+rely solely on labelled datasets; instead, it learns optimal 
+strategies through feedback from the environment [19]. 
+
+In ransomware detection, RL can guide a model to emphasize 
+the most informative samples during training. Rather than 
+treating all data points equally, the RL agent assigns varying 
+weights to the training samples, enabling the classifier to focus 
+on examples that are more influential in improving the decision 
+boundaries. This targeted weighting helps the model learn 
+patterns that are more representative of ransomware and benign 
+behaviors, even when these patterns are subtle or imbalanced in 
+the dataset. 
+The general interaction loop between the RL components is 
+illustrated in Fig. 2, which highlights the flow of states, actions, 
+and rewards [44]. At each time step t, the agent observes the 
+current state St, selects an action At, receives a reward Rt from 
+the environment based on the classification performance, and 
+transitions to the next state St+1. Over time, the agent optimizes 
+its decision policy by balancing exploration of new weighting 
+strategies with exploitation of those that have high-reward 
+actions. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+3.5.1 RL component mapping in our study 
+In our ransomware detection framework, the environment is 
+the model training dataset in each cross-validation fold. The RL 
+integration proceeds as follows. 
+• 
+Agent: The agent is a Q-learning–based sample 
+weighting module 
+• 
+Environment: 
+Environment 
+is 
+the 
+ransomware 
+classification model and its performance on the training 
+split within each cross-validation fold. 
+• 
+State (St): Q-table row values representing the learned 
+weight preferences for each training sample. 
+• 
+Action (At): Selection of one of five discrete sample 
+weight values {0.25, 0.5, 1.0, 1.25, 1.5} 
+• 
+Reward (Rt): Assigned as +1 if the sample is correctly 
+classified by the current model during training or 0 if 
+misclassified. 
+• 
+Policy update: Q-values are updated using the standard 
+Q-learning update rule, based solely on test predictions. 
+In the context of our ransomware detection framework, RL 
+offers the following two key advantages: 
+1. Adaptive focus on hard samples: The agent can assign 
+greater importance to ransomware samples that the 
+classifier struggles with, reducing the misclassification 
+risk. 
+2. Dynamic adjustment over epochs: Sample weights are 
+updated iteratively based on the ongoing model 
+performance, allowing the system to adapt to evolving 
+decision boundaries. 
+3.5.2 Integration into model training pipeline 
+The RL mechanism described here is applied within the 
+cross-validation framework defined in Section 4.3. For every 
+fold in the stratified 5-fold CV, the RL agent was re-initialized 
+to ensure that no learned weighting policy from previous folds 
+influenced the current evaluation. All Q-value updates and 
+reward assignments are computed exclusively from the training 
+split of that fold, completely excluding the test set predictions. 
+This integration guarantees that the adaptive weighting process 
+is learned under the same conditions as the model training, 
+without any data leakage. 
+Operational flow per fold in CV 
+1) Agent initialization: At the start of each fold, the 
+reinforcement learning (RL) agent was initialized with a fresh 
+Q-table of shape (N,5), where N is the number of training 
+samples. All the Q-values were set to zero. The discrete action 
+set of possible sample weight multipliers is: 
+ 
+A= {0.25, 0.50, 1.00, 1.25, 1.50} (1) 
+2) State representation: Each training sample i is treated as a 
+state Si, 
+
+[…middle truncated for length…]
+
+isclassified benign samples (green, FP) and ransomware 
+samples (red, FN) tended to cluster near the decision boundary, 
+indicating that these cases shared feature similarities with the 
+opposite class. The 3D visualization further highlights that 
+misclassifications occur in overlapping regions where class 
+boundaries are less distinct. Overall, the combined confusion 
+matrix and t-SNE analyses confirmed that the RL-guided 
+adaptive weighting enhanced the reliability of ransomware 
+detection by minimizing high-impact false negatives and 
+improving separation in ambiguous regions of the feature space. 
+These findings demonstrate the robustness of the RL-MLP in 
+handling adversarially evasive ransomware behaviors while 
+maintaining generalization to benign software. 
+.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Saliency map analysis using Grad-CAM 
+To improve interpretability, we employed Gradient-weighted 
+Class Activation Mapping (Grad-CAM) to visualize which 
+parts of the feature-to-image representations influenced model 
+predictions. Grad-CAM is important because it makes the 
+model’s “reasoning” more transparent, showing whether 
+decisions are based on meaningful behavioral patterns rather 
+than random noise. 
+ 
+As shown in Fig. 10, the benign sample displayed diffuse 
+activations, suggesting no single dominant feature group, 
+whereas the ransomware sample exhibited more localized 
+hotspots. Because each image region corresponds to feature 
+categories such as file operations, registry edits, or network 
+activity, these focused activations indicate that the model relies 
+on ransomware-relevant behaviors. This is particularly 
+important for detecting polymorphic and mutating ransomware, 
+where surface-level code changes vary, but the underlying 
+behaviors (e.g., file encryption and registry modification) 
+remain consistent. 
+Thus, Grad-CAM not only validates that our model learns the 
+correct cues but also strengthens trust in its ability to generalize 
+across diverse ransomware families. 
+ 
+4.4.4 Comparison with existing relevant methods 
+To further evaluate the effectiveness of the proposed TL-RL-
+FusionNet framework, we benchmarked its performance 
+against ransomware detection techniques from the literature 
+that also combined pretrained CNN feature extractors with 
+separate classifiers. The comparative results are presented in 
+Table 9. It is important to note that the studies listed in Table 6 
+differ substantially in terms of datasets, feature engineering 
+approaches (e.g., static, dynamic, or hybrid analysis), and 
+targeted malware families or versions. Consequently, the results 
+should be interpreted as contextual benchmarks across related 
+methodologies, rather than a direct head-to-head evaluation. 
+Fig. 9. Visualization of misclassified samples for the RL-MLP model using t-SNE. (a) 2D t-SNE projection and (b) 3D t-SNE projection. The correctly 
+classified samples appear in blue, false positives (benign misclassified as ransomware) appear in green, and false negatives (ransomware misclassified 
+as benign) appear in red. The figures show that samples form distinct clusters, whereas misclassified instances lie near decision boundaries, highlighting
+the inherent ambiguity of these samples. 
+Fig. 10. Grad-CAM heatmaps show visual saliency maps for benign 
+and ransomware inputs, highlighting influential classification 
+regions. RGB image regions correspond to behavioral features (file 
+operations, registry edits, and network activity) with distinct 
+activation patterns. Ransomware heatmaps show hotspots in file and 
+registry activities, whereas benign samples display diffuse patterns, 
+confirming the model's focus on ransomware behavior. 
+
+Our method is based on a custom, balanced, threat-informed 
+dynamic behavioral dataset, whereas most prior studies rely 
+primarily on static binary features, memory dumps, and hybrid 
+data sources.
+ 
+Table 9 Comparison of the proposed TL-RL-FusionNet framework with existing ransomware detection methods employing pretrained CNN feature extractors paired 
+with separate classifiers. The results highlight the superior performance of the proposed RL-enhanced Residual Lightweight MLP classifier, which combines dynamic-
+to-image feature transformation with RL-guided sample weighting. 
+Ref. 
+Analysis 
+Technique 
+Feature 
+Extractor(s) 
+RL-based 
+Sample 
+Weighting 
+Classifier 
+Accuracy 
+(%) 
+Training 
+Time (s) 
+Prediction 
+Time (s) 
+Memory 
+Usage 
+(MB) 
+False 
+Positive 
+(%) 
+False 
+Negative 
+(%) 
+[14] 
+Static 
+DenseNet-121 
+No 
+XGBoost 
+98.58 
+– 
+– 
+– 
+– 
+– 
+[15] 
+Static 
+VGG-16 
++ 
+ResNet50 
+No 
+Bi-KNN 
+99.00 
+18.928 
+– 
+– 
+– 
+– 
+[13] 
+Static 
+VGG16, 
+VGG19, 
+ResNet50, 
+InceptionV3 
+No 
+MLP 
+98.55 
+– 
+0.471 
+– 
+– 
+– 
+[16] 
+Static 
+VGG-16 
+No 
+SVM 
+92.97 
+– 
+– 
+– 
+– 
+– 
+[21] 
+Static 
+- 
+No 
+DRL (A2C, 
+DQN, 
+DDQN, 
+PPO) 
+89.78 with 
+A2C 
+168.27 
+0.76 
+ 
+ 
+ 
+[31] 
+Dynamic 
+- 
+- 
+FL and RL 
+Above 
+98% 
+- 
+- 
+- 
+ 
+ 
+Our 
+method 
+(TL-RL -
+FusionNet) 
+Dynamic 
+EfficientNetB0 
++ InceptionV3 
+Yes 
+RL-
+enhanced 
+Residual 
+MLP 
+99.10 
+13.90 
+0.23 
+0.66 
+0.70 
+0.20 
+Furthermore, while previous studies have demonstrated 
+competitive accuracy, such as 99% with VGG-16 + ResNet50 
+using Bi-KNN [15] or 98.58% with DenseNet-121 and 
+XGBoost [14], none have incorporated a RL-based sample 
+weighting mechanism. In contrast, the study in [21] introduced 
+Deep Reinforcement Learning (DRL) models such as A2C, 
+DQN, DDQN, and PPO for static ransomware detection; 
+however, their best performance (A2C = 89.78%) was notably 
+lower, with long training durations (168 s) and moderate 
+inference latency (0.76 s). The more recent CyberForce 
+framework [31] extended RL into a federated dynamic 
+environment, integrating FL with RL for decentralized 
+malware mitigation and achieving above 98% accuracy. 
+Nevertheless, CyberForce primarily targets adaptive defense 
+strategies in IoT networks rather than direct ransomware 
+classification. 
+In 
+comparison, 
+our 
+proposed 
+TL-RL-FusionNet, 
+incorporating an RL-enhanced Residual Lightweight MLP 
+classifier, achieved 99.1% accuracy, a 0.70% false-positive 
+rate, and a 0.20% false-negative rate, with an average inference 
+memory footprint of only 0.66 MB and prediction latency of 
+0.156 s. To the best of our knowledge, no prior study has 
+employed 
+a 
+dynamic-to-image 
+transformation 
+pipeline 
+combined with RL-guided transfer learning for ransomware 
+detection, making our contribution novel in terms of both 
+methodology and performance. 
+Moreover, none of the compared studies reported both false-
+positive and false-negative rates, which are highly relevant in 
+cybersecurity contexts. False negatives are particularly critical 
+because they correspond to undetected threats that can bypass 
+the defenses. The extremely low false-negative rate achieved by 
+TL-RL-FusionNet underscores its operational reliability. In 
+addition, the compared studies do not address computational 
+efficiency in terms of inference memory usage and do not 
+perform model interpretability analyses. Our framework 
+addresses these gaps through t-SNE-based visualization of 
+learned feature spaces and Grad-CAM saliency mapping to 
+identify decision-critical regions for both benign and 
+ransomware samples. 
+TL-RL-FusionNet outperforms existing approaches in terms 
+of accuracy and robustness while providing computational 
+efficiency and interpretability, making it deployable for 
+ransomware detection in IoT and edge devices. 
+ 
+5. Discussion 
+This section discusses the experimental findings of TL-RL-
+FusionNet, highlighting the importance of reinforcement 
+learning, its influence on the results, and the advancements of 
+the framework over prior studies. It then outlines the scientific 
+and practical implications, acknowledges key limitations with 
+future directions, and ends with a takeaway underscoring RL as 
+the defining factor that makes TL-RL-FusionNet adaptive and 
+deployable. 
+Ransomware is increasingly engineered to evade detection 
+by altering behaviors or mimicking benign activity. In this 
+setting, static weighting of training samples is insufficient 
+because it treats all data points as equally informative. The 
+central contribution of this study is demonstrating that 
+reinforcement learning (RL) directly addresses this limitation 
+by adaptively reweighting training samples. 
+The RL agent enhanced the framework by dynamically 
+reweighting samples: misclassified or challenging cases were 
+assigned higher weights, whereas trivial, consistently correct 
+cases were down-weighted. This dynamic prioritization 
+improved the classifier’s ability to learn from deceptive 
+behaviors such as registry edits, subtle file-system operations, 
+and suspicious network traffic. Although RL operated at the 
+
+sample level rather than individual features, the indirect effect 
+was that these high-risk behavioral categories received greater 
+influence during training. This mechanism improves the 
+calibration around difficult decision boundaries and reduces 
+high-impact errors. As shown in the fold-aggregated confusion 
+matrices (Table 7), the RL-guided MLP achieved only three 
+false negatives and six false positives (compared with four FN 
+and eight FP without RL). This corresponds to a measurable 
+reduction in the error rates (0.30% FN, 0.70% FP), which are 
+critical for reliable ransomware detection. Moreover, by 
+consistently highlighting misclassified or borderline cases, the 
+RL agent improved its resilience against polymorphism and 
+feature obfuscation. Simultaneously, interpretability analyses 
+further reinforced operational trust: t-distributed stochastic 
+neighbor embedding projections showed clear class separation 
+and identified misclassified samples, gradient-weighted class 
+activation mapping highlighted semantically meaningful 
+behavioral cues, and confusion matrices documented low FN 
+rates, underscoring the framework’s reliability in minimizing 
+undetected threats. Together, these results highlight the dual 
+value of TL-RL-FusionNet: it is both effective and trustworthy. 
+Previous research on RL in malware detection has largely 
+focused on static features such as portable executable headers 
+[19], Android permissions [21], and Bayesian vulnerability 
+modelling [20] or relied on pretrained CNNs without adaptive 
+weighting or efficiency profiling [14], [15], [16]. Additionally, 
+our previous work [18] employed full end-to-end fine-tuning of 
+multiple 
+CNN 
+backbones 
+(ResNet50, 
+EfficientNetB0, 
+InceptionV3, Xception, and VGG), achieving near-perfect 
+accuracy (99.96% with ResNet50) on color-transformed 
+dynamic features. However, this approach incurs substantial 
+computational costs owing to backpropagation across millions 
+of parameters, resulting in prolonged training times and high 
+memory consumption. TL-RL-FusionNet advances the field by 
+freezing EfficientNetB0 and InceptionV3 as feature extractors 
+and introducing RL-guided sample weighting with a residual 
+MLP classifier. This approach retains an accuracy above 98–
+99% while reducing the training time by approximately 45–
+55% and memory use by approximately 70–80%. In doing so, 
+it directly addresses one of the key weaknesses of our earlier 
+work: computational efficiency. Compared to the baseline 
+models without RL weighting, TL-RL-FusionNet achieved 
+consistently higher performance across accuracy, precision, 
+recall, and AUC. Classical machine learning models such as 
+RF, SVM, and XGBoost showed modest gains, but the largest 
+improvements appeared in deep learning models, where RL 
+weighting 
+stabilized 
+training 
+and 
+sharpened 
+decision 
+boundaries. 
+The findings show that reinforcement learning can serve as a 
+practical mechanism for guiding deep learning models in 
+security contexts. More broadly, the principle of adaptive 
+sample weighting can be applied across domains where difficult 
+edge cases carry the greatest risks, including fraud analysis and 
+healthcare diagnostics. In addition, by combining frozen 
+pretrained backbones with RL-guided adaptivity, TL-RL-
+FusionNet achieves a rare balance of accuracy, efficiency, and 
+interpretability. 
+This 
+efficiency 
+has 
+direct 
+practical 
+implications: the framework can operate effectively in 
+resource-constrained environments such as IoT devices, edge 
+systems, or mobile platforms, where computational and 
+memory budgets are limited but robust detection remains 
+essential. 
+Despite its contributions, the TL-RL-FusionNet has some 
+limitations. First, although the RL weighting improved 
+robustness, it was not a complete defense. Persistently 
+misclassified poisoning samples may still be repeatedly up 
+weighted, reinforcing incorrect decision boundaries, and 
+adversarial behaviors carefully engineered to mimic benign 
+activity could still bypass detection. Moreover, adversarial 
+robustness was not explicitly tested in this study, representing a 
+promising direction for future validation under adversarially 
+controlled environments Second, the evaluation was conducted 
+on a balanced dataset of 1,000 samples curated from recent 
+ransomware families. Although this mitigated class imbalance 
+and ensured representativeness, larger and more diverse 
+datasets are required to comprehensively assess scalability and 
+robustness. Although representative, larger, and more diverse 
+datasets are required to confirm the scalability across families 
+and execution environments. Third, the reinforcement learning 
+component employs a tabular Q-learning agent with discrete 
+weight actions. Although effective in this context, such agents 
+may be less adaptable in complex feature spaces than more 
+advanced RL methods, limiting their generalization potential. 
+These limitations open clear avenues for future research. 
+In summary, reinforcement learning is the key to making TL-
+RL-FusionNet adaptive. It shifts the training process away from 
+static, one-size-fits-all learning and toward a targeted focus on 
+the cases most likely to evade detection. This ability to combine 
+high accuracy, low error rates, and practical efficiency positions 
+TL-RL-FusionNet as a credible foundation for next-generation 
+ransomware detection and as a steppingstone for future 
+advances in adaptive security AI. 
+ 
+6. Conclusion and future work 
+This study demonstrated that the evolving behavior of 
+ransomware requires adaptive detection strategies beyond 
+static weighting. TL-RL-FusionNet addressed this by using 
+reinforcement learning to reweight challenging samples, such 
+as subtle file-system operations, registry edits, and suspicious 
+network traffic, thereby reducing critical misclassifications, 
+improving resilience against evasion, and maintaining high 
+accuracy, efficiency, and interpretability. By integrating frozen 
+dual CNN backbones (EfficientNetB0 and InceptionV3) with 
+a residual MLP classifier and an RL-based weighting agent, 
+TL-RL-FusionNet achieved a principled balance between the 
+predictive performance and computational efficiency. Across 
+stratified 5-fold cross-validation, the framework consistently 
+outperformed classical machine learning and deep learning 
+baselines, attaining 99.10% accuracy, 99.11% F1-score, and 
+99.74% AUC, while maintaining false positives at 0.70% and 
+false negatives at 0.20%. Efficiency profiling further showed 
+reductions of approximately 45–55% in training time and 
+approximately 70–80% in memory use compared with end-to-
+end fine-tuning, confirming its suitability for resource-
+constrained environments such as IoT devices, edge systems, 
+and mobile platforms. Interpretability analyses using t-
+distributed stochastic neighbor embedding and gradient-
+
+weighted class activation mapping verified that the model 
+captured 
+semantically 
+meaningful 
+behavioral 
+patterns, 
+reinforcing trust in its operational reliability. Despite these 
+strengths, the framework has limitations, such as the fact that 
+adversarial robustness was not explicitly tested, leaving open 
+the possibility that poisoning or mimicry attacks could bypass 
+detection. In addition, the dataset size was modest, and the RL 
+agent was limited to the tabular Q-learning. 
+Future research should focus on promising directions. First, 
+enhancing 
+adversarial 
+robustness 
+is 
+a 
+key 
+priority. 
+Incorporating adversarial training strategies, ensemble 
+defenses, and RL-guided mechanisms can strengthen 
+resilience against poisoning and mimicry attacks and ensure 
+reliability in adversarially controlled environments. Second, 
+scaling the evaluation to larger and more diverse datasets will 
+be essential to validate the effectiveness of the framework 
+against a wider spectrum of ransomware families and 
+polymorphic variants. Third, exploring more advanced 
+reinforcement learning algorithms may refine adaptive sample 
+weighting, improve generalization in complex feature spaces, 
+and 
+further 
+reduce 
+the 
+number 
+of 
+high-impact 
+misclassifications. 
+In 
+conclusion, 
+TL-RL-FusionNet 
+demonstrates 
+how 
+reinforcement learning can transform transfer learning into an 
+adaptive and efficient strategy for ransomware detection. Its 
+high accuracy while minimizing costs and enhancing 
+interpretability establishes it as a foundation for deployable 
+cybersecurity solutions and resilient AI-driven defenses 
+against threats. 
+ 
+CRediT authorship contribution statement 
+Jannatul Ferdous: Conceptualization, Methodology, Python 
+Scripting, Investigation of experimental results, Writing – 
+original draft, and Visualization. Rafiqul Islam: Validation, 
+Writing – review and editing, supervision. Arash Mahboubi: 
+Validation, Writing – review & editing, Supervision. Md 
+Zahidul Islam: Validation, Writing – review & editing, 
+Supervision. 
+Conflicts of interest: The authors declare no conflicts of 
+interest. 
+Funding: This work was supported by Charles Sturt University 
+(CSU) PhD funding. Project Operating Fund. 
+Data availability: Data will be made available on request

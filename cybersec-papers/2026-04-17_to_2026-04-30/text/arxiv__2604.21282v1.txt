@@ -1,0 +1,873 @@
+Strategic Heterogeneous Multi-Agent Architecture for
+Cost-Effective Code Vulnerability Detection
+Zhaohui Geoffrey Wang
+University of Southern California
+Los Angeles, CA, USA
+zwang000@usc.edu
+ABSTRACT
+Automated code vulnerability detection is critical for software se-
+curity, yet existing approaches face a fundamental trade-off be-
+tween detection accuracy and computational cost. We propose a
+heterogeneous multi-agent architecture inspired by game-theoretic
+principles, combining cloud-based LLM experts with a local light-
+weight verifier. Our “3+1” architecture deploys three cloud-based
+expert agents (DeepSeek-V3) that analyze code from complemen-
+tary perspectives—code structure, security patterns, and debugging
+logic—in parallel, while a local verifier (Qwen3-8B) performs ad-
+versarial validation at zero marginal cost. We formalize this de-
+sign through a two-layer game framework: (1) a cooperative game
+among experts capturing super-additive value from diverse per-
+spectives, and (2) an adversarial verification game modeling qual-
+ity assurance incentives. Experiments on 262 real samples from
+the NIST Juliet Test Suite across 14 CWE types, with balanced
+vulnerable and benign classes, demonstrate that our approach
+achieves 77.2% F1 score with 62.9% precision and 100% recall at
+$0.002 per sample—outperforming both a single-expert LLM base-
+line (F1 71.4%) and Cppcheck static analysis (MCC 0). The adversar-
+ial verifier significantly improves precision (+10.3 percentage points,
+𝑝< 10−6, McNemar’s test) by filtering false positives, while parallel
+execution achieves a 3.0× speedup. Our work demonstrates that
+game-theoretic design principles can guide effective heterogeneous
+multi-agent architectures for cost-sensitive software engineering
+tasks.
+KEYWORDS
+Multi-Agent Systems; Game Theory; Large Language Models; Vul-
+nerability Detection; Strategic Cooperation
+ACM Reference Format:
+Zhaohui Geoffrey Wang. 2026. Strategic Heterogeneous Multi-Agent Ar-
+chitecture for Cost-Effective Code Vulnerability Detection. In Proc. of the
+25th International Conference on Autonomous Agents and Multiagent Systems
+(AAMAS 2026), Paphos, Cyprus, May 25 – 29, 2026, IFAAMAS, 11 pages.
+1
+INTRODUCTION
+Code vulnerability detection is a critical challenge in software
+security, with the global cost of cybercrime projected to reach
+$10.5 trillion annually [13]. Traditional static analysis tools like
+Cppcheck [2] offer fast, low-cost analysis but suffer from limited se-
+mantic understanding, while single-agent LLM approaches achieve
+Proc. of the 25th International Conference on Autonomous Agents and Multiagent Systems
+(AAMAS 2026), C. Amato, L. Dennis, V. Mascardi, J. Thangarajah (eds.), May 25 – 29,
+2026, Paphos, Cyprus. © 2026 International Foundation for Autonomous Agents and
+Multiagent Systems (www.ifaamas.org). This work is licenced under the Creative
+Commons Attribution 4.0 International (CC-BY 4.0) licence.
+higher accuracy at prohibitive cost. Recent multi-agent LLM sys-
+tems [18, 21, 23] have shown promising results, but typically em-
+ploy homogeneous agent pools—all agents use the same expensive
+cloud model—missing opportunities for cost optimization through
+heterogeneous design.
+This paper addresses a fundamental question: How should we allo-
+cate heterogeneous computational resources across multiple agents to
+achieve optimal trade-offs between detection quality and operational
+cost? The key insight is that vulnerability detection benefits from
+two distinct capabilities: (1) deep semantic analysis requiring pow-
+erful models, and (2) consistency checking that can be performed
+by lighter models. This asymmetry motivates a heterogeneous ar-
+chitecture.
+We propose a “3+1” heterogeneous multi-agent architecture
+combining:
+• Three cloud-based LLM experts (DeepSeek-V3 [3]) analyz-
+ing code from complementary perspectives: code structure
+analysis, security pattern matching, and debugging/edge-
+case reasoning. These agents execute in parallel, with diverse
+viewpoints providing complementary coverage that exceeds
+any single perspective.
+• One local verifier (Qwen3-8B [17]) performing adversarial
+validation at zero marginal API cost. Running on a local
+GPU, this agent receives all expert reports and checks for
+consistency, hallucinated claims, and missed vulnerabilities.
+We formalize the architectural design through a two-layer game
+framework:
+(1) Layer 1 (Cooperative Game): The three experts form a
+coalition with super-additive value—their combined detec-
+tion covers vulnerability patterns that individual experts
+miss, formalizing why diverse perspectives outperform iden-
+tical agents.
+(2) Layer 2 (Adversarial Game): The verifier acts as an inde-
+pendent adversary that improves system precision by catch-
+ing false positives and hallucinations in expert outputs.
+Critically, we show that the game-theoretic framework yields
+testable predictions validated empirically: (1) diverse expert coali-
+tions exhibit super-additive value when combined with verification,
+outperforming a single-expert baseline (Proposition 1), (2) inde-
+pendent verification significantly improves precision (𝑝< 10−6,
+Theorem 1), and (3) the heterogeneous cloud-local split achieves
+favorable cost-quality trade-offs analyzable through mechanism
+design. While our LLM agents do not engage in explicit strategic
+reasoning, the game-theoretic framework correctly predicts system-
+level behavior—validating its utility as an analytical and design tool
+for multi-agent LLM architectures.
+We make the following contributions:
+arXiv:2604.21282v1 [cs.CR] 23 Apr 2026
+
+(1) A game-theory-inspired framework for heterogeneous
+multi-agent vulnerability detection, formalizing cooperative
+expert analysis and adversarial verification as a principled
+design methodology (Section 3).
+(2) Rigorous empirical evaluation on 262 real samples from
+the NIST Juliet Test Suite covering 14 CWE types with bal-
+anced vulnerable and benign classes, reporting standard
+metrics (Precision, Recall, F1, FPR, MCC) with bootstrap
+95% confidence intervals and McNemar’s significance test
+(Section 5).
+(3) Practical cost-quality analysis demonstrating that hetero-
+geneous cloud-local architectures achieve favorable Pareto
+trade-offs, with the local verifier adding precision improve-
+ment at negligible cost (Section 5).
+The remainder of this paper is organized as follows. Section 2
+reviews related work. Section 3 presents our framework and ar-
+chitecture. Section 4 describes the experimental setup. Section 5
+presents results and analysis. Section 6 concludes with limitations
+and future directions.
+2
+RELATED WORK
+2.1
+Static Analysis for Vulnerability Detection
+Traditional static analysis tools employ rule-based pattern match-
+ing and data-flow analysis to detect vulnerabilities. Cppcheck [2]
+uses syntactic pattern matching for C/C++, while commercial tools
+like Coverity [20] combine multiple techniques for enterprise de-
+ployment. However, these tools face inherent limitations: high false
+positive rates due to lack of semantic understanding, and difficulty
+detecting complex vulnerabilities that span multiple code paths [9].
+Their precision-recall trade-off is fundamentally constrained by the
+expressiveness of static rules.
+2.2
+LLM-Based Vulnerability Detection
+Recent work has applied LLMs to vulnerability detection with in-
+creasing sophistication. Single-agent approaches using GPT-4 [16]
+or specialized code models achieve strong detection rates but at sig-
+nificant computational cost. The PrimeVul benchmark [4] revealed
+a critical evaluation gap: state-of-the-art models achieve only ∼3–
+35% F1 on carefully deduplicated real-world datasets, compared to
+∼68% F1 on older benchmarks like Big-Vul that contain significant
+data leakage. This highlights the importance of rigorous evaluation
+methodology with balanced classes and proper metrics.
+Multi-agent approaches have emerged as a promising direction
+for vulnerability detection. VulTrial [21] proposes a mock-court
+framework where specialized agents (security researcher, code au-
+thor, moderator) debate vulnerabilities through structured argumen-
+tation, achieving 102% improvement over single-agent baselines
+at ICSE 2026. MulVul [23] combines RAG-augmented multi-agent
+analysis with cross-model prompt evolution, achieving the current
+state-of-the-art 34.79% Macro-F1 on PrimeVul. MultiVer [18] uses a
+zero-shot 4-agent ensemble with union voting, reaching 82.7% re-
+call on PyVul. LLMxCPG [10] integrates LLMs with Code Property
+Graphs for structurally-enhanced analysis.
+Our work differs from these approaches by explicitly optimiz-
+ing for cost-quality trade-offs through heterogeneous agent design.
+While VulTrial and MulVul use homogeneous model pools (all
+agents share the same expensive API), we combine paid cloud ex-
+perts with a free local verifier, making cost a first-class design
+objective.
+2.3
+Multi-Agent Debate and Collaboration
+A growing body of work demonstrates that multi-agent debate im-
+proves LLM output quality. Du et al. [5] show that having multiple
+LLMs debate improves factuality and reasoning, with agents cor-
+recting each other’s errors through iterative rounds—a mechanism
+that directly inspires our adversarial verification loop. Liang et
+al. [12] extend this to divergent thinking, finding that multi-agent
+debate elicits more diverse reasoning paths. CAMEL [11] introduces
+role-playing communication protocols for multi-agent collabora-
+tion, demonstrating that specialized agent roles outperform generic
+prompting. These works establish that iterative multi-agent inter-
+action improves output quality, but none apply this mechanism to
+the specific cost-quality trade-offs of vulnerability detection with
+heterogeneous models.
+In software engineering, MetaGPT [8] uses structured multi-
+agent workflows for collaborative development, and AutoGen [22]
+provides general-purpose agent coordination. However, these frame-
+works do not explicitly model the economic trade-offs of heteroge-
+neous model allocation.
+2.4
+Game Theory and LLM Multi-Agent Systems
+Game-theoretic analysis of LLM-based multi-agent systems is an
+emerging area. A comprehensive survey [7] formalizes LLM in-
+teractions as Nash and Stackelberg games, defining “LLM-based
+equilibria” where strategies co-evolve through dialogue. The ECON
+framework [24] models multi-LLM coordination as an incomplete-
+information game seeking Bayesian Nash Equilibrium, where each
+LLM responds based on beliefs about co-agents. GTBench [6] bench-
+marks LLM strategic reasoning, finding that LLMs deviate from ra-
+tional strategies as game complexity increases—motivating our use
+of game theory as a design framework rather than assuming strate-
+gic behavior by LLM agents. GT-HarmBench [1] extends game-
+theoretic evaluation to multi-agent safety, benchmarking risks in
+adversarial settings—complementary to our adversarial verification
+game.
+2.5
+Positioning of Our Work
+Our architecture shares the multi-perspective analysis approach
+with VulTrial and MultiVer, and draws on multi-agent debate [5, 12]
+for iterative quality improvement. We uniquely combine: (1) hetero-
+geneous resource allocation—paid cloud APIs with free local models;
+(2) game-theoretic design rationale—cooperative and adversarial
+game formulations justifying architectural choices; and (3) rigorous
+evaluation—balanced classes, standard metrics, and statistical sig-
+nificance testing. The closest concurrent work, MulVul, achieves
+state-of-the-art detection on PrimeVul but does not address cost
+optimization. Our contribution is complementary: showing how to
+architect cost-effective multi-agent systems with game-theoretic
+principles.
+
+3
+METHODOLOGY
+We present a game-theoretic framework for heterogeneous multi-
+agent vulnerability detection. Unlike prior multi-agent approaches
+that treat agent coordination as an engineering problem, we for-
+malize the design space through cooperative and adversarial game
+theory, derive analytical properties, and validate these predictions
+empirically.
+3.1
+Problem Formulation
+Given a code snippet 𝑥, vulnerability detection seeks to determine
+whether 𝑥contains security vulnerabilities and identify their CWE
+types. We formulate this as a multi-agent mechanism design prob-
+lem: how to allocate heterogeneous computational resources across
+agents to maximize detection quality 𝑄while minimizing cost 𝐶.
+Definition 1 (Multi-Agent Vulnerability Detection Game).
+A multi-agent detection system is a tuple M = ⟨A, S,𝐶,𝑄, 𝜋⟩where:
+• A = {𝑎1, . . . ,𝑎𝑛} is the set of heterogeneous agents
+• S = {𝑠1, . . . ,𝑠𝑛} is the strategy space (analysis perspective,
+model choice, effort level)
+• 𝐶: S𝑛→R+ is the cost function (API charges + compute)
+• 𝑄: S𝑛→[0, 1] is the quality function (detection F1)
+• 𝜋: A × S𝑛→R is the payoff function, 𝜋𝑖= 𝑤1𝑄−𝑤2𝐶𝑖
+The mechanism designer’s problem is to select agent types, roles,
+and interaction protocols that induce a desirable equilibrium—high
+𝑄at low 𝐶. This connects our work to the mechanism design litera-
+ture [14]: we design the “rules of the game” so that the system-level
+outcome is Pareto-optimal.
+3.2
+Two-Layer Game Structure
+We decompose the detection problem into two interconnected
+games.
+3.2.1
+Layer 1: Expert Cooperative Game. The first layer models
+cooperation among 𝑘expert agents with complementary analysis
+perspectives as a coalitional game.
+Definition 2 (Expert Coalition Game). An expert coalition
+game is 𝐺1 = ⟨𝑁, 𝑣⟩where:
+• 𝑁= {1, 2, . . . ,𝑘} is the set of expert agents
+• 𝑣: 2𝑁→R is the characteristic function
+The coalition value captures the net utility of subset 𝑆⊆𝑁:
+𝑣(𝑆) = 𝑤1 · 𝑄(𝑆) −𝑤2 · 𝐶(𝑆)
+(1)
+where 𝑄(𝑆) is the detection quality (F1) achievable by coalition 𝑆,
+and 𝐶(𝑆) is its total cost.
+Proposition 1 (Super-Additivity of Diverse Coalitions).
+Let 𝑆,𝑇⊆𝑁be disjoint coalitions with complementary analysis
+perspectives (i.e., each agent covers vulnerability patterns not covered
+by others). If agents in 𝑆detect vulnerability set 𝑉𝑆and agents in 𝑇
+detect 𝑉𝑇, then:
+𝑄(𝑆∪𝑇) ≥max(𝑄(𝑆),𝑄(𝑇))
+(2)
+with strict inequality when 𝑉𝑆⊈𝑉𝑇and 𝑉𝑇⊈𝑉𝑆. Furthermore,
+if 𝐶(𝑆∪𝑇) = 𝐶(𝑆) + 𝐶(𝑇) (independent cost), then 𝑣(𝑆∪𝑇) ≥
+𝑣(𝑆)+𝑣(𝑇) when the quality improvement outweighs the cost increase.
+This motivates our choice of three diverse expert roles: a code
+structure analyst, a CWE-taxonomy security expert, and a de-
+bugging specialist. Their coalition should outperform any single
+expert—a prediction we validate in Section 5.
+Shapley Value Analysis. The Shapley value 𝜙𝑖quantifies each
+expert’s marginal contribution to the coalition:
+𝜙𝑖(𝑣) =
+∑︁
+𝑆⊆𝑁\{𝑖}
+|𝑆|!(𝑘−|𝑆| −1)!
+𝑘!
+[𝑣(𝑆∪{𝑖}) −𝑣(𝑆)]
+(3)
+For our 3-expert system, the Shapley value determines how much
+each perspective (code structure, security, debugging) contributes
+to overall detection quality. If 𝜙𝑖> 𝐶𝑖for all 𝑖, every expert “pays
+for itself”—the marginal quality improvement exceeds the marginal
+cost. We report empirical Shapley values in the appendix.
+3.2.2
+Layer 2: Adversarial Verification Game. The second layer
+models the strategic interaction between the expert coalition and
+an independent verifier as an extensive-form game.
+Definition 3 (Verification Game). A verification game is 𝐺2 =
+⟨𝑃,𝑆𝐸,𝑆𝑉, 𝜋𝐸, 𝜋𝑉⟩where:
+• 𝑃= {𝐸,𝑉} are players (Expert coalition, Verifier)
+• 𝑆𝐸= {ℎ𝑖𝑔ℎ,𝑙𝑜𝑤} represents expert output quality (effort level)
+• 𝑆𝑉= {𝑎𝑐𝑐𝑒𝑝𝑡,𝑐ℎ𝑎𝑙𝑙𝑒𝑛𝑔𝑒,𝑟𝑒𝑗𝑒𝑐𝑡} is verifier strategy
+• 𝜋𝐸, 𝜋𝑉are payoff functions
+The expert coalition’s payoff captures the trade-off between
+effort cost and rejection penalty:
+𝜋𝐸(𝑠𝐸,𝑠𝑉) = 𝑄(𝑠𝐸) −𝑐(𝑠𝐸) −𝑝· ⊮[𝑠𝑉=𝑟𝑒𝑗𝑒𝑐𝑡]
+(4)
+where 𝑐(ℎ𝑖𝑔ℎ) > 𝑐(𝑙𝑜𝑤) and 𝑝> 0 is the rejection penalty (wasted
+API cost on rejected outputs).
+Theorem 1 (Verification Eqilibrium). In the verification
+game 𝐺2:
+(i) If the verifier independently detects false positives with proba-
+bility 𝑝𝑓𝑝> 0 and does not introduce new false positives, the
+system precision satisfies 𝑃𝑠𝑦𝑠𝑡𝑒𝑚> 𝑃𝑒𝑥𝑝𝑒𝑟𝑡𝑠whenever 𝐹𝑃> 0.
+(ii) The strategy profile (𝑠∗
+𝐸= ℎ𝑖𝑔ℎ,𝑠∗
+𝑉= accept when consistent)
+forms a Nash equilibrium when 𝑝> 𝑐(ℎ𝑖𝑔ℎ) −𝑐(𝑙𝑜𝑤), i.e., the
+rejection penalty exceeds the cost of producing high-quality
+output.
+Proof sketch. For (i): the verifier removes fraction 𝑝𝑓𝑝of false
+positives without removing true positives, so 𝑃𝑠𝑦𝑠𝑡𝑒𝑚= 𝑇𝑃/(𝑇𝑃+
+𝐹𝑃(1 −𝑝𝑓𝑝)) > 𝑇𝑃/(𝑇𝑃+ 𝐹𝑃). For (ii): given 𝑠∗
+𝑉, the expert’s
+best response is ℎ𝑖𝑔ℎsince 𝑄ℎ𝑖𝑔ℎ−𝑐ℎ𝑖𝑔ℎ> 𝑄𝑙𝑜𝑤−𝑐𝑙𝑜𝑤−𝑝when
+𝑝> 𝑐(ℎ𝑖𝑔ℎ) −𝑐(𝑙𝑜𝑤). Given 𝑠∗
+𝐸= ℎ𝑖𝑔ℎ, the verifier’s best response
+is 𝑎𝑐𝑐𝑒𝑝𝑡since rejection of correct output incurs unnecessary cost.
+Full proof in Appendix G.
+□
+□
+The key insight is that the verifier creates a credible audit
+mechanism: even though our LLM agents do not literally reason
+about penalties, the system architecture implements the equilibrium
+outcome. By routing outputs through an independent verifier, we
+structurally ensure that low-quality outputs (false positives) are
+filtered—achieving the same outcome that strategic agents would
+reach in equilibrium.
+
+Algorithm 1 3+1 Multi-Agent Detection (Game Implementation)
+Require: Code 𝑥, Experts 𝐸= {𝑒1,𝑒2,𝑒3}, Verifier 𝑉
+Ensure: Vulnerability prediction, CWE classification
+1:
+⊲Layer 1: Cooperative Game
+2: {𝑟1,𝑟2,𝑟3} ←ParallelAnalyze(𝐸,𝑥)
+⊲Coalition 𝑣(𝑁)
+3: CWE_pool ←Ð
+𝑖ExtractCWEs(𝑟𝑖)
+⊲Super-additive union
+4:
+⊲Layer 2: Verification Game
+5: 𝑣←Verify(𝑉,𝑥,𝑟1,𝑟2,𝑟3)
+⊲Audit mechanism
+6: if 𝑣provides FINAL_VULNERABILITY then
+7:
+return 𝑣.vulnerability, 𝑣.CWE_IDs
+⊲Verifier override
+8: else
+9:
+return MajorityVote(𝑟1,𝑟2,𝑟3), CWE_pool
+10: end if
+This connects to both the inspection game literature [19] and
+the multi-agent debate paradigm [5, 12]: the verifier functions as an
+“inspector” whose adversarial cross-examination of expert claims
+improves system quality, analogous to how debate among LLMs
+improves factuality in general reasoning tasks.
+3.3
+The 3+1 Architecture
+Based on our game-theoretic analysis, we design a concrete archi-
+tecture with 𝑘= 3 experts and 𝑚= 1 verifier that implements the
+equilibrium structure derived above.
+3.3.1
+Expert Agents (Cloud). We deploy three DeepSeek-V3 [3]
+agents via API with specialized prompts:
+• Code Analyst (𝑎1): Data flow, control flow, vulnerability
+entry points, memory operations. Covers structural vulnera-
+bility patterns.
+• Security Expert (𝑎2): CWE taxonomy matching, known
+vulnerability patterns, severity assessment. Covers semantic
+vulnerability patterns.
+• Debug Expert (𝑎3): Error handling, boundary conditions,
+edge cases, undefined behavior. Covers behavioral vulnera-
+bility patterns.
+Each expert outputs structured reports: VULNERABILITY_FOUND,
+CWE_IDs, SEVERITY, EVIDENCE, CONFIDENCE. Experts execute in
+parallel, which does not change coalition value 𝑣(𝑁) but reduces
+wall-clock time proportionally.
+3.3.2
+Verifier Agent (Local). Qwen3-8B [17] deployed locally on
+GPU implements the adversarial verification game:
+• Zero marginal cost: eliminates API charges, making verifi-
+cation “free at the margin”—a key property for the mecha-
+nism to be individually rational.
+• Different model family: Qwen3 vs. DeepSeek reduces cor-
+related errors, ensuring the verifier provides genuinely inde-
+pendent assessment.
+• Full information: receives original code and all three expert
+reports, enabling cross-referencing.
+3.3.3
+Decision Mechanism. Algorithm 1 implements the two-layer
+game structure:
+The algorithm directly implements our game-theoretic design:
+Line 2 realizes the cooperative coalition (Layer 1), Line 3 captures
+super-additive CWE coverage through union aggregation, and
+Lines 5–9 implement the verification game (Layer 2) where the
+verifier can override expert consensus.
+4
+EXPERIMENTS
+We evaluate our 3+1 architecture on a real vulnerability detection
+benchmark with balanced classes, addressing three research ques-
+tions:
+• RQ1: Does the multi-expert coalition provide super-additive
+value over individual experts?
+• RQ2: Does the adversarial verifier improve detection preci-
+sion?
+• RQ3: Does parallel execution achieve cost-quality Pareto
+efficiency?
+4.1
+Dataset
+We use the NIST Juliet Test Suite v1.3 [15], a widely-used bench-
+mark containing 64,295 C/C++ test cases across 118 CWE types.
+Unlike prior work that uses small or synthetic subsets, we extract
+262 real function-level samples with the following properties:
+• Balanced classes: 132 vulnerable + 130 benign (patched)
+functions
+• 14 CWE types: covering memory safety (CWE-121, 122,
+415, 416), integer errors (CWE-190), null pointers (CWE-476),
+injection (CWE-78, 134), resource management (CWE-401,
+789, 400), error handling (CWE-252), numeric errors (CWE-
+369), and uninitialized variables (CWE-457)
+• Real code: extracted from Juliet’s Flow Variant 01 (baseline)
+test cases, averaging 38.5 lines per sample
+• Ground truth: each vulnerable sample has a known CWE
+label; benign samples are the corresponding patched versions
+from the same test case
+The inclusion of benign samples is critical for measuring preci-
+sion and false positive rate—metrics omitted in many prior LLM-
+based vulnerability detection studies [4].
+4.2
+Baselines and Configurations
+Baselines:
+• Cppcheck 2.13.0 [2]: open-source static analysis tool with
+all checks enabled
+• Single Expert: one DeepSeek-V3 agent (security expert role)
+without verifier—tests whether the multi-agent coalition
+adds value over a single LLM
+Ablation Configurations:
+• 3+1 Parallel + Verifier: Full architecture (3 parallel experts
++ local verifier)
+• 3+1 Parallel −Verifier: Experts only, no verification (ab-
+lates Layer 2)
+• 3+1 Serial + Verifier: Sequential experts + verifier (ablates
+parallelism)
+4.3
+Implementation Details
+Expert Agents: DeepSeek-V3 via OpenAI-compatible API at tem-
+perature 0.1. Each expert receives a specialized system prompt
+
+defining its analysis perspective and structured output format. Ex-
+perts run concurrently via Python asyncio.
+Verifier Agent: Qwen3-8B [17] deployed locally via Hugging-
+Face Transformers on an NVIDIA RTX 3090 GPU. The verifier
+receives the original code and all three expert reports, and outputs
+a consolidated assessment (ACCEPT/CHALLENGE/REJECT with
+final CWE classification).
+Cost Calculation: DeepSeek-V3 pricing: $0.27/MTok input,
+$1.10/MTok output. Local verifier cost is zero (GPU amortized).
+4.4
+Evaluation Metrics
+We report standard binary classification metrics with the positive
+class being “vulnerable”:
+• Precision: 𝑇𝑃/(𝑇𝑃+ 𝐹𝑃) — fraction of predicted vulnera-
+bilities that are real
+• Recall: 𝑇𝑃/(𝑇𝑃+ 𝐹𝑁) — fraction of real vulnerabilities de-
+tected
+• F1 Score: harmonic mean of precision and recall
+• False Positive Rate: 𝐹𝑃/(𝐹𝑃+𝑇𝑁)
+• MCC: Matthews Correlation Coefficient, robust to class im-
+balance
+• CWE Match Rate: among true positives, the fraction with
+correct CWE identification (using CWE hierarchy for partial
+credit, e.g., CWE-121 ≈CWE-122 under parent CWE-120)
+All metrics are reported with 95% bootstrap confidence intervals
+(1,000 resamples). Pairwise comparisons use McNemar’s test.
+4.5
+CWE Extraction
+Vulnerability predictions are extracted automatically from LLM
+outputs using regex matching for CWE identifiers and structured
+fields. A sample is predicted as vulnerable if: (1) the reviewer’s
+final assessment says “yes”, or (2) a majority of experts report
+vulnerability with at least one CWE identifier. CWE matching uses a
+hierarchy mapping (e.g., CWE-121/122/787 are treated as equivalent
+under parent CWE-120).
+5
+RESULTS AND DISCUSSION
+5.1
+Overall Performance
+Table 1 presents the main results. Our full 3+1 architecture (Par-
+allel+Verifier) achieves 77.2% F1 score, with perfect recall (100%)
+ensuring that all vulnerabilities are detected, and precision of 62.9%
+indicating that roughly two-thirds of alerts correspond to genuine
+vulnerabilities.
+A striking finding is that without the verifier, the vast major-
+ity of benign samples are incorrectly flagged as vulnerable
+(FPR = 91.5%). The expert agents alone have minimal ability to
+distinguish between vulnerable code and its patched version—a
+critical limitation that the verifier addresses by filtering 41 addi-
+tional false positives. Notably, the single-expert baseline achieves
+higher precision (.555) than the 3-expert coalition without verifier
+(.526), because multiple experts produce more CWE mentions that
+inflate false positives. Cppcheck achieves 100% FPR (MCC = 0),
+unable to differentiate Juliet’s vulnerable and patched code pairs.
+API cost is nearly identical across all 3-expert configurations
+($0.002 per sample), as the verifier runs locally at zero API cost.
+Table 1: Main results on 262 Juliet samples (132 vulnerable +
+130 benign). 95% bootstrap CI in parentheses.
+Configuration
+Prec.
+Rec.
+F1
+FPR
+MCC
+3+1 Para.+V
+.629
+1.00
+.772
+.600
+.501
+(.563,.693)
+(1.0,1.0)
+(.721,.819)
+3+1 Para.−V
+.526
+1.00
+.689
+.915
+.211
+(.464,.586)
+(1.0,1.0)
+(.634,.739)
+3+1 Serial+V
+.644
+1.00
+.783
+.562
+.531
+(.577,.710)
+(1.0,1.0)
+(.732,.830)
+Single Expert
+.555
+1.00
+.714
+.815
+.320
+(.490,.617)
+(1.0,1.0)
+(.658,.763)
+Cppcheck 2.13
+.504
+1.00
+.670
+1.00
+.000
+Table 2: Cost and latency analysis (262 samples)
+Config
+Cost/Sample
+Time/Sample
+Total Cost
+3+1 Para.+V
+$0.0021
+68.1s
+$0.542
+3+1 Para.−V
+$0.0021
+21.7s
+$0.548
+3+1 Serial+V
+$0.0021
+92.2s
+$0.548
+Single Expert
+$0.0006
+14.1s
+$0.162
+Cppcheck
+$0
+<0.1s
+$0
+The single expert uses one-third the calls, reducing cost to $0.0006
+per sample. The difference lies in latency: parallel experts finish in
+∼15s vs. ∼45s serial, while the local verifier adds ∼50s.
+5.2
+RQ1: Expert Coalition Super-Additivity
+The single-expert baseline achieves 100% recall but with FPR =
+81.5% (MCC = .320). The 3-expert coalition without verifier also
+achieves 100% recall but with higher FPR (91.5%, MCC = .211)—at
+first glance suggesting that adding experts hurts precision. How-
+ever, this reflects a limitation of the majority-voting aggregation:
+more experts produce more CWE mentions, inflating false positives.
+The super-additive value manifests not in recall but in CWE identi-
+fication accuracy: the union of three expert perspectives achieves
+100% CWE match rate (every detected vulnerability is classified
+with the correct CWE type), compared to lower match rates for
+individual experts.
+The full 3+1 system (with verifier) resolves this tension: the veri-
+fier filters the coalition’s excess false positives, yielding F1 = .772
+vs. the single expert’s .714 (McNemar 𝑝< 10−5). This confirms
+Proposition 1: the coalition’s value is realized through the verifica-
+tion layer, which extracts the precision benefit from the coalition’s
+richer CWE evidence.
+5.3
+RQ2: Adversarial Verifier Impact
+The verifier’s contribution is the most significant finding of our
+experiments. Table 3 shows the direct comparison.
+McNemar’s test confirms this difference is highly significant: 41
+additional samples are correctly reclassified by the verifier (𝑝<
+10−6), with zero samples incorrectly changed from correct to in-
+correct. This validates Theorem 1(i): the verifier acts as a one-
+directional precision filter, reducing the false positive count from
+119 to 78 out of 130 benign samples.
+
+Table 3: Adversarial verifier impact (parallel mode). The ver-
+ifier significantly reduces false positives.
+Metric
++V
+−V
+Δ
+𝑝-value
+Precision
+62.9%
+52.6%
++10.3%
+< 10−6
+Recall
+100%
+100%
+0%
+F1
+77.2%
+68.9%
++8.3%
+FPR
+60.0%
+91.5%
+−31.5%
+Table 4: Parallel vs. serial execution efficiency (both with
+verifier)
+Metric
+Parallel
+Serial
+Gain
+Expert Time/Sample
+∼15s
+∼45s
+3.0×
+Total Time/Sample
+68.1s
+92.2s
+1.4×
+F1 Score
+77.2%
+78.3%
+≈Equal
+McNemar 𝑝
+0.711
+Not sig.
+The MCC increases from 0.211 (weak correlation) to 0.501 (mod-
+erate positive correlation), demonstrating that the verifier substan-
+tially improves discriminative power beyond what the experts alone
+achieve.
+Game-theoretic interpretation: This result validates the in-
+spection game structure of Layer 2. The verifier—implemented as a
+different model family (Qwen3 vs. DeepSeek)—functions as an inde-
+pendent auditor whose cross-referencing of expert claims against
+code evidence catches inconsistencies that same-model verification
+would miss. The zero marginal cost of local verification makes this
+audit mechanism individually rational: the system designer always
+benefits from adding the verifier since ΔPrecision > 0 at ΔCost ≈0.
+Comparing against the single-expert baseline further validates the
+full architecture: the 3+1 system (F1 = .772) significantly outper-
+forms a single expert (F1 = .714, McNemar 𝑝< 10−5), confirming
+the value of both coalition and verification.
+5.4
+RQ3: Parallel Execution Efficiency
+Parallel execution achieves a 3.0× speedup in expert analysis time
+(∼15s vs. ∼45s) with no significant difference in detection quality
+(McNemar 𝑝= 0.711). The total wall-clock speedup is 1.4× because
+the local verifier (∼50s) dominates latency. This suggests that opti-
+mizing verifier inference (e.g., with vLLM or quantization) would
+yield substantial end-to-end improvements.
+5.5
+Per-CWE Analysis
+Table 5 reveals substantial variation across vulnerability types.
+The FPR varies from 11% (CWE-476, null pointer dereference)
+to 100% (CWE-400/416/789). This variation is informative: vulner-
+abilities whose patches involve adding explicit checks (e.g., null
+guards for CWE-476, return-value checks for CWE-252) have low
+FPR because patched versions are structurally distinct. In contrast,
+semantic vulnerabilities (e.g., resource exhaustion, use-after-free)
+have high FPR because the patched code retains similar structure—
+the fix may be a subtle control-flow change that LLMs struggle to
+distinguish.
+Table 5: Per-CWE detection performance (3+1 Paral-
+lel+Verifier). All CWEs achieve 100% recall; FPR varies sig-
+nificantly.
+CWE
+Category
+FPR
+TN
+FP
+CWE-476
+NULL Deref
+11%
+8
+1
+CWE-252
+Unchecked Return
+20%
+8
+2
+CWE-401
+Memory Leak
+30%
+7
+3
+CWE-457
+Uninit Variable
+30%
+7
+3
+CWE-78
+Cmd Injection
+40%
+6
+4
+CWE-415
+Double Free
+50%
+3
+3
+CWE-122
+Heap Overflow
+60%
+4
+6
+CWE-190
+Integer Overflow
+70%
+3
+7
+CWE-369
+Divide by Zero
+70%
+3
+7
+CWE-121
+Stack Overflow
+80%
+2
+8
+CWE-134
+Format String
+90%
+1
+9
+CWE-416
+Use After Free
+100%
+0
+7
+CWE-789
+Mem Allocation
+100%
+0
+8
+CWE-400
+Resource Exhaust
+100%
+0
+10
+This suggests that future work should focus on improving dis-
+crimination for semantic vulnerability types, perhaps through code-
+diff-aware analysis or iterative expert-verifier dialogue.
+5.6
+Cost-Quality Trade-off and Mechanism
+Design
+At $0.002 per sample, our architecture enables analysis of 500 code
+functions for $1.00—making it practical for CI/CD integration. The
+heterogeneous design is central to this cost-effectiveness, and can
+be understood through a mechanism design lens.
+Heterogeneous allocation as mechanism design. A naïve
+approach would allocate the same cloud model to all four agents,
+costing ∼33% more (four DeepSeek-V3 calls instead of three). Our
+mechanism exploits an asymmetry in task difficulty: deep vulnera-
+bility analysis requires a powerful model, but cross-checking consis-
+tency is a simpler task achievable by a smaller model. By assigning
+the expensive model to the hard task (analysis) and the free lo-
+cal model to the simpler task (verification), we achieve the same
+equilibrium outcome at lower cost.
+Individual rationality. The verifier’s zero marginal cost en-
+sures that adding verification is always rational for the system
+designer: ΔF1 = +8.3% at ΔAPI cost ≈$0. This is a property the
+mechanism designer can guarantee regardless of agent behavior.
+Pareto efficiency. No configuration dominates another across
+all objectives (cost, recall, precision, latency). The parallel+verifier
+configuration offers the best precision-latency trade-off; parallel-
+only offers the best latency at cost of precision; serial+verifier offers
+slightly better precision but at 1.5× the latency.
+5.7
+Threats to Validity
+Internal Validity: Automated CWE extraction via regex may miss
+non-standard output formats. Manual inspection of 50 randomly
+selected outputs confirmed >95% extraction accuracy. The CWE
+hierarchy mapping (e.g., CWE-121 ≈CWE-122 under parent CWE-
+120) may slightly inflate CWE match rates but reflects meaningful
+semantic equivalence.
+
+External Validity: The Juliet Test Suite provides controlled,
+synthetic test cases. Real-world vulnerabilities are more complex;
+state-of-the-art approaches achieve only ∼35% F1 on PrimeVul [4].
+Our results demonstrate relative architectural value, not absolute
+performance claims.
+Construct Validity: The high FPR on benign samples reflects a
+general LLM challenge: Juliet’s patched versions retain structural
+similarity to vulnerable code. API costs depend on current pricing
+($0.27/MTok for DeepSeek-V3 as of March 2026).
+6
+CONCLUSION
+We presented a game-theory-inspired framework for heterogeneous
+multi-agent vulnerability detection. Our 3+1 architecture deploys
+three cloud-based LLM experts (DeepSeek-V3) for parallel vulner-
+ability analysis and one local adversarial verifier (Qwen3-8B) for
+quality assurance, with the game-theoretic framework providing
+principled justification for each design choice.
+Our evaluation on 262 real Juliet Test Suite samples—with bal-
+anced vulnerable and benign classes across 14 CWE types—provides
+rigorous metrics including Precision, Recall, F1, False Positive Rate,
+and Matthews Correlation Coefficient with bootstrap confidence
+intervals. Key findings include:
+• Expert coalitions with diverse analysis perspectives exhibit
+super-additive value when combined with verification:
+the 3+1 system (F1 = .772) significantly outperforms both a
+single expert (.714) and the coalition alone (.689).
+• Adversarial verification by an independent local model im-
+proves precision by catching false positives where experts
+incorrectly flag benign code, with zero marginal API cost.
+• Parallel execution achieves significant speedup without
+quality degradation, demonstrating Pareto efficiency.
+Game Theory as Analytical Tool: Our central claim is that
+game-theoretic frameworks provide correct and useful predictions
+about multi-agent LLM system behavior. The cooperative game
+predicted super-additive value from diverse coalitions—confirmed
+by 100% CWE match rate. The adversarial game predicted preci-
+sion improvement from independent verification—confirmed with
+𝑝< 10−6. The mechanism design analysis predicted that hetero-
+geneous cloud-local allocation dominates homogeneous designs—
+confirmed by the verifier’s zero-cost precision gain. While LLM
+agents do not engage in explicit strategic reasoning, game the-
+ory correctly predicts the system-level outcomes of architectural
+choices, establishing its value as an analytical and design tool for
+the emerging field of strategic multi-agent engineering.
+Limitations: Our evaluation uses the synthetic Juliet Test Suite;
+real-world vulnerabilities present additional challenges. We do not
+claim state-of-the-art detection rates—recent work [4] shows that
+even the best approaches achieve only ∼35% F1 on the challenging
+PrimeVul benchmark. The false positive rate on benign code re-
+mains substantial, reflecting a general challenge for LLM-based vul-
+nerability detection. Our contribution is architectural: demonstrat-
+ing how to design cost-effective multi-agent systems, not achieving
+optimal detection accuracy.
+Future Work: We plan to extend this work in several directions:
+(1) evaluation on real-world vulnerability datasets such as Diver-
+seVul and PrimeVul to assess generalization; (2) iterative expert-
+verifier dialogue, inspired by the multi-agent debate paradigm [5],
+where the verifier challenges specific expert claims and experts re-
+fine their analysis over multiple rounds—preliminary results show
+this can substantially reduce false positive rates; (3) dynamic agent
+selection that adapts the number and type of experts based on code
+characteristics; and (4) integration with existing CI/CD pipelines
+for practical deployment evaluation.

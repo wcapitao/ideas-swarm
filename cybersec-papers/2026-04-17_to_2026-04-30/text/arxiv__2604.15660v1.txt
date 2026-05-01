@@ -1,0 +1,1243 @@
+DPDSyn: Improving Differentially Private Dataset Synthesis for Model Training
+by Downstream Task Guidance
+Mingxuan Jia1 , Wen Huang1 , Weixin Zhao1 , Xingyi Wang1 , Jian Peng1 and Zhishuo Zhang2
+1Sichuan University
+2Southwest Minzu University
+{jiamx, zhaoweixin, wangxingyi97}@stu.scu.edu.cn, {wen, jianpeng}@scu.edu.cn,
+476321012@qq.com
+Abstract
+How to synthesize a dataset while achieving dif-
+ferential privacy for AI model training is a mean-
+ingful but challenging problem.
+To address this
+problem, state-of-the-art methods first select orig-
+inal private dataset’s multiple low-dimensional dis-
+tributions that have the potential to approximate
+the distribution of original private dataset with high
+precision, and then synthesize a dataset obeying
+all selected low-dimensional distributions as the
+synthetic dataset.
+However, it is difficult to se-
+lect suitable low-dimensional distributions, which
+in turn degrades the data utility of resulting syn-
+thetic dataset.
+To improve differentially private
+dataset synthesis, we propose to train a differen-
+tially private AI model for downstream tasks on
+the original private dataset and utilize the trained
+model to synthesize datasets. In particular, on the
+one hand, the AI model satisfies differential privacy
+so no matter how to use the model does not disclose
+private information of original private dataset. On
+the other hand, the AI model is trained to complete
+the downstream task so the AI model preserves crit-
+ical information for completing downstream tasks.
+We utilize the AI model to synthesize datasets to
+achieve the goal of improving data utility while
+preserving privacy. Empirical evaluations on four
+benchmark datasets demonstrate that our proposed
+DPDSyn consistently outperforms eight state-of-
+the-art baselines with a maximum improvement of
+2.40× in accuracy and 333.73× in synthesis ef-
+ficiency.
+Further experiments also validate that
+DPDSyn has strong scalability across varying data
+scales.
+1
+Introduction
+Dataset publishing contributes to the rapid advancement of
+AI model training significantly [Zha et al., 2025]. For ex-
+ample, the publication of ImageNet dataset contributes a lot
+to the advancement of deep learning [Deng et al., 2009]. The
+publication of 14-million-image ImageNet directly facilitates
+the dramatic reduction of top-5 classification error rates in
+the ILSVRC challenge from approximately 26% to under 3%
+[Krizhevsky et al., 2017] [He et al., 2016]. The dramatic
+reduction validates the effectiveness of deep convolutional
+neural networks. In recent years, the publication of massive
+datasets drives recent breakthroughs in large language mod-
+els, such as GPT-5 family and DeepSeek-V3 series [Weber et
+al., 2024] [Liu et al., 2024] [Wang et al., 2025].
+The publication of private datasets is the key to further im-
+prove AI model training [Ye et al., 2024]. As the contribution
+of dataset publishing is recognized, many useful non-private
+datasets are published for public usage, resulting in that the
+contribution of publishing non-private datasets to the devel-
+opment of AI model training is gradually diminishing. Due to
+strict privacy regulations, there are almost no publicly acces-
+sible private datasets, leading to that private datasets are not
+utilized to train AI models widely. Thus, the publication of
+private datasets has the potential to further enhance AI model
+training.
+Data Usage
+Differential Privacy 
+Mechanism
+Private 
+Datasets
+Risk Assessment
+Trend Detection
+Statistical Analysis
+Restricted 
+Access
+Privacy Policy
+Trust Risks
+＋
+Differentially Private Noise
+Synthetic Dataset
+Private Dataset
+Req.
+Resp.
+Figure 1: Application Scenario of DP Dataset Synthesis.
+Publishing private datasets while preserving privacy could
+be achieved by DP (differentially private) dataset synthe-
+sis as shown in Figure 1. For example, to publish private
+datasets while preserving privacy with differential privacy,
+Alzantot et al. utilized DP-SGD (Stochastic Gradient De-
+scent) to train Wasserstein GAN (Generative Adversarial Net-
+works). The trained GAN is used to generate publicly acces-
+sible datasets based on a private dataset needed to be pro-
+tected [Srivastava and Alzantot, 2019]. Jia et al. proposed
+ABSyn to publish private datasets with protection of differ-
+ential privacy [Jia et al., 2024]. In particular, they utilized
+arXiv:2604.15660v1 [cs.CR] 17 Apr 2026
+
+multiple low-dimensional distributions to approximate high-
+dimensional distributions such that the correlation relation-
+ship among data attributions could be preserved as much as
+possible.
+However, existing methods of DP dataset synthesis still
+have room for further improvement in terms of data util-
+ity. Specifically, existing methods of DP dataset synthesis
+are mainly divided into two categories: GAN-based methods
+such as [Srivastava and Alzantot, 2019] and select-measure-
+generate methods such as ABSyn [Jia et al., 2024].
+The
+GAN-based method tends to suffer from training instability,
+leading to suboptimal data utility in downstream tasks [Garg
+and Torra, 2024] [Ghosheh et al., 2024]. The select-measure-
+generate method focus on preserving the correlation relation-
+ship among data attributions in the private datasets and the
+preservation of correlation relationship makes the data utility
+high in general cases. But, select-measure-generate methods
+do not take the special characteristics of downstream tasks
+into account, which leaves us the chance to further improve
+the data utility of DP dataset synthesis.
+In this paper, we utilize the special characteristics of down-
+stream tasks to further improve data utility of DP dataset
+synthesis. In particular, to capture the key features which
+can significantly improve performance of downstream tasks,
+we train an AI model for completing downstream tasks on
+the private dataset through DP-SGD algorithm. On the one
+hand, due to the appearance of downstream tasks in the train-
+ing phase, the trained model contains key information which
+plays an important role in completing downstream tasks. On
+the other hand, due to the usage of DP-SGD, regardless of
+how the trained model is used, no private information is dis-
+closed. Thus, we utilize the trained model as an approxima-
+tion of data distribution of the private dataset to synthesize
+datasets. Specifically, we generate data attributions of syn-
+thetic data record first, and then input these attributions into
+the trained model to gain a corresponding label. The gener-
+ated data attributions and the gained labels are combined as
+one data record in the synthetic dataset. To make the synthetic
+dataset as similar as possible to the original private dataset,
+we generate data attributions of synthetic data records by
+randomly attribution-wise shuffling data attributions of orig-
+inal data records. By taking specific characteristics of down-
+stream tasks into account, we successfully improve the data
+utility of synthetic datasets and our main contributions are as
+follows
+• Superior Utility. Our method improves the data util-
+ity of DP dataset synthesis significantly. By introducing
+downstream tasks into the training phase, our method
+successfully captures the key features which are impor-
+tant for improving performance of downstream tasks.
+The preservation of key features enhances the data util-
+ity of synthetic datasets in downstream tasks. For exam-
+ple, our method attains a maximum accuracy improve-
+ment of 2.40× and a maximum F1-score improvement
+of 15.28× according to experiment results.
+• High Efficiency. Our method can efficiently synthesize
+a dataset. In particular, our method utilizes the model
+trained on the private dataset as the sampler of origi-
+nal data distribution, and utilizes the inference procedure
+of trained model as the sample procedure. Our method
+can synthesize a dataset fast because the inference pro-
+cedure of AI model is executed fast.
+Across various
+downstream tasks, our method attains a maximum effi-
+ciency improvement of 333.73× according to experiment
+results.
+• Strong Scalability. Our method has strong scalability
+than existing methods.
+As the data volume of origi-
+nal private dataset increases, existing methods such as
+PrivMRF [Cai et al., 2021] may fail to synthesize a
+dataset. Different from existing methods, our method
+trains an AI model on private datasets and utilizes the
+trained AI model to synthesize data records. As the data
+volume of original private dataset increases, the training
+procedure of AI model still can be executed although the
+training time may increase a little. Thus, as the data vol-
+ume increases, our method does not fail. That is, our
+method has strong scalability.
+Across various down-
+stream tasks, our method attains a maximum accuracy
+improvement of 1.59× when the dataset scale is dou-
+bled, and a maximum accuracy improvement of 1.62×
+when the dataset scale is tripled.
+2
+Related works
+In the field of DP data synthesis, existing works are primarily
+divided into two categories: select-measure-generate meth-
+ods and GAN-based methods.
+The select-measure-generate method leverages statistical
+correlation to synthesize datasets. In the selection phase, a set
+of queries such as low-dimensional distributions are selected
+to guarantee that important information is preserved. In the
+measure phase, answers to selected queries are computed in
+a differentially private way such that private information is
+not disclosed. In the phase of generation, a synthetic dataset
+is generated such that the selected queries have the same
+answers on the synthetic dataset as on the original private
+dataset. There are many works of select-measure-generate
+such as [Jia et al., 2024] [Zhang et al., 2021] [Cai et al., 2021]
+[McKenna et al., 2022] [McKenna et al., 2021] [Hardt et al.,
+2012]. While the select-measure-generate method can pre-
+serve correlation among data attributions well, it suffers from
+severe scalability issues. When a private dataset is large, the
+select-measure-generate method may fail.
+GAN-based methods use adversarial learning to synthesize
+datasets. In particular, GAN-based methods train a generator
+for synthesizing datasets and a discriminator for evaluating
+similarity between synthesized dataset and original private
+dataset. The training phase of discriminator uses DP-SGD so
+that private information is preserved. There are many GAN-
+based methods such as [Srivastava and Alzantot, 2019] [Ma
+et al., 2023] [Hou et al., 2023]. The GAN-based methods
+offer higher efficiency but often lack rigorous quality guar-
+antees for data utility. The utility degradation in GAN-based
+methods primarily stems from the instability of adversarial
+training when the gradient is perturbed by differentially pri-
+vate noise.
+
+Private 
+Dataset
+Input
+Attribution-wise shuffling
+＋
+Fuse synthetic attributions and labels
+…
+…
+…
+…
+…
+…
+Downstream Task
+Private Dataset
+DP-SGD
+Train
+DP AI Model
+Shuffled attributions
+DP AI Model
+labels
+Stage1: Train DP AI Model
+Stage2: Synthesize Attributions
+Stage3: Synthesize Labels
+Stage4: Synthesize Dataset
+…
+…
+…
+…
+…
+…
+Synthetic 
+Dataset
+Output
+Figure 2: The workflow of DPDSyn.
+3
+Method
+In this section, our method DPDSyn is presented in detail.
+Specifically, our idea is elaborated first. Then, the workflow
+of our method is presented through the detailed description of
+each step. Finally, the privacy analysis of our method is given
+concisely.
+3.1
+Idea
+Our basic idea is to preserve as much information as possible
+that is critical to improving the performance of target down-
+stream tasks, regardless of other information when synthesiz-
+ing datasets. In general, a dataset contains much information.
+However, only partial information contained in the dataset is
+useful for a particular downstream task. The rest information
+is useless for the particular downstream task although the rest
+information may be critical for other downstream tasks. Our
+basic idea is to preserve useful information for target down-
+stream tasks more when synthesizing datasets so that the data
+utility of synthetic datasets could be improved further.
+Our idea is different from the idea of existing methods of
+DP dataset synthesis. In particular, the most existing methods
+aim at synthesizing datasets such that the distribution of syn-
+thetic dataset is as similar as possible to the original dataset
+distribution. For example, ABSyn [Jia et al., 2024] synthe-
+sizes datasets such that selected low-dimensional distribu-
+tions of synthetic dataset are the same as low-dimensional
+distributions of original dataset. The main idea of ABSyn is
+that dataset’s distributions could be similar with a high proba-
+bility when low-dimension distributions of these datasets are
+the same. The existing methods such as ABSyn do not pay
+enough attention to really useful information for downstream
+tasks, which leaves us the chance to improve the data utility
+of synthetic dataset further.
+To achieve our idea, our method introduces downstream
+tasks into the procedure of synthesizing datasets to preserve
+critical information for downstream tasks. In particular, our
+method trains a DP AI model which can complete the down-
+stream task on original private dataset through DP-SGD al-
+gorithm. The trained model contains the critical information
+needed by downstream tasks due to the appearance of down-
+stream tasks in the training phase and does not disclose the
+private information of original dataset due to the usage of
+DP-SGD algorithm. Our method utilizes the trained DP AI
+model to generate synthetic datasets such that useful infor-
+mation for downstream tasks could be preserved as much as
+possible, resulting in that the data utility of synthetic dataset
+could be improved significantly.
+3.2
+Workflow
+As shown in Figure 2, there are four stages in our method
+workflow. Specifically, in the first stage, to preserve as much
+critical information as possible for improving the perfor-
+mance of downstream tasks, our method trains a task-aware
+DP AI model via DP-SGD algorithm to privately capture the
+mapping from data attributions to labels. In the second stage,
+to keep the distribution of each attribution unchanged in syn-
+thetic datasets, our method only shuffles each attribution ran-
+domly and then lets the shuffled attributions be new attribu-
+tions of synthetic data records. In the third stage, the shuffled
+attributions are fed into the trained DP AI model to obtain
+the corresponding label so that the procedure of synthesizing
+data record can be completed efficiently. In the fourth stage,
+the shuffled attributions and the obtained labels are merged to
+form the final synthetic dataset. Next, each stage in workflow
+of our DPDSyn is elaborated on.
+In the first stage, our method utilizes the private dataset to
+train a DP AI model which can complete the target down-
+stream task. The trained DP serves two purposes. The first
+purpose is to capture critical information (which can enable
+the completion of downstream tasks) so that the data utility of
+synthetic dataset is improved significantly. The second pur-
+pose is to avoid disclosing private information by applying
+DP mechanisms in the training phase. That is, the first stage
+achieves the goal of improving data utility while preserving
+privacy.
+To achieve purposes of the first stage, our method iden-
+tifies the target downstream task and determines the corre-
+sponding model architecture. Specifically, our method first
+initializes training set size N and establishes reasonable hy-
+perparameters, such as batch size b, the number of epochs
+E, and learning rate η. To guarantee good performance of
+trained DP AI model, our method turns the minibatch size
+Bt and clipping bound C using a DP-style warm-up proce-
+
+dure. To guarantee that the final DP AI model satisfies (ε,
+δ)-DP, our method computes the noise multiplier z using the
+compute noise function provided by the tensorflow-privacy
+library 1. This function can incorporate the privacy parame-
+ters (ε, δ) with DP-SGD training configuration obtained from
+the warm-up stage, i.e., (N, b, E), producing the required
+Gaussian noise scale for gradient perturbation.
+The training procedure of DP AI model is outlined in Al-
+gorithm 1. In particular, Algorithm 1 takes the private dataset
+D and privacy parameters (ε, δ) as inputs. Steps 1–5 pre-
+pare hyperparameter optimization to determine the training
+hyperparameters. During steps 1–4, the size of training set
+Dtrain is initialized. Then, by performance tuning and sensi-
+tivity calibration, necessary parameters are set, including the
+optimal batch size b, number of epochs E, learning rate η,
+the minibatch size Bt, and clipping bound C. In step 5, the
+noise multiplier z is computed to ensure that the resulting DP
+AI model satisfies (ε, δ)-DP. With all hyperparameters deter-
+mined, steps 6–17 perform the DP-SGD training procedure
+and finally output the trained DP AI model.
+Algorithm 1 DP AI Model Training with DP-SGD
+Input: Private dataset D = {(xi, yi)}, privacy budget (ε, δ)
+Output: DP AI model MDP
+Stage 1: Hyperparameter Optimization
+1: Let training set Dtrain be 80% data samples from D
+2: Initialize N ←|Dtrain|
+3: Performance Tuning: Perform grid search on Dtrain to
+determine the optimal batch size b, number of epochs E,
+and learning rate η for standard SGD convergence.
+4: Sensitivity Calibration: Calibrate minibatch Bt and the
+clipping bound C.
+Stage 2: Compute noise multiplier
+5: z ←compute noise(N, b, E, ε, δ)
+Stage 3: DP training
+6: Initialize model parameters θ0
+7: for t = 1 to E do
+8:
+Randomly sample a minibatch Bt ⊂Dtrain
+9:
+for each sample (xi, yi) ∈Bt do
+10:
+Compute gradient: gt(xi) ←∇θtL(θt; xi, yi)
+11:
+Clip gradient:
+˜gt(xi) ←gt(xi)/ max(1, ∥gt(xi)∥2
+C
+)
+12:
+end for
+13:
+Add noise: ¯gt ←
+1
+|Bt|
+P
+i∈Bt
+ ˜gt(xi) + N(0, z2C2I)
+
+14:
+Update parameters: θt+1 ←θt −ηt¯gt
+15: end for
+16: Build DP AI model with final parameters: MDP ←θE
+17: return MDP
+In the second stage, our method synthesizes high utility
+and privacy-preserving attributions of synthetic dataset. In
+particular, our method removes original labels Y from the
+private dataset D and shuffles remaining attributions denoted
+by X one by one, where the shuffling operation is denoted
+by f. The shuffled attribution (denoted by ˜X) preserves the
+1https://github.com/tensorflow/privacy
+marginal distribution of each attribution while breaking data
+attribution correlation and data record correlation. Preserv-
+ing the marginal distribution of each attribution makes the
+data attribution of synthetic dataset similar to that of original
+private dataset. Thus, the information contained in the syn-
+thetic dataset could be similar to the information contained in
+the original private dataset. In other words, the data utility of
+synthetic dataset could be similar to the data utility of origi-
+nal private dataset. Breaking data attribution correlation and
+data record correlation makes it impossible to infer informa-
+tion about original data record in private dataset by synthetic
+dataset, thus preserving the private information contained in
+the private dataset. In addition, the shuffling procedure can
+be performed efficiently so this procedure allows our method
+to rapidly obtain the new attribution for synthetic dataset. In
+a word, by shuffling, our method can efficiently synthesize
+privacy-preserving attributions with high data utility for syn-
+thetic datasets.
+In the third stage, our method synthesizes labels for syn-
+thetic attributions by DP AI model obtained in the first stage.
+In particular, our method feeds shuffled attributions ˜X into
+the DP AI model MDP to obtain corresponding labels ˆY .
+Our method successfully transforms useful information for
+downstream tasks from the DP AI model to synthetic datasets
+by the procedure of synthesizing labels. Different from the
+traditional select-measure-generate method that relies on it-
+erative marginal selection, our method leverages the DP AI
+model to efficiently synthesize data records. Our method by-
+passes the heavy computational burden associated with itera-
+tive selection of low-dimensional distribution and generation
+of high-dimensional data record by low-dimensional distribu-
+tion, significantly reducing both time and resource consump-
+tion.
+In the fourth stage, our method fuses the synthetic attri-
+butions ˜X with synthetic labels ˆY to output the synthetic
+dataset. The way in which our method synthesizes datasets
+is different from the way of GAN-based method although
+our method and GAN-based method both train an AI model.
+In particular, in the training phase of GAN-based method,
+the downstream task is not taken into account, resulting in
+that the trained model in GAN-based methods does not fo-
+cus enough on the information critical for completing down-
+stream tasks. On the contrary, our method introduces down-
+stream tasks into the training phase of DP AI model, which
+enables the model to retain a lot of useful information for
+completing downstream tasks.
+The workflow of DPDSyn is formally presented in Algo-
+rithm 2. Given the private dataset D and privacy parameters
+(ε, δ), steps 1-2 identify the downstream task and specify a
+corresponding AI model, respectively. In step 3, Algorithm 1
+is employed to obtain a DP AI model. In steps 4–8, synthetic
+attributions ˜X are obtained by applying column-wise shuf-
+fling to the attributions X from original dataset D after labels
+Y are removed. In step 9, the synthetic attributions ˜X are fed
+into the DP AI model MDP to synthesize corresponding la-
+bels ˆY . Finally, synthesized labels ˆY and synthesized attribu-
+tions ˜X are combined to produce the final privacy-preserving
+synthetic dataset ˆD.
+
+Algorithm 2 DPDSyn
+Input: Private dataset D, privacy parameters (ε, δ)
+Output: Synthetic dataset ˆD
+Stage 1: Train DP AI Model
+1: Identify downstream task
+2: Identify an AI model suitable for the downstream task
+3: Train DP AI model using Algorithm 1:
+MDP ←DP Train(D, ε, δ)
+Stage 2: Synthesize Attributions
+4: Extract attribution matrix X ←D \ Y ,
+where Y denotes data labels.
+5: Initialize shuffled attribution matrix ˜X
+6: for each attribution column in X do
+7:
+˜X:,j ←f(X:,j), where f represents randomly shuf-
+fling operation
+▷column-wise permute j-th attribution
+8: end for
+Stage 3: Synthesize Labels
+9: Synthetic labels ˆY ←MDP ( ˜X)
+Stage 4: Synthesize Dataset
+10: Combine synthetic attributions and labels:
+ˆD ←{ ˜X, ˆY }
+11: return ˆD
+3.3
+Analysis of Privacy Guarantee
+Our method satisfies (ε, δ) differential privacy. In particular,
+our method uses the private dataset only in the first and the
+second stage in Algorithm 2. In the first stage, our method
+uses DP-SGD algorithm to train a DP AI model on the pri-
+vate dataset through (ε, δ) DP mechanism. Thus, our method
+satisfies (ε, δ) differential privacy. In the second stage, our
+method removes labels of data records and randomly shuf-
+fles attributions to break data attribution correlation and data
+record correlation so that there are no private information
+disclosed. In a word, our method satisfies (ε, δ) differen-
+tial privacy according to the Sequential Composition theorem
+[Dwork et al., 2014].
+4
+Experiments
+In this section, comprehensive experiments are conducted to
+evaluate our method DPDSyn and eight existing state-of-the-
+art methods in terms of data utility, efficiency, and scalabil-
+ity. Specifically, the first experiment evaluates the data utility
+of synthetic dataset by measuring the performance of down-
+stream tasks. The second experiment evaluates efficiency by
+runtime as well as the trade-off between accuracy and run-
+time. The third experiment evaluates scalability by expanding
+the scale of private dataset to 2× and 3× its original scale.
+4.1
+Setting
+Datasets
+To comprehensively evaluate all methods, the evaluation ex-
+periments are conducted on four widely used benchmark
+datasets including Adult [Kohavi, 1996], Br2000 [Ruggles
+et al., 2015], LPD [Shrivastava, 2021], and Smoking [Mus-
+tanger, 2022]. The information of these datasets is summa-
+rized in Table 1, where “Cat. Feat.” represents the number
+of categorical attributions and “Num. Feat.” represents the
+number of numerical attributes.
+Table 1: Summary of datasets used in experiments
+Dataset
+Record
+Attribution
+Cat. Feat.
+Num. Feat.
+Task
+Adult
+48842
+14
+7
+6
+Whether
+an
+individual’s
+income exceeds $50K
+Br2000
+38000
+14
+12
+1
+Whether an individual is in
+the high-income group
+LPD
+27158
+11
+1
+9
+Whether an individual has
+liver disease
+Smoking
+55692
+25
+6
+18
+Whether an individual is a
+smoker
+There are three points worth mentioning. First, in Smok-
+ing dataset, the attribute oral is removed because its value is
+constant across all data records. Second, in LPD dataset, the
+samples containing null values are removed, and float values
+are transformed into integers so that select-measure-generate
+methods can apply. Third, the preprocessed datasets are ran-
+domly split into training, validation, and test sets with a ratio
+of 8:1:1.
+Baselines
+Eight state-of-the-art baselines are used in comparison exper-
+iments, including ABSyn [Jia et al., 2024], PrivSyn [Zhang
+et al., 2021], PrivPetal [Cai et al., 2025], PrivMRF [Cai et al.,
+2021], AIM [McKenna et al., 2022], MST [McKenna et al.,
+2021], MWEM+PGM [Hardt et al., 2012] and DP-GAN [Sri-
+vastava and Alzantot, 2019]. The DP-GAN uses GAN to syn-
+thesize datasets. Other methods are all the select-measure-
+generate method while the generation method within these
+methods varies.
+Specifically, PrivPetal and PrivMRF use
+MRF to generate synthetic datasets. ABSyn, AIM and MST
+use PGM to generate synthetic datasets. Following the setting
+of ABSyn, the generation method MW of MWEM is replaced
+by Private-PGM in this paper to accelerate the generation pro-
+cedure. PrivSyn uses GUM to generate synthetic datasets.
+Downstream Models and Tasks
+To evaluate all dataset synthesis methods, three representative
+AI models are used to complete the downstream task, namely
+MLP, SVM, and FT-Transformer.
+In particular, MLP and
+SVM are representative models of classical machine learning
+and FT-Transformer is a representative model of modern deep
+learning. These representative downstream models make the
+evaluation more comprehensive. The downstream tasks vary
+as described in Table 1.
+Evaluation Way
+Each dataset synthesis method utilizes the private dataset to
+synthesize a dataset and an AI model for completing down-
+stream task is trained on the synthesized dataset. Then, the
+trained AI model is subsequently evaluated on the original
+private test set to obtain performance metrics, including ac-
+curacy, F1-score, and runtime. To ensure statistical stabil-
+ity of experiment results, all experiments are executed five
+times and reported results are the average result of the five
+experiments. Notably, the following dataset–method pairs are
+excluded from the evaluation due to experiment runtime ex-
+ceeding 6 hours: Smoking dataset under PrivSyn; Smoking
+and LPD datasets under PrivMRF.
+
+4.2
+Evaluation
+Utility
+In the first experiment, the data utility of synthetic dataset is
+evaluated by accuracy and F1-score of downstream models
+including MLP, SVM, and FT-Transformer. The experiment
+results are shown in Table 2, 3, 4, and 5. In these tables, NP
+Baseline denotes results on the private dataset without dif-
+ferentially private protection, serving as the empirical perfor-
+mance upper bound. Max. Imp. and Avg. Imp. denote the
+maximum and average performance improvements, respec-
+tively. T/O denotes timeout. 0.00† indicates utility collapse
+where the model fails to predict the minority class.
+Table 2: Utility Comparison of Adult Dataset.
+Methods
+MLP
+SVM
+FT-Transformer
+acc
+F1-score
+acc
+F1-score
+acc
+F1-score
+NP Baseline
+0.8528
+0.6410
+0.8452
+0.6131
+0.8592
+0.6587
+ABSyn
+0.8352
+0.5663
+0.8347
+0.5698
+0.8386
+0.6257
+PrivSyn
+0.7426
+0.0888
+0.7653
+0.0392
+0.6959
+0.1355
+PrivMRF
+0.8342
+0.5814
+0.8331
+0.5735
+0.8366
+0.6288
+PrivPetal
+0.8237
+0.5511
+0.8228
+0.5090
+0.8291
+0.6056
+AIM
+0.8368
+0.6011
+0.8351
+0.5807
+0.8379
+0.6187
+MST
+0.7845
+0.1692
+0.7993
+0.2686
+0.7771
+0.1623
+MWEM
+0.7893
+0.2330
+0.7918
+0.2356
+0.7832
+0.2676
+DP GAN
+0.5409
+0.2320
+0.5306
+0.2672
+0.5604
+0.2449
+DPDSyn
+0.8429
+0.6260
+0.8398
+0.5991
+0.8429
+0.6288
+Max. Imp.
+1.56× ↑
+7.05× ↑
+1.58× ↑15.28× ↑1.50× ↑
+4.64× ↑
+Avg. Imp.
+1.11× ↑
+2.56× ↑
+1.10× ↑
+3.33× ↑
+1.11× ↑
+2.19× ↑
+Table 3: Utility Comparison of Br2000 Dataset.
+Methods
+MLP
+SVM
+FT-Transformer
+acc
+F1-score
+acc
+F1-score
+acc
+F1-score
+NP Baseline
+0.8221
+0.6168
+0.8174
+0.6105
+0.8134
+0.6290
+ABSyn
+0.6976
+0.3148
+0.8152
+0.5997
+0.8152
+0.6113
+PrivSyn
+0.7067
+0.3197
+0.7592
+0.3168
+0.6264
+0.2660
+PrivMRF
+0.8172
+0.6197
+0.8150
+0.6053
+0.8156
+0.6237
+PrivPetal
+0.7997
+0.5746
+0.8111
+0.5874
+0.7913
+0.5754
+AIM
+0.8158
+0.6071
+0.8154
+0.6057
+0.8169
+0.6193
+MST
+0.7882
+0.5340
+0.7930
+0.5594
+0.7908
+0.5545
+MWEM
+0.7917
+0.5517
+0.7937
+0.5611
+0.7926
+0.5571
+DP GAN
+0.5031
+0.2723
+0.5031
+0.3064
+0.5129
+0.2883
+DPDSyn
+0.8158
+0.6087
+0.8189
+0.6241
+0.8105
+0.5853
+Max. Imp.
+1.62× ↑
+2.24× ↑
+1.63× ↑
+2.04× ↑
+1.58× ↑
+2.20× ↑
+Avg. Imp.
+1.13× ↑
+1.42× ↑
+1.10× ↑
+1.30× ↑
+1.12× ↑
+1.27× ↑
+Based on experiment results in Table 2, 3, 4, and 5, the data
+utility of DPDSyn is consistently higher than that of other
+methods across different downstream models. In particular,
+on average, DPDSyn achieves a maximum accuracy improve-
+ment of 2.31× (0.7086/0.3063) in MLP, 2.40× in SVM, and
+2.15× in FT-Transformer, compared to the eight benchmark
+baselines. Meanwhile, on average, DPDSyn achieves a max-
+imum F1-score improvement of 11.34× in MLP, 15.28× in
+SVM, and 4.64× in FT-Transformer, compared to the eight
+benchmark baselines. The experimental results demonstrate
+Table 4: Utility Comparison of Smoking Dataset.
+Methods
+MLP
+SVM
+FT-Transformer
+acc
+F1-score
+acc
+F1-score
+acc
+F1-score
+NP Baseline
+0.7463
+0.6902
+0.7357
+0.6650
+0.7350
+0.6826
+ABSyn
+0.6029
+0.2479
+0.6867
+0.3872
+0.6901
+0.3910
+PrivSyn
+T/O
+T/O
+T/O
+T/O
+T/O
+T/O
+PrivMRF
+T/O
+T/O
+T/O
+T/O
+T/O
+T/O
+PrivPetal
+0.7073
+0.6110
+0.7095
+0.6167
+0.7059
+0.6179
+AIM
+0.6918
+0.5501
+0.6945
+0.5611
+0.6889
+0.5649
+MST
+0.6329
+0.00†
+0.6328
+0.00†
+0.6308
+0.00†
+MWEM
+0.5930
+0.2723
+0.6174
+0.3556
+0.5949
+0.2937
+DP GAN
+0.5097
+0.3723
+0.5222
+0.3969
+0.5212
+0.3904
+DPDSyn
+0.7275
+0.6498
+0.7361
+0.6555
+0.7368
+0.6628
+Max. Imp.
+1.43× ↑
+2.62× ↑
+1.41× ↑
+1.84× ↑
+1.41× ↑
+2.26× ↑
+Avg. Imp.
+1.17× ↑
+1.90× ↑
+1.14× ↑
+1.70× ↑
+1.15× ↑
+1.76× ↑
+Table 5: Utility Comparison of LPD Dataset .
+Methods
+MLP
+SVM
+FT-Transformer
+acc
+F1-score
+acc
+F1-score
+acc
+F1-score
+NP Baseline
+0.7647
+0.8542
+0.7077
+0.8240
+0.8233
+0.8786
+ABSyn
+0.6918
+0.8108
+0.7035
+0.8217
+0.7124
+0.8219
+PrivSyn
+0.3063
+0.0727
+0.2949
+0.00†
+0.3362
+0.2435
+PrivMRF
+T/O
+T/O
+T/O
+T/O
+T/O
+T/O
+PrivPetal
+0.7029
+0.8248
+0.7025
+0.8247
+0.7079
+0.8237
+AIM
+0.7051
+0.8269
+0.7046
+0.8265
+0.7194
+0.8366
+MST
+0.7051
+0.8270
+0.7051
+0.8270
+0.7203
+0.8374
+MWEM
+0.6683
+0.7552
+0.6817
+0.7997
+0.6761
+0.7610
+DP GAN
+0.4905
+0.4799
+0.4923
+0.5059
+0.4915
+0.4912
+DPDSyn
+0.7086
+0.8245
+0.7085
+0.8257
+0.7242
+0.8382
+Max. Imp.
+2.31× ↑11.34× ↑2.40× ↑
+1.63× ↑
+2.15× ↑
+3.44× ↑
+Avg. Imp.
+1.16× ↑
+1.26× ↑
+1.16× ↑
+1.25× ↑
+1.16× ↑
+1.22× ↑
+that: the way in which our DPDSyn incorporates down-
+stream task awareness into the synthesis procedure success-
+fully preserves important task-relevant information, thereby
+effectively improving the data utility of synthetic dataset.
+Efficiency
+In the second experiment, the efficiency of all methods is
+evaluated by runtime. Based on experiment results in Figure
+3, our DPDSyn achieves consistently better efficiency than
+comparable baselines. Specifically, on average, our DPDSyn
+achieves a maximum speedup of 160.40×, 333.73×, and
+8.09× in runtime on MLP, SVM, and FT-Transformer, re-
+spectively. The runtime of our DPDSyn is closely related
+to the used downstream model, and the running time of our
+DPDSyn is extremely small when the downstream task can
+be completed by simple AI models.
+To evaluate all methods more comprehensively, the trade-
+off between accuracy and runtime is illustrated in Figure 4.
+In particular, x-axis shows the mean of runtime of repeated
+experiments, and the y-axis shows the mean of accuracy. Ide-
+ally, overall performance of a method is better if it achieves
+high accuracy with low runtime. That is, when the represen-
+tative point of a method is closer to the top-left corner, the
+overall performance of the method is better. According to
+the experiment in Figure 4, our DPDSyn exhibits the optimal
+
+DPDSyn-M
+DPDSyn-S
+DPDSyn-F
+ABSyn
+PrivSyn
+PrivMRF
+PrivPetal
+AIM
+MST
+MWEM
+DP-GAN
+Time
+10−1
+100
+101
+ε
+101
+102
+103
+104
+(a) adult
+10−1
+100
+101
+ε
+101
+102
+103
+104
+(b) br2000
+10−1
+100
+101
+ε
+100
+101
+102
+103
+(c) LPD
+10−1
+100
+101
+ε
+101
+102
+103
+(d) smoking
+Figure 3: Runtime comparison. DPDSyn-{M, S, F} denote the runtime of DPDSyn under MLP, SVM, and FT-Transformer downstream
+models, respectively. All other runtime of baseline method are independent of the downstream model.
+DPDSyn
+ABSyn
+PrivSyn
+PrivMRF
+PrivPetal
+AIM
+MST
+MWEM
+DP-GAN
+Acc
+101
+102
+103
+Time
+0.6
+0.7
+0.8
+(a) adult
+101
+102
+103
+Time
+0.5
+0.6
+0.7
+0.8
+(b) br2000
+101
+102
+103
+Time
+0.4
+0.6
+(c) LPD
+101
+102
+103
+Time
+0.5
+0.6
+0.7
+(d) smoking
+Figure 4: The comparison of accuracy–runtime trade-off. The different colors denote different downstream models, namely
+(MLP),
+(SVM), and
+(FT-Transformer) and different shapes denote different baselines as shown in legend.
+trade-off between accuracy and efficiency for MLP, SVM,
+and FT-Transformer models, thereby validating the excellent
+overall performance of DPDSyn.
+Scalability
+To observe the scalability of all methods, the third experi-
+ment evaluates the accuracy of downstream models when the
+data volume increases. In particular, via bootstrap sampling,
+datasets’ scale is expanded to 2× and 3× their original scale.
+Notably, the PrivMRF and AIM baselines are excluded from
+the evaluation due to experiment runtime exceeding 6 hours.
+The PrivPetal baseline is excluded because it fails when the
+dataset is scaled to 2× and 3× its original scale.
+According to experiment results in Table 6, DPDSyn ex-
+hibits superior scalability than other baselines across differ-
+ent scaling factors over all datasets. In particular, on average,
+on the 2× scaled datasets, DPDSyn achieves a maximum ac-
+curacy improvement of 1.53× in MLP, 1.50× in SVM, and
+1.59× in FT-Transformer, compared to the benchmark base-
+lines. On the 3× scaled datasets, DPDSyn achieves a maxi-
+mum accuracy improvement of 1.53× in MLP, 1.44× in SVM,
+and 1.62× in FT-Transformer, compared to the benchmark
+baselines. The improvement of accuracy demonstrates the
+superior scalability of our DPDSyn.
+Table 6: Accuracy Comparison across Scaled Datasets.
+Methods
+MLP
+SVM
+FT-Transformer
+2×
+3×
+2×
+3×
+2×
+3×
+NP Baseline
+0.7944
+0.8099
+0.7756
+0.7790
+0.8484
+0.8497
+ABSyn
+0.7500
+0.7489
+0.7508
+0.7499
+0.7570
+0.7507
+PrivSyn
+0.5061
+0.5107
+0.5438
+0.5446
+0.4902
+0.4836
+MST
+0.7290
+0.7299
+0.7331
+0.7359
+0.7326
+0.7310
+MWEM
+0.7092
+0.7201
+0.7177
+0.7222
+0.7232
+0.7275
+DP GAN
+0.5243
+0.5434
+0.5167
+0.5393
+0.5167
+0.5473
+DPDSyn
+0.7762
+0.7830
+0.7734
+0.7787
+0.7801
+0.7825
+Max. Imp.
+1.53× ↑
+1.53× ↑
+1.50× ↑
+1.44× ↑
+1.59× ↑
+1.62× ↑
+Avg. Imp.
+1.24× ↑
+1.24× ↑
+1.22× ↑
+1.21× ↑
+1.26× ↑
+1.25× ↑
+5
+Conclusion
+In this paper, we propose a novel method of DP dataset syn-
+thesis by introducing downstream task guidance. In particu-
+lar, we train a DP AI model on the original private dataset
+such that the DP AI model preserves critical information
+for completing downstream tasks and the DP AI model is
+utilized to synthesize datasets such that the data utility is
+improved.
+Experimental evaluations demonstrate that our
+method achieves up to a 2.40× improvement in accuracy
+while reducing synthesis time by 333.73×.

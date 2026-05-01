@@ -1,0 +1,1358 @@
+DP-FLOGTINYLLM: DIFFERENTIALLY PRIVATE FEDERATED
+LOG ANOMALY DETECTION USING TINY LLMS
+Isaiah Thompson
+Department of Mathematical Sciences
+University of Texas at El Paso
+El Paso, TX 79968, USA
+iocansey@miners.utep.edu
+Tanmay Sen
+SQC & OR Unit
+Indian Statistical Institute
+Kolkata, 700118, India
+tanmay.sen@isical.ac.in
+Ritwik Bhattacharya
+Department of Mathematical Sciences
+University of Texas at El Paso
+El Paso, TX 79968, USA
+ritwik.bhatta@gmail.com
+April 22, 2026
+ABSTRACT
+Modern distributed systems generate massive volumes of log data that are critical for detecting
+anomalies and cyber threats. However, in real world settings, these logs are often distributed across
+multiple organizations and cannot be centralized due to privacy and security constraints. Existing
+log anomaly detection methods, including recent large language model (LLM) based approaches,
+largely rely on centralized training and are not suitable for such environments. In this paper, we
+propose DP-FLogTinyLLM, a privacy preserving federated framework for log anomaly detection
+using parameter efﬁcient LLMs. Our approach enables collaborative learning without sharing raw
+log data by integrating federated optimization with differential privacy. To ensure scalability in
+resource constrained environments, we employ low rank adaptation (LoRA) for efﬁcient ﬁne tuning
+of Tiny LLMs at each client. Empirical results on the Thunderbird and BGL datasets show that the
+proposed framework matches the performance of centralized LLM based methods, while incurring
+additional computational overhead due to privacy mechanisms. Compared to existing federated
+baselines, DP-FLogTinyLLM consistently achieves higher precision and F1-score, with particularly
+strong gains on the Thunderbird dataset, highlighting its effectiveness in detecting anomalies while
+minimizing false positives.
+Keywords Differential privacy, Federated learning, Large language models, Log anomaly detection, LoRA
+1
+Introduction
+Recent advancements in modern computing infrastructure have led to the generation of vast amounts of data, par-
+ticularly system logs. These logs provide vital information regarding system behavior, ranging from routine system
+activities to system failures and intrusions. System failures and instructions are anomalous events found in system logs,
+triggering concerns about system reliability and security Chourasiya et al. [2025]. Over the past decade, there have
+been models ranging from rule-based pattern recognition to deep learning sequential architectures to detect anomalies
+in system logs as a language modeling task Lee et al. [2025]. DeepLog Du et al. [2017a] demonstrated the use of Long
+Short Term Memory (LSTM) to predict the next log key sequence and ﬂags deviations as anomalies. LogAnomaly
+Meng et al. [2019] extended the LSTM paradigm to detect both sequential and quantitative log anomalies concurrently
+by modeling high-dimensional dependencies within template sequences and ﬂagging observed template sequences as
+anomalies if they are not among the top k predictions. More recently, transformer-based models such as LogBERT
+Guo et al. [2021a], LogGPT Han et al. [2023] , LogTinyLLM Ocansey et al. [2025], among others, have gained sig-
+niﬁcant improvements in log anomaly detection.
+However, every one of these models assumes that all log data is available at a single location for centralized training.
+In practice, this assumption rarely holds, since log data may be produced by servers in different geographic locations
+and data centers Liao et al. [2025]. Regulations such as the European Union’s General Data Protection Regulation
+European Union [2016] and China’s Personal Information Protection Law Zhu [2022] treat system logs as sensitive
+arXiv:2604.19118v1 [cs.CR] 21 Apr 2026
+
+A PREPRINT - APRIL 22, 2026
+data because they contain behavioral traces, user session identiﬁers, and other personal information. Organizations
+operating in different geographical locations need large amounts of data to train a robust log anomaly detection model,
+but may face legal challenges in transmitting this data to a centralized location due to differing legal compliance
+requirements across these locations Huang et al. [2024]. The consequence is that most state-of-the-art models that
+assume centralized data cannot be deployed by some of these organizations that operate in different geographical
+locations with different data protection laws Brauneck et al. [2023]. The federated learning log anomaly detction
+paradigm offers a seamless solution to this problem by allowing multiple servers at different geographical locations
+to train a shared model while keeping their raw data local Vucovich et al. [2022]. Despite this solution that federated
+learning offers, there are only a few studies in this area for log anomaly detection Bithi et al. [2026]. The study
+Landauer et al. [2024] was among the ﬁrst to explore this area by applying a federated LSTM architecture to HDFS
+log data. However, their approach did not use any language model and did not provide any formal privacy guarantees.
+Studies such as Shin and Kim [2023], Tsouvalas et al. [2025] provide initial baselines for federated log anomaly
+detection. However, it remains unclear whether these approaches can achieve performance comparable to centralized
+language model based methods. Extending existing LLM-based models to federated settings introduces an additional
+challenge related to computational cost and memory requirements.
+For instance, LogLLM Guan et al. [2024]
+combines BERT-base with LLaMA-3-8B, requiring approximately 16 GB of GPU memory for inference alone
+and signiﬁcantly more for training BentoML [2024]. Techniques such as LoRA Hu et al. [2022] and quantization
+can reduce the computational burden to some extent.
+However, these methods alone are often insufﬁcient for
+resource-constrained environments. Therefore, the use of compact (tiny) language models becomes essential for
+enabling efﬁcient training while maintaining reasonable performance Ocansey et al. [2025].
+The federated learning log anomaly detection models keep the raw data local, but the model updates are shared at each
+round for aggregation, which are not inherently private. Research on gradient inversion has shown that individual
+training examples can be reconstructed from transmitted gradients with surprising ﬁdelity Eltaras et al. [2025]. The
+standard guard against this is the use of a differential privacy algorithm introduced by Abadi et al. [2016], which
+clips per-sample gradients to a ﬁxed norm and adds calibrated Gaussian noise before each update. This provides a
+formal, mathematical guarantee expressed as an (ε, δ) budget on the maximum information any adversary can extract
+about any single training example Abadi et al. [2016]. Despite its importance in federated log anomaly detection, the
+general federated DP literature has focused on image classiﬁcation and general NLP tasks Xu [2025], rather than
+on the sequential anomaly-detection objective that log models optimize. Another issue in a federated learning log
+anomaly detection setting is heterogeneity in the log data across servers at different geographical locations, which
+can lead to a non-IID structure. This is a precise setting where standard federated averaging struggles McMahan et al.
+[2017], Alenezi et al. [2024] . The study Li et al. [2020a] demonstrated that FedAvg can diverge when local data
+distributions are heterogeneous, and proposed FedProx, which adds a proximal regularization term to each client’s
+local objective to limit drift from the global model. Putting all together, Centralized LLM-based methods such as
+LogGPT and LogLLM maximize utility but provide no privacy Han et al. [2023]. In federated log anomlay detection
+literature, no study has explored tiny language models, Differential privacy, and FedProx concurrently.
+In this paper, we propose DP-FlogTinyLLM,referred to simply as FlogTinyLLM, a federated framework that addresses
+privacy and heterogeneity issues in system logs for log anomaly detection. FlogTinyLLM is built around four distinct
+tiny LLMs, enhanced with low-rank adaptation, that are small enough to train entirely on edge hardware yet expressive
+enough to capture the sequential patterns of parsed log keys. Training uses four distinct compact sized language
+models: Microsoft Phi-1.5, DeepSeek-R1-Qwen, Facebook OPT-1.3, and TinyLlama-1.1B with FedProx aggregation
+incorporating differential privacy accounting, providing a tracked (ε, δ) privacy budget across all communication
+rounds. To our knowledge, this is the ﬁrst framework that uniﬁes federated learning, differential privacy, FedProx, and
+edge-scale models for log anomaly detection. The main contributions of this work are as follows:
+• We leverage four distinct tiny large language models with LoRA adaptation, enabling fully on-device feder-
+ated training within edge memory constraints. This contrasts with existing LLM-based log anomaly detection
+approaches that typically require models with 8B+ parameters and over 30 GB of GPU memory.
+• We incorporated DP-SGD with Rényi differential privacy accounting into the federated training pipeline,
+providing formal (ε, δ)-differential privacy guarantees with a fully tracked privacy budget.
+• Through comprehensive evaluation on the Thunderbird and BGL log datasets, we demonstrate that DP-
+FlogTinyLLM achieves superior performance compared to existing federated benchmark models for log
+anomaly detection.
+2
+
+A PREPRINT - APRIL 22, 2026
+1.1
+Related Work
+Detecting log anomalies in distributed systems by allowing multiple clients to train a shared model while keeping
+each client’s data local has attracted signiﬁcant reserach attention. Several federated log anomaly detection models
+have been proposed over the past decades, each with a distinct underlying architecture Du et al. [2022]. Fedlog
+Li et al. [2022a] combines a Temporal Convolutionary Network with an attention-based convolutional network
+(TCN-ACNN) with a softmax layer to classify log sequences as normal or anomalous. While the model is trained
+across clients in an unsupervised manner with the capability of capturing temporal patterns in log sequences, it
+does not belong to the family of language models that have proven effectiveness for sequential log analysis. The
+same observation applies to FLOGCNN Guo et al. [2021b]. FLOGCNN is a lightweight model that uses a standard
+neural network and federated averaging (FedAvg) as its aggregating strategy in each communication round. The
+model is designed to extract inherent strategies in log sequences, but it lacks the capability to model long-range
+dependencies in log sequences, which is a problem that transformer-based models solved in centralized settings.
+Shin et al. Shin and Kim [2023] took a different route by evaluating two well-established deep learning architectures
+within a federated framework: one-dimensional convolutional neural networks (CNN1D) and Long Short-Term
+Memory (LSTM) networks. Their approach shows that classical models can be adopted in a federated setting, but
+it does not introduce architectural innovations pertinent to sequential log anomaly detection. Federated deeplog
+Himler et al. [2024] directly focused on cyber security applications by adapting a semi-supervised LSTM model from
+the open-sourced LogDeep framework Du et al. [2017b]. Their approach leverages the Flower framework to manage
+the federated loop. Among the existing federated log anomlay detection architectures, Federated deeplog responds to
+the practical challenges of the problem but remains underpinned by LSTM, which trails the effectiveness of language
+model based methods in centralized evaluations. Most of the existing architectures rely on TCNN, CNN, or LSTM
+architectures that predate the transformer revolution in sequential modeling. Strongest centralized results on standard
+log benchmarks now come from language model based approaches that treat log key prediction as a natural language
+modeling task Zhou et al. [2024]. FlogTinyLLM addresses this directly by adopting four distinct transformer based
+tiny language models enhanced with low-rank adaptation, bridging language-level sequential understanding into
+federated learning.
+Another limitation of existing work is the lack of proper consideration of privacy. Although federated learning keeps
+client data local, it does not protect against adversarial attacks. Model updates shared during communication rounds
+are not inherently private and may leak information about the underlying data. Among the existing models, none
+provides rigorous privacy guarantees Alqazzaz [2026]. Fedlog
+Li et al. [2022a] relies on the federated learning
+paradigm itself as the basis for their privacy claims, with no privacy budget computed, no noise is added to model
+updates, and no analysis offered to quantify how much information the shared parameters might reveal about any
+individual client’s data. FLOGCNN Guo et al. [2021b] made mention of homomorphic encryption as a potential
+mechanism for protecting local parameters, but this remains at the level of assumption. No encryption scheme is
+actually implemented or evaluated within the training pipeline Shin and Kim [2023], leaving the system exposed to
+information leakage through the model updates shared during each training round. Federated Deeplog Himler et al.
+[2024] acknowledges data privacy as a concern and frames it as a motivating challenge, but their implementation does
+not include differential privacy or any other formal mechanism to bound the information that aggregated updates reveal.
+FlogTinyLLM addresses this challenge by integrating differential privacy directly into the federated training process.
+Each client clips its local gradients and adds calibrated noise before transmitting updates to the server, following the
+DP-SGD framework. The resulting privacy cost is tracked across all communication rounds using Rényi differential
+privacy accounting, producing a concrete (ε, δ) budget that quantiﬁes the maximum information leakage.
+Another limitation of existing methods is their inability to handle differences in data distributions across clients.
+In real settings, each client has its own workload and operating conditions, leading to different patterns of normal
+behavior and anomalies. This results in non-IID data, which is common in federated log settings Zhang et al. [2024a].
+Despite this, the aggregation strategies used in existing work do not account for it. FLOGCNN entirely avoids the
+problem by partitioning the training data into 50 equal sized clients, creating an artiﬁcially uniform distribution that
+does not reﬂect what would occur in practice Guo et al. [2021b]. Deeplog(FL) Himler et al. [2024] uses FedAvg for
+model aggregation, which assumes that client data is approximately identically distributed. When this assumption is
+violated as it inevitably is with real log data, FedAvg can produce a global model that converges slowly, converges to
+a poor solution, or fails to converge altogether Li et al. [2019].
+3
+
+A PREPRINT - APRIL 22, 2026
+FlogTinyLLM addresses data heterogeneity at two levels. At the data level, it assigns compute nodes derived from
+the training data to 14 clients on the Thunderbird dataset and 15 clients on the BGL dataset using a Round Robin
+algorithm. This creates a federated training environment in which each client holds a distinct subset of the data
+that may contain different patterns of normal behavior and different types of anomalies, reﬂecting the conditions
+of a real world multi-site setting. At the algorithmic level, FlogTinyLLM replaces FedAvg with FedProx Li et al.
+[2020a]. FedProx adds a proximal penalty term to each client’s local loss function, discouraging the local model from
+drifting too far from the global model during training. This penalty ensures that even when individual clients see very
+different data distributions, their local updates remain compatible with the shared global objective, promoting stable
+convergence across heterogeneous clients.
+2
+Problem Statement
+We consider a federated setting with N clients, where each client Ci holds a private dataset Di consisting of log key
+sequences. The data remains local to each client, and raw logs are not shared with the central server or other clients.
+The goal is to learn a global model W that can detect anomalies in log sequences across all clients. Each client
+minimizes a local loss function Li(W) based on its own data. The standard federated learning objective is given by:
+min
+W
+N
+X
+i=1
+|Di|
+|D| Li(W),
+(1)
+where |Di| is the number of samples on client Ci, and |D| = PN
+i=1 |Di| is the total number of samples across all
+clients. To handle data heterogeneity, we adopt the FedProx formulation Li et al. [2020a], where each client solves the
+following local objective at communication round t:
+min
+W
+Li(W) + µ
+2 ∥W −Wt∥2,
+(2)
+where Wt denotes the global model at round t, and µ controls the strength of the proximal term. In addition, the
+training process must satisfy (ε, δ)-differential privacy. This ensures that for any two neighboring datasets differing
+in a single training example, the probability of any output of the algorithm differs by at most a factor of eε, up to a
+small probability δ APXML [n.d.]. This constraint limits the amount of information that can be inferred about any
+individual data point from the shared model updates.
+3
+Methodology
+This section describes the FlogTinyLLM pipeline. We begin by formally stating the problem, then walk through each
+stage from raw log messages to anomaly detection.
+3.1
+Log Parsing
+Raw log messages are unstructured or semi-structured and are converted to a structured representation before being
+used as input to a language model. FlogTinyLLM performs this conversion using the Drain algorithm He et al. [2017].
+Drain organizes incoming log messages into a ﬁxed-depth tree based on textual similarity. Each leaf of this tree
+corresponds to a distinct message template. Variable ﬁelds such as hostnames and process identiﬁers within these
+templates are replaced with wildcards He et al. [2017]. This process is called Log parsing. Figure 1 illustrates an
+example of the parsed Thunderbird log data
+3.2
+Sliding Window Construction
+Following the approach established byHan et al. [2023], the parsed log entries are grouped into sliding time windows
+to form a sequence of log keys. Each window spans 5 minutes, and consecutive windows overlap by a 1-minute step
+size. A window is labeled as anomalous if it contains at least one log entry that is marked as anomalous in the original
+log dataset. Otherwise, the window is labeled as normal.
+4
+
+A PREPRINT - APRIL 22, 2026
+Raw Thunderbird Syslog Entries
+1131566461 2005.11.09 dn228 Nov 9 12:01:01 dn228/dn228 crond(pam_unix)[2915]: session closed for user root
+1131566461 2005.11.09 dn228 Nov 9 12:01:01 dn228/dn228 crond(pam_unix)[2915]: session opened for user root
+by (uid=0)
+1131566461 2005.11.09 dn228 Nov 9 12:01:01 dn228/dn228 crond[2916]: (root) CMD (run-parts /etc/cron.hourly)
+1131566461 2005.11.09 dn261 Nov 9 12:01:01 dn261/dn261 crond(pam_unix)[2907]: session closed for user root
+1131566461 2005.11.09 dn261 Nov 9 12:01:01 dn261/dn261 crond(pam_unix)[2907]: session opened for user root
+by (uid=0)
+Fields:
+Unix Timestamp | Date |
+Compute Node |
+Human Date/Time |
+Node/Node | Component[PID]: |
+Message Content
+Drain Parser
+Parsed Log
+Event
+Timestamp
+Node
+Template
+E1
+1131566461
+dn228
+crond(pam_unix)[<*>]: session closed for user <*>
+E2
+1131566461
+dn228
+crond(pam_unix)[<*>]: session opened for user <*> by (uid=<*>)
+E3
+1131566461
+dn228
+crond[<*>]: (<*>) CMD (run-parts /etc/cron.hourly)
+E1
+1131566461
+dn261
+crond(pam_unix)[<*>]: session closed for user <*>
+E2
+1131566461
+dn261
+crond(pam_unix)[<*>]: session opened for user <*> by (uid=<*>)
+Figure 1: shows parsed Thunderbird log data. Raw syslog entries are processed by the Drain algorithm, which extracts
+event templates by replacing variable ﬁelds with wildcards while preserving the originating compute node.
+3.3
+Round-Robin Distribution
+To simulate a realistic multi-site setting, sequences of the log keys are distributed by their compute nodes to N clients
+using Round Robin algorithm Silberschatz et al. [2018]. The Thunderbird dataset contains approximately 9,024 com-
+pute nodes Oliner and Stearley [2007], while the BGL dataset contains about 65,536 compute nodes Almási et al.
+[2003]. The Round Robin assignment works as follows: the ﬁrst compute node is assigned to client 1, the second to
+client 2, the third to client 3, and so on up to client N, after which the cycle repeats. This produces a data distribution
+where each client holds a distinct subset of the log dataset.
+3.4
+Model Architecture
+FlogTinyLLM adopted a horizontal federated learning (HFL) approach because all participating compute nodes dis-
+tributed to clients originate from the same set of supercomputers. This means that while each client operates on data
+that may be unique in certain aspects, their overall feature space remains the same. FlogTinyLLM uses the sequence
+of log keys for each client as input to the following tiny language models enhanced with low-rank adaptation:
+OPT-1.3B:
+Zhang et al. Zhang et al. [2022] introduced open pre-trained transformers (OPT), a family of auto-
+regressive causal language models (decoder only) developed by Meta AI, which range from 125 million to 175 billion
+parameters, and are open source. OPT-1.3B is a mid-sized model within this family, which demonstrates competitive
+performance compared to models of similar scale. The open access nature of OPT-1.3B allows for ﬂexible integration
+and tuning, facilitating domain-speciﬁc adaptation without the high costs associated with training a model from scratch.
+The model supports a context window suitable for modeling sequential dependencies in log data and provides reliable
+5
+
+A PREPRINT - APRIL 22, 2026
+inference performance for log classiﬁcation. Opt 1.3B consists of 24 layers, each containing 32 attention heads, an
+embedding size of 2048, and a vocabulary size of 50272 Ocansey et al. [2025].
+Phi-1.5:
+Li et al. Li et al. [2023] introduced Phi-1.5, a decoder only transformer based language model with 1.3
+billion parameters developed by Microsoft and designed for efﬁcient reasoning, coding, and math problem-solving. It
+was trained on a high quality dataset consisting of 30 billion tokens, which includes 7 billion tokens from Phi-1’s ﬁl-
+tered code corpus and 20 billion synthetically generated tokens modeled after textbooks. The model has 24 transformer
+layers, each with 32 attention heads and a hidden size of 2048, using Rotary Positional Embeddings (RoPE) with a
+rotary dimension of 32. It uses FlashAttention and a code friendly tokenizer, making it ideal for real time, low resource
+applications without the need for instruction tuning or RLHF. Despite its small size, Phi-1.5 performs competitively
+with much larger models like LLaMA-2 7B, while being more lightweight and resource efﬁcient Ocansey et al. [2025].
+TinyLlama-1.1B:
+Zhang et al. Zhang et al. [2024b] introduced TinyLlama, an open source language model with 1.1
+billion parameters based on the LLaMA 2 architecture. It is built as a decoder-only transformer with 22 transformer
+layers, 32 attention heads, and a hidden size of 2048. The latest version, TinyLlama v1.1, was trained on up to
+2 trillion tokens, utilizing a multi-stage pre-training process that incorporated domain-speciﬁc corpora, including
+SlimPajama, StarCoder, ProofPile, and Skypile. This paper utilizes TinyLlama-1.1B due to its excellent performance-
+to-size ratio and efﬁcient architecture. With a context window of 2,048 tokens and optimized features such as Rotary
+Positional Embeddings, Grouped-Query Attention, SwiGLU activations, and FlashAttention-2, it provides fast and
+accurate detection of anomalies in log sequencesOcansey et al. [2025].
+DeepSeek-R1-Distill-Qwen-1.5B:
+Guo et al. Guo et al. [2025] introduced DeepSeek-R1, a family of ﬁrst gener-
+ation reasoning optimized language models developed using reinforcement learning (RL) without supervised ﬁne
+tuning (SFT) as a preliminary step. DeepSeek-R1-Distill-Qwen-1.5B model is distilled from the larger DeepSeek-R1
+model, with the base architecture of Qwen-2.5-Math-1.5B. It consists of 28 transformer layers, each with a hidden
+size of 2048, and uses Grouped-Query Attention (GQA), where 32 attention heads are split into 12 query heads and 2
+shared key value heads, reducing memory cost while preserving performance. The model employs RoPE to encode po-
+sition information within queries and keys, supporting a maximum context length of 32,768 tokens. It uses SwiGLU
+activation in the feedforward blocks for better non-linearity. The feedforward network has an intermediate size of
+5632. This paper utilizes DeepSeek-R1-Distill-Qwen-1.5B due to its efﬁcient architecture and proven performance in
+reasoning tasks. The model beneﬁts from distilled reasoning behaviors inherited from larger base models, allowing it
+to process structured log sequences effectively Ocansey et al. [2025].
+3.5
+Training with Low-Rank Adaptation (LoRA)
+Training full scale large language models on each client is often infeasible due to limited computational resources.
+To overcome this, FlogTinyLLM employs Low-Rank Adaptation Hu et al. [2022], which enables efﬁcient ﬁne-tuning
+with a small number of additional parameters on the tiny language models outlined above. Given a weight matrix
+W ∈Rd×d, LoRA models the update as:
+Wadapted = W + BA,
+(3)
+where B ∈Rd×r and A ∈Rr×d with r ≪d. This signiﬁcantly reduces the number of trainable parameters, making
+LLM-based anomaly detection practical in federated environments. In transformer models, LoRA is applied to the
+query, key, and value projection matrices. The attention mechanism is deﬁned as:
+Attention(Q, K, V ) = softmax
+QK⊤
+√dk
+
+V,
+(4)
+where Q = HWQ, K = HWK, and V = HWV .
+Consider each log sequence is represented as (k1, k2, . . . , kT ), where kt denotes the log key at time step t. In particular,
+the embedding layers of each of these tiny language models convert each log key ki into a dense vector ei ∈Rd,
+where d is the hidden dimension of the tiny language model. A learned positional embedding is added to each ei
+to preserve the positions of each of the log keys within the sequence. The result is a matrix of input representations
+[e1, e2, . . . , eT ] that serves as input to the transformer blocks of the language models. Inside each transformer layer,
+the input representations are projected into queries (Q), keys (K), and values (V) through weight matrices WQ, WK,
+and WV . In a standard transformer Vaswani et al. [2017], these projections take the form:
+Q = HWQ,
+K = HWK,
+V = HWV
+(5)
+6
+
+A PREPRINT - APRIL 22, 2026
+where H = [e1, . . . , eT ] is the matrix of input embeddings. These projections determine what each log key attends to
+within the sequence. The attention output is then computed as:
+Attention(Q, K, V ) = softmax
+QK⊤
+√dk
+
+V
+(6)
+where dk is the dimension of each attention head. LoRA keeps all three of these weight matrices frozen at their
+pretrained values. Rather than updating them, LoRA attaches a low-rank bypass to each one following the frame-
+work Hu et al. [2022]. For any frozen matrix W ∈Rd×d, the adapted version is:
+Wadapted = W + α
+r BA
+(7)
+where B ∈Rd×r and A ∈Rr×d are small trainable matrices, r is the rank of the decomposition, and α is a scaling
+factor that controls how strongly the adaptation inﬂuences the output. With this modiﬁcation, the projections that
+produce queries, keys, and values from the log key embeddings become:
+Q = H
+
+WQ + α
+r BQAQ
+
+,
+K = H
+
+WK + α
+r BKAK
+
+,
+V = H
+
+WV + α
+r BV AV
+
+(8)
+The attention computation in Equation 6 receives the adapted Q, K, and V and proceeds as usual.
+The practical effect of this design on the log key embeddings is as follows. The frozen matrices WQ, WK, and WV
+already know how to project token embeddings into an attention space, because they were learned during pretraining
+Envisioning [2017]. The LoRA matrices A and B learn a small correction on top of these projections that is speciﬁc to
+the anomaly detection task Emergent Mind [2026]. Through this correction, the model adjusts which log keys it con-
+siders relevant to each other within a sequence, without discarding the general sequential knowledge captured during
+pretrainingHu et al. [2021] . After passing through all transformer layers, the model outputs contextual representa-
+tions [h1, h2, . . . , hT ] that reﬂect not only the identity of each log key but also its relationship to every other key in
+the sequence. At each communication round, only the LoRA parameters are communicated, with the FedProx penalty
+applied. While LoRA improves computational efﬁciency, it does not by itself guarantee privacy. To provide formal
+privacy protection, we incorporate differential privacy into the federated training process.
+3.6
+Federated Learning and Differential Privacy
+FlogTinyLLM operates in a federated learning setting, where training proceeds over multiple communication rounds
+between a central server and distributed clients, as illustrated in Fig. 2. At each round t, the server broadcasts the
+current global model w(t) to all participating clients. Each client then performs local training on its private log data
+and computes an update based on its local objective. These updates are subsequently sent back to the server for
+aggregation.
+Although raw log data never leaves a client, the transmitted model updates can still leak information about individ-
+ual log sequences. An adversary observing the global model across multiple rounds may infer whether a speciﬁc
+log sequence was part of a client’s training data. This type of attack is known as a membership inference attack
+Zhang et al. [2026]. To mitigate this risk, FlogTinyLLM incorporates differential privacy (DP) into the federated train-
+ing process. Differential privacy, introduced by Dwork et al. Dwork et al. [2010], provides a formal guarantee that the
+output of a computation does not depend signiﬁcantly on any single data record. The formal deﬁnition is as follows
+U.S. Census Bureau [2023].
+Deﬁnition 1 ((ε, δ)-Differential Privacy). A randomized mechanism M satisﬁes (ε, δ)-differential privacy if, for any
+two datasets D and D′ that differ in exactly one record, and for all measurable sets S ⊆Range(M):
+Pr[M(D) ∈S] ≤eε · Pr[M(D′) ∈S] + δ.
+(9)
+In the context of federated learning, the mechanism M corresponds to the process that maps local datasets to the shared
+model updates and the ﬁnal global model. If DP is satisﬁed, the inclusion or exclusion of any single log sequence
+in a client’s dataset has only a limited effect on the distribution of the observed model outputs. In FlogTinyLLM,
+differential privacy is enforced during each communication round. After local training, each client computes its model
+update ∆i and applies gradient clipping to bound its sensitivity:
+∥∆i∥2 ≤C.
+(10)
+The server then aggregates the clipped updates and adds Gaussian noise:
+w(t+1) =
+K
+X
+i=1
+ni
+n wi + N(0, σ2C2I),
+(11)
+7
+
+A PREPRINT - APRIL 22, 2026
+where σ is the noise multiplier. This procedure ensures that each round contributes a controlled amount to the total
+privacy loss. It is note that we adopt a central differential privacy (CDP) setting, where the server is assumed to be
+trusted and applies Gaussian noise during aggregation.
+The overall privacy guarantee is tracked across all communication rounds using Rényi differential privacy accounting,
+resulting in a ﬁnal (ε, δ) privacy budget. A smaller value of ε corresponds to stronger privacy, meaning that the model
+behaves similarly regardless of whether any speciﬁc log sequence is included in training.
+Handling Data Heterogeneity.
+To handle data heterogeneity for each client, FlogTinyLLM adopts the Federated
+Proximal (FedProx) algorithm Li et al. [2020b], which extends the standard Federated Averaging (FedAvg) objective.
+The FedAvg objective is:
+min
+W
+N
+X
+i=1
+|Di|
+|D| Li(W),
+(12)
+FedProx introduces a proximal term:
+min
+W
+N
+X
+i=1
+|Di|
+|D| Li(W) + µ
+2 ∥W −Wt∥2,
+(13)
+where Wt is the global model at round t. This term constrains local updates to remain close to the global model,
+improving stability under non-IID log data.
+4
+Experimental Setup
+4.1
+Dataset Description
+The proposed FlogTinyLLM framework is evaluated on two publicly available supercomputer log datasets, as de-
+scribed below
+4.1.1
+Thunderbird dataset
+The Thunderbird dataset is generated on a 4,096-node Dell high-performance computer cluster called Thunderbird
+located at Sandia National Laboratories (SNL) in Albuquerque Singer [2005]. It provides about 8000 processors of
+compute capacity. The computer’s aggregated capacity is about 24 terabytes of memory and 60 tera-OPS (trillion
+operations per second) Singer and Corwell [2006]. The Thunderbird dataset comprises alert and non-alert messages,
+each tagged with a speciﬁc alert category. In the ﬁrst column of the log, a hyphen ("-") indicates non-alert messages,
+while other entries represent alert messages. The dataset contains about 211, 212,192 log entries.
+4.1.2
+Blue Gene/L(BGL) dataset
+The BGL log dataset contains system logs from the Blue Gene/L supercomputer at Lawrence Livermore National
+Laboratory (LLNL), California. Each compute node has a single ASIC with two 700 MHz CPU cores, two ﬂoating-
+point units, 4 MB of embedded cache, and 256 MB of external memory. Nodes connect via high-speed ports in a
+32 × 32 × 64 three-dimensional torus network. The system achieves a peak performance of 360 Teraﬂops and a total
+memory of 16 Terabytes Lawrence Livermore National Laboratory [n.d.]. The logs are semi-structured, automatically
+generated messages that contain both alert and non-alert entries. A dash in the ﬁrst log column indicates a non-alert
+message. Each message includes ﬁelds such as label, epoch timestamp, date, node location, full timestamp, source
+node, system, component, severity and message body. The dataset contains about 4.7 million log entries and 3,853 log
+templates. Of these, 348,460 (7.3%) are labeled as anomalies, and 4,399,503 (92.7%) as normal Tian et al. [2023].
+4.2
+Data Processing
+After log parsing, the structured log entries are segmented using a sliding-window technique to form sequences of
+log keys. For the Thunderbird dataset, a ﬁve-minute sliding window with a one-minute step size is applied, and for
+the BGL dataset, an eight-minute window with a two-minute step size is used. This segmentation captures system
+activity within each window, producing sequences of log keys. The sequences are then distributed using the Round-
+Robin algorithm to 14 clients for the Thunderbird dataset and 15 clients for the BGL dataset forming individual
+client datasets {Di}N
+i=1, each consisting of log key sequences {ki1, ki2, . . . , kin},
+i = 1, 2, . . . , n. This enables
+FlogTinyLLM to detect diverse anomaly patterns throughout clients using the tiny language models enhanced with
+LoRA.
+8
+
+A PREPRINT - APRIL 22, 2026
+Server: Global Model w(t)
+Broadcast LoRA parameters
+Client 1
+D1, n1 samples
+[k1, k2, . . . , kT ]
+Embedding: ki →ei
+Transformer + LoRA
+WQ, WK, WV
+frozen
+W + AB
+r ≪d
+[h1, h2, . . . , hT ]
+ˆyt ∈{0, 1}
+L1 = LW CE + µ
+2 ∥w −w(t)∥2
+Client 2
+D2, n2 samples
+[k1, k2, . . . , kT ]
+Embedding: ki →ei
+Transformer + LoRA
+WQ, WK, WV
+frozen
+W + AB
+r ≪d
+[h1, h2, . . . , hT ]
+ˆyt ∈{0, 1}
+L2 = LW CE + µ
+2 ∥w −w(t)∥2
+· · ·
+Client K
+DK, nK samples
+[k1, k2, . . . , kT ]
+Embedding: ki →ei
+Transformer + LoRA
+WQ, WK, WV
+frozen
+W + AB
+r ≪d
+[h1, h2, . . . , hT ]
+ˆyt ∈{0, 1}
+LK = LWCE + µ
+2 ∥w −w(t)∥2
+Clip: ∥∆1∥2 ≤C
+Clip: ∥∆2∥2 ≤C
+Clip: ∥∆K∥2 ≤C
+¯w = PK
+k=1
+nk
+n wk
+w(t+1) = ¯w + N(0, σ2C2I)
+Server: Global Model w(t+1)
+t ←t + 1
+Figure 2: FlogTinyLLM architecture. Each client processes log keys [k1, . . . , kT ] through a transformer with LoRA
+adapters (W + AB, r ≪d). FedProx loss includes proximal term µ
+2 ∥w −wt∥2. Updates are clipped and aggregated
+with DP noise.
+4.3
+Model Speciﬁcations
+Table 1 outlines the experimental setup for FlogTinyLLM on the Thunderbird dataset, with parameters grouped as
+follows: The training data contains up to 4,500,000 samples and a minimum anomaly rate of 0.001 per node. The
+LoRA parameters include rank 8, a scaling factor of 32, and a dropout rate of 0.1. Federated learning settings are
+14 clients, 10 communication rounds, 50% participation rate, and a proximal coefﬁcient of 0.01. Sliding Window
+parameters are a 5-minute window size, a 1-minute step size, and at least 5 logs per window. Training parameters are
+batch size 8, learning rate 2 × 10−5, weight decay 0.01, 10 local epochs, warmup ratio 0.1, 2 gradient accumulation
+steps, and maximum gradient norm 1.0. The Differential Privacy parameters are a privacy budget of 10.0, a delta of
+10−5, a clipping bound of 1.0, and a noise multiplier of 0.01.
+Table 1 and Table 2 summarize the experimental setup for the FlogTinyLLM framework on both datasets. Table 3
+presents architectural and parameter efﬁciency across the four FlogTinyLLM models on the Thunderbird dataset. Re-
+ported metrics are: base parameters (billions), trainable parameters, trainable parameter ratio (%), memory Usage
+(MB), and noise. All models employ LoRA (r - 8, α - 32, noise std - 0.002857). These metrics directly quantify the
+trade-offs between memory efﬁciency and noise. Phi-1.5 has a base parameter of 1.3B but is reduced to a trainable pa-
+rameter of 3,149,824 due to LoRA adoption, representing 0.44% of the total base parameter. Phi-1.5 used a memory of
+2,907.6 MB, representing the second least for the FlogTinyLLM training, which indicates moderate resource require-
+9
+
+A PREPRINT - APRIL 22, 2026
+Algorithm 1: FlogTinyLLM: Federated Log Anomaly Detection with LoRA and DP
+Input
+:C clients, T rounds, E local epochs, learning rate η, FedProx coefﬁcient µ, clipping bound C, noise
+multiplier σ, LoRA rank r ≪d
+Output :Trained global model w(T )
+⊲Phase 1:
+Initialization
+1 w(0) ←pre-trained transformer
+2 Attach LoRA adapters: A ∈Rd×r, B ∈Rr×d
+3 Freeze attention weights: WQ, WK, WV
+4 for t = 0 to T −1 do
+⊲Phase 2:
+Broadcast
+5
+Server sends w(t) to all C clients
+⊲Phase 3:
+Local Training
+6
+for each client C = 1, . . . , C in parallel do
+7
+wk ←w(t)
+8
+for epoch e = 1 to E do
+9
+for batch
+ [k1, k2, . . . , kT ], y
+
+∈Dk do
+⊲Forward pass
+10
+ei ←EMBED(ki),
+i = 1, . . . , T
+11
+[h1, . . . , hT ] ←TRANSFORMER
+ e1, . . . , eT ; W + AB
+
+12
+ˆy ←SOFTMAX
+ LINEAR(hT )
+
+⊲FedProx loss
+13
+LCE ←−y log ˆy −(1 −y) log(1 −ˆy)
+14
+Lprox ←µ
+2 ∥wk −w(t)∥2
+2
+15
+Lk ←LCE + Lprox
+⊲Gradient update
+16
+wk ←wk −η ∇wkLk
+17
+end
+18
+end
+⊲Compute and clip update
+19
+∆k ←wk −w(t)
+20
+∆k ←∆k · min
+
+1,
+C
+∥∆k∥2
+
+21
+Send ∆k and nk = |Dk| to server
+22
+end
+⊲Phase 4:
+Aggregation with Differential Privacy
+23
+n ←PK
+k=1 nk
+24
+¯w ←w(t) + PK
+k=1
+nk
+n ∆k
+25
+w(t+1) ←¯w + N
+ 0, σ2C2I
+
+26 end
+27 return w(T )
+ments for execution. DeepSeek-R1 has a base par
+
+[…middle truncated for length…]
+
+erformance delta analysis on the Thunderbird dataset.
+0.9580, with a standard deviation of 0.0118. Opt-1.3B demonstrates the most stable performance, converging to an
+accuracy of 0.9332 by round 3 and maintaining this level consistently through round 20. The low standard deviation of
+0.0034 indicates minimal variance and highly predictable behavior throughout the federated learning process. Phi-1.5
+demonstrates moderate performance, achieving a peak accuracy of 0.9492 and a mean accuracy of 0.9443. The model
+ﬂuctuates between 0.9332 and 0.9492 across rounds, with a standard deviation of 0.0067, indicating relatively stable
+but not entirely consistent performance. TinyLlama-1.1B exhibits the most variable performance among the four
+models, with accuracy ranging from 0.9303 to 0.9492 throughout the training process.
+Across the 20 communication rounds from Table 10 and Figure 13, DeepSeek-R1-Distill-Qwen-1.5B shows the
+strongest overall performance with a mean F1 of approximately 0.8609 and the most consistent behavior, clustering
+around 0.8465 and 0.8922 with only a single dip to 0.7764 at round 10. Phi-1.5 follows with a mean of approximately
+0.8260 and produces the highest single-round score of any model (0.9168 at round 18), though it ﬂuctuates between
+0.7723 and that peak. Opt-1.3b averages approximately 0.8051 and is the most volatile, ranging from 0.7404 at round
+1 to 0.9023 at rounds 14 and 19. TinyLlama-1.1B is the weakest performer, averaging approximately 0.7822, though
+its narrow range makes it relatively predictable at that lower level. Overall, DeepSeek-R1-Distill-Qwen-1.5B offers
+the best balance of high F1 and round-to-round stability among the four models evaluated on the BGL dataset.
+21
+
+A PREPRINT - APRIL 22, 2026
+1
+5
+10
+15
+20
+0.6
+0.7
+0.8
+0.9
+1
+Communication Rounds
+Accuracy
+FlogTinyLLM Accuracy on BGL Dataset Over 20 Rounds
+DeepSeek-R1-Distill-Qwen-1.5B
+facebook/opt-1.3b
+microsoft/phi-1.5
+TinyLlama-1.1B
+Figure 12: FlogTinyLLM accuracy over 20 communication rounds on the BGL dataset. DeepSeek-R1 demonstrates
+superior performance with peak accuracy of 0.9681, while Opt-1.3B exhibits the most stable convergence pattern at
+0.9332 from round 3 onwards.
+1
+5
+10
+15
+20
+0.72
+0.76
+0.8
+0.84
+0.88
+0.92
+Communication Rounds
+F1 Score
+FlogTinyLLM F1-Score on BGL Dataset Over 20 Rounds
+DeepSeek-R1-Distill-Qwen-1.5B
+facebook/opt-1.3b
+microsoft/phi-1.5
+TinyLlama-1.1B
+Figure 13: FlogTinyLLM performance over 20 communication rounds. F1 scores show varying convergence patterns
+with DeepSeek-R1 achieving the most stable high performance.
+Figure 14 and Table12 present the ROC-AUC values for FlogTinyLLM on the BGL dataset across 20 communication
+rounds. DeepSeek-R1 achieves values ranging from 0.9334 to 0.9448 with a mean of 0.9411. The Opt-1.3b model
+exhibits values ranging from 0.8703 to 0.9758, with a mean of 0.9082 and a peak single-round performance at round
+19. The Phi-1.5 model shows values between 0.8799 and 0.9594, with a mean 0.9089, with a peak at round 19 (0.9594).
+TinyLlama-1.1B displays values from 0.8762 to 0.8932 with a mean of 0.8843. DeepSeek-R1 demonstrates the lowest
+variation, while opt-1.3b shows the largest.
+22
+
+A PREPRINT - APRIL 22, 2026
+Table 10: FlogTinyLLM F1-Score on BGL Dataset Over 20 Communication Rounds
+Round
+DeepSeek-R1-Distill-Qwen-1.5B
+opt-1.3b
+phi-1.5
+TinyLlama-1.1B
+1
+0.8426
+0.7404
+0.7938
+0.8083
+2
+0.8465
+0.7610
+0.8168
+0.7647
+3
+0.8878
+0.7723
+0.7723
+0.7647
+4
+0.8465
+0.7723
+0.7723
+0.7723
+5
+0.8465
+0.8723
+0.8768
+0.7723
+6
+0.8465
+0.7923
+0.8168
+0.7723
+7
+0.8922
+0.7723
+0.8168
+0.8168
+8
+0.8922
+0.8723
+0.7723
+0.7723
+9
+0.8922
+0.8123
+0.8723
+0.7723
+10
+0.7764
+0.7723
+0.8168
+0.7723
+11
+0.8465
+0.7723
+0.8768
+0.7723
+12
+0.8465
+0.7723
+0.7723
+0.7723
+13
+0.8922
+0.7723
+0.8168
+0.7723
+14
+0.8922
+0.9023
+0.8168
+0.7723
+15
+0.8922
+0.8723
+0.8568
+0.8168
+16
+0.8465
+0.8023
+0.8168
+0.7723
+17
+0.8465
+0.8223
+0.8168
+0.8168
+18
+0.8465
+0.7723
+0.9168
+0.8168
+19
+0.8465
+0.9023
+0.8868
+0.7723
+20
+0.8922
+0.7723
+0.8168
+0.7723
+Table 11: Statistical Metrics on BGL Dataset
+Model
+Mean
+Std Dev
+Min
+Max
+Range
+DeepSeek-R1-Distill-Qwen-1.5B
+0.9411
+0.0026
+0.9334
+0.9448
+0.0114
+facebook/opt-1.3b
+0.9082
+0.0296
+0.8703
+0.9758
+0.1055
+microsoft/phi-1.5
+0.9089
+0.0272
+0.8799
+0.9594
+0.0795
+TinyLlama-1.1B
+0.8843
+0.0036
+0.8762
+0.8932
+0.0170
+Table 13 show the mean performance metrics of FlogTinyLLM on the BGL Data set over 20 rounds. DeepSeek-R1-
+Distill-Qwen-1.5B ranks ﬁrst in 4 of 5 metrics (Accuracy, F1, Recall, AUC), showing balanced and consistently high
+performance across all evaluation criteria. Phi-1.5 excels in precision (0.9666), the highest among all models, and
+maintains competitive accuracy and AUC. However, its recall (0.7569) ranks third. TinyLlama-1.1B has the lowest
+recall (0.6899). OPT-1.3B shows moderate performance across all metrics, ranking last in precision (0.8737) but
+second in recall (0.7730). All models maintain accuracy above 0.93, showing effective federated learning training
+across the 20 rounds.
+5.2
+Performance Analysis of FlogTinyLLM and LogTinyLLM on the BGL Dataset
+The results presented in Table 14 indicate that LogTinyLLM outperforms the FlogTinyLLM across the four models in
+terms of accuracy, F1-score, precision, and recall on the BGL dataset. Speciﬁcally, LogTinyLLM achieves accuracies
+between 0.9911 and 0.9919, F1-Scores between 0.9912 and 0.9919, precisions between 0.9913 and 0.9920, and recalls
+between 0.9693 and 0.9862, with loss values ranging from 0.0307 to 0.0335. In comparison, FlogTinyLLM demon-
+strates lower performance, with accuracy ranging from 0.9324 to 0.9569, F1-score from 0.7822 to 0.8609, precision
+from 0.8737 to 0.9666, recall from 0.6899 to 0.8057, and AUC from 0.8843 to 0.9410. Although the FlogTiny architec-
+ture performs well on the BGL dataset, its results do not match those of LogTinyLLM. Table 15 provides a quantitative
+assessment of these differences, with positive deltas reﬂecting the superior performance of LogTinyLLM. The mean
+differences are +0.0487 for accuracy, +0.1730 for F1-score, +0.0738 for precision, and +0.2251 for recall. The most
+substantial individual gap is observed in recall for TinyLlama-1.1B (+0.2957) and in F1-score for TinyLlama-1.1B
+(+0.2095), while the smallest precision gap is noted for Phi-1.5 (+0.0254).
+23
+
+A PREPRINT - APRIL 22, 2026
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+0.86
+0.88
+0.9
+0.92
+0.94
+0.96
+0.98
+1
+Communication Round
+ROC AUC
+FlogTinyLLM ROC-AUC Progression on BGL Dataset Over 20 Rounds
+DeepSeek-R1-Distill-Qwen-1.5B
+facebook/opt-1.3b
+microsoft/phi-1.5
+TinyLlama-1.1B
+Figure 14: ROC AUC values across 20 communication rounds for four models.
+Table 12: FlogTinyLLM Best Performances Across All Rounds on BGL Dataset
+Model
+Best
+Best
+Best
+Best
+Best
+Round
+Acc.
+F1
+Prec.
+Rec.
+AUC
+Round
+DeepSeek-R1-Distill-Qwen-1.5B
+0.9681
+0.8922
+1.0000
+0.8142
+0.9448
+7–9
+OPT-1.3B
+0.9332
+0.9023
+1.0000
+0.8903
+0.9758
+19
+TinyLlama-1.1B
+0.9492
+0.8168
+1.0000
+0.6903
+0.8932
+7, 15–18
+Phi-1.5
+0.9492
+0.9168
+1.0000
+0.8903
+0.9594
+18
+The Fig 15 is a horizontal bar chart. It compares performance gaps (LogTinyLLM minus FlogTinyLLM) across four
+metrics: Accuracy, F1-Score, Precision, and Recall. The x-axis shows the gap values from 0 to 0.32. The y-axis lists
+the models. Each metric uses bars with distinct ﬁlls and patterns.
+Figure 16 shows that OPT-1.3B in the FlogTinyLLM architecture achieves the fastest federated training on the BGL
+dataset, completing 20 rounds in 14.18 hours. This makes it 3.09× faster than TinyLlama-1.1B (43.85 hours), despite
+having more parameters (714.1M vs. 556.4M). DeepSeek-R1-Distill-Qwen-1.5B follows with 41.29 hours, while
+Phi-1.5 needs 43.31 hours. For LogTinyLLM, training time decreases across all models. OPT-1.3B remains most efﬁ-
+cient, ﬁnishing centralized training in 5.92 hours, followed by Phi-1.5 at 6.03 hours, DeepSeek-R1 at 6.83 hours, and
+TinyLlama-1.1B at 7.60 hours. The tight cluster of 1.68 hours shows similar computational needs across architectures
+with centralized data.
+5.2.1
+Performance Comparison with Federated Baseline Models on the BGL Dataset
+Table 16 compares federated learning models for log anomaly detection on the BGL dataset. LogDeep(FL) achieves
+the highest precision (0.9688) and F1-score (0.9118), showing a strong balance between precision and recall. Feder-
+ated LogBERT delivers the best recall (0.9625), though at the expense of lower precision. Among the FlogTinyLLM
+variants, DeepSeek attains the best F1-score (0.8609), while Phi 1.5 reaches the highest precision (0.9666). Federated
+LogGPT has the lowest F1 Score (0.7562), showing a weaker precision-recall trade-off.
+Figure 17 presents a bar chart of training times in hours for federated log anomaly detection models on the BGL
+dataset, with a logarithmic y-scale (base 10) from 0.2 to 80 and y-ticks at 0.5, 1, 2, 5, 10, 20, 50.
+24
+
+A PREPRINT - APRIL 22, 2026
+Table 13: Average Performance Metrics Across 20 Federated Learning Rounds
+Model
+Accuracy
+F1
+Precision
+Recall
+AUC
+DeepSeek-R1-Distill-Qwen-1.5B
+0.9569
+0.8609
+0.9268
+0.8057
+0.9410
+OPT-1.3B
+0.9324
+0.8051
+0.8737
+0.7730
+0.9045
+TinyLlama-1.1B
+0.9368
+0.7822
+0.9041
+0.6899
+0.8843
+Phi-1.5
+0.9448
+0.8260
+0.9666
+0.7569
+0.9095
+Table 14: Performance Comparison: FlogTinyLLM vs. LogTinyLLM Training on BGL Dataset
+Model
+FlogTinyLLM
+LogTinyLLM
+Acc.
+F1
+Prec.
+Rec.
+Acc.
+F1
+Prec.
+Rec.
+DeepSeek-R1-Distill-Qwen-1.5B
+0.9569
+0.8609
+0.9268
+0.8057
+0.9911
+0.9912
+0.9913
+0.9849
+OPT-1.3B
+0.9324
+0.8051
+0.8737
+0.7730
+0.9911
+0.9913
+0.9913
+0.9693
+TinyLlama-1.1B
+0.9368
+0.7822
+0.9041
+0.6899
+0.9916
+0.9917
+0.9917
+0.9856
+Phi-1.5
+0.9448
+0.8260
+0.9666
+0.7569
+0.9919
+0.9919
+0.9920
+0.9862
+Federated LogBERT completes training in 1388.19 seconds (≈0.39 hours), while the FlogTinyLLM variants require
+between 14.2 and 43.9 hours due to the computing overhead of ﬁne-tuning large language models in a federated setting.
+Table 17 presents a comparison of federated learning-based log anomaly detection models evaluated on the Thunder-
+bird dataset. The best result for each metric is highlighted in the table.
+The FlogTinyLLM variants consistently outperform traditional federated approaches (LogBERT, LogDeep(FL), Log-
+GPT) in F1-Score on the Thunderbird dataset, showing the effectiveness of tiny LLMs for federated log anomaly
+detection.
+6
+Discussion
+Comparing FlogTinyLLM and LogTinyLLM across both Thunderbird and BGL datasets shows that FlogTinyLLM
+provides strong local training on distributed clients while preserving data privacy. This approach produces results
+comparable to LogTinyLLM’s centralised training on both datasets, supporting the feasibility of privacy-preserving
+and practical learning. On the Thunderbird dataset, FlogTinyLLM achieves near-centralized performance, with accu-
+racy scores of 0.9876 for OPT-1.3B and 0.9825 for Phi-1.5. Precision in the federated setup remains high, slightly
+exceeding that of the centralized setup. Recall and F1-scores are also competitive, demonstrating FlogTinyLLM’s
+effectiveness for Thunderbird. On the BGL dataset, FlogTinyLLM’s accuracy ranges from 0.9324 to 0.9569 and
+F1-scores from 0.7822 to 0.8609. While the FlogTinyLLM trails centralized LogTinyLLM on BGL, the gap across
+models is modest. Training times are longer for FlogTinyLLM due to privacy measures on both datasets, with OPT-
+1.3B notable for faster federated training and near-centralized accuracy. Overall, FlogTinyLLM performs well on both
+datasets with reasonable increases in computational cost. Comparing FlogtinyLLM family with benchmark models:
+Federated LogBERT, Federated LogGPT, and LogDeep(FL) on the Thunderbird dataset from Table 17. It can be seen
+that within the FlogTinyLLM family, all variants obtain high Precision (≥0.9991). However, they differ slightly in Re-
+call. OPT-1.3 and Phi-1.5 achieve the highest Recall values (0.9879 and 0.9828). TinyLlama records the lowest Recall
+in this group (0.9354). DeepSeek-R1 falls in between at 0.9615. These results suggest that among the FlogTinyLLM
+family, OPT-1.3 provides the best anomaly detection capability in federated settings on the Thunderbird dataset. Phi-
+1.5 offers a close second. It can also be seen from Table 17 that the FlogTinyLLM family outperformed all the
+benchmark models on precision and F1-Score, except on recall, where LogDeep(FL) leads with perfect recall. Figure
+18 shows a difference in training time between baselines and FlogTinyLLM models. The three baselines Federated
+LogBERT (0.39 hrs), LogDeep(FL) (3 hrs), and Federated LogGPT (3.42 hrs) train in under 4 hours. In contrast,
+FlogTinyLLM variants require more time, from 105.12 hours (Phi-1.5) to 194.08 hours (TinyLlama), about 30 to 50
+times longer than baselines. Comparing the FlogTinyLLM family with the benchmark models Federated LogBERT,
+Federated LogGPT, and LogDeep(FL), Table 16 shows their performance measures on the BGL dataset. Regarding
+precision, LogDeep(FL) achieves the highest (0.9688), with FlogTinyLLM: Phi-1.5 only slightly lower (0.9666). In
+contrast, Federated LogBERT obtains the lowest precision (0.7574). Other FlogTinyLLM variants fall between 0.8737
+(OPT-1.3B) and 0.9268 (DeepSeek). This demonstrates that, in terms of precision, FlogTinyLLM variants generally
+outperform Federated LogBERT but not FL LogDeep on the BGL dataset. For recall metrics on the BGL dataset, Fed-
+25
+
+A PREPRINT - APRIL 22, 2026
+Table 15: Performance Gap: LogTinyLLM vs. FlogTinyLLM (Difference)
+Model
+∆Acc.
+∆F1
+∆Prec.
+∆Rec.
+DeepSeek-R1-Distill-Qwen-1.5B
++0.0342
++0.1303
++0.0645
++0.1792
+OPT-1.3B
++0.0587
++0.1862
++0.1176
++0.1963
+TinyLlama-1.1B
++0.0548
++0.2095
++0.0876
++0.2957
+Phi-1.5
++0.0471
++0.1659
++0.0254
++0.2293
+Mean Gap
++0.0487
++0.1730
++0.0738
++0.2251
+0
+5 · 10−2
+0.1
+0.15
+0.2
+0.25
+0.3
+DeepSeek-R1
+OPT-1.3B
+TinyLlama-1.1B
+Phi-1.5
+0.034
+0.059
+0.055
+0.047
+0.13
+0.186
+0.21
+0.166
+0.065
+0.118
+0.088
+0.025
+0.179
+0.196
+0.296
+0.229
+Performance Gap
+Accuracy
+F1-Score
+Precision
+Recall
+Figure 15: Performance gap analysis with horizontal bars showing gaps by model across metrics
+erated LogBERT leads at 0.9625, excelling at true-positive identiﬁcation. FlogTinyLLM: TinyLlama has the lowest
+recall (0.6899). Regarding F1-scores: LogDeep(FL) lead at 0.9118, with FlogTinyLLM: DeepSeek (0.8609) and Fed-
+erated LogBERT (0.8477) following. The lowest F1-scores are seen in Federated LogGPT (0.7562) and FlogTinyLLM:
+TinyLLama (0.7822). Notably, some FlogTinyLLM variants, such as DeepSeek, remain competitive, offering effective
+trade-offs. It can also be seen from Figure 17 that the FlogTinyLLM family took more time to train due to the use of
+LLMs
+7
+Conclusion
+In this work, we studied log anomaly detection in settings where data cannot be centrally shared. We proposed DP-
+FLogTinyLLM, a federated framework that integrates differential privacy with parameter-efﬁcient LLM ﬁne tuning.
+Empirical results on the Thunderbird and BGL datasets show that FlogTinyLLM performs close to its centralized
+counterpart in terms of accuracy, precision, and F1-score. The differences across models are small, suggesting that the
+federated setup is able to retain most of the predictive performance while adding privacy protection. On Thunderbird,
+the results are nearly identical to the centralized setting, while on BGL the model remains strong across all metrics
+with only slight variation in recall. Also, FlogTinyLLM outperforms benchmark federated models such as Federated
+LogBERT, Federated LogGPT, and LogDeep(FL) on the Thunderbird dataset, while remaining competitive on BGL.
+Moving to a federated and privacy-preserving setup does introduce additional computational cost. However, this
+overhead appears to be a reasonable trade-off given that sensitive log data never leaves local systems.
+26
+
+A PREPRINT - APRIL 22, 2026
+DeepSeek-R1
+OPT-1.3B
+Phi-1.5
+TinyLlama
+0
+10
+20
+30
+40
+50
+41.3
+14.2
+43.3
+43.9
+6.8
+5.9
+6
+7.6
+Model
+Training Time (Hours)
+FlogTinyLLM
+LogTinyLLM
+Figure 16: Comparison of training time between FlogTinyLLM and LogTinyLLM across the four model architectures
+on the BGL dataset.
+Table 16: Performance Comparison of Federated Learning Models on the BGL Dataset
+Model
+Precision
+Recall
+F1-Score
+Federated LogBERT
+0.7574
+0.9625
+0.8477
+Federated LogGPT
+0.9211
+0.7482
+0.7562
+LogDeep(FL)
+0.9688
+0.8611
+0.9118
+FlogTinyLLM: OPT 1.3B
+0.8737
+0.7730
+0.8051
+FlogTinyLLM: DeepSeek
+0.9268
+0.8057
+0.8609
+FlogTinyLLM: TinyLLama
+0.9041
+0.6899
+0.7822
+FlogTinyLLM: Phi 1.5
+0.9666
+0.7569
+0.8260
+Bold values indicate the best performance for each metric.
+Table 17: Performance Comparison of Federated Models on the Thunderbird Dataset
+Model
+Recall
+Precision
+F1-Score
+Federated LogBERT
+0.9625
+0.7574
+0.8477
+LogDeep(FL)
+1.00
+0.7935
+0.8191
+Federated LogGPT
+0.9924
+0.9629
+0.9774
+FlogTinyLLM: Phi-1.5
+0.9828
+0.9994
+0.9908
+FlogTinyLLM: DeepSeek-R1
+0.9615
+0.9996
+0.9797
+FlogTinyLLM: OPT-1.3
+0.9879
+0.9996
+0.9935
+FlogTinyLLM: TinyLlama
+0.9354
+0.9991
+0.9660
+27
+
+A PREPRINT - APRIL 22, 2026
+Fed. LogBERT
+Fed. LogGPT
+LogDeep(FL)
+FlogTinyLLM: OPT 1.3B
+FlogTinyLLM: DeepSeek
+FlogTinyLLM: TinyLLama
+FlogTinyLLM: Phi 1.5
+0.5
+1
+2
+5
+10
+20
+50
+0.39 h
+0.61 h
+1.50 h
+14.20 h
+41.30 h
+43.90 h
+43.30 h
+Training Time (hours)
+Figure 17: Training time efﬁciency of federated log anomaly detection models on the BGL dataset (log scale). Fed-
+erated LogBERT completes training in 1388.19seconds (≈0.39 hours), while the FlogTinyLLM variants require be-
+tween 14.2 and 43.9 hours due to the computational overhead of ﬁne-tuning large language models in a federated
+setting.
+1388.19 seconds (0.39 hrs)
+3 hours
+205 min 19 secs (3.42 hrs)
+105.12 hours
+156.92 hours
+165.62 hours
+194.08 hours
+Baseline Models
+FlogTinyLLM Models
+All times converted to hours for uniform comparison. Original values from the dataset shown on each bar.
+0
+25
+50
+75
+100
+125
+150
+175
+200
+FlogTinyLLM: TinyLlama
+FlogTinyLLM: OPT-1.3
+FlogTinyLLM: DeepSeek-R1
+FlogTinyLLM: Phi-1.5
+Fed. LogGPT (base)
+Himler et al. (2024)
+Fed. LogBERT (Base)
+Training Time (hours)
+Lorem ipsum
+Figure 18: Training time comparison of federated models on the Thunderbird dataset.
+28
+
+A PREPRINT - APRIL 22, 2026

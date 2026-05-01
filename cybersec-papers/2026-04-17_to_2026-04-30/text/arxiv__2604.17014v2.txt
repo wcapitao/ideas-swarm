@@ -1,0 +1,216 @@
+False Security Confidence in Benign LLM Code Generation∗
+Xiaolei Ren†
+School of Computer Science and Engineering
+Macau University of Science and Technology
+Taipa, Macao SAR, China
+April 2026
+Keywords: false security confidence, FSC rate, LLM code generation, security evaluation, func-
+tional correctness, benchmark design, deployment-context tasks, FSC-hard, conditional security
+metric
+Abstract
+Prior work has demonstrated that functionally correct yet vulnerable outputs arise system-
+atically in threat-oriented settings, where adversarial or implicit channels are used to induce
+security failures in code agents and automated patching workflows [1]. This note introduces a
+complementary but distinct framing: False Security Confidence (FSC), which studies the
+same surface phenomenon from a measurement-first perspective in ordinary, non-attack-framed
+generation tasks.
+Our interest is not in whether attacks can produce such outputs, but in
+how frequently and in what forms they appear absent explicit attack pressure, and whether
+conventional functional evaluation reliably detects them. We formalize FSC rate as the preva-
+lence of security failure within the set of functionally correct outputs, distinguish it from prior
+joint functional–security metrics such as SAFE and outcome-driven evaluation frameworks such
+as CWEval [3, 4], define a three-ecosystem task view for studying how FSC manifests across
+general-purpose programming, deployment-context tasks, and security-explicit programming,
+and identify FSC-hard as a practically important refinement layer in which static analyzers
+miss vulnerabilities that remain dynamically triggerable. This technical report is intentionally
+scoped as a framework statement rather than a full empirical paper: its purpose is to establish
+terminology, measurement boundaries, and study design commitments for subsequent large-scale
+evaluation.
+1
+Introduction
+Functional correctness and security correctness are often treated as if they were naturally aligned in
+LLM-based code generation. In practice, however, they frequently diverge. A generated program
+may satisfy unit tests, produce the expected output, or even look stylistically polished, while
+still embedding unsafe query construction, insecure credential handling, exploitable deserialization
+logic, or context-sensitive deployment misconfigurations. Recent evaluation work already shows
+that this mismatch is not rare: early evidence from formally published studies of AI-assisted code
+generation security already documented insecure suggestions in realistic development settings [2],
+and more recent secure-code benchmarks and joint evaluation studies repeatedly report a non-
+trivial share of outputs that appear functionally successful while remaining security-problematic [4,
+∗Repository: https://github.com/SysSoftwareSecLab/fsc-benchmark
+†Correspondence: xlren@must.edu.mo
+1
+arXiv:2604.17014v2 [cs.CR] 21 Apr 2026
+
+3, 6]. This gap creates a particularly misleading form of evaluation comfort: once a sample is
+counted as “correct,” both users and researchers may implicitly overestimate its quality. We refer
+to this phenomenon as False Security Confidence (FSC): confidence induced by functional success
+even though the generated artifact remains security-failing. The goal of this note is not to claim
+discovery of the broader functionally-correct-yet-vulnerable phenomenon, which has already been
+observed in adjacent lines of work, but to define a clean measurement framework for studying how
+frequently and in what forms this mismatch appears during ordinary, non-attack-framed LLM-
+assisted programming.
+Contributions of this note.
+This report makes four scoped contributions. First, it introduces
+FSC as a measurement-oriented concept for studying security failure within functionally correct
+outputs. Second, it formalizes FSC rate so that security failure is normalized by the set of func-
+tionally correct outputs rather than by all generations. Third, it proposes a three-ecosystem view of
+tasks that separates general-purpose programming, deployment-context tasks, and security-explicit
+programming. Fourth, it defines FSC-hard, a refinement layer for cases that evade static tooling
+yet remain dynamically exploitable.
+2
+Positioning FSC Relative to Prior Work
+FSC should be read as a measurement-first reframing, not as a competing claim that functionally
+correct yet vulnerable code was never previously identified. Prior work has already shown that
+code agents and code generation systems can produce outputs that preserve functionality while
+embedding vulnerabilities, spanning both foundational studies of AI coding assistants in practice [2]
+and more recent settings that motivate adversarial or threat-oriented analysis [1]. Our claim is
+narrower and different: even when the interaction is not framed as an attack, and even when
+the user’s visible objective is simply to solve a programming task, the evaluation pipeline can still
+produce the same misleading end state—a functionally successful artifact that should not be trusted
+from a security standpoint. The scientific value of FSC therefore lies in changing the measurement
+lens: from threat induction and exploitability demonstrations to the prevalence, distribution, and
+structural causes of security failure inside the subset of outputs that conventional evaluation would
+otherwise count as success.
+Relationship to SAFE and joint evaluation work.
+Recent work has already argued that
+secure code generation should not be evaluated on security and functionality in isolation. SAFE
+introduces a joint functional–security metric for comparing secure code generation methods, and
+CWEval provides an outcome-driven framework that tests both aspects on the same problem set [3,
+4]. FSC is complementary rather than redundant. SAFE is a method-comparison metric: it asks
+how well a secure-code-generation technique performs when security and functionality are jointly
+considered. FSC rate is a conditional failure metric: it asks how often security failure occurs among
+the outputs that would already be counted as functionally correct. The denominator is therefore the
+key distinction. FSC is designed to quantify over-trust risk inside apparent success, not to collapse
+multiple desiderata into a single overall score.
+Relationship to internal-mechanism work.
+Recent work has shown that code LLMs can in-
+ternally represent security concepts even while generating insecure code [5], suggesting that FSC is
+not merely a capability gap but may also involve a generation-priority divergence. FSC as a mea-
+surement framework is complementary to this finding: rather than explaining why models generate
+2
+
+insecure-yet-correct code, FSC quantifies how often this occurs in ways that escape conventional
+evaluation.
+Boundary statement.
+Under this framework, FSC is not an umbrella term for repair-time
+phenomena, optimization-time phenomena, or analyzer disagreement. It is strictly reserved for
+initial-generation settings in which the output is functionally correct but security-failing. Apparent
+repair phenomena that arise when users attempt to remediate FSC instances through conversational
+refinement belong to a separate taxonomy of Pseudo-Repair [7], which is treated as a companion
+framework to the present note.
+3
+Definition of False Security Confidence
+Notation.
+Throughout this note, s denotes a single generated code sample produced by a fixed
+model under a fixed prompt, FCR(s) ∈{0, 1} is the functional correctness indicator under the
+task’s oracle, and SSR(s) ∈{0, 1} is the security success indicator under the chosen validation
+stack. Both indicators are treated as deterministic given the sample and the validation procedure;
+stochasticity enters through the generation distribution, not through the indicators.
+We define FSC at the sample level. A sample exhibits False Security Confidence if and only
+if
+FCR(s) = 1 ∧SSR(s) = 0.
+Intuitively, FSC marks the subset of outputs that are likely to be over-trusted because they “work”
+in the narrow functional sense while remaining unsafe in the broader engineering sense.
+Interpretation.
+The definition intentionally puts functionality first because the problem we want
+to quantify is not generic vulnerability prevalence, but rather the vulnerability prevalence among
+outputs that would otherwise be counted as successful generations. This is what differentiates FSC
+from ordinary insecure-code rate and makes it especially relevant for benchmark design, deployment
+decisions, and scientific claims about model quality.
+4
+FSC Rate as a Conditional Security-Failure Metric
+We define FSC rate over a set of generations S as
+FSC-rate(S) = |{s ∈S : FCR(s) = 1 ∧SSR(s) = 0}|
+|{s ∈S : FCR(s) = 1}|
+.
+This conditional denominator is essential. If one instead divides by all generations, then changes in
+general coding ability and changes in security behavior become confounded. FSC rate isolates the
+portion of apparent success that should be discounted because the success is security-invalid. As a
+result, two models can have similar overall vulnerability rates but very different FSC profiles if one
+produces many more functionally correct outputs than the other. FSC rate is defined only when
+the denominator is non-zero; tasks or model-task pairs yielding no functionally correct outputs are
+excluded from FSC analysis by definition.
+3
+
+Reporting recommendation.
+We recommend that FSC rate never be reported alone. At mini-
+mum it should be paired with functional correctness rate, and when possible with raw insecure-code
+rate, analyzer coverage notes, and a small set of manually adjudicated exemplars. The key inter-
+pretive question is not just “how often is the model insecure?” but “how often is the model insecure
+precisely when evaluators are most tempted to trust it?”
+5
+A Three-Ecosystem View of FSC
+We propose studying FSC across three task ecosystems because the causes of misleading security
+success are unlikely to be uniform. General-Purpose Programming includes common algorith-
+mic, input/output, and data-processing problems with no explicit security framing; here FSC is
+expected to arise when latent vulnerabilities are masked by narrow task correctness. Deployment-
+Context Tasks introduce secrets handling, authorization logic, request routing, configuration se-
+mantics, environment assumptions, and service boundaries; here functionally correct code may still
+fail under realistic deployment or threat assumptions. Security-Explicit Programming directly
+requests validation, cryptographic usage, sanitization, or access control; here FSC captures the
+disturbing case where the model appears to understand the security goal yet still produces an
+implementation that remains vulnerable. Existing benchmarks have broadened secure-code evalua-
+tion coverage, but they do not organize the space around this measurement question or around the
+deployment-context failure modes FSC is intended to expose [6]. In particular, benchmark suites
+typically foreground prompt-level task categories or method-level comparison settings, while under-
+specifying the environment- and deployment-dependent conditions under which security relevance
+only becomes visible after the code is situated in a realistic execution context.
+Why the ecosystem split matters.
+This partition is not merely organizational. It is a hypoth-
+esis about where different forms of false confidence are most likely to arise. A task that appears
+harmless in a general benchmark may conceal security relevance once embedded in a deployed envi-
+ronment. Conversely, a security-explicit task may reveal whether the model can maintain security
+intent under pressure rather than merely produce plausible secure-looking syntax.
+6
+FSC-hard as a Refinement Layer
+Not all FSC instances are equally visible. Some are caught by standard static analyzers; others
+are not. We define FSC-hard as the subset of FSC cases in which static tooling fails to flag the
+vulnerability while lightweight dynamic or semantic validation still confirms that the exploit path
+remains reachable. FSC-hard is a refinement layer within the FSC framework, not a separate
+top-level problem. Its purpose is to identify the portion of FSC instances that are most resistant
+to current tooling—precisely the cases that practitioners are least likely to catch without dedicated
+dynamic validation.
+Why FSC-hard matters.
+If a functionally correct yet insecure output is at least statically
+flagged, users still receive a visible warning. FSC-hard is more dangerous because it aligns apparent
+success with apparent tool silence. This makes it the most practically deceptive region of the FSC
+space. It is also where current evaluation stacks are most likely to undercount risk, particularly
+when static analysis is treated as the dominant or sole security oracle [3, 5].
+4
+
+7
+Validation Guidance for Future Empirical Work
+Because FSC is a measurement framework, its empirical value depends on validation discipline.
+Functional correctness should be established through task-specific oracles rather than stylistic judg-
+ment. Security success should be evaluated through a layered stack that can include multiple static
+analyzers, dynamic tests where feasible, and selective manual adjudication for disagreement-heavy
+or high-impact cases. The exact stack may vary by ecosystem, but the principle should remain fixed:
+FSC claims require enough evidence to support the statement that an output is both functionally
+successful and security-failing.
+Minimal credible validation principle.
+This note does not prescribe one universal maximum-
+cost validation stack. Instead, it recommends the minimum stack sufficient for the research question.
+For general FSC measurement, paired functional and security evaluation may suffice. For FSC-hard
+claims, however, dynamic or semantic evidence is necessary by definition. Specifically, a dynamic
+exploit oracle or a concrete exploit-path demonstration constitutes sufficient evidence; warning
+disappearance or code-pattern matching alone does not.
+8
+Scope and Non-Goals
+This report does not present prevalence estimates, benchmark results, or a fixed leaderboard. It
+does not claim that FSC replaces existing secure-code-generation metrics, nor that it subsumes
+adversarial threat analyses such as FCV. It also does not resolve the internal causal question
+of why models generate insecure-yet-correct outputs; that question belongs to mechanistic work
+such as SCS-Code [5]. Apparent repair phenomena that arise when users try to remediate FSC
+instances through conversational refinement belong to a separate taxonomy of Pseudo-Repair [7],
+which should be read as a companion framework rather than a subsection of FSC.
+9
+Conclusion
+False Security Confidence names a measurement problem that has been visible in fragments across
+recent secure-code-generation research but has not, to our knowledge, been cleanly isolated as a
+conditional security-failure concept. By defining FSC, FSC rate, a three-ecosystem task view, and
+FSC-hard, this note fixes a vocabulary for studying how conventional notions of “correctness” can
+mask security failure in benign LLM code generation. Planned large-scale empirical evaluation will
+quantify FSC rate across models, languages, and task ecosystems; the companion framework ad-
+dressing repair-stage failure modes is described in [7]. Planned benchmark studies are documented
+at the repository listed above.

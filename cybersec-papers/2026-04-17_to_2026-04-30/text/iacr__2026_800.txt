@@ -1,0 +1,1083 @@
+Deploying decryption oracles for fun and non-profit: Backing up with friends and
+TEEs
+Kanav Gupta
+University of Maryland
+Gabriel Kaptchuk∗
+University of Maryland
+Ian Miers∗
+University of Maryland
+Abstract
+Secure backups are the Achilles’ Heel of the E2EE ecosystem
+if they do not provide the same strong security properties as
+the E2EE messaging systems they support. They constitute a
+set of servers that, if compromised, would expose nearly all
+user messages. Unfortunately, state-of-the-art and deployed
+secure backup systems fail to consider forward secrecy and
+post-compromise security of these servers as first-order de-
+sign constraints. Additionally, some proposals, in limited de-
+ployment, implicitly rely on the PKIs of trusted execution
+environments in order to provide security, creating a small
+number of keys whose compromise would be catastrophic.
+We develop an elegant, efficient, and simple secure backup
+system that naturally addresses these issues by regularly ro-
+tating backup servers, each of which samples independent
+key material. To make this approach scalable, we design a
+silent backup procedure, reducing server load compared to
+state-of-the-art designs while providing improved security.
+Our design can be trivially extended to incorporate social key
+recovery, enabling more flexible deployment configurations.
+We carefully prove the security of our construction and bench-
+mark it to show that it is deployment-ready. Our approach
+works on commodity hardware making it deployable without
+the resources needed for WhatsApp or Apple’s Encrypted
+Backups.
+1
+Introduction
+Modern end-to-end encrypted (E2EE) messaging systems are
+secure not just against eavesdroppers, but—to the maximum
+extent possible—attackers compromising key material. State-
+of-the-art systems, including Signal and WhatsApp, provide
+three crucial guarantees: (1) forward secrecy, ensuring that
+past, deleted messages remain secure even when an attacker
+compromises a client’s device and keys; (2) post-compromise
+security, ensuring that temporary compromise does not expose
+future messages; and (3) no single point of compromise that
+∗Joint senior authors. Order determined by a coin flip.
+would effect all users—no master key whose compromise
+would expose vast troves of communication.1
+The strong security properties of encrypting messaging,
+however, break down, when we consider the infrastructure
+needed to provide backups, which have become an essential
+feature for real-world deployment and are. These servers,
+if compromised, would explore nearly all users’ messages,
+making forward secrecy and post-compromise even more
+important for the backup infrastructure than it is for individual
+clients.
+Deployed secure backup systems all share a single tem-
+plate: users encrypt their key material under a joint function
+of their password (or pin) and high-entropy key on the re-
+covery server; typically, this involves the client deriving a
+key from their pin via an Oblivious Pseudorandom Function
+(OPRF) keyed by the server. In order to prevent dictionary
+attacks, the recovery server stores the high-entropy key within
+a secure compute environment (e.g., hardware security mod-
+ules [15,16,40] or trusted execution environments [11]) that
+limits the number of times this function can be evaluated. To
+further strengthen the security properties of the system, the
+trust in the secure compute environment can be distributed
+in a threshold manner across multiple physical devices [12]
+or secure compute providers [11], ensuring backups remain
+secure even when an attacker compromises a subset of the
+recovery infrastructure.
+Given that these backup system store key material for E2EE
+system, one might expect them to provide the same security
+properties in the event the keys they hold are compromised.
+Namely, forward secrecy would allow secure deletion of old
+backups and post-compromise security would ensure that a
+temporarily compromise of the server key material would
+not allow decryption of all future backups. On the contrary,
+however, achieving forward secrecy and post compromise
+security for these secure backup systems is an understudied
+problem and one given little practical consideration in system
+1PKI mapping usernames to keys, of course, comes close, but key finger-
+prints and key transparency make this difficult to exploit, especially at large
+scale.
+1
+
+designs—despite the fact that backups are a more concen-
+trated target than client devices. Even worse, many designs
+introduce an oft-overlooked central point of failure: the PKI
+infrastructure used to identify a TEE is rooted by a master
+signing key held by the TEE manufacturer. We stress that
+these are not hypothetical or theoretical problems—failing
+to design robust secure backup systems immediately makes
+them the Achilles’ Heel of the E2EE ecosystem.
+Challenges of designing robust secure backup systems.
+Consider a baseline solution in which there is a single HSM or
+TEE storing the server’s key material. Making such a system
+robust encounters the following challenges:
+(1) Failover and verifying hardware authenticity: As in
+any cloud service, encrypted backup serves must handle
+failover by provisioning new servers. However, validat-
+ing new TEE hardware relies on the hardware manufac-
+turer’s or cloud operator’s trusted PKI, rooted in the a
+small number of master signing keys. Were these signing
+keys to be compromised, an attacker could impersonate
+genuine HSMs/TEEs, and gain access to all key material.
+This threat is not addressed in many proposals and, at
+present, the only known solution is to massively over pro-
+vision capacity at initial setup, which is cost prohibitive
+for many organizations [15,16].
+(2) Handling key rotation as we scale up: In order to provide
+forward secrecy and post-compromise security, we must
+periodically rotate the server’s key material. Because key
+rotation necessarily invalidates existing client backups,
+clients must generate a fresh backup. But, for the OPRF
+approach widely used in many backup schemes, this re-
+quires the client to interact with the service. Doubling
+the frequency of backups effectively doubles the load
+on the service, resulting in severe limits on the speed at
+which key material can reasonably be rotated and there-
+fore extending the window of exposure for an enclave.
+This is in contrast to the fine grained forward secrecy and
+post compromise security achieved by E2EE messaging
+protocols.
+(3) Scaling out infrastructure and trust diversity: Of course,
+we cannot run our backup system with only a single
+HSM/TEE for two reasons. First, like all services at
+scale, an encrypted backup service needs to scale out
+to run on many servers, since messaging services hun-
+dreds of million to billions of daily active users. Sec-
+ond, there is a vast literature demonstrating that HSMs’
+and TEEs’ security guarantees are imperfect, especially
+in the face of highly-resourced and persistent adver-
+saries [10, 34, 36–39]. As such, we must build a large
+cloud infrastructure and distribute our trust among a vari-
+ety of hardware manufacturers and cloud providers. But,
+operating at scale makes verifying hardware authenticity
+and key rotation significantly more complex, expensive,
+and risky.
+As an additional design constraint, we require systems that
+can be deployed for relatively low cost, allowing smaller and
+non-profit E2EE platforms (e.g., Signal) to provide strong
+security. This leads to the final design challenge:
+(4) Guess limits on commodity trusted hardware: The se-
+curity of a pin-based encrypted backup system depends
+almost entirely on the systems ability to limit guess at-
+tempts for the low entropy pin. Here, its critical that the
+system is secure against rollback attacks that reset the
+guest counter. One option is to use hardware security
+modules with strong rollback preventions. Indeed this
+is the approach taken by Apple and WhatsApp [15,40]
+These, however, incur some substantial cost.
+Another option is to use commodity Trusted Execution
+Environments. However, widely available and concretely
+affordable commodity TEEs, including SGX on server
+chipsets, TDX, AMD SEV-SNP, and AWS Nitro (see [3]
+for a detailed discussion), either do not provide protected
+counters or provide them with far lower security. The
+standard solution to resolve this is to operate a consen-
+sus protocol over the TEEs, reducing the security of the
+protocol to the security of the consensus protocol. This
+is a security reduction, as semi-synchronous consensus
+protocols are only robust against adversaries that corrupt
+less than 1/3 of the nodes (essentially limiting client’s
+abilities to pick their own trust diversity) and consen-
+sus critically relies on carefully controlling the number
+of adversarial nodes that can participate in consensus.
+Alternatively, the system could leverage an external out-
+source consensus to a proof-of-stake cryptocurrency like
+Ethereum, but a high-resource attacker could simply fo-
+cus on compromising the keys that hold enough stake (or
+even temporarily buy a large amount of stake) to locally
+fork the protocol. No matter the specific consensus ap-
+proach taken, it will also drastically increases the trusted
+compute base of the TEE, since it now needs to handle
+consensus.2
+Simultaneously solving all these problems efficiently is nec-
+essary before secure backup systems can safely be deployed.
+We emphasize that the choice of guess limiting mechanism
+to solve (4) is completely orthogonal to the solutions used
+to solve challenges (1), (2), and (3). Specifically, the design
+space for (1), (2), and (3) assumes the existence of some guess
+limiting approach, and a service provider can choose a so-
+lution to (4) that fits the security and efficiency profile they
+need. Looking ahead, we develop a protocol for (1), (2), and
+(3) and then explore combining it with multiple guess limiting
+approaches, ranging from the standard approach with HSMs
+2For a detailed review of rollback prevention techniques in TEEs, please
+refer to Section 8.
+2
+
+to an alternative using a proof of work blockchain. We stress
+that the approach in this paper is not dependent on using a
+blockchain for (4).
+1.1
+Our Contributions
+In this work, we design an efficient, dynamically scalable
+secure backup system that carefully takes deployment con-
+straints into consideration. Our work leverages three obser-
+vations: (1) if we can design a non-interactive backup pro-
+cedure, clients can independently decide how to distribute
+trust across a heterogeneous backup infrastructure; (2) let-
+ting each TEE sample key material independently reduces the
+need for enclaves to mutually authenticate. Additionally, with
+a non-interactive backup procedure, the client doesn’t need
+to interact with each TEE in order to use them as a backup
+resource; and (3) we can provide forward secrecy and post-
+compromise security naturally by allowing the set of active
+backup servers evolve and churn over time. Again, a non-
+interactive backup procedure makes this strategy possible, as
+frequently refreshing backups does not incur any server load.
+Our system has the following desirable properties:
+– Extraordinarily simple design: Our system’s core design is
+a careful composition of a set of well-studied cryptographic
+primitives for which there are existing efficient, robust im-
+plementations. We believe that this simplicity is a good
+sign that our approach is the “right way” to think about this
+problem.
+– Improved security guarantees: We are able to significantly
+improve the security guarantees offered compared to state-
+of-the-art. Our construction provides natural forward se-
+crecy and post-compromise security while actually decreas-
+ing the interaction required between clients and servers.
+Additionally, we provide some security in the event of
+catastrophic compromises: if the TEE PKI is compromised,
+the attacker doesn’t get access to the key material stored in
+existing TEEs, even if trust in them is rooted in the compro-
+mised PKI. Using a compromised PKI to access messages
+requires announcing new (inauthentic) TEEs and waiting
+for clients to migrate their backups—a potentially slow and
+detectable process.
+– Configurable trust diversity and social key recovery: Our
+system is highly configurable, allowing clients to ad-hoc
+customize their backup configurations, e.g., distribute trust
+across different TEEs, regions, cloud provider, and archi-
+tectures or choose their preferred balance between security
+and availability. In fact, our system architecture naturally
+allows interoperability with social key recovery, in which
+some amount of trust is placed in a users personal contact,
+rather than exclusively rooting trust in cloud platforms.
+This is possible because interaction is only required during
+recovery and TEEs need not be mutually aware.
+– Rigorous proof of security: We provide a simulation-based
+security definition for our system and rigorously prove that
+our protocol realizes this definition.
+2
+Technical Overview
+Our work considers a client holding a secret m.3 Our construc-
+tion is agnostic to the specific utility of m, but we encourage
+the reader to imagine m is a key encryption key which en-
+crypts some data encryption key material used to encrypt a
+users’ message history. The client wants to back up m un-
+der a low-entropy password4 pwd in the presence of mul-
+tiple recovery servers S1,S2,...,Sn, each running a TEE.5
+These TEEs might be of different types (i.e., TDX, SGX, or
+Nitro), in different cloud environments (i.e., Azure, Google
+Cloud, or AWS), or in different jurisdictions. Importantly, we
+assume that each of these servers samples their key mate-
+rial completely independently and publishes their public key,
+along with an attestation that they are running the correct
+software, publicly. The client’s software starts by building an
+access policy A over these servers (e.g., 7 of 10 TDX nodes
+on Azure, 5 of 9 AMD SEV-SNP nodes on GCP, and 8 of
+11 Nitro nodes on AWS) and then generating secret shares
+m1,m2,...,mn ←ShareA(m) such that m can only be recon-
+structed using shares that satisfy A. For simplicity, one can
+think of A as a threshold access structure and the secret shar-
+ing scheme as Shamir secret shares [35], but other access
+structures (like threshold of thresholds) are also supported.
+In existing approaches [11,40], the client would then spec-
+ify the password pwd and interact with the TEE within each
+server Si to encrypt mi as
+si = mi +OPRFki(pwd),
+where OPRF is an oblivious pseudorandom function keyed
+with a high-entropy server key ki stored in the TEE. Our
+work takes a slightly different approach: the client samples an
+OPRF key ki locally for each server Si and then locally evalu-
+ates the OPRF and computes si as before. Additionally, the
+client then encrypts the key pair under Si’s public encryption
+key pki as
+cti ←Encryptpki(ki).
+The client’s backup then
+constitutes a set of pairs
+(ct1,s1),(ct2,s2),... all of which can be stored in arbitrary
+cloud storage (e.g., storage provided by the E2EE service
+provider or Google Drive). To recover m, the client can down-
+load the (cti,si) tuples, send cti to Si’s TEE, and then query
+using the oblivious evaluation protocol on pwd, unmasking
+3To reduce ambiguity, we refer to the client’s data as a message, even
+though it will often, in practice, be cryptographic key material.
+4Throughout the rest of this work, we refer to the client’s low-entropy
+secret as a password, although in practice it may also be a pin.
+5For convenience, we use the term server and TEE interchangeably, as
+the “important” part of the servers we consider are their TEEs.
+3
+
+the share mi. Finally, once enough mi have been recovered,
+the client can reconstruct m.
+Notice that this backup procedure is fully silent, in that
+there is no interaction between the client and Si. While this
+will improve the efficiency of the backup system, this alone is
+not sufficient to provide improved security.
+Improving security via key rotation. Rather than thinking
+of the set of servers S1,S2,...,Sn as static, we accept that the
+set will change, allowing for hardware failures, reboots, cloud
+migration, or dynamic scaling. Whenever a server is removed
+from the active set—even if it is just for a temporary reboot—
+the key material (pki,ski) it stores will be permanently deleted
+and each new—or rebooted—server will sample a fresh key
+pair. Rather than seeing this as a “bug,” we leverage this
+churn into a free source of gradual key rotation. Namely, we
+can require all servers to reboot regularly, even if it is not
+necessary for logistical reasons, in order to provide stronger
+security guarantees.
+When a client wants to back up their message m, they use
+(a subset of) the currently active servers and run the backup
+procedure outlined above. Eventually, a sufficiently large num-
+ber of their chosen servers may go offline—securely delet-
+ing the TEE encryption keys in the process—such that it
+would be impossible to reconstruct m, even with access to
+the correct pwd. At the same time, a set of new servers with
+fresh key material will come online. This churn means the
+client must refresh their backup of m, generating a new set
+of pairs (ct1,s1),(ct2,s2),... with respect to the new active
+set of servers. Alternatively, the client could sample a new m′
+to replace m entirely and back m′ up instead.6 Importantly,
+the client should not wait until their old backups are non-
+recoverable, but instead should regularly be refreshing their
+backups such that they have the necessary redundancy. Im-
+portantly, clients can’t simply just “migrate” a masked share
+mi to another server, or they cannot possibly achieve forward
+secrecy. Instead, the client should generate a fresh secret shar-
+ing of m each time they renew, allowing their old backups to
+completely expire.
+Notice that this approach immediately provides forward se-
+crecy and post-compromise security. We get forward secrecy
+because old backups eventually become fully non-recoverable,
+even if all key information in the system is later compromised.
+Similarly, we get post-compromise security because each new
+server samples their encryption key independently, allowing
+the security of the system to “heal” over time.
+Moreover, we observe that the TEE PKI is no longer a
+single point of failure in our system, despite the fact that we
+make use of cheap cloud TEEs. If an adversary were to com-
+promise the TEE PKI, they could convincingly impersonate
+6When m is a key encryption key, this would require re-encrypting just
+the data encryption key rather than the full backup (e.g., message history).
+Looking ahead, the data encryption key material may also change over time
+to facilitate secure deletion of messages in the backup history or providing
+post-compromise security.
+authentic TEEs and advertise valid-looking encryption pub-
+lic keys for backup, but there is no synchronization between
+TEEs—even those that are backed by the same TEE PKI.
+Over time, some clients may migrate their backups (at least
+partially) to these malicious servers. Importantly, however,
+this process would likely be somewhat slow, as it relies on
+client-driven actions. Moreover, the malicious servers would
+need to announce themselves publicly in order to successfully
+exfiltrate user messages; this provides an opportunity for the
+service provider to identify a failure at halt the system’s oper-
+ation. Given the risk of TEE PKI compromise, it may make
+sense for clients to slowly ramp up their trust in newer TEEs,
+either by designing an access policy A that puts little trust
+in them or by migrating shares with probability proportional
+to their uptime. Paranoid clients or applications using the
+backup service, can effectively be configured in a fail-safe
+model, where excessive churn in TEEs, e.g., by an adversary
+spinning up many sybil servers, would not be selected, simply
+halting future backups while previous ones slowly expire.
+We note that our approach is only feasible because we have
+a non-interactive backup process. If client-server interaction
+were required in order to refresh backups, the TEEs would
+become saturated by the hundreds of millions of users who
+would need to perform such an action. Instead, interactions
+between clients and server are only necessary during recovery,
+which should be relatively less frequent and independent of
+how aggressive clients are in achieving fine grained forward
+secrecy and post compromise security for backups.
+Synchronizing query counts. So far, we have implicitly
+assumed that there was some mechanism to rate-limit the
+queries sent to each server. Because the cloud-provisioned
+TEEs we use have no non-malleable state, we must leverage
+a mechanism outside of the TEE to enforce limits. Existing
+work’s decision to rely on consensus among the TEEs [11]
+makes the TEE PKI a vulnerability again, as an attacker might
+be able to subvert the consensus process if they controlled
+enough TEEs, allowing them to launch efficient online dictio-
+nary attacks, which may be enough to quickly brute-force the
+low entropy pins used in some configurations.
+In our work, we turn to existing consensus networks as an
+alternative tool to root consensus, conceptually building on
+the approach of Kaptchuk, Green and Miers [23]. Specifically,
+we propose that the recovery servers rely on the extraordi-
+narily high cost of forking a proof-of-work blockchain (e.g.,
+Bitcoin [33] or Zcash [5, 31]) to prevent an attacker from
+circumventing the rate limiting process.7 The most naive way
+to do this is have clients generate a chain of transactions, in
+which each transaction embeds a specific password attempt.
+Because transactions can only be spent once, this allows TEEs
+7It is important that the blockchain use proof-of-work rather than proof-
+of-stake, as we want to avoid the existence of key material that could be stolen
+in order to allow brute-force attacks. Moreover, highly-resourced attackers
+could also stake a large amount of money temporarily in order to launch such
+an attack before withdrawing their fund, making this attack very inexpensive.
+4
+
+to robustly count the number of previous password attempts
+corresponding to a particular backup and limit the number of
+query to which they will respond (e.g., ten).
+An important, and often overlooked, part of guess counting
+is preventing the attacker from copying a existing backup
+directly into a new backup with a fresh guess counter, thereby
+bypassing the guess limit. In our work, we do this by
+assigning each backup with a randomly sampled backup
+identifier BID. Each ciphertext then embeds BID as cti ←
+Encryptpki(ki,BID,lim). When logging a new guess attempt,
+it is associated with the identifier BID and the enclave verifies
+that this BID matches the one in the ciphertext. Critically,
+this approach requires a non-malleable public key encryption
+scheme, such that an attacker cannot blindly modify the BID
+stored in a ciphertext.
+Alterative approach for synchronizing query counts
+and design trade offs. Our proposed approach for query
+synchronization—using a proof-of-work blockchain— incurs
+delays: transactions must be confirmed before a client can
+complete their recovery, requiring 10 to 60 minutes for Bit-
+coin and 2 minutes to 15 minutes for Zcash, depending on
+number of confirmations required. While these delays are not
+insignificant, we note that recovery should be a relatively rare
+event for any given user and rarely is instantaneous recovery
+necessary—especially if it comes at the cost of reduced se-
+curity. Finally, we note that specific consensus mechanism
+is completely orthogonal to the rest of our design; design-
+ers could use consensus between the TEEs or some small
+number of HSM counters, choosing to sacrifice some security
+for reduced latency, or combine all approaches for defense in
+depth.
+2.1
+Extensions
+Social key recovery. While all existing, deployed secure
+backup systems only use service-provider provisioned re-
+sources as recovery servers, a popular idea in the literature
+is social key recovery, in which clients put some trust into
+their contacts instead [9, 25, 28, 32]. While promising, this
+approach has proved difficult to operationalize.
+Having a non-interactive backup procedure, however,
+makes social key recovery trivial: clients can simply encrypt
+some of the shares ki to their contacts. When the user’s con-
+tact’s devices have secure elements, the construction can re-
+main exactly the same, although it may be prudent to require
+a users’ contacts to manually approve guess attempts or re-
+strict guesses to be face-to-face (i.e., over NFC). When these
+devices have no secure element, there is no way to prevent a
+client from locally running a dictionary attack to attempt to
+recover mi. To mitigate the risk of such an attack, we simply
+pick a secret sharing scheme with shares that are computation-
+ally close to uniform when below the reconstruction threshold
+(e.g., Shamir secret shares), which prevents an attacker from
+checking if their password attempts are correct.
+On-demand forward security via. puncturable public
+key encryption. The above design expires existing backups
+slowly, as a user must either wait for enough servers to churn
+or must exceed their maximum number of guesses. Letting
+clients request that a TEE delete their key material would
+immediately expire their existing backup, this the TEE’s key
+material is reused across all clients, making this approach a
+dead-end.
+If deployments want to enable proactive deletion, they can
+replace the public key encryption scheme in the above sketch
+with a puncturable public key encryption scheme [17]. In this
+scheme, the TEEs can locally modify their secret key material
+such that they can no longer decrypt specific ciphertexts, e.g.,
+either from specific users or encrypted under some known
+tag. Using such a scheme would allow clients to request re-
+cover servers to puncture out their existing backups without
+impacting the recoverability of other clients. We note that
+this approach needs to be treated carefully, as many TEEs are
+vulnerable to rollback attacks, which would potentially allow
+an adversary to “un-puncture” a secret key.
+Efficiently deleting backed up files. Until this point, we have
+largely elided how m should would be used within an end-to-
+end application. Recall that m could be a key encryption key
+which is used in a KEM/DEM paradigm (i.e., encrypting a
+data encryption key material, which is actually responsible for
+encrypting the user’s message history). By providing forward
+secrecy to m, the data encryption key can also be rotated,
+thereby securely deleting old versions of backups. In principle,
+this makes it possible to delete specific messages with a users’
+message backups. A naive approach to this would require
+the user to sample a new data encryption key d, re-encrypt
+their entire message history besides the message that will
+be deleted under d, and then sample a fresh m′ to encrypt
+d. Finally, m′ can be backed up. Recently Dodis, Jost, and
+Marcedone describe Compact Key Storage [13,14], an elegant
+technique for reducing this linear overhead to logarithmic
+while keeping |d| logarithmic in the message history . Their
+approach can be directly integrated with our own to facilitate
+efficient deletion of files.
+2.2
+Threat Model
+In our work we assume a powerful state-sponsored attacker
+who is interested in (1) mass-compromise of many users
+backups in order to conduct mass surveillance, and (2) the
+targeted compromise of high-value targets’ backups.8 We
+begin with the new threats we consider in this work:
+– Compromise TEE PKI: All modern TEEs embed some at-
+testation or measurement protocol, which allows clients to
+8Of course, individuals who are very high-value, e.g., leaders of opposi-
+tion movements or diplomats, should likely not be using backups at all, as
+they are a usability feature that incurs security risk; this approach has been
+embraced by Apple’s Lockdown Mode, which trades worse functionality for
+much stronger security guarantees.
+5
+
+verify that (1) the endpoint with which they are interact-
+ing is an authentic TEE, and (2) the software the TEE is
+running matches some pre-determined hash. The security
+of this mechanism is rooted in key material held by the
+TEE manufacturer. In a significant departure from prior
+work, we assume that the adversary can compromise this
+high-value key material.
+– Slowly compromise TEEs: Clearly there can be no mean-
+ingful security if the adversary can arbitrarily compromise
+all TEEs in the system, as dictionary attacks will imme-
+diately be possible. Instead, we aim for the next, weakest
+security assumption: we assume that the adversary can
+slowly compromise TEEs and TEE types, such that over
+a long time all TEEs will eventually be compromised, but
+not at the same time.
+Additionally, the adversaries we consider can perform the
+following, standard actions:
+– Compromise service provider: We assume the service pro-
+vide itself can be compromised, either because they are
+legally compelling to take some particular action, an inter-
+nal malicious actor, or a system breach. As a result, any key
+material held by the service provide that is not stored in a
+TEE can be accessed by the adversary and all server-side
+data can be arbitrary modified.
+– Compromise cloud provider: The adversary can direct the
+cloud hosts on which TEEs are executed to act arbitrarily.
+In addition to being able to read or modify all messages
+exchanged between clients and TEEs, the adversary can
+launch rollback attacks (either using software snapshots or
+potentially even physical access to the device), in which
+the attacker attempts to revert the state of the TEE to some
+previous, authentic state.
+– Act as a malicious client: The adversary may also act as a
+malicious client interacting with the system, potentially re-
+using or modifying messages sent by other, honest clients.
+– Post to public ledger: Our solution relies upon the unfor-
+gability of a public ledger as a synchronization primitive.
+Thus, we consider adversaries that cannot forge proofs of
+inclusion on a known public ledger (e.g., locally gener-
+ate forks of the Bitcoin blockchain). The adversary may,
+however, post arbitrary messages onto the ledger.
+We enumerate our desired security properties, both infor-
+mally and formally, in Section 4.
+3
+Preliminaries
+Notation For integers a ≤b, we use [a,b] to denote the set
+{a,...,b}. For integer n, [n] denotes [1,n]. For a set S, we use
+P(S) to denote its power set. For a deterministic algorithm A,
+we use y = A(x) to denote running A on input x to get y. In
+case of randomized algorithm, we use ‘←’ instead of ‘=’.
+Secret Sharing. Our construction depends on a (generaliza-
+tion of) threshold secret sharing scheme, where the distribu-
+tion of any subset of shares below threshold are uniform.
+Definition 1. For an integer n and a monotonic access struc-
+ture A : P([n]) →{0,1}, a (A,n) secret sharing scheme is
+a set of algorithms (Share,Reconstruct) with the following
+syntax:
+1. Share : I →Sn, a randomized algorithm that splits a
+message (from domain I) into n shares (in domain S)
+2. Reconstruct : S≤n →I ∩⊥, a reconstructing algorithm
+that combines shares output by Share.
+We require our secret sharing scheme to satisfy the following
+two properties:
+1. Correctness: For all x ∈I, if (x1,x2,...xn) ←Share(x),
+then
+for all sets P ⊆[n] such that A(P) = 1,
+Reconstruct({xi}i∈S) = x.
+2. Uniformity: For all x ∈I, if (x1,x2,...xn) ←Share(x),
+then for all sets P ⊆[n] such that A(P) = 0, {xi}i∈P is
+computationally indistinguishable from uniform distri-
+bution over S|P|
+Public Key Encryption. We revisit the definition of CCA-
+secure public key encryption:
+Definition 2 (CCA Public Key Encryption). A CCA
+Public Key Encryption scheme is a set of algorithms
+(KeyGen,Encrypt,Decrypt) that satisfies two properties:
+1. Correctness: For all messages m, and (sk,pk) ←
+KeyGen(1λ), Decrypt(sk,Encrypt(pk,m)) = m.
+2. CCA-Security: The advantage of all adversaries A in
+the following game with challenger C is negligible:
+(a) C runs (sk,pk) ←KeyGen(1λ) and sends pk to A
+(b) A picks two messages m0,m1 of same length and
+sends it to the challenger.
+(c) C
+picks a random
+bit b and sends c ←
+Encrypt(pk,mb) to A.
+(d) A can request polynomial number of decryption
+queries from the challenger, as long as the query
+is not c.
+(e) A outputs b′ and wins if b = b′.
+2HashDH OPRF. Jarecki et al [20] provide a construction
+for a minimally interactive UC-secure oblivious PRF (OPRF).
+Informally, an OPRF allows a client, with input x, to oblivi-
+ously learn F(k,x) for a target PRF F, where the PRF key k
+is held by a server. For a formal definition, we refer the reader
+to [20].
+6
+
+FaoKVS
+Setup: Initializes an empty public list of lists L.
+On input (MakePost,BID,post) from P:
+1. Append post to the end of L[BID] (create a list if it
+doesn’t exist).
+2. Send (MakePost,BID,post) to S (if P ̸= S)
+On input (GetPost,BID) from P:
+1. Set T ←L[BID].
+2. Set ℓ←|T| and post = T[ℓ−1]
+3. Send back (post,ℓ) to P.
+Figure 1: Append-only Key Value Store Functionality,
+FaoKVS.
+Jarecki et al’s 2HashDH construction computes a target
+PRF F(k,x) = H2(x,H1(x)k), where H1 and H2 are random or-
+acles. H1 : {0,1}∗→G converts a low entropy x into a group
+element, and H2 : {0,1}∗×G →D converts x and group ele-
+ment G into the target output domain D. In our construction,
+D is going to be the share space of the corresponding secret
+sharing scheme.
+To compute this PRF obliviously, the client first sends u =
+H1(x)r for a random scalar r, to the server. The server, sends
+back v = uk = H1(x)rk to the client. The client unblinds v and
+hashes the output along with x to get the desired output; that
+is, it computes H2(x,v1/r) = H2(x,H1(x)k).
+Append-only Key Value Store. Our construction makes use
+of an append-only key value store functionality FaoKVS, as de-
+scribed in Figure 1. The functionality is reminiscent of a trans-
+parency log; however, we additionally require the function-
+ality to return the number of values under the requested key.
+There are many ways in which such a functionality could be
+instantiated; most key-transparency systems [8,18,26,27,30]
+could be trivially reconfigured to serve as such a system. In
+our implementation, we take a more direct approach (build-
+ing on the ideas in [23]) by simply committing to a plaintext
+dictionary and embedding this commitment into a chain of
+Bitcoin transactions. See Section 6 for details.
+4
+Definition: Password-Protected Distributed
+Key Backup and Recovery
+In this section, we give both informal and formal security
+notions for our system. We note that the existing literature on
+secure backups tends to rely on informally security arguments,
+which can lead to missing subtleties. Thus, we choose to
+provide both.
+4.1
+Informal Security Goals
+We begin by enumerating a set of informal security goals:
+(1) Client configurable trust: Clients should have control
+over their own risk tolerance by arbitrarily configuring a
+threshold access policy for their backups among the set
+of online servers.9 As long as the set of compromised
+TEEs does not satisfy that access policy, then the adver-
+sary can make no more than some public known limit
+lim number of password guesses. Beyond these guesses,
+the adversary can learn nothing about the contents of the
+backup.
+(2) Forward secrecy: A backup system should allow clients
+to delete subsets of their data. As such, old backups
+must either naturally expire or expire in response to user
+requests. This should hold against an adversary which
+compromises all key material in the system after expiry.
+(3) Post-compromise Security: In the event that the adver-
+sary does successfully compromise enough servers to ac-
+cess a clients’ backups, we require that the system auto-
+matically “heal.” Specifically, messages that are backed
+up after the adversary is no longer corrupting the system
+cannot be decrypted using the key material the adversary
+has already accessed.
+(4) Existing backups remain confidential under TEE PKI
+compromise: In the event that the attestation keys for
+the TEEs are compromised, we require that the confi-
+dentiality of existing backups are not compromised. It is
+clear that this compromise will eventually result in the
+system failure, but this failure should be slow and highly
+noticeable, such that administrators can halt the system’s
+use.
+(5) Security against slow-moving adversaries:
+Confiden-
+tiality of a client’s backup should be preserved against a
+slow-moving adversary that eventually could corrupt all
+the recovery servers. Such an adversary may not be able
+to simultaneously corrupt all the servers, but could, e.g.,
+over years, gather all long-term servers’ key material.
+(6) Security under password reuse: Clients will inevitably
+reuse passwords over time. As such, we require that the
+recovery procedure does not reveal anything about the
+password.
+9Our system is technically slightly more flexible: any access policy is
+possible, providing there exists a secret sharing scheme for that access policy
+such that any set of shares that do not satisfy the policy appear pseudorandom.
+This is trivially satisfied by Shamir secret sharing [35] as well as the threshold-
+of-thresholds generalization.
+7
+
+FKeyBackup
+Setup: Initiate Active,Corr,Unregistered,Backups and RecoveryAttempts as empty lists.
+Server Management: We assume Sim is aware of all interactions in this section.
+On input (Register,S,t) from S (or Sim if S is corrupt):
+1. If S is already in Active or Unregistered, abort.
+2. Append S to Active
+3. If S is corrupt, append S to Corr.
+4. After time t has passed and S ̸∈Corr at that point in time, invoke (Unregister,S).
+On input (Corrupt,S) from Sim:
+1. If S is already in Corr, abort.
+2. Append S to Corr.
+On input (Unregister,S) from S (or Sim if S is corrupt):
+1. Remove S from Active and append S to Unregistered
+Backup Phase
+On input (Backup,BID,S,A,pwd,lim,m) from C (or Sim if C is corrupt):
+1. If C is not corrupt, sample a unique BID and use it instead.
+//Honest clients use high-entropy BID
+2. If C is corrupt and there already exists a record associated with BID in Backups, sample a unique corrupt identifier backup ID
+CBID and record (CBID,BID,S,A,pwd,m,lim) to Backups. Otherwise, record (⊥,BID,S,A,pwd,m,lim) to Backups.
+3. Send (Backup,BID,CBID,S,A,lim) to Sim.
+4. Set ctr[BID] = 0
+5. Send (CBID,BID) to C.
+Recovery Phase
+On input (InitRecovery,CBID,BID,pwd′) from C (or Sim if C is corrupt):
+//Honest clients set CBID = ⊥
+1. Retrieve record (CBID,BID,S,A,pwd,m,lim) from Backups, and abort if it doesn’t exist.
+2. Set attempt = ctr[BID]
+3. Record (CBID,BID,attempt,S,A,pwd,pwd′,m,C,lim) to RecoveryAttempts
+4. Send (RecoveryStart,CBID,BID,attempt) to Sim and all S ∈S.
+5. Update ctr[BID] = ctr[BID]+1
+On input (AllowRecovery,S,CBID,BID,attempt) from S (or Sim if S is corrupted):
+1. Fetch record (CBID,BID,attempt,S,A,pwd,pwd′,m,C,lim) from RecoveryAttempts, and abort if it doesn’t exist
+
+[…middle truncated for length…]
+
+ex. This is important, as a
+client, who has lost all key material, has no way to authenticate
+with the service provider.
+When a server Si, with trusted compute capabilities, joins,
+it generates a public key encryption key pair (ski,pki) and
+announces the public key along with a maximum uptime t and
+an attestation document. Once the time is up, the server tears
+itself down, securely deleting the secret key. The attestation
+document makes sure that the public key was generated by
+a TEE running a predetermined binary (or VM). This binary
+can be published publicly for audit. We discuss the properties
+of our binary in Section 6.
+Backup Phase. During the backup phase, the client begins
+with secret sharing its backup encryption key m into secret
+shares {m1,m2,...mn} for each server {S1,S2,...Sn}. Our
+construction supports any secret sharing scheme, as long as
+the desired access structure can be efficiently realized. The
+servers can be picked arbitrarily, based on users preference; if
+the user prefers to not keep updating the backup, it can pick
+servers with a larger uptime.
+Then, corresponding to each server, it uniformly samples a
+PRF key ki for the 2HashDH PRF, and masks the correspond-
+ing share with the PRF output on its password pwd; that is,
+si = H2(pwd,H1(pwd)ki)+mi. It then encrypts the PRF key
+ki, along with backup ID BID and attempt limit lim, under the
+server Si’s announced public key to get cti. While BID and
+lim can themselves be public, including them in the ciphertext
+is important, to make sure they are not tampered with by SP.
+After repeating the process for all servers, C sends all si’s
+and cti’s to SP’s blob storage, to be stored at location BID.
+Alternatively, a client can store it in a personal storage service,
+like Google Drive, that can be readily accessible in case their
+device is lost. This concludes the backup phase.
+Recovery Phase. To recover their secret with a candidate pass-
+word pwd′, the client samples a random field element r and
+computes com = H1(pwd′)r, and records this value on FaoKVS
+at BID. Then, it contacts all servers in it’s original access
+structure, sends server Si the backup ID BID and ciphertext
+cti from the original backup structure. The server Si fetches
+(com,ℓ) from FaoKVS, decrypts cti, checks if the BIDs (the
+one that is sent vs the one in cti) match and ℓ≤lim, and returns
+back ti = comki = H1(pwd′)r·ki. Client unblinds ti to calculate
+H1(pwd′)ki, calculates the PRF value H2(pwd′,H1(pwd′)ki)
+and unblinds si to get the secret share mi. It reconstructs mis
+to get back the secret m. In case the password is correct, i.e.
+pwd′ = pwd, this results in the correct secret m.
+Batching. Our protocol also supports coordinated batching
+from SP. That is, instead of clients directly contacting the
+servers, the clients can proxy the recovery requests through
+SP. This allows SP to additionally learn comki, however, this
+is fine, in terms of security, due to DH-assumption. This coor-
+dination allows SP to efficiently batch requests from multiple
+client, and avoid client-to-server round trips from each client.
+Now, SP could make 1 request to each server, for say 1000
+client requests, avoiding expensive round trips.
+We provide the simulator and indistinguishability proof of
+the following theorem in Section 9:
+Theorem 1. Protocol ΠKeyBackup securely realizes FKeyBackup
+in FaoKVS-hybrid, random oracle and algebraic generic
+model.
+5.1
+Adding Social Key Recovery and Proactive
+Deletion
+Adding our extensions into our protocol is direct. First, if
+we want to model social key recovery, we simply require a
+mechanism by which the public keys of a users’ contacts can
+be advertised. If we aim to backup the key material for E2EE
+systems, this is trivial, as contacts already should be exchang-
+ing public key material (and verifying safety numbers). Thus,
+the protocol can remain exactly the same. Depending on the
+10
+
+ΠKeyBackup
+Maintenance and Setup
+1. On setup, SP initiates an empty, publicly-accessible blob-store mapping backup IDs to backup structures.
+2. When a server Si joins, it samples a fresh PKE pair (ski,pki), picks a maximum uptime t, and broadcasts (pki,t).
+3. Si tears itself down, securely deleting ski, after t time has passed since provisioning.
+Backup Phase
+Inputs: Client C starts with a backup key m, a password pwd and an attempt limit lim
+1. C generates (A,n)-secret shares of m to get {m1,m2,...mn}.
+2. C picks a BID such that chain with BID doesn’t exist on FaoKVS
+3. C selects n online servers S1,S2,...Sn.
+4. for i in [n]:
+(a) C picks a random ki ←Fp and calculate si = H2(pwd,H1(pwd)ki)+mi
+(b) C encrypts (ki,BID,lim) under Si’s public key pki to get cti.
+5. C sends (BID,s1,s2,...,sn,ct1,ct2,...ctn) to SP or personal storage.
+6. SP stores (s1,s2,...,sn,ct1,ct2,...ctn) at index BID in the blob-store (and aborts if entry at BID already exists).
+Recovery Phase
+Inputs: Client C starts with a password attempt pwd′ and BID
+1. C fetches (s1,s2,...,sn,ct1,ct2,...ctn) from SP’s blob-storage at index BID.
+2. C samples r uniformly from Fp, computes com = H1(pwd′)r, and sends (BID,com) to SP
+3. SP sends (MakePost,BID,com) to FaoKVS.
+4. for i in [n]:
+(a) C sends (BID,cti) to Si.
+(b) Si sends (GetPost,BID) to FaoKVS to get back (com,ℓ)
+(c) Si decrypts cti, using ski, into (ki,BID′,lim), and aborts if decryption fails.
+(d) Si checks if ℓ≤lim and BID = BID′, and aborts otherwise
+(e) Si sends back ti = comki to C.
+(f) C receives ti and calculates mi = si −H2(pwd′,t1/r
+i
+).
+5. C checks if the set of servers R that did not abort satisfies A(R ) = 1, and abort otherwise.
+6. C reconstructs m from received shares and aborts if reconstruction fails.
+Figure 3: Password-protected Key Backup Protocol, ΠKeyBackup.
+11
+
+limitation on a users’ contact’s devices, it may be more appro-
+priate to remove formal guess limiting for these shares and
+instead enforce guess limits by (1) only allowing recovery
+queries to happen over NFC, so that face-to-face verification
+can happen, and (2) requiring the users’ contact to manually
+approve each query through the devices user interface. Imple-
+menting these features does not require and changes to the
+protocol itself.
+Similarly, allowing clients to proactively delete their exist-
+ing keys simply requires replacing the existing CCA-secure
+public key encryption with a puncturable, CCA-secure public
+key encryption scheme [17]. Otherwise, the entire protocol
+remains the same.
+6
+Implementation
+We implement a PoC of our scheme in Rust in 4400 lines of
+code. We use ECIES encryption scheme, from ecies Rust
+package, for CCA-secure public key encryption. This is essen-
+tially hash Elgamal, using secp256k1 as the Elliptic Curve
+and AES-256-GCM as the symmetric cipher. We use SHA256
+to realize our random oracles.
+Realizing FaoKVS. Again, we emphasize that the choice os
+implementation for FaoKVS is orthogonal to the rest of the
+system design. We first describe the choices we make within
+our implementation before discussing alternatives.
+Our implementation realizes FaoKVS using Bitcoin. Specif-
+ically, during initialization, the service provider generates a
+new bitcoin wallet and adds some Bitcoin to it, to cover for fu-
+ture transaction fees. It maintains an invariant, about its wallet,
+that it always have one available UTXO. Whenever it needs
+to make a transaction with some associated data (more on
+the contents later), it spends the previous UTXO, to generate
+two outpoints: (1) an OP_RETURN script with the associated
+data, and (2) all available bitcoin (minus the fees) sent back
+to the wallet’s address. The second outpoint becomes the new
+unique UTXO. Since the wallet’s private key is only avail-
+able with the service provider, nobody else can make these
+transactions.
+Now, when the service provider needs to push the client
+query (line 3 in the recovery phase, Figure 3), it creates a
+transaction with associated data (BID,com), and informs all
+the servers about the new transaction. The servers check if the
+claimed transaction has indeed been made with the claimed
+data, using a lightweight client, and update their internal copy
+of the key-value store, along with a counter for number of
+attempts. This also means that when a new server joins, it
+needs to catch up from the root transaction to the current one.
+The above construction requires 1 transaction per query. We
+can optimize using batching. That is, when a client makes a
+recovery request, the service provider stores the query in mem-
+ory. When enough requests have been collected, the service
+provider makes a transaction with hash of all (BIDi,comi)
+tuples observed, and informs all the servers about the new
+transaction and data. Similar to the unbatched variant, the
+servers check if the hash of the transaction data matches with
+the claimed data, and update their internal map.
+As mentioned earlier, FaoKVS could also be implemented
+using either traditional HSMs with hardware counter support
+or commodity enclaves that integrate other rollback preven-
+tion techniques. Such an instantiation would allow the system
+to avoid expensive interactions with a blockchain and confir-
+mation latency. However, on the downside, this would reduce
+the security of the system, as now each HSM would have
+an individual counter, enforcing attempt limit per HSM, not
+backup. Depending on the access structure used by the client,
+this could increase the effective number of attempts. One so-
+lution to that would be to use a limit smaller than what you
+would use in a blockchain based system; however, even this
+solution is not perfect: as at the end of your effective attempt
+limit, you would be required to contact certain specific servers
+which might not be online, risking losing your secret.
+Attestation Document. We configure our TEE binary to per-
+form just three functions: (1) generate the PKE key pair, (2)
+on joining the pool of TEEs, fast forward to the latest transac-
+tion in our FaoKVS and verify that the transactions trace back
+to a hard coded root transaction; and (3) respond to recovery
+requests after performing necessary checks. As mentioned in
+Section 5, we attest to this binary and the generated public key
+and provide this attestation document along with the public
+key, publicly. Any client can audit this document against the
+binary hash before using the associated public key.
+7
+Evaluation
+We deploy and benchmark our construction on server through-
+put (i.e. number of recovery queries supported by each server),
+client runtimes, and client communication sizes.
+System Setup. We deploy the service provider on a Azure
+D8as_v5 instance in the Central US region with 32 GiB of
+RAM and 8 vCPUs. In production, the service provider should
+be deployed on a much more powerful server, as it is a central
+coordination point.
+We deploy three recovery servers with different confidential
+compute engines (i.e. TEEs), with different cloud providers:
+1. GCP (c3-standard-8 instance), with Intel TDX
+2. GCP (n2d-standard-8 instance), with AMD SEV-SNP
+3. AWS (c5.2xlarge instance), with AWS NitroTPM
+All servers have 32 GiB of encrypted memory and processor
+with 8 vCPUs, and cost between $0.4−0.9 per hour. We use
+a MacBook Air with M4 chip as the client. We deploy the
+append-only key-value store on Bitcoin testnet.
+Client Runtimes. We benchmark our client implementation
+to measure the times required to (A) generate the backup,
+12
+
+(a) Client runtimes for backup and recovery phase across different
+number of servers.
+(b) Throughput of different TEE types configured with different num-
+ber of threads.
+Figure 4: Runtime Benchmarks
+Backup Size
+Recovery Query Size
+n = 3
+0.54 KB
+32 bytes
+n = 100
+17.14 KB
+32 bytes
+Figure 5: Client side query sizes.
+and (B) recovery phase (including query generation and share
+reconstruction). We plot runtime against the number of servers
+used to share the secret in Figure 4a. These numbers are
+averaged across 100 runs. Even with 100 servers in the access
+structure, our construction requires less than 13ms and 5ms for
+backup and reconstruction phases, respectively, on average.
+Client Query Sizes. We summarize client’s backup and recov-
+ery query sizes in Figure 5. For a single backup to n servers,
+the backup contains n ciphertexts and n field elements (for
+shamir secret shares masked with PRF output). Each scalar
+takes 32 bytes (256 bits) and each ciphertext, in our imple-
+mentation, requires 137 bytes. The entire backup struct, for
+n = 100, along with all metadata, requires 17551 bytes (≈
+17.14 KB). For n = 3, the backup size is 559 bytes. Roughly,
+for n servers, the backup size is 33+175n bytes.
+For recovery phase, the client only needs to send a single
+group element to the service provider, consisting of 32 bytes.
+Throughput. To benchmark the throughput of the servers dur-
+ing recovery phase, consider the following experimental setup:
+the service provider hosts 1000 backups for 1000 clients.
+Each backup is configured to require responses from all three
+servers. Then, during recovery phase, the service provider
+collects recovery queries from all clients. Once all requests
+are collected, the service provider makes a Bitcoin transaction.
+Once the transaction propagates, the service provider contacts
+all of the servers to get back their recovery responses. For all
+TEE types (i.e. TDX, SEV-SNP and NitroTPM), we measure
+the number of queries supported by the server per second,
+in this setup. We run this experiment, 100 times, against the
+TEE server configured with different number of threads and
+present the averaged numbers in Figure 4b. Our results do not
+include the time required to confirm the transaction.
+Intel TDX and AMD SEV-SNP provide comparable per-
+formance, peaking at 4420 and 4242 queries per second, re-
+spectively, while AWS NitroTPM has a slightly lower peak
+throughput of 3209 queries per second.
+8
+Related Works
+Password-Protected Secret Sharing Our work is deeply in-
+spired by the works on Password Protected Secret Sharing,
+first introduced by Bagherzandi et al [4]. There has been a sig-
+nificant line of work on improving the efficiency [1,7,19,21]
+and providing formal security analysis [20]. Our work builds
+on the ideas in these works by confronting the real-world chal-
+lenges that come with deploying these systems and providing
+security properties like forward secrecy, post-compromise
+security, and robustness against PKI compromise.
+Rollback Prevention
+in
+Enclaves.
+Nimble
+[3]
+and
+ROTE [29] both consider augmenting TEEs to detect roll-
+back attacks. Nimble achieves this by building a ledger, while
+ROTE uses a novel distributed algorithm to achieve the same.
+These works, however, do not consider how to maintain secu-
+rity when the trusted hardware itself can be compromised.
+Kaptchuk et al [24] formalize a way to augment a stateless
+trusted execution environment with a ledger, to allow the
+hardware with limited secure memory to maintain arbitrary
+13
+
+states and prevent replay/rollback attacks. They also consider
+limiting password attempts using this system.
+Secure Key Recovery using Trusted Hardware. There has
+also been work on using trusted execution environments to
+implement secret key recovery protocols [2], with most pop-
+ular implementations of such being by WhatsApp [40] and
+Apple [15,16]. These works, however, require HSMs to work
+and to the best of our knowledge, assume un-breakability of a
+single HSM (or respective trusted hardware).
+To overcome this issue, SafetyPin [12] explored the idea
+of splitting the secret among low-cost HSMs while limiting
+password guesses counters. At its core, SafetyPin clients hash
+their password (and some public parameters) to determinis-
+tically select a subset of servers and encrypt secret shares of
+their message to these servers. This results in a non-interactive
+backup procedure similar to ours, but does not make use of the
+OPRF template that has become standard. Additionally, Safe-
+tyPin explores using puncturable encryption to get forward
+secrecy in a very similar manner to our own work. Finally,
+they build a distributed log to limit password attempts. While
+the ideas presented in SafetyPin are elegant, their construc-
+tion suffers from two deployability challenges. First, they
+leverage random auditing to ensure the password log is being
+constructed honestly, which is risky when the auditors could
+be cloud-deployed TEEs, as we consider in our work. Sec-
+ond, their construction provides no post-compromise security,
+forward secrecy requires clients to actively puncture backups,
+and ensuring password-reuse is safe requires active checking
+on the part of clients.
+SVR3 [11] is a more recent work which was partially de-
+ployed by Signal. Similar to our work, they also make use
+of OPRF-based PPSS protocol with counters to implement
+attempt limits. Instead of public ledgers, they make use of a
+modified version of Raft to implement counters. A key limita-
+tion of SVR3 is that it is not designed with forward secrecy
+or post compromise security in mind. And does not protect
+against TEE PKI Compromise.After publication, the authors
+of SVR3 added a note about key rotation, in response to identi-
+fied issues. It is unclear how it would be implemented at scale,
+specifically because SVR3 requires interaction for backups.
+Our construction builds on some of the best ideas devel-
+oped in SafetyPin and SVR3, while offering improved deploy-
+ability and security. Specifically, our non-interactive backup
+scheme is similar, in spirit, to the one considered in SafetyPin,
+but uses the OPRF approach considered in SVR3 (among oth-
+ers). Similarly, SafetyPin leverages the idea that each HSM
+should use different key material, but does not consider using
+commodity cloud-based TEEs, which SVR3 does. Neither
+work first-order considers key rotation.
+We note that neither SafetyPin nor SVR3 provide a proofs
+of security or formal definitions. Davies et al. [40] provide a
+security proof for WhatsApp’s backup system. For a detailed
+survey of recovery systems, we refer the reader to [6].
+14

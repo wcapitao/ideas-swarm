@@ -1,0 +1,274 @@
+Breaking MCP with Function Hijacking Attacks:
+Novel Threats for Function Calling and Agentic Models
+Yannis Belkhiter
+yannis.belkhiter@ibm.com
+IBM Research Europe
+Trinity College Dublin
+Giulio Zizzo
+giulio.zizzo2@ibm.com
+IBM Research Europe
+Sergio Maffeis
+sergio.maffeis@imperial.ac.uk
+Imperial College London
+Seshu Tirupathi
+seshutir@ie.ibm.com
+IBM Research Europe
+John D. Kelleher
+john.kelleher@tcd.ie
+Trinity College Dublin
+ADAPT Research Centre
+Abstract
+The growth of agentic AI has drawn significant attention to function calling Large Language
+Models (LLMs), which are designed to extend the capabilities of AI-powered system by in-
+voking external functions. Injection and jailbreaking attacks have been extensively explored
+to showcase the vulnerabilities of LLMs to user prompt manipulation. The expanded capa-
+bilities of agentic models introduce further vulnerabilities via their function calling interface.
+Recent work in LLM security showed that function calling can be abused, leading to data
+tampering and theft, causing disruptive behavior such as endless loops, or causing LLMs
+to produce harmful content in the style of jailbreaking attacks. This paper introduces a
+novel function hijacking attack (FHA) that manipulates the tool selection process of agen-
+tic models to force the invocation of a specific, attacker-chosen function. While existing
+attacks focus on semantic preference of the model for function-calling tasks, we show that
+FHA is largely agnostic to the context semantics and robust to the function sets, making
+it applicable across diverse domains. We further demonstrate that FHA can be trained to
+produce universal adversarial functions, enabling a single attacked function to hijack tool
+selection across multiple queries and payload configurations. We conducted experiments on
+5 different models, including instructed and reasoning variants, reaching 70% to 100% ASR
+over the established BFCL dataset. Our findings further demonstrate the need for strong
+guardrails and security modules for agentic systems.
+1
+Introduction
+Function Calling (FC) is at the core of agentic AI systems, providing agents with the ability to invoke
+functions relevant to a natural language intent (Abdelaziz et al., 2024; Patil et al., 2023). Within agentic
+AI research, the Model Context Protocol (MCP) has emerged as a popular framework that standardizes
+the communication between LLM agents (Hou et al., 2025). Already widely used, FC capability introduces
+additional security concerns.
+Agentic AI enables an agent to autonomously interact with an execution
+environment, and this expanded interactivity increases the attack surface of the system. As shown in Table
+1, a growing body of work has started to explore novel attack vectors that exploit the FC mechanisms of
+1
+arXiv:2604.20994v1 [cs.CR] 22 Apr 2026
+
+Benign MCP usage
+user
+Github MCP Server
+Benign tools – Safe MCP
+MCP Client
+Process hidden from the user
+MCP Client
+Querying 
+available 
+tools 
+MCP 
+Client 
+selects
+the tool
+git_push
+"Create a private repository 
+called Hello World, including 
+a small description."
+…Accessing 
+MCP Server...
+{"name": "create_repository", 
+"parameters": {"name": "Hello World", 
+"private": true, "description": “…"}}
+git_push
+merge_branch
+delete_repository
+create_repository
+Selected tool
+Action – Repository Hello World 
+successfully created
+Description: 
+“Delete a git repository […]”
+Arguments:
+{“name”: “…”, “private”: {0,1}}
+Description: 
+“Create a git repository.”
+Arguments:
+{“name”: “…”, “private”: {0,1}}
+git_push
+FH-attack on MCP
+user
+Github MCP Server
+Corrupted tools – Attacked MCP
+MCP Client
+Process hidden from the user
+Hijacked MCP Client
+Attacker
+Querying 
+available 
+tools 
+MCP 
+Client
+selects 
+the tool
+"Create a private repository called Hello 
+World, including a small description."
+…Accessing 
+MCP Server...
+{"name": ”delete_repository", 
+"parameters": {{"name": “mcp_server”}}
+git_push
+merge_branch
+create_repository
+FH-attack
+Target Function: delete_repository
+Insert tokens in the description to 
+trigger the function 
+delete_repository
+Selected tool
+Action – Repository mcp_server 
+successfully deleted
+Description: 
+“Create a git repository […]”
+Arguments:
+{“name”: “…”, “private”: {0,1}}
+Description: 
+“Create a git repository. xBr:- x x $ x”
+Arguments:
+{“name”: “…”, ...}
+Figure 1: High-level example of FH-attack on a GitHub MCP Server (details in Appendix F).
+LLM agents. Nevertheless, to our best knowledge, most research focused on generating harmful content,
+and overlooked the broader challenge of controlling the perturbation of the FC process itself. To date, there
+remains a lack of methods aiming to robustly and systematically perturb the function calling task.
+Table 1: Attacks on Function Calling. P.I.: Prompt Injection, A.P.: Adversarial Perturbation, T.C.: Tool-Call
+Type of Attack
+Attack Location
+Intent
+Method
+P.I.
+A.P.
+User Prompt
+Tool Args.
+Harmful Behavior
+Disrupt T.C.
+Hijack T.C.
+(Zhan et al., 2024)
+✓
+✓
+✓
+✓
+(Wu et al., 2024)
+✓
+✓
+✓
+(Zhang et al., 2024)
+✓
+✓
+✓
+✓
+(Andriushchenko et al., 2025)
+✓
+✓
+✓
+✓
+(Debenedetti et al., 2024)
+✓
+✓
+✓
+✓
+FHA (Ours)
+✓
+✓
+✓
+To address this challenge, this paper demonstrates that FC models can be hijacked, showing a novel risk of
+the usage of LLMs, especially in the context of agentic AI systems. In particular, our new function hijacking
+attack (FHA) manipulates the tool selection process of agentic models to force the invocation of an attacker-
+chosen function. To achieve this objective, our attack inserts adversarial tokens in the description of a specific
+function to enforce the generation of a function call intended by the attacker. The FHA is implemented by
+adapting the GCG attack from Zou et al. (2023) to fit the FC task and the hijacking objective. Figure 1
+shows an example of FHA in action. In the rest of the paper we detail the FHA attack and demonstrate its
+key properties:
+• Effectiveness: We evaluated the attack against 5 different FC models (instructed and reasoning), on
+scenarios where the attacker perturbs the function calling mechanism in different ways. Our findings
+reveal Attack Success Rates ranging from 70% to 100%.
+• Robustness: Compared to existing attacks, which rely on semantic preference between the prompt and
+the function, FHA is agnostic to FC contexts. We show in Section 6 that our attack is effective over
+diverse domains, and robust across multiple perturbations of the payload.
+• Universality: We further show that FHA can be made universal with regards to queries and payloads
+perturbations. We introduce an extended version of our algorithm, that design a enhance the robustness
+of the FHA with regards to various alternative perturbations.
+2
+
+2
+Related Work
+Recent research on LLM security has revealed new threats to the use of generative models (Yi et al., 2024).
+This section offers an overview of the current state-of-the-art for agentic system security.
+NLP attacks. Prior work, such as GCG (Zou et al., 2023), or AutoDAN (Liu et al., 2024) demonstrated
+that adversarial attacks on LLMs can deviate models from their expected behavior with minimal input
+manipulation at inference time, breaking model alignment. More recently, research in Red Teaming (Rawat
+et al., 2024) further demonstrated the impact of adversarial attacks.
+Agentic systems. Recently, research has shifted towards agentic AI, where LLMs are augmented with
+external tools or memory to interact with their environment (Wang et al., 2024a; Guo et al., 2024; Yao et al.,
+2023; Schick et al., 2023). Anthropic standardized the use of tools by agents with the MCP framework (Hou
+et al., 2025), specifying a protocol to regulate the interaction between LLMs, databases and other tools.
+Another example is CoTools from Wu et al. (2025), a framework that generalizes the use of tools in the
+context of reasoning tasks.
+Security of LLM agents. Although MCP significantly enhances the capabilities of models, the introduction
+of external modules increases vulnerability to malicious users (Vassilev et al., 2025).
+Recent work has
+acknowledged security issues with agentic systems, and identified potential new vulnerabilities. He et al.
+(2024) raised concerns about specific threats on agents, including manipulation of the database, available
+functions, as well as privacy risks for a user leading to leak of sensitive information. Similarly, Hou et al.
+(2025) identified the potential risk of MCP database manipulation. In addition, Intelligence (2025) lists
+recent MCP vulnerabilities and attacks.
+Function calling attacks. Before the rise of LLMs, Kumar et al. (2018) demonstrated an attack on voice-
+activated agents such as Amazon Alexa. The authors introduced the concept of skill squatting, referring to
+the exploitation of phonetic ambiguities in spoken user commands to trigger malicious skills (i.e. tools in this
+context) that can be invoked in place of benign ones. This work demonstrated how attackers could exploit
+the environment to manipulate the interaction between agent and user, anticipating attacks on LLMs.
+Jailbreaking and prompt injection attacks can be effective on FC models. For instance, Wu et al. (2024)
+showed that tool-calling can be leveraged as a trojan horse to jailbreak LLMs and generate harmful content.
+Zhan et al. (2024) demonstrated that indirect prompt injection on the output of a function call can lead
+to direct harm or data stealing.
+Similarly, Debenedetti et al. (2024) suggested a novel framework and
+benchmark to assess vulnerabilities of agentic systems in the usage of specific applications such as Slack,
+email, and others. Zou et al. (2024) demonstrated the vulnerability of FC models to call harmful functions,
+leading to the generation of unsafe content. Wu et al. (2025) showed that input containing a vast quantity
+of available functions can lead to miscalls by models. Invariant Labs (2025) introduce the Tool Poisoning
+Attack on MCPs where attackers inject a malicious prompt in the description of functions. Zhang et al.
+(2024) showed that prompt injection attacks targeting the user query itself can lead to incorrect function
+calls.
+In contrast to our results, they find that adversarial perturbations have limited effectiveness (see
+Section 8). Closer to our work, Wang et al. (2025) introduce the MCP Preference Manipulation Attack
+(MPMA) that edits the name or description of a function specifically to be preferred to the ones available
+to the FC model.
+3
+Preliminaries
+In this section, we introduce function calling models and their mathematical notation.
+Large Language Models. We begin by formalizing the auto-regressive decoding process of LLMs. Let
+us assume x1:s is a (1, s) dimensional vector containing the tokens of the input sequence, where each token
+xi ∈{x1, ..., xV }, |V | being the size of the vocabulary. We can approximate the next-token generation as
+follows (Zou et al., 2023):
+Pπθ(xs+1:s+n | x1:s) ≈
+n
+Y
+i=1
+Pπθ(xs+i | x1:s−i+1)
+(1)
+3
+
+where Pπθ(xs+1:s+n | x1:s) is the probability of auto-regressively generating the output sequence xs+1:s+n,
+given the input x1:s and πθ the model parametrized by θ.
+FC models. These are usually standard LLMs fine-tuned to perform tasks related to API calling (Abdelaziz
+et al., 2024; Patil et al., 2023). We build upon the LLM’s generation process set out in Equation 1, extending
+it to formally describe FC generation. Given a user query q, the objective of model πϕ, fine-tuned for the
+function calling task and parametrized by ϕ, is to predict the most appropriate function fj from a set of
+available functions F = {f1, f2, ..., fm}. The model computes the probability of predicting function fj given
+the input context x1:s representing the input token sequence, including both the available functions x1:|F |,
+and the user query q = x|F |+1:s.
+Pπϕ(fj|x1:s) = Pπϕ(fj|x1:|F | ∪x|F |+1:s)
+(2)
+Equation 2 is agnostic with respect to the representation of fj in a specific agentic protocol. The most
+common representation begins with the function name fname
+j
+followed by aj,1, aj,2, ..., aj,k values for the k
+arguments of the function:
+fj = {f name
+j
+, aj,1, aj,2, . . . , aj,k}
+(3)
+To help language models perform FC tasks, most providers introduce special-purpose tokens that explicitly
+signal the beginning and structure of function calls. These help enforce the task format and improve the
+model’s ability to identify and invoke the correct functions. For notational clarity we omit such tokens here.

@@ -1,0 +1,1358 @@
+BTX : Simple and Efficient Batch Threshold Encryption
+Amit Agarwal, Sourav Das, Babak Poorebrahim Gilkalaye, Peter Rindal, and Victor Shoup
+Category Labs
+Abstract
+Batched threshold encryption (BTE) enables a committee of servers to jointly decrypt any
+chosen subset of ciphertexts from a large pool, while all remaining ciphertexts stay private. BTE
+is a key building block for encrypted mempools, where transactions are encrypted until block
+inclusion to mitigate maximal extractable value (MEV). Existing epochless BTE constructions
+either require user-chosen ciphertext indices that create coordination and censorship concerns
+or are computationally inefficient.
+In this paper, we present BTX, a simple and concretely efficient BTE construction that is
+both epochless and collision-free: encryption does not require a user-chosen batch index. Our
+scheme achieves the shortest ciphertext size among all known BTE constructions having the
+same size as a standard elgamal ciphertext.
+By making the scheme amenable to FFT, we
+reduce the decryption cost to O(B log B) group exponentiations and O(B) pairings, where B is
+the size of the dynamically chosen batch of ciphertexts.
+We implement BTX and two baselines in a shared, aggressively optimized C++ codebase over
+BLS12-381 with AVX-512 vectorization, FFT-based backends where applicable, and additional
+low-level engineering throughout. At batch size B = 512, using a single core, BTX requires
+approximately 598 ms total for decryption, compared with 1197 ms for the FFT optimized
+version of partial-fraction evaluation baseline [7], an overall 2.0× improvement.
+1
+Introduction
+Batched threshold encryption (BTE) enables a committee of servers to jointly decrypt an arbi-
+trarily chosen subset (batch) of ciphertexts from a large pool, while all remaining ciphertexts stay
+private [11, 2, 10, 9]. The defining feature of BTE is scalability: the total server-to-server communi-
+cation required for decryption grows sublinearly in the batch size and is independent of the overall
+pool size. This makes BTE a natural building block for encrypted mempools, where transactions are
+encrypted until they are included in a block. This is a key approach to mitigate maximal extractable
+value (MEV) [18, 26, 23]. Practical encrypted mempools operate under tight latency budgets. Re-
+ducing both the communication and the computation of batch decryption while supporting large
+batch sizes is therefore an important problem.
+Recent work [11, 12, 2, 10, 9, 1, 27, 4] makes substantial progress toward this goal. Choudhuri
+et al. [11] introduced BTE and achieved low decryption communication, but their construction
+requires an MPC-based setup for each block. Later schemes [12, 2] remove this repeated setup
+cost. However, they require each ciphertext to be generated with respect to a unique decryption
+session ID; and each session can have a single batch decryption. In the encrypted mempool setting,
+the decryption session ID corresponds to a block ID, so each block has its own mempool of pending
+transactions and the transactions cannot roll over to the next block if they are not included. This
+is undesirable: it reduces flexibility and creates avenues for censorship.
+1
+
+BEAT-MEV [10] presents an alternative construction where ciphertexts are not tied to a de-
+cryption session. However, BEAT-MEV suffers from a collision problem: each ciphertext carries
+an index from a small namespace, and each decryption session can decrypt at most one ciphertext
+per index. Follow-up works [9, 1] improve the computation cost and support non-interactive setup,
+respectively, while retaining the same collision issues.
+Two other works, Fernando et al. [15] and Boneh et al. [7], address all the above issues. However,
+Fernando et al. [15] require a large CRS proportional to the number of batches (decryption sessions)
+and a higher asymptotic computation cost (see Table 1), and Boneh et al. [7] incur higher concrete
+computation cost (see §8). We elaborate on related work in §2.
+In this paper, we present BTX, a simple and concretely efficient BTE construction that addresses
+all the above issues while maintaining high efficiency. Similar to [7], to achieve these results we
+increase the secret key size of each decryptor to linear in the batch size. In contrast to [7], our
+scheme is conceptually much simpler without needing any partial-fraction-based techniques and
+also yielding better concrete costs (in terms of ciphertext size and decryption computation). A
+second key idea is to make the scheme amenable to Fast Fourier Transform (FFT) acceleration.
+We elaborate on these ideas in Section 3.
+We summarize our contributions below.
+• A collision-free and epochless BTE. We present a new BTE scheme where ciphertexts are not
+tied to any epoch (decryption session) and are collision-free, i.e., encryption does not require a
+user-chosen index.
+• Quasi-linear decryption with dynamic batch sizing.
+We improve the computation cost of our
+scheme by making it amenable to FFT/NTT, and achieve a decryption cost of O(B log B) group
+exponentiations and O(B) pairings. Here, B is the actual batch size. This is an improvement
+over the prior-best cost of O(Bmax log Bmax) exponentiations and O(Bmax) pairings [1], where
+Bmax ≥B is a protocol parameter indicating the maximum supported batch size.
+• Shortest ciphertext size. Our scheme achieves the shortest ciphertext size compared to all prior
+schemes. The ciphertext in our scheme has exactly the same size as a standard elgamal encryption
+- one additional source group element besides the usual additive overhead due to message length
+and Schnorr-based NIZK proof (for CCA security).
+• Evaluation. We implement BTX, BEAT++, and the partial-fraction evaluation baseline (PFE) in
+a shared, aggressively optimized C++ codebase with AVX-512 vectorization [22] over BLS12-
+381. This includes FFT-based backends where applicable, optimized MSM/multipairing paths,
+and additional micro-optimizations across the stack, so the comparison is against best-effort
+implementations of the strongest prior protocols rather than against lightly optimized reference
+code. At batch size B = 512, using a single core, BTX requires ≈598 ms total for decryption,
+compared with 1197 ms for PFE— an overall 2.0× improvement.
+Paper organization. The rest of the paper is organized as follows. We discuss related work
+in §2 and present a technical overview of BTX in §3. We describe preliminaries and formalize the
+BTE definitions in §4. We present our construction in detail in §5 and describe our computational
+optimizations in §6. We analyze correctness and security in §7 and present our evaluation in §8.
+2
+Related Work
+We summarize our comparison with prior work in Table 1 and describe them next.
+2
+
+Table 1: Comparison of BTE schemes. Here, B denotes the actual batch size and Bmax denotes the
+maximum supported batch size. CR denotes “censorship resistance” and signifies that the scheme
+is index-independent and not vulnerable to censorship attack due to index collision among clients
+generating ciphertexts. The decryption complexity is in terms of number of group operations.
+Scheme
+CR
+Epochless
+Decryption complexity
+Ciphertext size
+Batched IBE [1]
+✓
+✗
+O(B log2 B)
+3|G1| + |GT |
+✗
+✗
+O(Bmax log Bmax)
+3|G1| + |GT |
+Fernando et al. [15]
+✓
+✓
+O(B log2 B)
+2|G1| + |GT |
+BEAT-MEV [10]
+✗
+✓
+O(B2)
+3|G1| + |GT |
+Gong et al. [19]
+✓
+✗
+O(B log2 B)
+2|G1| + |GT |
+✗
+✗
+O(Bmax log Bmax)
+2|G1| + |GT |
+Agarwal et al. (BEAT++) [1]
+✗
+✓
+O(Bmax log Bmax)
+2|G1| + |GT |
+Boneh et al. (PFE) [7]
+✓
+✓
+O(Bmax log Bmax)*
+2|G1| + |GT |
+Our scheme (BTX)
+✓
+✓
+O(B log B)
+|G1| + |GT |
+*In the original presentation of Boneh et al., the decryption complexity is O(B2). However, we observe that their
+computation can be implemented in O(Bmax log Bmax) time using FFT techniques. This optimization has a larger
+constant factor and is about 2× slower than our scheme in practice; see Table 2 for a detailed comparison.
+Threshold encryption for mempool privacy. A natural approach to mempool privacy is to
+encrypt transactions under a threshold encryption scheme, where the decryption key is secret-
+shared among the validator set [3, 21]. However, this approach incurs a communication cost of
+O(N · B) for decrypting B ciphertexts with a committee of N servers. For large batches and large
+validator sets, this cost is prohibitive.
+Mempool privacy using threshold identity-based encryption. Shutter [14] and Fairblock [24]
+use threshold identity-based encryption (IBE) [6] to encrypt transactions for a specific epoch (block).
+Users encrypt their transactions to a target block using an IBE scheme, and the decryptors release
+an O(1)-size decryption key for that epoch, which enables decryption of all ciphertexts encrypted
+to that epoch. This achieves O(N) total communication cost. However, releasing the epoch key
+decrypts all ciphertexts in that epoch, so ciphertexts not included in the batch lose their privacy.
+D¨otting et al. [13] present a similar approach with the same all-or-nothing privacy limitation.
+Epoch-bound BTE. Choudhuri et al. [11] introduced batched threshold encryption (BTE), achiev-
+ing O(N) total decryption communication while preserving the privacy of ciphertexts outside the
+selected batch. However, their construction requires a separate setup for every decryption ses-
+sion (i.e., every block in the mempool application).
+Concurrent works [12, 1, 27] remove the
+per-block setup requirement while achieving O(N) total communication cost.
+Moreover, these
+constructions incur O(Bmax log Bmax) group exponentiations and O(Bmax) pairings to decrypt any
+batch of B ≤Bmax ciphertexts. However, both approaches bind each ciphertext to a specific de-
+cryption session or batch identity (block or epoch label). A ciphertext can be decrypted only within
+its designated session. In the encrypted mempool setting, this gives each transaction only one in-
+clusion opportunity, limiting flexibility and creating avenues for censorship. Very recently, [19] give
+a BTE construction in the plain model with cost similar to prior works.
+Epochless BTE. BEAT-MEV [10] introduced the first epochless BTE with concrete efficiency and
+no ciphertext-to-block binding, while requiring only a reusable one-time setup. However, BEAT-
+MEV requires each ciphertext to carry a user-chosen index from a small set, with the constraint
+3
+
+that each decryption session can decrypt at most one ciphertext per index. This creates a coor-
+dination problem and a corresponding censorship surface. BEAST-MEV [9] extends BEAT-MEV
+with silent (non-interactive) setup. Agarwal et al. [1] extend BEAT-MEV to support weighted val-
+idators and lower the computation cost to O(Bmax log Bmax) exponentiations and O(Bmax) pairings,
+compared with O(B2) pairings in BEAT-MEV. Both of these works retain the same indexed design
+and collision issue.
+Collision-free BTE. Fernando et al. [15] and Boneh et al. [7] each address both the collision and
+session-binding issues. Fernando et al. [15] achieve collision-free BTE but require a CRS whose size
+grows with the number of decryption sessions, which limits long-lived deployments, and a higher
+asymptotic computation cost (see Table 1). Boneh et al. [7] present a collision-free BTE based on
+partial-fraction techniques. Their construction avoids the large-CRS limitation but incurs higher
+concrete computation cost (see §8 for a concrete comparison).
+Other research.
+Bhattacharyya et al. [4] study traceable threshold encryption for mempool
+privacy, focusing on accountability of colluding decryptors rather than selective batch decryption
+with pending transaction privacy.
+3
+Technical Overview
+Notation. We use [[x]]1, [[x]]2, [[x]]T to denote group elements in G1, G2, GT respectively, and ◦for
+the bilinear pairing, so that [[a]]1 ◦[[b]]2 = [[ab]]T . Let Bmax denote the maximum supported batch
+size and B ≤Bmax the actual batch size in the current decryption session. We summarize our
+construction in Fig. 2 (single-server setting) and Fig. 3 (threshold setting), and describe the key
+ideas next. For better exposition, we present the construction in three steps.
+Step 1 — A single-server BTE scheme. We begin with the simplest setting: a single server
+holds the full secret key and decrypts the entire batch. This version illustrates the core algebraic
+mechanism without threshold machinery. The protocol we describe below is only CPA secure. We
+describe the CCA secure scheme later.
+Setup and encryption. The secret key sk is a scalar τ ←$ Zp and the public key is a punctured
+powers-of-τ where dk below is the public decryption key and ek is an encryption key:
+dk =
+
+[[τ i]]2
+| {z }
+hi
+ 
+i∈[2Bmax]\{Bmax+1},
+ek = [[τ Bmax+1]]T .
+That is, all powers τ, τ 2, . . . , τ 2Bmax in G2 are published except the middle power τ Bmax+1. The
+corresponding target-group element ek = [[τ Bmax+1]]T serves as the public encryption key.
+To encrypt a message m ∈GT , the sender samples r ←$ Zp and outputs
+ct =
+ [[r]]1
+|{z}
+ct1
+, m + r · ek
+|
+{z
+}
+ct2
+
+.
+This is an additive ElGamal ciphertext in GT : the encryption pad is r · ek = [[r · τ Bmax+1]]T . We
+emphasize that encryption does not require a batch index. This is a key difference from [10, 1]
+where each ciphertext carries a user-chosen index.
+Batch decryption. Given an ordered batch (ct1, . . . , ctB), the server uses its knowledge of τ to
+compute the batch secret key:
+σ =
+B
+X
+ℓ=1
+τ ℓ· ctℓ,1 =
+B
+X
+ℓ=1
+[[rℓ· τ ℓ]]1.
+4
+
+This is a single multi-scalar multiplication of size B, costing O(B) scalar multiplications in G1.
+The value σ compactly encodes the contribution of the entire batch.
+To open slot ℓ, the server pairs σ with the public element hBmax−ℓ+1 = [[τ Bmax−ℓ+1]]2:
+αℓ:= σ ◦hBmax−ℓ+1 =
+B
+X
+k=1
+[[rk · τ k+Bmax−ℓ+1]]T .
+This sum contains the desired term [[rℓ· τ Bmax+1]]T (when k = ℓ), which is exactly the encryption
+pad rℓ· ek for message mℓ. However, it also contains cross-terms from every other ciphertext in the
+batch.
+The key observation is that these cross-terms are publicly computable. Define
+βℓ:=
+B
+X
+i=1
+i̸=ℓ
+cti,1 ◦hBmax−ℓ+i+1 =
+B
+X
+i=1
+i̸=ℓ
+[[ri · τ Bmax−ℓ+i+1]]T .
+The exponent Bmax −ℓ+ i + 1 equals Bmax + 1 only when i = ℓ. Since the sum excludes i = ℓ,
+every required element hBmax−ℓ+i+1 is present in the CRS. The omitted middle power is precisely
+what separates the desired term from the cross-terms. Subtracting gives
+αℓ−βℓ= [[rℓ· τ Bmax+1]]T = rℓ· ek,
+and the server recovers mℓ= ctℓ,2 −(αℓ−βℓ).
+Cost. Computing the α terms requires B pairings (one per slot). Each βℓterm sums over B −1
+pairings, so the total cost is B + B(B −1) = O(B2) pairings.
+Step 2 — Reducing the cross-term cost to O(B log B). The O(B2) cost comes entirely from
+the βℓcomputation.
+The key observation is that βℓdepends only on the relative offset i −ℓ:
+the CRS element used is hBmax+(i−ℓ)+1. Consequently, the vector (β1, . . . , βB) is not an arbitrary
+quadratic collection of terms; it is a contiguous coefficient window of a bilinear polynomial product
+— a middle-product computation in the classical sense of Hanrot et al. [20].
+Based on this observation regarding the middle product, FFT acceleration is natural.
+One
+input polynomial comes from the ciphertext batch and changes from block to block; the other
+is determined entirely by the fixed CRS powers and can be preprocessed once. The result is an
+implementation of the cross-term computation using O(B log B) group exponentiations and only
+O(B) pairings, reducing the dominant cost from quadratic to quasi-linear. We describe the formal
+reduction in §6.
+This structure also yields a clean latency decomposition. The βℓvalues depend only on the
+ciphertext batch and not on the batch secret key σ. Therefore, the entire cross-term computation
+can run as a Precompute step as soon as the batch is fixed. After σ is computed, the remaining Open
+step requires only B pairings for the αℓterms, followed by lightweight subtraction and unmasking.
+Moreover, the FFT size adapts to the actual batch size B, not the provisioned maximum Bmax, so
+smaller batches incur proportionally less work.
+Step 3 — Extension to threshold decryption. The single-server scheme requires the server
+to know τ. In a decentralized setting, no single party should hold τ.
+The extension to a threshold setting is immediate. The batch secret key σ = PB
+ℓ=1 τ ℓ· ctℓ,1 is
+a linear function of (τ, τ 2, . . . , τ Bmax) for any fixed batch of ciphertexts. If we Shamir-share each
+5
+
+power τ ℓamong N servers with reconstruction threshold t + 1, then each server j can compute its
+share of σ locally:
+σj =
+B
+X
+ℓ=1
+⟨τ ℓ⟩j · ctℓ,1,
+where ⟨τ ℓ⟩j denotes server j’s Shamir share of τ ℓ. This is one multi-scalar multiplication using only
+the server’s own shares and the public ciphertexts. Each server sends a single G1 element σj to the
+combiner, so communication is O(1) per server, independent of B.
+The combiner reconstructs σ from any t+1 shares via Lagrange interpolation: σ = P
+j∈V Lj ·σj.
+By the linearity of Shamir reconstruction, this gives the same σ as in the single-server setting.
+Everything else — αℓ, βℓ, and the unmasking — remains unchanged. The resulting protocol is a
+single-round threshold scheme. We present the full multi-server protocol in Fig. 3.
+Step 4 — CCA security and Robustness. The construction described above is only CPA-
+secure. Moreover, in the above scheme, a malicious server can submit a malformed decryption
+share to prevent honest servers from decrypting the batch of ciphertexts. We address these issues
+using standard techniques, as follows.
+• CCA security.
+We make the scheme CCA secure by requiring each encryption to include a
+(simulation-extractable) non-interactive zero-knowledge (NIZK) proof of knowledge of the en-
+cryption randomness.
+• Malicious servers. To protect against malicious decryptors, we augment the decryption key with
+commitments to each server’s shares: pki
+j = [[⟨τ i⟩j]]2 for each server j and power i ∈[Bmax]. The
+combiner verifies σj via a single batched pairing check:
+X
+ℓ∈U
+ ctℓ,1 ◦pkℓ
+j
+ ?= σj ◦[[1]]2.
+Servers that fail this check are excluded.
+We defer the formal security analysis to §7.
+4
+Preliminaries and BTE Definition
+Notations. We use λ to denote a computational security parameter, [a, b] to represent the set of
+integers {a, a + 1, . . . , b} and [n] := [1, n], x ←$ S to denote that x is sampled uniformly at random
+from set S. We use bold letters to indicate vectors. For a vector v of length n, we use vi to denote
+the ith element where i ∈[n]. By poly(λ) and negl(λ), we mean the classes λO(1) and
+1
+λω(1) . We use
+PPT to denote probabilistic poly(λ)-time Turing Machines.
+4.1
+Bilinear Groups
+We follow the notation used in [17]. A bilinear group BG is a set of three groups (G1, G2, GT ) of
+prime order p, with a (non-degenerate) bilinear map or pairing e. This map takes one element from
+G1 and one element from G2 and produces an element in GT . The groups G1 and G2 are called
+the source groups, and GT is the target group.
+The groups G1, G2 have generators g1, g2, and we use the notation [[x]]s to represent x · gs in
+the group Gs for s ∈{1, 2, T}, where x ∈Zp and the generator of GT is gT = e(g1, g2). The group
+operation is additive, and therefore [[x]]s + [[y]]s = [[x + y]]s.
+6
+
+We represent the pairing operation e([[x]]1, [[y]]2) as [[x]]1 ◦[[y]]2 = [[y]]2 ◦[[x]]1 = [[x · y]]T . This
+notation composes naturally with linear operations. For vectors u ∈Gn
+1, v ∈Gn
+2, we have uT ◦v =
+[[u1v1 + · · · + unvn]]T .
+4.2
+Shamir Secret Sharing
+We use a (t, N) Shamir secret sharing scheme over Zp. For any secret x ∈Zp, the sharing procedure
+Share(x, N, t, Ω) produces shares (⟨x⟩1, . . . , ⟨x⟩N) such that any subset T ⊆[N] of size |T| = t
+determines Lagrange coefficients (λj)j∈T satisfying P
+j∈T λj⟨x⟩j = x. Here, Ω∈ZN
+p is an evaluation
+domain of size N.
+4.3
+NIZKs
+We will need a specific type of NIZK (non-interactive zero knowledge proof), namely, a simulation-
+extractable NIZK. Intuitively, this is a NIZK with the following properties. As usual, zero-knowledge
+means that there is a simulator that can simulate proofs of true statements without knowing a
+witness. Simulation-extractable means that there is an online extractor that can efficiently extract
+in an online fashion the witness from any valid proof of a statement, even when using the zero-
+knowledge simulator to generate proofs, so long as the statement/proof pair presented to the
+extractor is not identical to any statement/proof pair for a previously simulated proof.
+As a
+formal notion, we can restate the definition from [5].
+Definition 4.1 (Non-Interactive Zero Knowledge Proofs). Let R ⊆X × W be a relation over sets
+X and W. A NIZK scheme NIZK for R is a tuple of PPT algorithms NIZK = (Setup, Prove, Verify)
+defined as follows:
+• Setup(1λ) →crs: given the security parameter λ, outputs a common reference string crs. The
+algorithms below implicitly take crs as input.
+• Prove(x, w) →π: given a statement x ∈X and a witness w ∈W, outputs a proof π.
+• Verify(x, π) →0/1: given a statement x ∈X and a proof π, outputs 0 or 1.
+Let LR denote the language defined by the relation R. A NIZK scheme must satisfy the following
+properties.
+Definition 4.2 (Completeness). A NIZK scheme for R is complete if for all (x, w) ∈R, it holds
+that
+Pr[Verify(x, π) = 1 | π ←Prove(x, w)] ≥1 −negl(λ).
+Definition 4.3 (Soundness). A NIZK scheme for R is sound if for all x /∈LR and all PPT provers
+P∗, there exists a negligible function negl(λ) such that
+Pr[Verify(x, π) = 1 | π ←P∗(x)] ≤negl(λ).
+Definition 4.4 (Zero-Knowledge). A NIZK scheme for R is zero-knowledge if there exists a PPT
+simulator Sim such that for all (x, w) ∈R,
+(x, Sim(x)) ≈c (x, Prove(x, w)).
+7
+
+Definition 4.5 (Simulation-Extractability). A NIZK scheme for R, NIZK = (Setup, Prove, Verify),
+is said to be simulation-extractable (or an SE-NIZK) if there exists a PPT extractor Ext and a PPT
+simulator Sim = (SimSetup, SimProve) such that for all PPT adversaries A, there exists a negligible
+function negl(λ) for which the following holds:
+Pr
+
+
+Verify(x∗, π∗) = 1 ∧
+x∗/∈Q ∧
+(x∗, w∗) /∈R
+
+(crs, tdsim, tdext) ←SimSetup(1λ);
+Q ←∅;
+(x∗, π∗) ←AOsim(crs);
+w∗←Ext(crs, tdext, x∗, π∗)
+
+≤negl(λ).
+Here, Osim denotes the simulation oracle:
+Osim(x) :
+Q ←Q ∪{x};
+return π ←SimProve(crs, tdsim, x).
+We will also require the extractor to be online (or straightline), meaning that the extractor does
+not rewind the adversary.
+4.4
+Hardness Assumptions
+Assumption 4.1 (Decisional n-Power Diffie–Hellman(nDH)). Let GrpGen be an asymmetric bilin-
+ear group generator. The nDH problem is hard for GrpGen if the following two distributions D0 and
+D1 are computationally indistinguishable:
+D0 =
+
+{[[xi]]1}i∈[n], {[[xi]]2}i∈[2n]\{n+1}, [[y]]1, [[xn+1 · y]]T
+
+,
+D1 =
+
+{[[xi]]1}i∈[n], {[[xi]]2}i∈[2n]\{n+1}, [[y]]1, [[z]]T
+
+,
+where (G1, G2, GT , [[1]]1, [[1]]2, [[1]]T , p, ◦) ←GrpGen(1λ) and (x, y, z) ←$ Z∗
+p.
+4.5
+Batched Threshold Encryption: Definition
+We formalize the syntax and security of Batched Threshold Encryption (BTE), following the defi-
+nition in [1].
+Definition 4.6 (Batched Threshold Encryption). A batched threshold encryption scheme BTE
+consists of the following PPT algorithms and protocols:
+• pp ←Setup(1λ): The randomized setup algorithm takes as input the security parameter λ and
+outputs public parameters pp, which is an implicit input to all subsequent interfaces.
+• (ek, dk, {skj}j∈[N]) ←KeyGen(1Bmax, N, t): The randomized key-generation algorithm takes as
+input the total number of servers N and the corruption threshold t, along with the maximum
+batch size Bmax, and outputs a public encryption key ek and a public decryption key dk to all,
+and the j-th secret key skj to server j ∈[N].
+• ct ←Enc(ek, m): The randomized encryption algorithm takes as input an encryption key ek and
+a message m, and outputs a ciphertext ct.
+• {f
+mℓ}ℓ∈[B] ←Π-BDec(dk, {ctℓ}ℓ∈[B], ⟨skj⟩j∈[N]): This is a potentially interactive protocol among
+all [N] servers for batch decryption, where the jth server has a private input skj, and all servers
+have public decryption key dk and an ordered batch of ciphertexts {ctℓ}ℓ∈[B] where B ≤Bmax.
+The protocol outputs the decrypted messages {f
+mℓ}ℓ∈[B] in the same order, where each f
+mℓis
+either a valid message or ⊥.
+8
+
+Game ExptBTE-CCA
+A,b
+(N, t, λ, Bmax):
+1: pp ←Setup(1λ)
+2: QBDec ←∅
+3: C ←A(pp)
+4: (ek, dk, {skj}j∈[N]) ←KeyGen(1Bmax, N, t)
+5: (m0, m1) ←AOBDec(ek, dk, {skj}j∈C)
+6: ct∗←Enc(ek, mb)
+7: b′ ←AOBDec(ct∗)
+8: if |C| ≤t ∧ct∗/∈QBDec :
+9:
+return b′
+10: return 0
+Oracle OBDec({cti}i∈[B]):
+// Π-BDec is run among all [N] parties where
+A controls the parties in the set C.
+1: {mi}i∈[B] ←Π-BDec(dk, {cti}i∈[B], ⟨skj⟩j∈[N])
+2: QBDec ←QBDec ∪{cti}i∈[B]
+3: return {mi}i∈[B]
+Game ExptBTE-rob
+A
+(N, t, λ, Bmax):
+1: pp ←Setup(1λ)
+2: C ←A(pp)
+3: if |C| > t : return 0
+4: (ek, dk, {skj}j∈[N]) ←KeyGen(1Bmax, N, t)
+5: (B, S, {mi}i∈[B]\S) ←AOBDec(ek, dk, {skj}j∈[N])
+6: if B > Bmax ∨S ̸⊂[B] : return 0
+7: for all i ∈[B] \ S :
+8:
+cti ←Enc(ek, mi)
+9: {cti}i∈S ←A({cti}i∈[B]\S)
+10: {emi}i∈[B] ←OBDec({cti}i∈[B])
+11: if ∃i ∈[B] \ S s.t. emi ̸= mi :
+12:
+return 1
+13: return 0
+Figure 1: Security and robustness game ExptBTE-CCA
+A,b
+and ExptBTE-rob
+A
+, respectively, for a BTE
+scheme.
+We require the BTE scheme to satisfy the correctness, IND-CCA security, and robustness properties.
+We formalize these properties in Theorems 4.7 to 4.9 and describe them next.
+Correctness. The correctness property guarantees that correctly encrypted ciphertexts success-
+fully decrypt to the original encrypted messages.
+Definition 4.7 (Correctness of BTE). A batched threshold encryption scheme BTE is correct if
+for all N ∈N, t ≤N, λ ∈N, Bmax ∈N, B ≤Bmax, and all messages (m1, m2, . . . , mB) ∈MB, the
+following holds with probability 1:
+Pr
+
+∀i ∈[B], emi = mi
+
+pp ←Setup(1λ)
+(ek, dk, {skj}j∈[N]) ←KeyGen(1Bmax, N, t)
+cti ←Enc(ek, mi)
+for i ∈[B]
+{emi}i∈[B] ←Π-BDec(dk, {cti}i∈[B], ⟨skj⟩j∈[N])
+
+
+IND-CCA Security. The IND-CCA security for BTE guarantees that an adversary cannot distin-
+guish between encryptions of two equal-length messages, even when it can invoke the batch decryp-
+tion protocol (Π-BDec) on arbitrary batches of its choice not containing the challenge ciphertext.
+Security holds even when the adversary statically corrupts servers up to t.
+Definition 4.8 (IND-CCA Security of BTE). Let ExptBTE-CCA
+A,b
+be the game as defined in Fig. 1. A
+batched threshold encryption scheme BTE is IND-CCA secure if for all N ∈N, t < N, Bmax ∈N,
+and all stateful PPT adversaries A, we have
+ Pr
+h
+ExptBTE-CCA
+A,0
+(N, t, λ, Bmax) ⇒1
+i
+−Pr
+h
+ExptBTE-CCA
+A,1
+(N, t, λ, Bmax) ⇒1
+i  = negl(λ)
+Robustness. The robustness property prevents an adversary A that can corrupt parties up to
+t from invoking the batch decryption protocol (Π-BDec) on malformed ciphertexts to disrupt de-
+cryption of correctly generated ciphertexts.
+9
+
+Definition 4.9 (Robustness of BTE). Let ExptBTE-rob
+A
+be the game as defined in Fig. 1. A batched
+threshold encryption scheme BTE is robust if for all N ∈N, t < ⌊N/2⌋, Bmax ∈N, we have:
+Pr
+
+ExptBTE-rob
+A
+(N, t, λ, Bmax) ⇒1
+
+= negl(λ) .
+Remark (Efficiency of BTE). We are interested in BTE schemes where the total communication
+complexity of Π-BDec, across all N servers, is o(B), meaning that it scales sublinearly per server
+in the batch size B.
+Definition 4.10 (Batched Encryption (BE)). The notion of Batched Threshold Encryption ( The-
+orem 4.6) is also meaningful in the single server setting (special case where N = 1, t = 0). In this
+setting, we refer to it as a Batched Encryption (BE) scheme.
+5
+Construction of BTX
+We present the BTX construction in two steps. We first describe the single-server setting (Fig. 2),
+which captures the core algebraic mechanism. We then extend it to the threshold setting (Fig. 3) by
+Shamir-sharing the secret key. In both figures, the parts needed for CCA security and robustness
+are highlighted in blue.
+5.1
+Single-Server Construction (BE)
+We first describe BTX as a BE scheme (Theorem 4.10), where a single server holds the full secret
+key sk = τ.
+Setup and key generation.
+The setup algorithm Setup(1λ) generates a bilinear group G =
+(G1, G2, GT , [[1]]1, [[1]]2, [[1]]T , p, ◦). The key generation algorithm KeyGen(1Bmax) samples a secret
+scalar τ ←$ Zp and produces three components:
+• An encryption key ek = [[τ Bmax+1]]T .
+• A decryption key dk = {hi = [[τ i]]2}i∈[2Bmax]\{Bmax+1}, i.e., all powers of τ in G2 from 1 to 2Bmax
+except the middle power Bmax + 1.
+• A secret key sk = τ.
+The encryption key ek is a single GT element. The decryption key dk consists of 2Bmax elements in
+G2 and is public. The omitted middle power [[τ Bmax+1]]2 is the key structural feature of the CRS.
+It prevents anyone from computing the encryption pad from the ciphertext alone, while the server
+can recover it using sk.
+Encryption. To encrypt a message m ∈GT , the client samples r ←$ Zp and outputs
+ct := (ct1, ct2) :=
+ [[r]]1, m + r · ek
+
+.
+This is an additive ElGamal-like ciphertext in GT : the encryption pad is r ·ek = [[r ·τ Bmax+1]]T . For
+CCA security, the client additionally computes a NIZK proof πclient of knowledge of r such that
+ct1 = r · [[1]]1, and appends it to the ciphertext (see Fig. 2). We emphasize that encryption does
+not require a batch index.
+Batch decryption. Given an ordered batch (ct1, . . . , ctB) with B ≤Bmax, the server decrypts
+them in two steps:
+10
+
+Building-blocks:
+• N is the number of servers and t is the corruption threshold.
+• λ denotes the security parameter, Bmax is the maximum batch size, B ≤Bmax is the batch size.
+• A NIZK system DL = (Prove, Verify) to prove knowledge of discrete logarithm w.r.t. an arbitrary group.
+Setup(1λ):
+1: G
+:=
+(G1, G2, GT, [[1]]1, [[1]]2, [[1]]T , p, ◦)
+←
+GrpGen(1λ)
+2: return pp := G
+KeyGen(1Bmax):
+1: τ ←$ Zp
+2: dk := {[[τ i]]2
+| {z }
+hi
+}i∈[2Bmax]\{Bmax+1}
+3: ek := [[τ Bmax+1]]T
+4: sk := τ
+5: return (ek, dk, sk)
+Enc(ek, m ∈GT ):
+1: r ←$ Zp
+// ElGamal encryption using randomness r
+2: ct1 := [[r]]1
+3: ct2 := m + r · ek
+| {z }
+pad
+// Compute NIZK proof πclient for CCA security
+4: χclient := [[1]]1
+|{z}
+χ1
+, ct1
+|{z}
+χ2
+, ct2
+5: witclient := r
+// Proving knowledge of discrete logarithm of χ2
+w.r.t. χ1
+6: πclient ←DL.Prove(χclient, witclient)
+7: return ct := (ct1, ct2, πclient)
+BDec1(pp, {ctℓ}ℓ∈[B] , sk):
+1: for all ℓ∈[B], parse ctℓas (ctℓ,1, ctℓ,2, πℓ)
+// U contains the set of only valid ciphertexts
+2: for ℓ∈[B], χclient
+ℓ
+:= ([[1]]1, ctℓ,1, ctℓ,2)
+3: U := {ℓ| ℓ∈[B] ∧DL.Verify(χclient
+ℓ
+, πℓ) = 1}
+// Computing a succinct secret key σ for the
+batch of valid ciphertexts.
+4: σ := Σℓ∈Uskℓ· ctℓ,1
+5: return σ
+BDec2(σ, dk):
+1: Parse dk as (h1, . . . , hBmax, hBmax+2, . . . , h2Bmax)
+2: for all ℓ∈U, αℓ:= σ ◦hBmax−ℓ+1
+// Compute all βi in a single shot using FFT
+3: for all ℓ∈U, βℓ:= P
+i∈U,i̸=ℓcti,1 ◦hBmax−ℓ+i+1
+// Decrypting all the valid ciphertexts
+4: for all ℓ∈U, f
+mℓ:= ctℓ,2 −(αℓ−βℓ)
+|
+{z
+}
+pad
+// Default output for all the invalid ciphertexts
+5: for all ℓ∈[B] \ U, f
+mℓ:= ⊥
+6: return {f
+mℓ}ℓ∈[B]
+Figure 2: Construction of Batched Encryption scheme (single server setting) supporting a max-
+imum batch size Bmax. We highlight parts needed for robustness and CCA security (against any
+number of malicious clients) in blue.
+Step 1. In the first step (BDec1), the server verifies the client NIZK proofs and filters out invalid
+ciphertexts, retaining the set U of valid indices. It then computes the batch secret key σ as:
+σ =
+X
+ℓ∈U
+τ ℓ· ctℓ,1 =
+X
+ℓ∈U
+[[rℓ· τ ℓ]]1.
+This is a single multi-scalar multiplication of size |U|.
+Step 2. In the second step (BDec2), the server computes the decryption materials (αℓ, βℓ) for
+each slot ℓ∈U, as follows:
+αℓ= σ ◦hBmax−ℓ+1,
+βℓ=
+X
+i∈U
+i̸=ℓ
+cti,1 ◦hBmax−ℓ+i+1,
+and recovers mℓ= ctℓ,2 −(αℓ−βℓ). For all ℓ∈[B] \ U (invalid ciphertexts), the output is ⊥.
+11
+
+We prove in §7 that αℓ−βℓ= [[rℓ· τ Bmax+1]]T = rℓ· ek, which is exactly the encryption pad for
+message mℓ. Intuitively, the exponent Bmax −ℓ+ i + 1 above equals Bmax + 1 only when i = ℓ,
+which the sum excludes.
+Cost. Computing all αℓterms requires |U| pairings. Each βℓterm requires |U| −1 pairings, for
+O(B2) pairings total. In §6, we reduce the β computation to O(B log B) group exponentiations
+and O(B) pairings.
+5.2
+Threshold Construction (BTE)
+We now extend the single-server scheme to the threshold setting, where N servers collectively hold
+the secret key and any t + 1 of them can decrypt.
+Key generation. The key generation algorithm KeyGen(1Bmax, N, t) runs exactly as in the single-
+server case to produce ek and dk, but instead of outputting sk = τ, it Shamir-shares each power τi
+for i ∈[Bmax] among the N servers:
+{⟨τ i⟩j}j∈[N] ←Share(τ i, N, t, Ω)
+for i ∈[Bmax],
+where Ω= {Ω1, . . . , ΩN} ⊆Zp is the evaluation domain. Server j receives skj = (⟨τ⟩j, ⟨τ 2⟩j, . . . , ⟨τ Bmax⟩j).
+For CCA security against malicious servers, the decryption key dk is augmented with com-
+mitments to each server’s shares: pki
+j = [[⟨τ i⟩j]]2 for i ∈[Bmax] and j ∈[N]. These enable any
+decryptors to verify the correctness of each server’s contribution (see below).
+Encryption. The encryption algorithm is identical to the single-server case.
+Batch decryption. As in the single server protocol, the batch decryption protocol Π-BDec pro-
+ceeds in two steps.
+Step 1. In the first step (Π-BDec1), each server j independently verifies the client NIZK proofs
+to determine the valid set U, then computes its share of the batch secret key:
+σj =
+X
+ℓ∈U
+⟨τ ℓ⟩j · ctℓ,1.
+Each server sends a single G1 element σj to the combiner. The communication per server is O(1),
+independent of B.
+Step 2. In the second step (Π-BDec2), a decryptor (could be the servers) first verifies each
+server’s contribution using a multi-pairing check:
+X
+ℓ∈U
+(ctℓ,1 ◦pkℓ
+j) ?= σj ◦[[1]]2.
+Let S be the subset of validators who sent valid decryption shares, and let V ⊆S with |V | > t.
+We then combine decryption shares from the servers in V using Lagrange interpolation in the
+exponent to compute the batch secret key σ as:
+σ :=
+X
+j∈V
+Lj · σj.
+As the final step of the decryption process, the decryptor computes αℓ, βℓas in the BE scheme,
+and recovers each message exactly as in the single-server case.
+12
+
+Building-blocks:
+• N is the number of servers and t is the corruption threshold.
+• λ denotes the security parameter, Bmax is the maximum batch size, B ≤Bmax is the batch size.
+• A NIZK system DL = (Prove, Verify) to prove knowledge of discrete logarithm w.r.t. an arbitrary group.
+• Shamir secret sharing scheme having algorithms Share and Lagrange
+Setup(1λ):
+1: G
+:=
+(G1, G2, GT, [[1]]1, [[1]]2, [[1]]T , p, ◦)
+←
+GrpGen(1λ)
+2: return pp := G
+KeyGen(1Bmax, N, t):
+1: τ ←$ Zp
+// Secret sharing evaluation domain Ω
+2: Ω= {Ω1, . . . , ΩN} ⊆Zp s.t. |Ω| = N
+3: ∀i ∈[Bmax],
+
+τ i
+j
+ 
+j∈[N] ←Share(τ i, N, t, Ω)
+4: for j ∈[N], skj := {τ i
+j}i∈[Bmax]
+5: dk :=
+
+
+
+
+
+
+
+
+
+
+
+{[[τ i]]2
+| {z }
+hi
+}i∈[2Bmax]\{Bmax+1}
+{[[τ i
+j]]2
+| {z }
+pki
+j
+}i∈[Bmax],j∈[N]
+6: ek := [[τ Bmax+1]]T
+7: return (ek, dk, {skj}j∈[N])
+Enc(ek, m ∈GT ):
+1: r ←$ Zp
+// ElGamal encryption using randomness r
+2: ct1 := [[r]]1
+3: ct2 := m + r · ek
+| {z }
+pad
+// Compute NIZK proof πclient for CCA security
+4: χclient := [[1]]1
+|{z}
+χ1
+, ct1
+|{z}
+χ2
+, ct2
+5: witclient := r
+// Proving knowledge of discrete logarithm of χ2
+w.r.t. χ1
+6: πclient ←DL.Prove(χclient, witclient)
+7: return ct := (ct1, ct2, πclient)
+Π-BDec1(pp, {ctℓ}ℓ∈[B] , skj):
+1: for all ℓ∈[B], parse ctℓas (ctℓ,1, ctℓ,2, πℓ)
+// U contains the set of only valid ciphertexts
+2: for ℓ∈[B], χclient
+ℓ
+:= ([[1]]1, ctℓ,1, ctℓ,2)
+3: U := {ℓ| ℓ∈[B] ∧DL.Verify(χclient
+ℓ
+, πℓ) = 1}
+// Succinct secret key share σj for the batch of
+valid ciphertexts.
+4: Parse skj as (sk1
+j, . . . , skBmax
+j
+)
+5: σj := Σℓ∈Uskℓ
+j · ctℓ,1
+6: return σj
+Π-BDec2({σj}j∈[N], dk):
+1: Parse dk as
+(
+{hi}i∈[2Bmax]\{Bmax+1}
+{pki
+j}i∈[Bmax],j∈[N]
+// S includes the indices of only those servers
+who send a valid message σj
+2: S := {j|j ∈[N] ∧P
+ℓ∈U(ctℓ,1 ◦pkℓ
+j) = σj ◦[[1]]2}
+3: Select V ⊆S s.t. |V | > t
+// Defining the share interpolation domain Ω′
+and lagrange coefficients Lω
+4: Ω′ := {Ωj}j∈V and {Lj}j∈V := Lagrange(Ω′, t)
+// Reconstruct the batch secret key σ
+5: σ := P
+j∈V Lj · σj
+6: for all ℓ∈U, αℓ:= σ ◦hBmax−ℓ+1
+// Compute all βi in a single shot using FFT
+7: for all ℓ∈U, βℓ:= P
+i∈U,i̸=ℓcti,1 ◦hBmax−ℓ+i+1
+// Decrypting all the valid ciphertexts
+8: for all ℓ∈U, f
+mℓ:= ctℓ,2 −(αℓ−βℓ)
+|
+{z
+}
+pad
+// Default output for all the invalid ciphertexts
+9: for all ℓ∈[B] \ U, f
+mℓ:= ⊥
+10: return {f
+mℓ}ℓ∈[B]
+Figure 3: Construction of Batched Threshold Encryption scheme for N servers supporting a max-
+imum batch size Bmax. We highlight parts needed for robustness and CCA security (against any
+number of malicious clients and upto t malicious servers running Π-BDec) in blue.
+Remark. We note that, in the optimistic case, i.e., when all servers are honest, we can optimize the
+computation cost to verify the validity of the decryption by first interpolating {σj}j∈S to compute
+13
+
+σ and then verify it at once by checking:
+X
+ℓ∈U
+(ctℓ,1 ◦[[τ ℓ]]2) = σ ◦[[1]]2}
+When all servers are honest, the verification above would require a multi-pairing of size B.
+6
+Computational Optimizations
+The main computational bottleneck in batch decryption is the cross-term vector (β1, . . . , βB). Recall
+from §5 that for each slot ℓ∈[B],
+βℓ:=
+B
+X
+i=1
+i̸=ℓ
+cti,1 ◦hBmax−ℓ+i+1.
+A naive implementation computes each βℓusing B −1 pairings, for B(B −1) pairings in total. In
+contrast, the αℓterms require only B pairings (one per slot) and depend on the threshold output σ.
+In this section, we show how to reduce the cross-term computation from quadratic to quasi-linear.
+6.1
+Middle-Product View
+We observe that the βℓvalues form a contiguous coefficient window of a bilinear polynomial product.
+This is exactly the middle-product pattern studied by Hanrot et al. [20]. Define the G1-valued
+polynomial
+A(X) :=
+B−1
+X
+j=0
+AjXj,
+Aj := ctj+1,1 ∈G1,
+and define the fixed G2-valued polynomial Q(X) from the CRS powers in reverse order:
+Q(X) :=
+2Bmax−1
+X
+u=0
+quXu,
+where
+qu :=
+(
+[[τ 2Bmax−u]]2
+if 2Bmax −u ̸= Bmax + 1,
+0
+if 2Bmax −u = Bmax + 1.
+The zero coefficient at position u = Bmax −1 corresponds to the omitted power [[τ Bmax+1]]2.
+Let C(X) := A(X) ◦Q(X), where coefficient multiplication is given by the bilinear map:
+X
+j
+ajXj
+◦
+X
+u
+buXu
+:=
+X
+m
+ X
+j+u=m
+aj ◦bu
+
+Xm.
+Claim 1. For each ℓ∈[B], the coefficient of XBmax+ℓ−2 in C(X) equals βℓ.
+Proof. The coefficient of XBmax+ℓ−2 is PB−1
+j=0 Aj ◦qBmax+ℓ−2−j.
+Substituting Aj = ctj+1,1 and
+using the definition of qu, we get qBmax+ℓ−2−j = [[τ Bmax−ℓ+j+2]]2 = hBmax−ℓ+(j+1)+1, except when
+j + 1 = ℓ, in which case the exponent is Bmax + 1 and qu = 0. Setting i = j + 1, the sum becomes
+P
+i̸=ℓcti,1 ◦hBmax−ℓ+i+1 = βℓ.
+The vector (β1, . . . , βB) is therefore a contiguous block of B coefficients of C(X), starting at
+degree Bmax −1. The problem of evaluating all βℓreduces to a middle-product computation, where
+the second input Q(X) is fixed across batches.
+14
+
+6.2
+FFT-Based Middle Product
+The standard way to compute a middle product is to embed the relevant coefficient window into a
+cyclic convolution of appropriate length [20]. Since Q(X) is fixed, its FFT representation can be
+precomputed once and reused across batches. Let
+m := 2⌈log2(2B)⌉.
+The precompute(B) step then performs:
+1. One forward G1 FFT of size m to transform the ciphertext polynomial A(X).
+2. m pointwise pairings in the evaluation domain.
+3. One truncated inverse GT FFT of size m to recover the product coefficients.
+4. Read off βℓfrom the relevant coefficient window.
+For power-of-two batches, this amounts to exactly 2B pairings and two FFTs of size 2B. The FFTs
+contribute O(B log B) group exponentiations, so the total cost is O(B log B) exponentiations and
+O(B) pairings.
+Note that the inverse transform operates in the target group GT , where group operations are
+approximately 3–5× more expensive than in the source groups. This affects the concrete constants
+but not the asymptotic improvement.
+6.3
+Karatsuba-Style Middle Product
+An alternative is to compute the middle product recursively using a Karatsuba-style decomposi-
+tion [20]. The coefficient window is split into overlapping subproblems, and the Karatsuba reuse
+pattern reduces the number of bilinear multiplications below the naive quadratic count.
+Since Q(X) is fixed, all required combinations of its coefficients can be precomputed once. The
+recursive recombination uses only GT additions and inversions, while the pairings occur only at the
+base level. In particular, the final exponentiation step of the pairing can be deferred through the
+recursion, yielding better constants for moderate batch sizes.
+This gives a subquadratic algorithm with O(B1.585) operations, without requiring a target-group
+FFT.
+6.4
+Centered Decryption Key
+The middle-product structure becomes particularly clean in a centered coordinate system. For each
+nonzero offset d ∈{−Bmax, . . . , −1, 1, . . . , Bmax}, define
+hd := [[τ Bmax+1+d]]2.
+In this notation, the decryption equations become
+αℓ= σ ◦h−ℓ,
+βℓ=
+B
+X
+i=1
+i̸=ℓ
+cti,1 ◦hi−ℓ.
+The cross-term depends only on the relative offset i −ℓ, and the effective decryption key window
+for a batch of size B is
+h−B, h−(B−1), . . . , h−1,
+0,
+h1, . . . , hB−1.
+This centered kernel of size O(B) is the natural input to both FFT-based and Karatsuba-based
+middle-product algorithms.
+15
+
+6.5
+Phase Decomposition
+The batch decryption path separates naturally into four phases: precompute(B), partialDecrypt(B),
+combine(n), and open(B), where B is the batch size and n := |V | is the number of valid threshold
+shares actually used in reconstruction. When robustness is enabled, two additional subroutines
+are layered on top of this path: ctxtCheck(B) inside precompute(B) and serverCheck(B, n) inside
+checked combine.
+precompute(B) — offline batch work. The combiner computes all βℓvalues using the FFT or
+Karatsuba method. Since this depends only on the ciphertext batch and the public CRS, it can
+begin as soon as the batch is fixed.
+ctxtCheck(B) — client proof filtering. If robustness against malformed ciphertexts is enabled,
+the combiner also verifies the client proofs attached to the batch ciphertexts and filters to the valid
+subset U. This subroutine is linear in B and sits naturally inside precompute(B), since it depends
+only on the ciphertext batch and public verification material.
+partialDecrypt(B) — per-server threshold work. Each server computes its aggregate share σj
+using one G1 MSM of size B.
+combine(n) — threshold reconstruction. The combiner reconstructs σ from n shares using one
+G1 MSM of size n.
+serverCheck(B, n) — optimistic server-share check. If robustness against malformed server
+shares is enabled, the combiner additionally verifies the reconstructed aggregate share against the
+public powers {[[τ ℓ]]2}ℓ∈[B]. In the optimistic path, this is one aggregate pairing check over the
+batch and therefore linear in B and essentially independent of n.
+open(B) — final opening. The combiner computes αℓfor all ℓ∈[B] (B pairings), subtracts the
+precomputed βℓvalues, and unmasks the messages.
+The precompute step runs concurrently with the threshold path (partialDecrypt and combine).
+When enabled, ctxtCheck is absorbed into the same offline batch-processing window, while serverCheck
+is absorbed into checked combine. The final open step requires only B pairings plus linear-time
+subtraction and unmasking. In encrypted-mempool deployments, where the threshold path is of-
+ten dominated by network delay, this decomposition is important: the batch-dependent FFT work
+overlaps with the threshold protocol, and the final opening step contributes as little additional
+latency as possible.
+7
+Analysis
+7.1
+Correctness
+Theorem 7.1 (Correctness). For every ordered batch (ct1, . . . , ctB) of honestly generated cipher-
+texts with B ≤Bmax, the decryption algorithm recovers all messages correctly.
+Proof. Let each cti = ([[ri]]1, cti,2). Fix an index i ∈[B]. By definition of σ,
+σ =
+B
+X
+k=1
+[[rkτ k]]1.
+Hence
+αi = σ ◦[[τ Bmax+1−i]]2 =
+B
+X
+k=1
+[[rkτ k+Bmax+1−i]]T .
+16
+
+On the other hand,
+βi =
+B
+X
+k=1
+k̸=i
+[[rk]]1 ◦[[τ Bmax+1−i+k]]2 =
+B
+X
+k=1
+k̸=i
+[[rkτ k+Bmax+1−i]]T .
+Subtracting gives
+γi = αi −βi = [[riτ Bmax+1]]T .
+which is exactly the pad used in the second component of cti. Thus
+cti,2 −γi = mi.
+Since this holds for all i ∈[B], all messages are recovered.
+7.2
+CCA security (single server)
+Theorem 7.2 (CCA security (single server)). The single-server scheme BE in Fig. 2 is CCA secure
+under the nDH assumption (see Assumption 4.1) and the existence of a simulation-extractable NIZK
+(Definition 4.1).
+Proof. The proof is quite straightforward. It is easiest to present the proof using the “bit guessing”
+version of the CCA attack game (see, for example, Section 2.2.5 of [8]). Here, the challenger chooses
+b ∈{0, 1} at random and the adversary’s task is to guess b with probability significantly better than
+1/2. More precisely, the adversary outputs b′ ∈{0, 1} and the adversary’s advantage is defined
+to be |Pr[b′ = b] −1/2|.
+This bit-guessing advantage is 1/2 the advantage as defined earlier in
+Definition 4.8, and our goal is to show that this is negligible.
+We do this via a sequence of games.
+Game 0.
+This is the bit-guessing version of the original attack game. Let X0 be the event that
+b′ = b in this game, so that Pr[X0] −1/2 is the adversary’s bit-guessing advantage.
+Game 1.
+This is the same as Game 0, except that we replace the NIZK used to create the
+challenge ciphertext ct∗by a simulated proof.
+Let X1 be the event that b′ = b in this game. By the zero-knowledge property of the NIZK,
+|Pr[X0] −Pr[X1]| is negligible.
+Game 2.
+This is the same as Game 1, except we use the simulation-extractability property of
+the NIZK to extract a witness from ciphertexts. More precisely, consider one invocation of the
+decryption oracle BDec1(pp, {ctℓ}ℓ∈[B] , sk). From each valid ciphertext (ctℓ,1, ctℓ,2, πℓ), we extract
+the witness rℓ, which satisfies [[rℓ]]1 = ctℓ,1. If any of these extractions fail, we abort. Using all of
+these witnesses, and only public data, we can compute σ = P
+ℓ∈U skℓ· ctℓ,1, where U is the set of
+indices with valid NIZK proofs (as in Fig. 2), as follows:
+σ ←
+X
+ℓ∈U
+rℓ[[τ ℓ]]1.
+Let X2 be the event that b′ = b in this game. By the simulation-extractability property of the
+NIZK, |Pr[X1] −Pr[X2]| is negligible.
+17
+
+Game 3.
+Consider again the logic for generating the challenge ciphertext ct∗= (ct∗
+1, ct∗
+2, π∗),
+where ct∗
+1 = [[r∗]]1 and ct∗
+2 = mb + r∗· ek. In Game 1, we replaced π∗by a simulated proof, so r∗is
+not used in the generation of π∗. Moreover, after the modification made in Game 2, the secret key
+is not used anywhere. This justifies the following modification: compute ct∗
+2 ←mb + ρ, where ρ is
+a random element of GT .
+Let X3 be the event that b′ = b in this game. A straightforward reduction to nDH shows that
+|Pr[X2] −Pr[X3]| is negligible. It is also evident that Pr[X3] = 1/2. That completes the proof of
+the theorem.
+7.3
+Implementing the NIZK
+One can implement the NIZK by just applying the Fiat-Shamir transform to the Schnorr ID pro-
+tocol.
+However, as noted by [25], this does not yield online extractability in the ROM. Prior
+works [10, 1, 7] get around this by appealing to the AGM (algebraic group model). We suggest
+another approach that allows us to prove that Fiat-Shamir applied to Schnorr gives the result we
+need in GGM+ROM.
+The idea is the following. We extend our nDH assumption by making it interactive. Specifically,
+we consider the following game between a challenger and an adversary.
+In the first step, the
+challenger chooses x, y, z at random as in Assumption 4.1, and sends the public data (either D0
+or D1) to the adversary. Next, the adversary interacts with the challenger by effectively opening
+many (possibly concurrent) Schnorr ID sessions, where the adversary plays the role of prover and
+the challenger plays the role of verifier. In each such session, the adversary first sends a pair of
+group elements ([[r]]1, [[s]]1) to the challenger, who responds with a random Schnorr challenge c ∈Zp.
+At some later time, the adversary may resume the session by sending a response w ∈Zp to the
+challenger, who checks if [[w]]1 = [[s]]1 + c[[r]]1. If this check passes, the challenger responds with
+{[[rxi]]1}i∈[n] (and otherwise does not respond at all).
+The goal of the adversary is still the same: to distinguish between D0 and D1. The extended
+nDH assumption is that this remains hard even given access to these Schnorr ID sessions.
+We claim two things, which are fairly straightforward to prove.
+1. In the ROM (modeling the hash function used for Fiat-Shamir), the CCA security of the BE
+scheme reduces to the extended nDH assumption.
+2. The extended nDH assumption holds in the GGM.
+As known in the literature, it is also possible to get straightline simulation-extractability NIZK
+only in ROM (without GGM or AGM) by using the Fischlin transformation [16] at the cost of a
+much larger proof size.
+7.4
+CCA security (multi server)
+Theorem 7.3 (CCA security (multi server)). The multi-server scheme BTE in Fig. 3 is CCA
+secure if the single-server scheme BE is CCA secure.
+Proof. This is a standard reduction and we omit the proof.
+Note that we are crucially assuming static corruptions in the multi-server setting. This is what
+makes the reduction straightforward.
+18
+
+Phase
+BTX
+PFE [7]
+BEAT++ [1]
+precompute(B)
+2B pairings; 2 FFTs of size
+2B
+B pairings; 4 FFTs of size
+2B
+2B pairings; 2 FFTs of
+size 2B
+partialDecrypt(B)
+1 G1 MSM of size B
+1 G1 MSM of size B
+1 G1 MSM of size B
+combine(n)
+1 G1 MSM of size n
+1 G1 MSM of size n
+1 G1 MSM of size n
+open(B)
+B pairings; B GT subtrac-
+tions; B KDF/unmask op-
+erations
+4B
+pairings;
+linear
+GT
+work; B KDF operations
+B
+pairings;
+linear
+GT
+work; B KDF operations
+Table 2: Phase-by-phase cost comparison assuming B is a power of two. Here B is the batch size
+and n is the number of threshold shares combined.
+combine(n) (ms/share)
+serverCheck(B, n) (ms/item)
+n
+PFE
+BTX
+BEAT++
+B
+n = 8
+n = 62
+n = 512
+2 0.042 0.042
+0.042
+32
+0.179
+0.179
+0.179
+4 0.043 0.043
+0.042
+64
+0.167
+0.167
+0.165
+8 0.039 0.039
+0.043
+128
+0.161
+0.161
+0.160
+16 0.031 0.031
+0.044
+256
+0.158
+0.158
+0.157
+512
+0.156
+0.156
+0.156
+Table 3:
+Threshold/combine measurements over 3 repetitions.
+Left:
+mean running time of
+combine(n) in ms/share.
+Right: mean running time of serverCheck(B, n), reported as the per-
+item difference (ms/item) between checked combine and raw combine.
+7.5
+Complexity
+Assume throughout this subsection that B is a power of two, so the transform size used in the FFT
+implementation is m = 2B. We write the batch opening path as the four phases precompute(B),
+partialDecrypt(B), combine(n), and open(B), where B is the batch size and n := |V | is the number
+of valid threshold shares actually used in reconstruction.
+When robustness is enabled, two additional subroutines are layered on top of this core decom-
+position for BTX. First, ctxtCheck(B) verifies client proofs inside precompute(B) and therefore
+costs linear work in B. Second, serverCheck(B, n) verifies the reconstructed aggregate share dur-
+ing checked combine. In the optimistic path used in our implementation, this adds one aggregate
+pairing check over the batch, i.e., B + 1 pairing terms in one multipairing, so the cost is O(B) and
+essentially independent of n. This replaces the direct per-share server-check path in Fig. 3, which
+cost Θ(Bn).
+The table makes the comparison transparent for the core four phases. BTX and BEAT++ match
+on all four phases at the level of operation counts. The main difference relative to PFE is the split
+between the batch-dependent and final opening work: PFE saves pairings in precompute(B) at the
+cost of extra FFTs, but its open(B) phase requires 4B pairings rather than B.
+8
+Implementation and Evaluation
+We implement BTX over BLS12-381 using the blst library, compiled with Clang 21.1.8 in release
+mode with AVX-512, ADX, and native vectorization enabled. All experiments run on an AWS in-
+stance with an Intel Xeon Platinum 8488C processor (48 cores, 96 threads, 3.8 GHz max frequency)
+and approximately 105 MiB shared L3 cache. Our implementation uses AVX-512 vectorization,
+19
+
+partialDecrypt(B) (ms/item)
+precompute(B) (ms/item)
+ctxtCheck(B) (ms/item)
+open(B) (ms/item)
+B
+PFE
+BTX
+BEAT++
+PFE
+BTX
+BEAT++
+BTX
+PFE
+BTX
+BEAT++
+32
+0.035
+0.035
+0.039
+0.963 0.644
+0.642
+0.097
+0.721
+0.171
+0.171
+64
+0.029
+0.029
+0.039
+1.120 0.722
+0.722
+0.097
+0.721
+0.171
+0.172
+128 0.025
+0.025
+0.039
+1.278 0.801
+0.800
+0.098
+0.721 0.171
+0.171
+256 0.022
+0.022
+0.039
+1.436 0.880
+0.880
+0.098
+0.722 0.171
+0.171
+512 0.019
+0.019
+0.039
+1.596 0.959
+0.960
+0.100
+0.723 0.171
+0.171
+Table 4:
+Mean running times of the batch-size-dependent phases, together with the isolated
+ciphertext-proof verification cost ctxtCheck(B).
+in line with the broader recent push toward vectorized number-theoretic cryptography [22]. We
+compare BTX against two baselines: PFE [7] and BEAT++ [1]. To avoid sandbagging the base-
+lines, we reimplement all three systems in the same aggressively optimized codebase rather than
+benchmarking against previously reported prototype numbers. This shared implementation stack
+includes AVX-512 field/group arithmetic, optimized MSM and multipairing routines, FFT-based
+backends wherever the algebra permits them, and a number of additional micro-optimizations across
+the pipeline. In particular, the absolute runtimes we obtain for the baselines are materially better
+than earlier reported implementations, especially for BEAT++. For fairness, we also implement an
+FFT-optimized Toeplitz multiplication backend for the PFE baseline.
+We report the average time organized around the four-phase decomposition from §6: precompute(B),
+partialDecrypt(B), combine(n), and open(B), where B is the batch size. Here n := |V | denotes the
+number of valid server shares actually used in reconstruction, so t + 1 ≤n ≤N, where N is
+the total number of servers.
+To make the robustness overhead equally explicit, we also write
+ctxtCheck(B) for the isolated client ciphertext-proof verification subroutine inside precompute(B),
+and serverCheck(B, n) for the optimistic server-share correctness check inside checked combine. The
+batch-size-dependent phases are grouped in Table 4, while the threshold/combine measurements
+are grouped in Table 3.
+Robustness overhead.
+We also isolate the two robustness subroutines.
+The column labeled
+ctxtCheck(B) in Table 4 reports the per-item cost of client ciphertext-proof verification inside
+precompute(B). The right half of Table 3 reports serverCheck(B, n), namely the added per-item
+cost of the optimistic server-side correctness check obtained by taking the difference between the
+raw combine routine and the checked combine routine that first reconstructs σ and then verifies it
+against the public powers {[[τ ℓ]]2}ℓ∈[B]. In that table, n again denotes the number of server messages
+passed to checked combine. The main takeaway is that serverCheck(B, n) is essentially independent
+of n and scales linearly with B, as expected from a single aggregate pairing check over the batch.
+This replaces the older per-share server-check path, whose cost scaled as Θ(Bn).
+Takeaway. BTX and BEAT++ remain close on the batch-dependent phases precompute(B) and
+open(B), where both share the same internal algebraic structure and differ mainly in the surround-
+ing protocol structure (collision-free indexing vs. user-chosen indices). On the MSM-only threshold
+phases, however, the current implementation constants favor BTX over BEAT++.
+Relative to PFE, the gains appear exactly where the complexity analysis predicts. In precompute(B),
+BTX is approximately 1.5–1.7× faster than PFE across all tested batch sizes. In open(B), the gap
+is larger: for B = 512, BTX requires only 0.171 ms per ciphertext compared with 0.723 ms per
+ciphertext for PFE, a speedup of approximately 4.2×. This matches the expected ratio, since PFE
+requires four pairings per slot in the opening step while BTX requires only one.
+On the threshold-MSM phases partialDecrypt(B) and combine(n), BTX and PFE are essentially
+20
+
+identical in the current implementation. For example, at B = 512, both schemes require about
+0.019 ms per ciphertext in partialDecrypt, and at n = 16 both require about 0.03 ms per share in
+combine.

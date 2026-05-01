@@ -1,0 +1,1221 @@
+X-NegoBox: An Explainable Privacy-Budget
+Negotiation Framework for Secure Peer-to-Peer
+Energy Data Exchange
+Poushali Sengupta, Sabita Maharjan, Frank Eliassen, Yan Zhang*
+Department of Informatics, University of Oslo, Norway
+*University of Electronic Science and Technology of China
+Abstract—The decentralization of modern energy systems is
+transforming consumers into prosumers who continuously ex-
+change data with aggregators, peers, and market operators.
+While such data is essential for peer-to-peer trading, demand
+response, and distributed forecasting, it can reveal sensitive
+household patterns, creating significant privacy risks. Most ex-
+isting data-sharing mechanisms rely on fixed policies or pre-
+determined differential-privacy budgets, limiting their ability to
+adapt to variations in reliability, data sensitivity, and intended
+purpose across requests. As a result, prosumers rarely receive
+explanations for why a data request is accepted, rejected, or
+modified, weakening trust and limiting meaningful participation
+in peer-to-peer data exchange. To address these limitations, we
+introduce an explainable negotiation framework that enables
+adaptive privacy budgeting and transparent decision-making.
+In the proposed framework, each prosumer’s data is managed
+locally within a Private DataBox, where raw data remain confined
+and are never directly shared. Incoming requests are processed by
+an Autonomous Privacy-Budget Negotiation Protocol (APBNP),
+which dynamically determines an optimal differential-privacy
+budget by accounting for trust, feature sensitivity, declared
+purpose, historical sharing behavior, and risk-aware pricing.
+When a request cannot be accepted as-is, APBNP generates
+privacy-preserving counter-offers, such as reduced resolution or
+shorter duration. To ensure transparency, X-NegoBox includes
+an Explainable Agreement Layer (X-Contract) that produces
+human- and machine-readable explanations for acceptance, re-
+jection, or modification. After agreement, requester code executes
+locally inside the DataBox sandbox, and only sanitized outputs
+are released. All negotiation and optimization steps execute
+locally within a secure computation environment, while execution
+authorization is distributed using threshold secret sharing. Exper-
+iments on realistic energy-market settings show that X-NegoBox
+reduces privacy leakage, increases acceptance rates, and provides
+interpretable justification for decisions.
+Index Terms—Privacy, Differential Privacy, Smart Contracts,
+Peer-to-Peer Energy Systems, Explainable AI, Data Sharing.
+I. INTRODUCTION
+The reliability and efficiency of decentralized energy sys-
+tems increasingly depend on fine-grained data related to
+electricity consumption, generation, and flexibility in market
+operations [1], [2]. While operationally valuable, such data
+can reveal sensitive household patterns, including occupancy,
+appliance usage, and lifestyle characteristics [3], [4].1 Ex-
+{poushals,sabita,frank}@ifi.uio.no, yanzhang@ieee.org
+1Examples include presence inference, appliance-level behavior, and routine
+detection.
+isting privacy-preserving approaches, such as static access-
+control policies, fixed differential-privacy (DP) budgets [5],
+or centralized clean rooms [6], rely on pre-defined configura-
+tions and apply uniform privacy settings across heterogeneous
+data-access requests, despite differences in data sensitivity,
+requester intent, and usage context. Moreover, prosumers
+typically receive no clear explanation for why a request is
+accepted, rejected, or modified, limiting transparency and trust
+in participatory energy systems [7]. Advanced metering infras-
+tructure (AMI) and home energy management systems enable
+prosumers to participate in peer-to-peer energy exchange and
+local balancing [8]. Such participation requires continuous
+data exchange, including load curves and generation fore-
+casts [9], which can expose sensitive household routines and
+socioeconomic attributes [10], [11]. As data is shared with
+aggregators, peers, and service providers, concerns regarding
+privacy protection and regulatory compliance intensify [12].
+Fine-grained energy data (e.g., smart meter readings) can re-
+veal sensitive household patterns such as occupancy, appliance
+usage, and behavioral habits, enabling inference attacks and
+potential misuse (e.g., surveillance or security threats). In peer-
+to-peer energy trading, repeated data exchange amplifies these
+risks, motivating adaptive, context-aware privacy mechanisms
+beyond static policies.
+Existing solutions broadly fall into three categories: access
+control with static rules [13], differential privacy with fixed
+budgets [14], [15], and data clean rooms that centralize sen-
+sitive data [16].2 However, they fail to accommodate varying
+privacy preferences across requesters and purposes [17], [18].
+Supporting peer-to-peer energy interactions therefore requires
+an adaptive, bidirectional negotiation mechanism that dynami-
+cally adjusts disclosure parameters (e.g., temporal resolution or
+reporting duration), rather than relying on static policies [19],
+[20]. Without such mechanisms, prosumers have limited ability
+to understand or control cumulative privacy-budget consump-
+tion across repeated requests [21]. To address these challenges,
+we introduce X-NegoBox, a distributed, privacy-preserving
+framework that enables adaptive control of data disclosure
+while keeping all raw data confined within a local Private
+DataBox. Incoming requests are evaluated by an Autonomous
+2These approaches differ in enforcement and threat models but share static
+disclosure assumptions.
+arXiv:2604.24326v1 [cs.CR] 27 Apr 2026
+
+Privacy-Budget Negotiation Protocol (APBNP), which allo-
+cates per-request DP budgets based on request parameters and
+remaining privacy allowance [22]. Requests operate only on
+derived data (e.g., aggregates or coarse-grained profiles), while
+raw measurements remain local. When a request cannot be
+satisfied, APBNP generates privacy-preserving counteroffers
+by adjusting disclosure parameters. The contributions of this
+work are:
+1) An
+explainable,
+autonomous
+privacy-budget
+negotiation
+framework for prosumer-to-prosumer energy data exchange.
+2) The APBNP protocol for adaptive, per-request DP allocation.
+3) X-Contract, an explainability layer providing interpretable
+justification for contract decisions.
+4) A secure local execution sandbox enabling “run code, not
+data” interactions [23].
+5) An evaluation on realistic energy-market workloads demon-
+strating improved privacy preservation, trust, and contract
+acceptance.
+The remainder of the paper is organized as follows. Section II
+presents background and motivation. Section III introduces the
+system model. Section IV details APBNP. Section V describes
+X-Contract. Section VI discusses sandboxed execution. Sec-
+tion VII evaluates X-NegoBox, and Section VIII concludes the
+paper.
+II. STAKEHOLDERS AND ROLES
+X-NegoBox operates in a prosumer-controlled environment
+involving five key stakeholders. A prosumer is a household
+or local energy actor that owns sensitive energy data (e.g.,
+load curves, PV generation, flexibility bids, and appliance-
+level signatures) and retains full data ownership. A Pri-
+vate DataBox is a prosumer-controlled computation enclave
+deployed at the household or trusted edge that stores raw
+data locally, enforces privacy and contract constraints, and
+guarantees that raw data never leaves the box. A requester
+is an external entity, such as another prosumer, an aggregator,
+a forecasting service, or a market operator, seeking access
+to derived energy data for a declared purpose (e.g., billing,
+forecasting, or peer-to-peer trading). A contract agent is
+a lightweight orchestration component within the DataBox
+that validates requests, coordinates the Autonomous Privacy-
+Budget Negotiation Protocol (APBNP), generates counter-
+offers when required, and invokes the explainable agreement
+layer (X-Contract). Finally, an execution sandbox provides an
+isolated runtime for executing requester-supplied code under
+strict contract and privacy constraints, injecting differential-
+privacy noise and releasing only sanitized outputs.
+Figure 1 provides a high-level view of how data-access
+requests are processed within X-NegoBox, from the initial
+contract proposal to privacy-budget allocation and decision ex-
+planation, without exposing raw household data. The workflow
+proceeds as follows:
+1) Contract Proposal: A requester submits a contract spec-
+ifying data fields, temporal granularity, duration, intended
+Requester
+(Aggregator or Prosumer)
+PRIVATE DATABOX
+1. Contract Agent
+Validates & Parses Proposal
+Checks syntax, intent,
+and resource needs
+2. APBNP
+Negotiates ϵ, δ
+3. X-Contract
+Explainable Decision Layer
+4. Execution Sandbox
+Isolated code execution
++ Differential Privacy noise injection
+Runs requester-supplied code safely
+Sanitized Output
+Differentially Private Results
+(ϵ, δ)-DP guaranteed
+RAW
+DATA
+1. Contract Proposal
+(Code + Query
++ Proposed ϵ)
+2. Validated Proposal
+3. Allocated Privacy Budget
+Accepted / Rejected
+4. Approved Code + Budget
+5. Noisy/Aggregated
+Results
+NO RAW DATA EVER LEAVES
+Rejection + Counter-proposal
+Reject or Renegotiate
+Household Feedback
+(Accept / Modify / Reject)
+Natural Language
+Explanation &
+Reasoning Trace
+Private Raw Data
+(Accessible ONLY
+inside sandbox)
+Fig. 1: X-NegoBox architecture enforcing a secure “run code, not
+data” model, where contracts are negotiated, explained, and executed
+locally with differential privacy, and only sanitized outputs are
+released.
+purpose, maximum acceptable noise, and expected utility.3
+2) APBNP Decision Process: Upon receiving a data-access
+request, the DataBox evaluates request-specific parameters
+such as the requested data granularity, temporal resolution,
+reporting duration, and the remaining privacy allowance.
+Based on this evaluation, the Autonomous Privacy-Budget
+Negotiation Protocol (APBNP) determines an appropriate
+differential-privacy budget ε⋆and selects one of three out-
+comes: approval, modification, or denial. APBNP proceeds
+in six phases: (i) authenticate and validate the encrypted
+request, (ii) compute sensitivity, trust, and purpose scores,
+(iii) optimize the privacy budget ε⋆, (iv) check feasibil-
+ity constraints, (v) generate a counter-offer or rejection
+if needed, and (vi) authorize release via threshold key
+reconstruction followed by differentially private execution.
+Approval occurs if the request fits within the remaining
+privacy budget; modification produces a counter-offer by
+adjusting disclosure parameters (e.g., reduced temporal
+resolution or duration); denial is issued when no feasible
+configuration satisfies privacy constraints..
+3) X-Contract Explanation: The system produces a transpar-
+ent explanation detailing the decision rationale, privacy–
+utility trade-offs, and actionable guidance for revising the
+request. An Explainable Agreement Layer (X-Contract)
+generates human- and machine-readable justifications for
+each decision [21]. After agreement, the requester code
+executes locally in a secure sandbox, ensuring that only
+DP-sanitized outputs are released [24].
+4) Local Execution: After agreement, requester code is vali-
+dated and executed in the DataBox sandbox. Only contract-
+compliant, DP-sanitized outputs are returned.
+Privacy Objectives and Operational Safeguards:
+The X-
+NegoBox architecture is designed with privacy as a primary
+operational objective, supported by safeguards that regulate
+3These parameters define both the disclosure scope and the acceptable
+privacy–utility trade-off from the requester’s perspective.
+
+how data-access requests are evaluated, adapted, and executed
+within the DataBox. Rather than exposing raw data, the
+system limits disclosure to privacy-preserving outputs and
+enforces constraints throughout the request lifecycle. Data-
+access requests may involve repeated interactions over time,
+which can lead to unintended information leakage if not
+properly controlled. For example, attempts to infer sensitive
+household attributes, such as occupancy or appliance usage,
+from released outputs are mitigated through adaptive privacy-
+budget allocation and controlled output granularity. To pre-
+vent reconstruction of exact values across successive queries,
+the system monitors cumulative privacy loss and dynami-
+cally adjusts or restricts further disclosure when necessary.
+TABLE I: Adaptive X-Contract param-
+eterization across energy data requests.
+Param.
+Base
+Settlement
+Forecast
+DR
+Data type
+HH load
+Agg. load
+Smoothed agg. Load + flex.
+Resolution
+15 min
+1 h
+30 min
+5 min
+Window
+30 d (hist.) 60 d (hist.)
+14 d roll.
+Event
+DP ε
+4.0
+2.0
+3.0
+5.5
+Output
+Aggregates
+Billing
+Stats
+Events
+Mode
+Periodic
+One-shot
+Periodic
+On-demand
+Filters
+–
+–
+–
+Peaks
+All data processing is
+performed within a se-
+cure local sandbox that
+isolates execution from
+external
+access.
+The
+sandbox validates sub-
+mitted code, restricts
+system operations, and prevents unauthorized data extraction,
+thereby ensuring that privacy guarantees are consistently en-
+forced. The X-NegoBox architecture focuses on five key goals:
+• Preserving
+privacy
+by
+ensuring
+data
+sharing
+meets
+differential-privacy standards.
+• Automating privacy-budget negotiations for ease of use.
+• Providing clear explanations for contract decisions to build
+trust.
+• Maintaining logs for accountability and dispute resolution.
+• Ensuring that requesters follow contractual guidelines for
+data outputs.
+Together, these elements, including APBNP, X-Contract, and
+the local execution sandbox, facilitate a ”run code, not data”
+model, enabling secure and transparent data exchanges among
+prosumers while laying the groundwork for negotiation logic
+and explainability.
+III. AUTONOMOUS PRIVACY-BUDGET NEGOTIATION
+PROTOCOL (APBNP)
+APBNP determines whether a contract is approved, rejected, or
+modified by computing an optimal privacy budget ε⋆that bal-
+ances privacy risk, expected utility, trust, sensitivity, purpose,
+and historical budget consumption. This section formalizes
+the notation, optimization criteria, scoring components, and
+negotiation algorithm. Let requester i and data owner j be
+prosumers. A contract specifies a feature set x, time window
+w, temporal resolution r, and purpose p. The sensitivity of x
+is denoted by Sx, trust by Tij, and purpose compatibility by
+P(p). Let Hj denote prosumer j’s cumulative privacy-budget
+consumption. Functions U(ε) and R(ε) represent the expected
+utility and privacy risk under budget ε, respectively, while
+C(ε) captures the associated economic cost. The resulting
+optimal budget is denoted ε⋆. To regulate the privacy budget
+offered to a requester, X–NegoBox first quantifies the inherent
+privacy risk associated with the features included in the
+request. We formalize this using a sensitivity score, which
+aggregates feature-level risk weights into a single scalar.
+Definition 3.1 (Feature Sensitivity Weight): Let f denote a fea-
+ture category included in a data-access request x. Each feature
+is assigned a sensitivity coefficient αf ∈[0, 1] that reflects its
+inherent privacy risk. Larger values indicate a higher likelihood
+of revealing personal, behavioural, or appliance-level patterns.
+Typical values used throughout this work are: αloc
+=
+1.0, αapp = 0.7, αload = 0.4, αagg = 0.2.
+Definition 3.2 (Sensitivity Score): For a request x containing
+a set of features F(x), the sensitivity score is defined as
+Sx =
+X
+f∈F(x)
+αf.
+(1)
+A higher Sx indicates that the request targets more privacy-
+critical aspects of the household profile.Consequently, a higher
+sensitivity score reduces the set of privacy budgets ε that
+can be safely allocated to a request. Rather than directly
+rejecting such requests, the negotiation engine adapts the
+contract parameters to remain within acceptable privacy limits.
+Concretely, this adaptation may involve lowering the temporal
+or spatial granularity of the data, increasing the amount of
+noise injected into the released outputs, or restructuring the
+request into an alternative form that exposes less sensitive
+information. Sensitivity scoring therefore serves as an initial
+control mechanism that converts high-level semantic descrip-
+tions of requested data (e.g., appliance-level usage or location-
+related features) into explicit quantitative constraints that guide
+privacy-budget allocation and contract reformulation.
+Beyond the intrinsic sensitivity of the requested features, the
+willingness of a data owner to share information also depends
+on the historical relationship with the requester. We model this
+with a contract-level trust score, which aggregates behavioural
+evidence accumulated across previous interactions.
+Definition 3.3 (Trust Score): Let i denote a requester and j
+the data owner. The trust score Tij quantifies the historical
+reliability of requester i with respect to owner j and is
+computed as,
+Tij = β1Nsucc
+ij
++ β2Qqual
+ij
++ β3Amatch
+ij
+,
+(2)
+where each component captures a distinct behavioural signal.
+The terms in Eq. (2) are defined as follows: N succ
+ij : number
+of successfully completed contracts between requester i and
+owner j, indicating behavioral consistency. Qqual
+ij : a metric
+evaluating the compliance, correctness, and timeliness of out-
+puts from requester i. Amatch
+ij
+measures how closely actual
+data use aligns with the declared purpose, penalizing misuse.
+Higher trust increases the data owner’s confidence and allows
+a wider feasible ε-range, enabling more informative counter-
+offers when prior cooperation is strong. Conversely, low trust
+reduces the maximum permissible ε and may trigger fallback
+policies such as reporting limitations or additional verification.
+The sensitivity score Sx and trust score Tij jointly govern
+negotiation by capturing complementary aspects of a request:
+sensitivity characterizes what information is requested, while
+trust captures who is requesting it. Sensitivity reflects intrinsic
+data risk (e.g., granularity or temporal scope), whereas trust
+
+reflects requester behavior and historical compliance. In peer-
+to-peer energy trading, households are generally willing to
+share fine-grained load data with trusted neighbors with whom
+they have previously traded, while restricting disclosure to
+aggregated data for new or infrequent partners. This reflects
+common practice in community energy markets, where re-
+peated successful interactions increase willingness to share
+operational details. Such history may permit a higher privacy
+budget ε, but this remains bounded by data sensitivity and
+the remaining cumulative budget; even with strong compliance
+records, highly sensitive requests remain tightly constrained to
+prevent long-term privacy loss. While related to decentralized
+reputation systems, the proposed mechanism operates differ-
+ently.4 Instead, it employs a continuous reliability score in
+[0, 1], derived from historical adherence, output quality, and
+successful completions with greater weight on recent behavior.
+Higher scores allow more informative disclosure, whereas
+lower scores enforce stricter aggregation and noise, supporting
+cooperation while preserving long-term privacy guarantees.
+The declared purpose of a request plays a central role in
+determining how strictly privacy should be enforced. Certain
+purposes (e.g., billing) are legally mandated and operationally
+essential, whereas others (e.g., behavioural profiling) carry
+substantial privacy risks. To formalize this effect, we define
+a purpose compatibility score as follows.
+Definition 3.4 (Purpose Compatibility): Let p denote the
+declared purpose of a data request. The compatibility function,
+P(p) ∈[0, 1] quantifies the legitimacy and societal acceptability
+of the purpose. Higher P(p) values correspond to purposes that
+align with regulatory norms and grid-operational requirements.
+In practice, the value of P(p) is determined using a prede-
+fined compatibility table derived from regulatory guidelines,
+standard energy-market operations, and commonly accepted
+industry practices. Purposes that are explicitly required for
+settlement, billing, or grid operation are assigned higher
+scores, while purposes that are optional, exploratory, or
+weakly regulated receive lower values. This mapping is fixed,
+auditable, and independent of the requester. Representative
+examples used throughout this work include P(billing) =
+1.0, P(forecasting)
+=
+0.8, P(demand response)
+=
+0.7,
+P(peer trading) = 0.6, and P(profiling) = 0.1. Higher com-
+patibility values correspond to purposes that justify lower noise
+injection or broader access, while low-scoring purposes trig-
+ger stronger noise or counter-offers with reduced granularity.
+Thus, P(p) acts as a normative filter in the negotiation process,
+complementing sensitivity Sx and interaction reliability Tij. In
+this work, P(p) is static and assigned via a predefined lookup
+table based on the operational necessity of the declared pur-
+pose. Core market functions (e.g., billing or settlement) receive
+the highest scores; widely used but non-mandatory activities
+(e.g., forecasting or grid monitoring) receive slightly lower
+scores; and optional or exploratory purposes (e.g., behavioural
+profiling) receive low scores due to limited necessity and
+higher privacy impact. Each purpose is mapped to a fixed value
+4Traditional reputation systems typically make binary allow/deny decisions.
+in [0, 1] prior to deployment and applied uniformly across
+requests, ensuring transparency, auditability, and resistance
+to strategic purpose rephrasing. Representative categories and
+scores are shown in Table II.
+A. Privacy-Budget Optimization and Decision Logic
+The Adaptive Privacy-Budget Negotiation Protocol (APBNP)
+seeks to find the optimal privacy parameter, denoted as ε⋆,
+by balancing four key factors in responsible data sharing: the
+usefulness of the data, the privacy risk based on feature sen-
+sitivity and remaining budget, the trust between the requester
+and data owner, and the legitimacy of the request’s purpose.
+The protocol assesses each potential ε value by evaluating
+a combined score that rewards utility, trust, and legitimate
+purpose, while penalizing privacy risks and associated long-
+term costs. The goal is to maximize this score to achieve the
+best compromise between data utility and privacy protection.
+The optimal value is the one that maximizes ε is,
+ε⋆= arg maxε∈[0,εmax]
+
+λ1U(ε) −λ2R(ε | Sx, Hj) + λ3Tij + λ4P(p) −λ5C(ε)
+
+(3)
+APBNP selects the privacy budget ε that maximizes data
+utility while limiting privacy risk, accounting for declared
+purpose, trust, and cost, with non-negative coefficients λk
+weighting their relative influence.5 Solving Eq. (3) yields
+one of three outcomes: (i) approval, when ε⋆satisfies all
+feasibility constraints; (ii) rejection, when no feasible ε meets
+minimum privacy guarantees; or (iii) a counter-offer, in which
+adjusted parameters (w, r, x) produce a policy-compliant ε⋆.
+In all cases, APBNP verifies that ε⋆does not exceed the
+data owner’s remaining cumulative privacy budget, thereby
+preventing excessive information leakage.
+Definition 3.5 (Feasibility Constraints): A privacy budget ε⋆
+is feasible if it satisfies:
+ε⋆≥εmin(Sx, p), ε⋆≤Hremaining
+j
+,
+(4)
+where εmin is the minimum noise level required to protect
+the requested feature set given its sensitivity Sx and declared
+purpose p. If both inequalities hold, the contract is approved
+and execution proceeds to secure key reconstruction and
+differentially private release. Otherwise, APBNP attempts to
+generate a counter-offer by adjusting the reporting window,
+temporal resolution, or requested feature granularity. If no such
+modification yields a feasible ε, the system issues a formal
+rejection to maintain strict privacy guarantees.
+B. Secure-Computation & TSS Integration
+The X–NegoBox negotiation engine operates entirely inside
+a dedicated secure computation environment (SCE), ensur-
+ing confidentiality, integrity, and correctness of all negotia-
+tion artefacts, including contract metadata, feature-sensitivity
+scores, trust evidence, purpose compatibility evaluations, and
+intermediate computations used to determine the optimal pri-
+vacy budget ε⋆. The SCE follows a privacy-by-design architec-
+ture combining authenticated encryption, isolated execution,
+5The weights λk regulate the trade-off between utility and privacy preser-
+vation.
+
+and a threshold secret sharing (TSS) mechanism for key
+management. All contract requests are authenticated using
+the requester’s public key, and metadata such as load for
+(e.g., purpose and features) is protected via authenticated
+encryption EncKpub(p, x, r), preventing inspection or tamper-
+ing by intermediate nodes.Only the Secure Contract Executor
+inside the SCE holds the private keys, and all negotiation and
+decision logic executes locally within the prosumer-controlled
+TABLE II: Purpose-compatibility scores
+P(p) (higher = more operationally es-
+sential).
+Purpose
+Rationale
+P (p)
+Billing / Settlement
+Billing, market settlement, regula-
+tory compliance
+1.0
+Load Forecasting
+Short- and medium-term demand
+prediction
+0.8
+Grid Monitoring
+Congestion, voltage, and anomaly
+detection
+0.75
+P2P Energy Trading
+Optional, user-driven local energy
+exchange
+0.6
+Behavioural Profiling
+Habit inference; not operationally
+required
+0.1
+DataBox. This includes
+APBNP
+optimization,
+feasibility checks, pur-
+pose compatibility as-
+sessment, and expla-
+nation generation, all
+performed
+using
+lo-
+cal metadata and pre-
+defined policy tables,
+without any centralized
+coordinator, shared global state, or external computation. As a
+result, neither raw household data nor intermediate negotiation
+artefacts leave the local execution boundary. TSS operates
+at a separate authorization layer and is invoked only after
+contract approval to authorize the release of differentially
+private outputs. The signing key is split across independent
+entities (e.g., trusted enclaves or organizationally distinct edge
+services), such that in a (k, n) configuration (e.g., (3, 5)), at
+least k nodes must cooperatively reconstruct the key. This
+separation keeps sensitive decision-making local to the data
+owner while distributing execution authorization to prevent
+unilateral or premature disclosure, allowing X–NegoBox to
+combine local optimization and explainability with distributed
+authorization.
+Definition 3.6 (Threshold Secret Sharing): A (k, n) TSS
+scheme splits a cryptographic secret s into n shares s −→
+(s1, s2, . . . , sn), such that any subset of at least k shares
+can reconstruct s, while any subset of size < k yields zero
+information about s.
+Typical deployments use (k, n) = (3, 5) or (4, 7), balancing
+resilience to node failure with compromise resistance. In
+Threshold Secret Sharing (TSS), a signing key is split into n
+shares and distributed across independent nodes such that any
+subset of at least k nodes can reconstruct the key, while fewer
+than k reveal no information. This prevents any single entity
+from authorizing data release without majority agreement. TSS
+is activated once a contract is ready for execution. After a
+safe privacy budget ε⋆is determined, a reconstruction request
+is issued, and the key is recovered only if sufficient trusted
+nodes cooperate: {si}i∈K =⇒Reconstruct(s), ∥K| ≥k. The recon-
+structed secret s is used exactly once to authorize the privacy-
+preserving transformation Dj
+DP with ε⋆
+−−−−−−→e
+Dj,after which the key
+is immediately erased from memory. Even an adversary with
+temporary control over one or two nodes cannot force data
+release or weaken DP noise parameters. Authorization is pos-
+sible only if (i) the negotiation protocol determines a safe ε⋆,
+and (ii) the threshold of trusted nodes jointly reconstructs the
+key. We employ established TSS constructions (e.g., Shamir’s
+polynomial-based scheme or modern lattice-based variants)
+rather than introducing a new protocol. Designing a next-
+generation, negotiation-aware TSS that embeds policy con-
+straints directly into the reconstruction process is left for future
+work. Figure 2 illustrates the resulting authorization workflow
+in X-NegoBox, showing how negotiation and explainabil-
+ity remain local within a Trusted Execution Environment,
+while execution authorization is distributed across independent
+threshold nodes.
+Secure Computation Environment (prosumer-controlled)
+Input & Auth
+Policy & Trust
+ε⋆
+DP Release
+TSS Node 1
+Key share s1
+TSS Node 2
+Key share s2
+TSS Node 3
+Key share s3
+≥k shares required
+Requester
+encrypted request
+Consumer
+e
+Dj
+Fig. 2: Adaptive Privacy-Budget Negotiation Protocol. Negotiation
+runs locally in the prosumer-controlled Secure Computation En-
+vironment; Threshold Secret Sharing (TSS) authorizes a one-time
+differentially private release, preventing unilateral disclosure.
+The computational overhead of APBNP is modest and well
+suited for deployment at the edge, such as within a household
+DataBox or trusted gateway device. The privacy-budget selec-
+tion problem is formulated as a one-dimensional optimization
+over the interval ε ∈[0, εmax], evaluated in practice over
+a finite set of M candidate values, resulting in O(M) time
+complexity.6 The remaining components of the negotiation are
+lightweight. Sensitivity scoring and application-level compat-
+ibility evaluation operate only on request metadata
+Algorithm 1 X-Contract Explanation
+Require: Decision d, scores (Sx, Tij, P (p), Hrem
+j
+), opti-
+mized ε⋆
+1: if d = approve then
+2:
+return ApprovalExplanation(Sx, Tij, P (p), ε⋆, UPU)
+3: else if d = reject then
+4:
+return RejectionExplanation(Sx, Hrem
+j
+)
+5: else if d = counter then
+6:
+return CounterOfferExplanation(w, r, ε⋆)
+7: end if
+and
+scale
+linearly with
+the
+number
+of
+requested
+features,
+which
+is
+typically
+small.7
+Feasibility
+checks involve simple comparisons against precomputed
+thresholds and the remaining privacy budget, and therefore
+execute in constant time. The threshold secret sharing (TSS)
+mechanism is invoked only after a contract has been approved
+and does not participate in the optimization process itself.
+Key reconstruction requires cooperation among k out of
+n key-holding entities, incurring O(k) communication and
+computation cost, where k ≪n in typical deployments.8
+Overall, the latency of APBNP is dominated by local
+metadata processing and simple arithmetic operations. As
+a result, negotiation time remains predictable, bounded,
+6In practice, M is small and fixed by design (e.g., tens of candidate values),
+yielding negligible latency.
+7These operations are independent of dataset size or historical record length.
+8Reconstruction occurs at most once per approved contract, so its overhead
+is amortized and does not affect the negotiation phase.
+
+and independent of the volume of raw data stored in the
+DataBox, making the framework practical for real-time and
+resource-constrained edge environments.
+IV. X-CONTRACT: EXPLAINABLE AGREEMENT LAYER
+While APBNP determines the optimal privacy budget ε⋆and
+feasibility of a contract, prosumers require understandable
+justifications to make informed decisions about data shar-
+ing. To address this, X-NegoBox incorporates X-Contract,
+an explainable agreement layer that generates transparent,
+human-readable and machine-interpretable explanations for
+every negotiation outcome. X-Contract increases prosumer
+trust, improves accountability, and supports regulatory com-
+pliance in energy data ecosystems. X-Contract is built on
+three principles: Transparency: Prosumers must understand
+why a contract is approved, rejected, or counter-offered.
+Actionability: Explanations should provide concrete steps
+(e.g., reduce time window) that improve the likelihood of
+approval. Traceability: Every explanation is logged, ensuring
+accountability and enabling auditing of privacy decisions. For
+each negotiation outcome produced by APBNP, X-Contract
+provides one of three explanation types.
+• Approval Explanation: Clarifies why the request satisfies
+privacy constraints.
+• Rejection Explanation: Identifies which constraints were
+violated and why no feasible ε⋆exists.
+• Counter-Offer Explanation: Suggests modifications to con-
+tract parameters to achieve a valid privacy budget.
+These explanations rely on the underlying factors computed by
+APBNP: sensitivity, trust, purpose, and historical budget. X-
+Contract summarizes the tradeoff between privacy and utility
+through the privacy–utility score:
+UPU = λ1
+ 1 −R(ε⋆)
+
++ λ2U(ε⋆) + λ3Tij −λ4C(ε⋆).
+(5)
+A higher value indicates that the contract provides strong
+utility with acceptable risk. The score is included in the
+explanation to inform both parties. X-Contract relies on a
+rule engine mapping APBNP outputs to explanations. Let
+d ∈{approve, reject, counter} be the decision. The explanation
+logic is:
+Explain(d) =
+
+
+
+
+
+Expapp(Tij, Sx, P(p), ε⋆)
+d = approve,
+Exprej(Sx, Hrem
+j
+)
+d = reject,
+Expctr(w, r, ε⋆)
+d = counter.
+(6)
+X-Contract explains why a data-sharing request is approved,
+rejected, or modified by translating the outcome of APBNP
+into a human-readable rationale. For approved requests, ex-
+planations highlight the key factors enabling safe acceptance,
+such as acceptable sensitivity, sufficient remaining privacy
+budget, and appropriate declared use. For rejected requests,
+the explanation explicitly identifies the violated constraint
+(e.g., excessive sensitivity or insufficient remaining budget).
+When a counteroffer is issued, X-Contract clarifies which
+parameters were adjusted, such as reduced temporal resolution
+or increased noise, and why the modified request becomes
+acceptable. Each explanation is generated from template-
+based functions referencing computed scores, thresholds, the
+privacy–utility score Uu, and actionable guidance for revising
+future requests. We illustrate this with a peer-to-peer energy
+trading scenario in which Prosumer A requests 5-minute
+flexibility data from Prosumer B for one day. With sufficient
+remaining budget (Hj = 5.0), the request is approved as low-
+sensitivity and allocated ε⋆= 2.25. With lower but feasible
+budget (Hj = 1.5), the request is approved with ε⋆= 1.50
+and an explicit warning that most remaining privacy capacity
+is consumed. When the budget is insufficient (Hj = 0.3),
+the request is rejected to prevent privacy risk, and the re-
+quester is guided to revise the request by reducing resolution,
+duration, or feature sensitivity. These cases show that X-
+Contract delivers consistent, auditable explanations aligned
+with the underlying negotiation logic. X-Contract provides
+transparent and interpretable decision reasoning that is largely
+absent from existing privacy-preserving systems. By exposing
+actionable feedback and scoring factors, it enables prosumers
+to understand negotiation outcomes. Algorithm 1 summarizes
+the explanation-generation process for approval, rejection, and
+counter-offer decisions. Robustness is evaluated by perturbing
+interaction-reliability and sensitivity scores by ±5%. Across
+2000 replayed requests, explanation outcomes remain un-
+changed in 97.25% of cases, with deviations occurring only at
+feasibility threshold crossings. This indicates that explanations
+are locally stable and aligned with the underlying negotiation
+logic rather than numerical noise.
+V. LOCAL EXECUTION SANDBOX
+After a contract is approved or adjusted via APBNP and X-
+Contract, the requester submits computation code for execu-
+tion within the prosumer’s Private DataBox. Since raw data
+never leaves prosumer control, the execution sandbox enforces
+contract compliance, differential-privacy guarantees, and safe
+execution of untrusted code. Prior to execution, the DataBox
+validates that the code accesses only the approved feature set
+x, time window w, and granularity r; uses only whitelisted
+operations (e.g., arithmetic, aggregation, inference); passes
+lightweight static analysis for prohibited file or network access,
+recursion, or exfiltration logic; and executes under a bounded
+runtime to prevent denial-of-service attacks. Validation failures
+are explained via X-Contract. Validated code executes in an
+isolated sandbox (e.g., containerized VM, lightweight enclave,
+or WebAssembly runtime) with no access to system files,
+external processes, or network interfaces. Memory safety is en-
+forced by bounding heap and stack usage, and execution trac-
+ing is used to detect suspicious behavior. After computing the
+output y, the DataBox applies differential privacy noise based
+on the negotiated budget ε⋆, producing ˜y = y+Noise(ε⋆, Sx),
+where noise magnitude increases with sensitivity Sx and
+decreases with higher trust or purpose compatibility. Supported
+mechanisms include Laplace noise for numerical aggregates,
+Gaussian noise for model outputs, and randomized rounding
+for categorical values; privacy loss and noise application are
+logged by X-Contract. Finally, the DataBox enforces con-
+tract compliance by restricting output dimensionality, capping
+resolution, and rejecting outputs that expose raw values or
+exceed the DP budget. Violations halt execution and are
+logged. Through validation, isolation, and DP enforcement,
+
+the sandbox mitigates repeated-query, model-inversion, side-
+channel, and code-injection attacks, operationalizing the run
+code, not data paradigm while ensuring privacy, integrity, and
+explainability throughout the data-access lifecycle.
+VI. EXPERIMENTAL EVALUATION
+In this section we evaluate the X-NegoBox framework and the
+APBNP negotiation engine. All experiments are implemented
+in Python and executed on a local workstation. Performance
+is assessed along three axes: (i) a 48-scenario cross-dataset
+benchmark using real load time series, proxy-real traces de-
+rived from real data, and synthetic loads; (ii) a full-scale
+synthetic smart-grid simulation with 100 heterogeneous pro-
+sumers; and (iii) a privacy-budget sweep varying the initial
+privacy budget. These experiments evaluate privacy preserva-
+tion, negotiation stability, acceptance behavior, and sensitivity
+to budget availability. All experiments reuse identical request
+streams and real datasets to ensure controlled and comparable
+evaluation, without relying on synthetic fallback data.
+Datasets: For the analysis, we utilize two dataset families:
+real/proxy-real datasets like the UCI Household Dataset and
+national-level load data from DE, FR, IT (Energy-Charts
+API), along with synthetic city-level datasets generated for
+Oslo, Berlin, Rome, and Paris. We also create a synthetic
+prosumer ecosystem with 100 prosumers and 60 days of
+hourly data. This ecosystem features varied load profiles influ-
+enced by factors such as temperature-dependent heating and
+appliance usage, enabling the exploration of appliance-level
+sensitivities, trust distribution, and privacy-budget dynamics
+across multiple interactions. We simulate a trust-inflation ad-
+versary that behaves cooperatively to increase its trust score
+over time. Despite trust saturating at its maximum value,
+cumulative privacy leakage remains bounded by the remaining
+budget. In the experiment, the adversary obtains 49 accepted
+contracts, after which the remaining budget drops below 0.05.
+This confirms that trust alone cannot override cumulative
+budget and sensitivity constraints in APBNP.
+Assumptions and Execution Environment: Our evaluation
+assumes: (i) a secure local execution environment with en-
+crypted storage and authenticated communication; (ii) trusted
+DataBox modules maintaining Hmax
+j
+, history, and local DP
+mechanisms; (iii) confidentiality of contract metadata, privacy
+budgets, and TSS keys; and (iv) local DP noise injection before
+any data leaves the DataBox. X-NegoBox targets resource-
+constrained edge environments (e.g., smart meters), where
+APBNP achieves linear-time complexity with millisecond la-
+tency, and communication is minimized via “run code, not
+data.” The system assumes a semi-trusted decentralized setting
+with SCE enforcement, TSS authorization (< k of n com-
+promised), and trust-aware but constrained negotiation. While
+realistic, deployment may require lightweight cryptography,
+batching, and hardware enclaves, and assumptions should be
+revisited under adversarial or large-scale conditions. Under this
+setting, APBNP enables adaptive negotiation of ε⋆based on
+trust, sensitivity, purpose, and cost while preserving privacy
+constraints.
+Negotiation Model and Privacy Mechanisms: Each pro-
+sumer j maintains an individual privacy budget Hj, repre-
+senting the remaining allowable privacy loss. In the synthetic
+ecosystem, budgets are initialized as H(0)
+j
+= 8.0, ∀j ∈
+{1, . . . , 100}, and are decremented as contracts are accepted.
+Given a request defined by a purpose p (e.g., forecasting,
+billing), a feature set F (e.g., hourly load, PV generation,
+EV events), a requester trust score T ∈[0, 1], and a feature
+sensitivity score S ≥0, the APBNP engine searches for a
+feasible privacy parameter ε⋆by maximizing the following
+scoring function:
+Score(ε) = 2√ε −1.8 · Sε1.7 + 1.0T + 0.8P −0.15ε.
+(7)
+Here, S =
+X
+f∈F
+sensitivity(f) and P = purpose-score(p). The term
+2√ε
+models
+utility
+gains
+from
+reduced
+noise,
+while
+−1.8 S ε1.7 penalizes privacy risk for sensitive features. A
+regularizer −0.15 ε discourages excessive budgets, and T
+and P encode trust and purpose awareness. The optimizer
+searches for ε⋆over 0 < ε ≤εmax, subject to ε⋆≤Hj,
+ensuring that allocated privacy loss does not exceed the
+remaining budget. If no feasible ε⋆exists under the ini-
+tial sensitivity S, X-NegoBox applies a three-stage fallback.
+TABLE III: Mean acceptance
+rates across datasets and negoti-
+ation patterns.
+Dataset
+Calibrated
+Fixed
+Natural
+Berlin
+0.599
+0.597
+0.593
+DE
+0.604
+0.609
+0.593
+FR
+0.608
+0.595
+0.589
+IT
+0.595
+0.603
+0.598
+Oslo
+0.613
+0.599
+0.585
+Paris
+0.588
+0.609
+0.605
+Rome
+0.594
+0.603
+0.604
+UCI
+0.592
+0.590
+0.599
+Mean
+0.599
+0.601
+0.596
+First, it issues a counter-
+offer by reducing sensitiv-
+ity to 0.25S (via downsam-
+pling, aggregation, or feature
+removal) and re-optimizes. If
+unsuccessful, it may allow a
+minimal ε only for highly
+trusted requesters in low-risk
+scenarios. If both strategies
+fail, or if the safety condition Hj < 4S holds, the request
+is rejected to prioritize privacy protection. Upon approval,
+the allocated ε⋆is deducted from Hj, enforcing cumulative
+privacy-risk accounting for future negotiations.
+Baseline Comparison: We compare APBNP against a fixed-
+ϵ differential privacy baseline using identical request streams
+on the same real datasets. Evaluation focuses on acceptance
+rate, cumulative privacy leakage, and budget exhaustion time.
+Across all datasets, APBNP achieves a mean acceptance rate
+of 0.9998 while keeping cumulative privacy leakage within
+the initial budget (H(0)
+= 8.0) and avoiding premature
+exhaustion. In contrast, the fixed-ϵ baseline collapses: for
+ϵfix = 0.10, acceptance drops to 0.04, and the budget is
+exhausted after only 80 requests. These results show that static
+privacy policies cannot sustain continuous operation under
+realistic workloads, whereas APBNP supports long-term data
+sharing through adaptive budget shaping rather than rejection.
+A. Experimental Design
+We measure the runtime overhead of APBNP negotiation
+and X-CONTRACT explanation generation on a commodity
+CPU. Privacy-budget optimization takes 0.32 ms per request,
+while explanation generation adds 0.006 ms. Sandboxed exe-
+cution incurs a 121% relative overhead, but absolute execution
+time remains below 0.02 ms, indicating that X-NEGOBOX
+is suitable for real-time edge deployment. Robustness to
+
+parameter mis-specification is assessed by perturbing scoring
+weights, trust distributions, and feature-sensitivity coefficients
+by ±10%. We conduct three complementary experiments:
+• Experiment 1: Cross-Dataset Benchmark (48 scenarios).
+We simulate 2000 requester–owner interactions across eight
+datasets. Each interaction specifies a request purpose, feature
+sensitivities, and a dataset-specific trust score. Three negotia-
+tion patterns (fixed-acceptance, natural, dataset-calibrated) are
+evaluated under two risk modes (mild, moderate), yielding 48
+scenarios to assess acceptance stability and policy robustness.
+• Experiment 2: Full Synthetic Smart-Grid Simulation.
+Using the corrected APBNP engine, we model a synthetic
+ecosystem of 100 prosumers and simulate 2500 interactions.
+Requests follow realistic purpose and sensitivity profiles (utili-
+ties, aggregators, third-party services). We analyze large-scale
+privacy-budget evolution, rejection versus fallback behavior,
+and feasibility of the ε⋆scoring function under heterogeneous
+trust and sensitivity conditions.
+• Experiment 3: Privacy-Budget Sweep. For each initial pri-
+vacy budget ε0 ∈{1, . . . , 10}, we simulate 700 interactions
+using fixed trust, purpose, and sensitivity distributions. Ac-
+ceptance, rejection, and counter-offer rates are measured to
+characterize the transition from scarce-privacy (tight budgets)
+to surplus-privacy (high feasibility) regimes.
+Across all variants, acceptance rates vary within a narrow band
+of width 0.001, indicating stable negotiation behavior and low
+sensitivity to moderate hyperparameter variation.
+B. Results and Discussion
+Cross-Dataset Acceptance Behavior: Across all 48 cross-
+dataset experiments, we observe that the acceptance rate
+lies in a narrow, highly stable band: 0.57 ≤Acceptance ≤0.62.
+Table III visualizes this as a heatmap over datasets (rows)
+and negotiation patterns/risk modes (columns). It also high-
+lights structural differences between household and national
+load series, demonstrating the heterogeneity under which X-
+NegoBox is evaluated. The global mean and standard deviation
+across all scenarios are: ¯A = 0.603, σ = 0.013. Table III
+reports the mean acceptance rates aggregated per dataset. Two
+observations stand out:
+1) Lack of dataset-induced collapse or inflation. Despite differ-
+ences in scale (household vs national), climate, and synthetic
+generation, all acceptance rates concentrate around ≈0.60.
+This indicates that the APBNP scoring function and constraints
+are robust to distributional changes in load time series.
+2) Balanced negotiation behavior. Acceptance around 0.60 re-
+flects a regime where requests are neither trivially accepted
+nor systematically rejected. X-NegoBox thus avoids “all-
+or-nothing” behavior, which is a known issue in simpler
+differential-privacy contracts.
+In practical terms, this means that operators can deploy X-
+NegoBox across different regions and datasets without having
+to retune the entire negotiation logic for each scenario.
+Full Synthetic Prosumers (100-Household Simulation:) In
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+0
+0.2
+0.4
+0.6
+0.8
+1
+Initial Privacy Budget ϵ0
+Decision Rate
+Acceptance
+Rejection
+Counter-offer
+Fig. 3: APBNP decision rates as a function of the initial privacy
+budget ϵ0. Acceptance rises monotonically, rejection decreases, and
+counter-offers vanish beyond ϵ0 ≥4.
+the 100-prosumer synthetic experiment involving 2500 inter-
+actions, the system achieved an acceptance rate of 87.49%,
+with rejection at 12.51% and zero counter-offers. The mean
+remaining privacy budget per prosumer was 0.765, indicating
+that the negotiation engine effectively produces feasible ε⋆
+0
+5 10 15 20 25 30 35 40 45
+0.58
+0.6
+0.62
+0.64
+0.66
+0.68
+0.7
+Experiment Index
+Acceptance Rate
+Acceptance Rate Across 48 Experiments.
+Observed acceptance
+Target Min 60%
+Target Max 70%
+Fig. 4: Acceptance rate across configurations, show-
+ing stable APBNP negotiation behavior.
+values
+without
+becoming
+stuck
+in
+infeasible
+scenarios.
+The
+negligible
+counter-
+offer
+rate
+suggests
+that
+most
+beneficial requests can be accepted directly, while the
+conservative budget usage reflects that prosumers do not fully
+deplete their privacy budgets, demonstrating the system’s
+efficiency in resource consumption. From a deployment
+perspective, these
+findings suggest that X-NegoBox
+can sustain long-term operation without rapidly exhausting
+prosumers’ privacy budgets, while still enabling a high
+fraction of socially useful contracts. As shown in Fig. 4,
+acceptance rates remain tightly concentrated around 60%,
+confirming stable negotiation behavior across patterns and
+datasets. Fig. 5 provides a structured view of how acceptance
+behaves jointly across datasets and policy patterns, reinforcing
+the observation of dataset-independent stability. The transition
+observed in Fig. 5 empirically validates the theoretically
+predicted privacy-regime behavior: relaxations in ϵ0 enlarge
+the feasible negotiation region.
+Privacy-Budget Sweep: Figure 3 shows acceptance, rejection,
+and counter-offer rates as functions of the initial privacy bud-
+get ε0 ∈{1, . . . , 10}, revealing four operating regimes. In the
+scarce-privacy regime (ε0 ≤2), acceptance ranges from 55%
+to 74%, with frequent rejections required to preserve privacy.
+The transitional regime (2 < ε0 < 4) exhibits a smooth
+increase in acceptance as additional budget becomes available.
+In the stable regime (4 ≤ε0 ≤7), acceptance saturates
+around 99% with negligible rejection. Finally, the surplus
+regime (ε0 ≥8) corresponds to a setting in which privacy
+is no longer a binding constraint: acceptance reaches 1.00 and
+remains constant, indicating that further budget increases do
+not affect negotiation outcomes. This behavior reflects dimin-
+
+Oslo
+IT
+Berlin
+Rome
+Paris
+UCI
+DE
+FR
+0.98
+0.99
+1
+±0
+0.98
+0.98
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+Acceptance Rate
+Mean Acceptance Rate Across Datasets
+0
+2
+4
+5
+6
+8
+10
+0
+0.2
+0.4
+0.6
+0.8
+1
+Scarcity-Driven Rejection
+Near-Perfect Acceptance
+Initial Privacy Budget ϵ0
+Acceptance Rate
+Acceptance vs. Initial Privacy Budget
+Fig. 5: Acceptance stability and privacy-regime transitions in X-NEGOBOX. (Left) Mean acceptance remains within a narrow band (±0.02)
+across datasets. (Right) Increasing initial privacy budgets transitions APBNP from scarcity-driven rejection to near-perfect acceptance.
+ishing returns in privacy-budget allocation. At low ε0, privacy
+dominates feasibility, and small budget increases substantially
+improve acceptance. Beyond moderate budgets (approximately
+ε0 ∈[4, 5]), this constraint weakens and other factors, such as
+data sensitivity, declared purpose, and remaining cumulative
+budget, become decisive. From a system-design perspective,
+these results indicate that excessively large initial privacy
+budgets are unnecessary: comparable acceptance performance
+can be achieved with moderate privacy flexibility, preserving
+long-term privacy without sacrificing negotiation success.
+Discussion, Limitations, and Future Work: Results show
+that X-NegoBox effectively balances utility and privacy,
+achieving stable acceptance without tuning and high accep-
+tance (87.49%) with minimal counter-offs. It manages budgets
+conservatively and adapts to trust and sensitivity variations.
+Limitations include simulation-based evaluation, static purpose
+scores P(p), lack of network-level TSS validation, and ab-
+sence of user studies. Future work will explore real-world
+deployment, adaptive purpose modeling, negotiation-aware
+cryptography, and user-centric evaluation. 9
+VII. CONCLUSION
+This paper presents X-NegoBox, an explainable and adap-
+tive privacy-budget negotiation framework for secure peer-
+to-peer energy data exchange. By combining local execution
+with APBNP and X-Contract, it replaces static policies with
+context-aware negotiation. Experiments across diverse datasets
+show stable acceptance, sustained data sharing, and improved
+transparency, supporting privacy-aware decentralized energy
+systems. Future work includes negotiation-aware TSS, incen-
+tive design, and large-scale deployment.

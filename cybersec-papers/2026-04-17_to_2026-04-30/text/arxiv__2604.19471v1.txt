@@ -1,0 +1,1205 @@
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+1
+API Security Based on Automatic OpenAPI
+Mapping
+Yarin Levi
+Ran Dubin
+Abstract—This paper presents Map Reduce Graph (MRG),
+a novel unsupervised method for modeling and securing HTTP
+REST APIs. MRG learns API structure from real-world traffic
+without prior knowledge or labels, automatically generating
+OpenAPI-compliant documentation by reconstructing routes,
+methods, and parameter formats.
+MRG enables real-time updates, explainable visualization, and
+anomaly detection, helping identify undocumented or evolving
+behaviors. It detects malformed requests, structural deviations,
+and injection attacks using graph-based validation and a deep
+autoencoder for payload analysis. Compared to state-of-the-art
+methods like HRAL and FT-ANN, MRG achieves up to 11.4%
+higher recall, over 20 times faster inference, and perfect precision
+(100%) on multiple API-layer attacks.
+Designed for dynamic microservice environments, MRG op-
+erates in three phases—training, updating, and detection—and
+integrates smoothly with observability and security tools. This
+work contributes a fully automated, efficient pipeline for real-
+time API visibility, schema inference, and anomaly detection
+without manual tuning or labeled data.
+Index Terms—HTTP REST API, API Security, OpenAPI,
+Injection Attacks, Cloud Security, API Visibility
+I. INTRODUCTION
+In today’s digital landscape, Application Programming In-
+terfaces (APIs) have become the backbone of modern soft-
+ware ecosystems. They facilitate seamless interactions between
+microservices, mobile applications, cloud services, and IoT
+devices, enabling everything from payment processing and
+user authentication to telemetry collection and machine learn-
+ing workflows. As of 2023, API calls constituted 71% of
+all internet traffic, highlighting their central role in digital
+communications [1].
+However, this exponential growth in API usage has intro-
+duced significant security and observability challenges. APIs
+are often exposed externally, evolve rapidly, and suffer from
+incomplete or outdated documentation. According to a recent
+study, 84% of security professionals experienced at least one
+API-related incident in the past year, with average remediation
+costs of $591,404 in the United States, and costs rising
+to $832,801 in the financial services sector [2]. Globally,
+organizations are losing between $94 billion and $186 billion
+annually due to vulnerable or insecure APIs and automated
+abuse by bots [3].
+Yarin Levi is with the Department of Computer Science and the
+Ariel Cyber Innovation Center, Ariel University, Ariel, Israel (e-mail:
+yarin.levi4@msmail.ariel.ac.il).
+Ran Dubin is with the Department of Computer and Software Engineering
+and the Ariel Cyber Innovation Center, Ariel University, Ariel, Israel (e-mail:
+rand@ariel.ac.il).
+Real-world incidents underscore these risks. In January
+2023, T-Mobile disclosed that the personally identifiable infor-
+mation of 37 million customers had been breached through an
+API attack [4]. Similarly, the Optus data breach in September
+2022 exposed sensitive information of up to 10 million cus-
+tomers due to an unprotected and publicly exposed API [5]. In
+May 2021, Peloton experienced a data breach where an API
+vulnerability allowed unauthorized access to user data, high-
+lighting the lack of proper authentication and authorization
+measures [6].
+Despite growing threats, traditional security mechanisms
+such as Web Application Firewalls (WAFs) and Intrusion
+Detection Systems (IDS) are often inadequate for securing
+modern APIs. These systems rely heavily on static signatures
+or predefined rules, rendering them ineffective against novel,
+obfuscated, or logic-based attacks, particularly in dynamic API
+environments where endpoints evolve rapidly and documenta-
+tion is incomplete or missing.
+Machine learning-based approaches also fall short, as they
+typically treat API requests as flat token sequences, failing
+to model the hierarchical structure of RESTful APIs, such as
+nested paths, dynamic parameters, and method-path relation-
+ships. This limits their ability to detect structural anomalies,
+undocumented endpoint usage, or subtle deviations from nor-
+mal API behavior.
+To overcome these limitations, API-specific security solu-
+tions must understand and enforce the API traffic’s structural
+and semantic context. These solutions can be deployed either
+inline, for real-time enforcement and request blocking, or out-
+of-band, for passive monitoring, retrospective analysis, and
+detection of complex or delayed threats.
+To address these limitations, we propose Map Reduce
+Graph (MRG)—a novel, unsupervised method for learning
+and modeling the structure of HTTP REST APIs directly
+from live traffic. MRG automatically generates accurate Ope-
+nAPI specifications without requiring labeled data or prior
+knowledge of the existing API endpoint documentation. The
+framework operates in three distinct phases:
+• Training: Analyzes incoming HTTP requests to extract
+and aggregate structural patterns.
+• Updating: Incorporates new request patterns over time,
+supporting continuous learning.
+• Anomaly
+Detection: Identifies deviations from the
+learned
+structure,
+flagging
+potentially
+malicious
+or
+anomalous behavior.
+MRG introduces a tree-based, map-reduce approach where
+API endpoints are represented as hierarchical trees. The
+mapping phase decomposes paths and parameters, while the
+arXiv:2604.19471v1 [cs.CR] 21 Apr 2026
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+2
+reduction phase generalizes them into a canonical form us-
+ing placeholders (e.g., {id}, {param}). This structure is
+further modeled as a graph, capturing both local and global
+relationships among request components. Unlike vector-based
+models, this graph representation allows for precisely detecting
+structural anomalies and unusual patterns, such as nested path
+manipulation or unexpected query combinations.
+By automatically learning all API usage, dynamic specifica-
+tion inference, and anomaly detection in a single system, MRG
+bridges the gap between API observability and security. It of-
+fers competitive performance in structured settings and demon-
+strates fast inference times, though further improvements are
+needed to generalize across less-structured environments. This
+paper details the design, implementation, and evaluation of
+MRG and demonstrates its advantages through experiments
+on real-world and synthetic API datasets.
+The paper is structured as follows: Section II outlines the
+key contributions of our work, including the introduction of the
+MRG framework. Section III reviews relevant prior research
+in API security, automatic documentation, and anomaly de-
+tection, positioning our approach within the current body of
+knowledge. Section IV describes the architecture and detailed
+workflow of the MRG framework, including tree construction,
+graph transformation, and anomaly detection mechanisms.
+Section V elaborates on the graph-based anomaly detection
+strategy, discussing schema generalization, graph compari-
+son, and advantages over traditional methods. Section VI
+introduces the datasets used for evaluation, including CSIC
+2010, ATRDF, and the proprietary ATRDF2 dataset. Sec-
+tion VII details our evaluation methodology, comparing MRG
+against baseline approaches using standard metrics. Moreover,
+it presents experimental results, providing quantitative com-
+parisons and analysis across multiple datasets. Section VIII
+discusses the limitations of the current framework and sug-
+gests directions for future improvements. Finally, Section IX
+summarizes our findings and concludes the paper.
+II. CONTRIBUTION
+We offer several notable contributions to the field of API
+security and observability:
+• MRG: A Novel Unsupervised Tree-Graph Framework
+for API Schema Learning: We introduce MRG, a
+unique unsupervised method for learning and modeling
+HTTP REST API structures directly from live traffic (see
+visualization in
+2). This framework operates in three
+phases: the Map phase decomposes HTTP requests into
+hierarchical tree structures and graph representations; the
+Reduce phase aggregates patterns and generalizes dy-
+namic segments into canonical placeholders (e.g., {id}),
+forming a reusable schema; and the Detect phase lever-
+ages this learned graph-based API schema to identify
+structural anomalies and potential malicious traffic.
+• Automated and Explainable OpenAPI Specification
+Generation: Our system significantly enhances API vis-
+ibility by automatically generating detailed and human-
+readable OpenAPI specifications via OpenAPI UI from
+observed traffic. This includes continuous updates to
+Fig. 1. Automatically generated OpenAPI UI from MRG showing endpoints
+and parameterized paths inferred from traffic.
+reflect evolving API behaviors and the automatic iden-
+tification of both documented and previously undocu-
+mented (shadow) APIs. The generated specifications are
+designed to be highly explainable, providing security
+analysts and developers with clear, up-to-date documen-
+tation for reliable validation and enforcement. Figure 1
+displays the rendered OpenAPI UI showing the set of
+endpoints, methods, and generalized parameter paths
+(e.g., /user/{id}/orders) inferred by MRG from
+real-world traffic, enabling transparent schema inspection.
+• Visibility & Reset Options: The system supports stream-
+ing input, adapting incrementally to new API patterns
+without requiring full retraining. It provides real-time
+visualization of the inferred API tree structure, offering
+security analysts immediate insights into endpoint behav-
+iors. Additionally, the system includes a reset mechanism,
+enabling analysts to easily re-baseline the model for
+environmental changes or testing.
+• New Dataset - API Traffic Research Dataset Frame-
+work v2 (ATRDF2): We introduce ATRDF2 [7], a novel
+synthetic dataset containing a large volume of both nor-
+mal and anomalous API traffic. This dataset is specifically
+designed to evaluate generalization and robustness against
+diverse, LLM-generated API-layer attacks, facilitating
+future research.
+III. RELATED WORK
+Traditional WAFs and IDSs, like Snort [8], rely on prede-
+fined signatures, which quickly become outdated and struggle
+with dynamic API environments, as shown by their inability
+to detect up to 89% of JSON-based SQL injection payloads
+in recent tests [9]. This limitation stems from their reliance on
+exact byte pattern matching, which fails to adapt to constantly
+changing API paths, parameters, and encodings.
+While machine learning approaches, such as CNN/LSTM
+hybrids [10], Markov models [11], and GNNs [12], have been
+applied to HTTP traffic anomaly detection, they face two key
+challenges [13]:
+1) Most models flatten hierarchical URLs into token se-
+quences, losing crucial structural information and con-
+text [14].
+2) They typically require large, labeled datasets for train-
+ing, which are scarce in security applications.
+FT-ANN [15] introduces a novel few-shot anomaly detection
+framework based on FastText embeddings and Approximate
+Nearest Neighbor (ANN) search. It incorporates a custom
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+3
+Fig. 2. Tree structure before and after reduction. This visual illustrates how API paths are generalized using placeholders. The left side presents a raw API
+tree structure as learned from observed traffic. Each node corresponds to a URL path segment, including dynamic values such as user IDs or order IDs,
+which are represented explicitly. The right side shows the reduced tree schema after applying the generalization phase. Dynamic segments (yellow nodes in
+the tree) are merged into placeholders (e.g., {categories_id}) based on inferred types and structural patterns. This process abstracts variable components
+while preserving essential relationships, significantly reducing complexity. This simplified schema forms the foundation for API specification generation and
+anomaly detection in MRG.
+tokenizer tailored for API syntax and emphasizes efficient
+detection through a classification-by-retrieval approach. De-
+spite its strong performance on benchmark datasets like CSIC
+and ATRDF, FT-ANN still relies on vector encodings and a
+predefined training set. In contrast, MRG leverages a graph-
+based representation that preserves the full structure of API
+requests and learns directly from traffic in an unsupervised
+manner—eliminating the need for labeled data while capturing
+richer semantic and structural information.
+Finally, detecting API logic flaws (e.g., IDOR, Broken
+Authentication, Excessive Data Exposure), which are high
+on the OWASP API Security Top 10 [16], is challenging as
+they involve incorrect behavior, not invalid input. Tools like
+APISpec [17] detect violations by comparing runtime behavior
+to OpenAPI specs, and RESTler [18] uses fuzzing. However,
+these require accurate and complete documentation, often
+unavailable. MRG differs by learning the API structure directly
+from live traffic and encoding it into a graph schema. This
+schema captures method-to-path bindings, parameter types,
+dynamic IDs, and header requirements, enabling detection
+of unauthorized access, missing authentication, and method
+misuse—issues missed by traditional signature or payload-
+based tools. MRG’s unified framework addresses both visibil-
+ity and security without prior knowledge or labeled examples,
+distinguishing it from prior work.
+Our work is compared against HTTP REST API Learning
+(HRAL) [14], FT-ANN [15], and traditional anomaly detection
+techniques (One-Class SVM, Isolation Forest, centroid-based
+classifiers), covering structural, embedding-based, and statisti-
+cal approaches. Speculator was excluded due to its inferiority
+compared to HRAL.
+IV. METHODOLOGY
+In this section, we present the architecture and processing
+pipeline of the proposed system for learning and enforcing
+API schemas. The methodology is divided into two main
+phases: a learning phase that constructs a generalized schema
+from observed API requests, and an enforcement phase that
+validates incoming requests against this schema. We further
+detail each phase through a step-by-step description of the
+system’s internal processes
+A. System Overview
+Figure 3 illustrates the full MRG pipeline, from traffic inges-
+tion and schema learning to anomaly detection and response:
+Learning (Map) Phase: Incoming HTTP requests are
+parsed and decomposed into a hierarchical tree structure. Each
+node in this tree corresponds to a segment of the API path,
+while associated metadata (such as HTTP methods and query
+parameters) is captured. The tree is then transformed into
+a graph, where nodes represent URL segments and query
+parameters, and edges represent their connections. This graph
+encapsulates the overall structure of the API.
+Enforcing (Reduce) Phase: After accumulating sufficient
+data based on the user’s decision, the system aggregates
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+4
+Fig. 3.
+MRG Methodology Overview. This diagram outlines the MRG
+system’s concise process: (1) Ingest Traffic: The system receives real-
+world HTTP traffic. (2) Map Phase: Requests are parsed into hierarchical
+trees in a ”Learning State.” (3) Reduce Phase: Trees are aggregated and
+generalized into a graph schema. (4) Anomaly Detection: Incoming requests
+are validated against the schema (structural) and payload content (semantic via
+autoencoder). (5) Output/Action: Detected anomalies trigger security alerts;
+requests are blocked/accepted; OpenAPI specs are inferred.
+repeated patterns and replaces dynamic segments with place-
+holders to form a generalized graph schema.
+Anomaly Detection Phase: Incoming API requests are
+compared against the learned schema, and anomalies are
+flagged. When discrepancies are detected, the integrated CDR
+component sanitizes the request, allowing it to pass through
+while describing the anomaly.
+B. Detailed Process Flow
+1) Parsing and Tokenization:
+Each incoming API request is parsed to extract essen-
+tial components such as the HTTP method, URL path
+segments, and query parameters.
+For each incoming request:
+Parse the URL to extract:
+- HTTP method
+- Path segments (split by ’/’)
+- Query parameters (key-value pairs)
+2) Hierarchical Tree Construction:
+The request structure is stored in a tree where each node
+corresponds to a path segment. The tree preserves the
+hierarchical API structure and stores metadata like query
+parameters and methods.
+For each segment in the path:
+If segment does not exist as a child:
+Create a new tree node
+Move to the child node
+At the final node:
+Store query parameters and HTTP method
+metadata
+3) Graph Transformation (Tree Reduction):
+Once learning is complete, the tree is reduced by gener-
+alizing variable segments (e.g., UUIDs, IDs, emails) into
+placeholder nodes. This reduction results in a reusable
+schema.
+Traverse the tree recursively:
+Identify dynamic children (UUIDs, numbers,
+etc.) using regex pattern
+Merge them under a placeholder node:
+- e.g., {user_param_0}
+Collect metadata:
+- Example values
+- Min/max string lengths
+- Inferred type (integer, UUID, etc.)
+- Randomness indicator
+4) Aggregation and Placeholder Insertion:
+Similar dynamic structures are aggregated under com-
+mon placeholders. This compaction allows for better
+generalization while maintaining contextual information.
+For each set of dynamic nodes:
+Replace with a single placeholder
+Store:
+- Sample values
+- Length distribution
+- Inferred data types
+- Is-random flag
+5) Anomaly Detection via Schema Validation and Deep
+Autoencoder:
+Each request is first validated against the reduced API-
+tree schema. The tree is scanned using BFS to find
+the root segment, then DFS to check nested segments,
+methods, and query parameters. Any mismatch—like an
+undocumented parameter or invalid segment—flags the
+request as anomalous.
+If structure passes, the request is serialized, vectorized
+with a feature hasher, and passed through a deep au-
+toencoder. If the reconstruction error exceeds a dynamic
+threshold, the request is flagged.
+For each new request:
+Tree-based schema validation:
+- Use BFS (Breadth-First Search)[19] to locate
+root path in the reduced API tree
+- Use DFS (Depth-First Search)[20] to validate
+the full nested path, method, and query
+params
+- If path segment not found or rare ->
+anomaly
+- If type mismatch in dynamic segments ->
+anomaly
+- If undocumented query param or method ->
+anomaly
+Deep autoencoder (explained below) content
+check:
+- Serialize request (headers, query params,
+body)
+- Vectorize and pass through trained
+autoencoder
+- If reconstruction error > threshold ->
+anomaly
+C. Body Anomaly Detection
+While MRG’s schema validation handles malformed URLs
+and undocumented paths, it cannot detect obfuscated or zero-
+day payloads within the HTTP requests’ body and header
+content. To bridge this gap, we introduce a lightweight autoen-
+coder that analyzes serialized request data, including headers,
+query parameters, and body fields.
+Input Vectorization
+Requests are serialized into the format: H:key=val
+QP:param=val B:{body},
+then
+hashed
+via
+FeatureHasher into a fixed-length vector x ∈R256,
+enabling compact and efficient processing.
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+5
+Model Architecture
+The autoencoder comprises an encoder–decoder structure
+trained on vectorized representations of request headers, query
+parameters, and bodies. The encoder includes three ReLU-
+activated dense layers (128, 64, 16 units), projecting input into
+a compact latent space. The decoder mirrors this structure with
+layers of 64, 128, and 256 units to reconstruct the original
+input. Batch normalization is applied after each layer. The
+model is optimized using Adam (learning rate 0.001) and
+trained for 20 epochs using a batch size of 128 with mean
+squared error as the loss function. Anomalies are flagged
+when reconstruction error exceeds the 99.99999th percentile
+of training error.
+Anomaly Scoring
+Anomaly score is the Mean Squared Error (MSE) between
+input x and reconstruction ˆx:
+Score = 1
+n
+n
+X
+i=1
+(xi −ˆxi)2
+(1)
+A request is flagged as anomalous if its score exceeds the
+99.99999th percentile of training MSEs (see Equation 1).
+Integration with Schema Validation
+Requests first pass through BFS-based structural matching
+and DFS-based validation. If structurally valid, they are serial-
+ized and evaluated by the autoencoder. This two-stage process
+detects both structural and semantic anomalies.
+Summary
+Combining tree-based and content-aware validation al-
+lows MRG to detect a broad range of API-layer at-
+tacks—including polymorphic, obfuscated, and previously un-
+seen content—without labeled data.
+V. GRAPH-BASED ANOMALY DETECTION
+This section outlines our graph-based anomaly detection
+strategy, a key element of MRG. By modeling API requests
+as directed graphs, our system captures structural relationships
+between path segments, query parameters, and methods, allow-
+ing precise detection of topological anomalies.
+• Graph Construction from API URLs: Each HTTP
+request is tokenized into path segments and query pa-
+rameters, forming a hierarchical tree. This tree is trans-
+formed into a directed graph: nodes represent segments
+or parameters, and edges capture parent-child traversal.
+For instance, /user/123/orders becomes user →
+{user_id} →orders, with metadata (type, value
+range, method).
+• Schema
+Generation
+and
+Generalization:
+With
+increased
+traffic,
+dynamic
+elements
+(e.g.,
+IDs,
+emails, UUIDs) are abstracted into placeholders (e.g.,
+{param_0}) using semantic inference and statistical
+thresholds. The result is a reduced schema graph
+capturing the API’s typical structure while preserving
+types and constraints (e.g., min/max length, randomness).
+• Graph Comparison for Anomaly Detection: At run-
+time, each request is compared to the reduced schema.
+BFS locates the starting node; DFS [21] validates the
+structure. Anomalies are flagged when:
+– Unknown nodes or edges appear,
+– Types/values deviate (e.g., string instead of UUID),
+– Unexpected query formats are used,
+– Rare segments break known path patterns.
+These checks capture both syntactic errors and logical
+violations (e.g., invalid method-resource usage).
+• Handling Structural Variations: To reduce false posi-
+tives, minor variations (e.g., new UUIDs) are tolerated
+if semantically valid. Heuristics guide decisions using
+metadata—e.g., an unseen UUID-format string may still
+pass based on context and format conformity. Policies are
+configurable for stricter or more adaptive behavior.
+• Advantages of a Graph-Based Approach: Our model
+offers:
+– Context-aware reasoning: Structure is preserved for
+hierarchical validation.
+– Template generalization: Placeholders allow match-
+ing unseen but valid requests.
+– Human-readable visibility: MRG supports schema
+visualization, exposing undocumented endpoints and
+evolving API logic, aiding both detection and anal-
+ysis.
+This graph-based method, paired with our deep autoencoder
+(Section IV-C), forms a hybrid system capable of detecting
+both structural and semantic API anomalies, without relying
+on labeled data or handcrafted rules.
+VI. DATASETS
+We evaluated our framework using three datasets: CSIC
+2010, ATRDF, and ATRDF2, a new synthetic dataset we
+introduce below.
+• CSIC 2010 Dataset: CSIC 2010 [22] is a synthetic HTTP
+dataset from the Spanish National Research Council,
+containing 61,065 requests: 36,000 normal and 25,065
+anomalous. The anomalies include SQLi, XSS, buffer
+overflows, file disclosure, CRLF injection, and more,
+generated using Paros [23] and W3AF [24]. While labeled
+only as ’normal’ or ’anomalous’, we group attacks into
+two categories: Attack and File Inclusion, aiding evalua-
+tion across different vectors.
+• ATRDF Dataset: ATRDF [25] is a large-scale, labeled
+dataset with 217,529 API requests: 109,277 malicious and
+108,252 benign, spanning 18 API endpoints. It includes
+seven attack types: SQLi, XSS, RCE, Log Forging,
+Log4J, Directory Traversal, and Cookie Injection, each
+represented with thousands of randomized, obfuscated
+variants. The distribution of these attack types is sum-
+marized in Table I.
+The dataset simulates realistic traffic patterns, payload
+diversity, and adversarial behavior, making it suitable for
+evaluating detection systems under varied and challenging
+conditions.
+• Proprietary Dataset (ATRDF2): ATRDF2 is a synthetic
+dataset of approximately 10,000 malicious API requests
+generated using LLMs. It is designed to evaluate gen-
+eralization and robustness against obfuscated, novel, and
+diverse API-layer attacks.
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+6
+Attack Type
+Count
+Cookie Injection
+24,458
+SQL Injection (SQLi)
+24,285
+Remote Code Execution (RCE)
+12,293
+Cross-Site Scripting (XSS)
+12,403
+Log Forging
+12,059
+Directory Traversal
+12,058
+Log4J Exploits
+11,721
+TABLE I
+ATTACK DISTRIBUTION IN THE ATRDF [25] DATASET
+Samples are evenly distributed across six categories (e.g.,
+SQLi, XSS, RCE) and structured by attack location:
+– URL-Embedded Attacks: Payloads in path/query
+parameters.
+– Header and Body-Embedded Attacks: Payloads in
+headers or body fields.
+This enables targeted analysis of how different MRG
+components handle structural vs. content anomalies.
+Ground-truth labels ensure precise evaluation, and the
+synthetic nature allows control over edge cases and
+structure. The distribution of attack types in ATRDF2 is
+shown in Table II.
+Attack Tag
+Count
+SQL Injection
+1451
+XSS
+1448
+Log Forging
+1441
+RCE (Remote Code Execution)
+1434
+Cookie Injection
+1414
+Directory Traversal
+1407
+LOG4J
+1405
+TABLE II
+ATTACK DISTRIBUTION IN THE ATRDF2 DATASET
+ATRDF2 supports fine-grained benchmarking of struc-
+tural and semantic anomaly detection, especially for
+systems like MRG that differentiate anomalies based on
+request location.
+VII. EVALUATION
+We evaluate the MRG framework based on its detection
+capabilities and efficiency. The evaluation focuses on two
+aspects: (1) detection of URL-Embedded and Body-Header at-
+tacks (Section VII-A); and (2) a comparative analysis of accu-
+racy and speed against two baselines: HRAL (Section VII-B)
+and the FastText Embedding method by Aharon et al. [15]
+(Section VII-C).
+All methods are tested on the same datasets using standard
+metrics: precision (proportion of flagged requests that are truly
+malicious), recall (proportion of malicious requests correctly
+detected), F1-score (harmonic mean of precision and recall),
+and classification time. These metrics reflect both detection
+quality and runtime performance across datasets.
+A. URL-Embedded vs Body-Header Attacks
+We evaluated MRG on two subsets of the ATRDF2 dataset:
+URL-embedded and Body/Header embedded attacks. This
+dataset was selected because it uses LLM-generated attacks,
+simplifying the process of distinguishing attack types—a chal-
+lenge with other datasets like ATRDF and CSIC 2010.
+TABLE III
+PERFORMANCE OF MRG ON ATRDF2 BY PRIMARY DETECTION
+COMPONENT (%)
+Attack Type
+MRG Structural Component
+MRG Autoencoder Component
+Prec.
+Rec.
+F1
+Prec.
+Rec.
+F1
+SQL Injection (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+XSS (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+Log Forging (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+RCE (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+Cookie Injection (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+Directory Traversal (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+LOG4J (URL)
+100.0
+100.0
+100.0
+-
+-
+-
+Macro Average (URL-Embedded)
+100.0
+100.0
+100.0
+-
+-
+-
+SQL Injection (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+XSS (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+Log Forging (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+RCE (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+Cookie Injection (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+Directory Traversal (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+LOG4J (Body/Header)
+-
+-
+-
+100.0
+100.0
+100.0
+Macro Average (Body/Header-Embedded)
+-
+-
+-
+100.0
+100.0
+100.0
+Table III separates the results into MRG’s two detection
+components—the structural component (left block: first three
+columns) for URL-embedded attacks, and the autoencoder
+component (right block: last three columns) for body/header-
+embedded attacks. The table shows that MRG achieved a
+perfect 100% precision, recall, and F1-score across all URL-
+embedded attack types in the ATRDF2 dataset. These results
+underscore MRG’s strong ability to detect API-layer attacks
+with malicious payloads embedded in the URL, proving its
+effectiveness for API security.
+In addition, Table III shows that the MRG auto-encoder
+component also obtained perfect scores for Body-Header
+embedded attacks. However, these attacks were quite simple,
+which contributed to the excellent performance of the deep
+learning model. A thorough evaluation of our model on more
+complex body-header embedded attacks remains challenging
+due to the lack of a dedicated and widely accepted benchmark
+dataset. This gap in the literature limits comparative research
+and highlights the need for more representative datasets cov-
+ering deeply nested or obfuscated payloads.
+B. API Learning Comparison
+1) ATRDF
+Table IV shows that MRG achieves 100% precision across
+all attack types and high recall (93.51% macro avg), with
+LOG4J (54.59%) being the only weakness due to limited
+header scanning and truncated body analysis. In contrast,
+HRAL has lower recall on LOG4J (37.14%) and Log Forging
+(41.44%), leading to a macro recall of 82.07%. On average,
+MRG processes each request in 0.00031 seconds, compared
+to 0.00349 seconds for HRAL—making MRG approximately
+ten times faster.
+TABLE IV
+COMPARISON OF HRAL [14] VS. MRG ON THE ATRDF DATASET (%)
+Attack Type
+HRAL
+MRG
+Prec.
+Rec.
+F1
+Prec.
+Rec.
+F1
+Cookie Injection
+100.00
+99.48
+99.74
+100.00
+100.00
+100.00
+Directory Traversal
+100.00
+99.95
+99.97
+100.00
+100.00
+100.00
+LOG4J
+100.00
+37.14
+54.18
+100.00
+54.59
+70.63
+Log Forging
+100.00
+41.44
+58.59
+100.00
+100.00
+100.00
+RCE
+100.00
+96.90
+98.43
+100.00
+100.00
+100.00
+SQL Injection
+100.00
+99.60
+99.80
+100.00
+99.95
+99.97
+XSS
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+Macro Avg
+100.00
+82.07
+87.24
+100.00
+93.51
+95.80
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+7
+2) CSIC 2010
+HRAL achieves perfect recall and F1 on CSIC 2010 as
+presented in Table V, while MRG underperforms (69.78% re-
+call, 82.20% F1) due to its limited analysis depth on synthetic
+payloads. In terms of efficiency, MRG processes each request
+in 0.00036 seconds compared to 0.00050 seconds for HRAL,
+making it about 28% faster.
+TABLE V
+COMPARISON ON CSIC 2010 DATASET (%)
+Attack Type
+HRAL
+MRG
+Prec.
+Rec.
+F1
+Prec.
+Rec.
+F1
+Attack
+100.00
+100.00
+100.00
+100.00
+70.93
+83.00
+File Inclusion
+100.00
+100.00
+100.00
+100.00
+68.63
+81.39
+Macro Avg
+100.00
+100.00
+100.00
+100.00
+69.78
+82.20
+3) ATRDF2
+Both systems perform perfectly on ATRDF2 as shown in
+Table VI. However, MRG processes each request in 0.00010
+seconds compared to 0.00173 seconds for HRAL, making it
+approximately 17 times faster and highlighting its runtime
+efficiency.
+TABLE VI
+COMPARISON ON ATRDF2 DATASET (%)
+Attack Type
+HRAL
+MRG
+Prec.
+Rec.
+F1
+Prec.
+Rec.
+F1
+Cookie Injection
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+Directory Traversal
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+LOG4J
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+Log Forging
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+RCE
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+SQL Injection
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+XSS
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+Macro Avg
+100.00
+100.00
+100.00
+100.00
+100.00
+100.00
+Both MRG and HRAL achieve 100% macro precision
+across all datasets. On ATRDF, MRG yields higher recall
+(93.51% vs. 82.07%) and F1-score, especially in detecting
+Log Forging, though both models underperform on LOG4J.
+On CSIC 2010, HRAL reaches perfect recall, while MRG
+lags (69.78%) due to limited body analysis. Performance is
+identical on ATRDF2, with perfect detection across all metrics.
+MRG is consistently faster, as shown in Table VII, running
+10 times faster on ATRDF, 28% faster on CSIC, and 17
+times faster on ATRDF2. These results highlight MRG’s strong
+accuracy on real-world data and significant runtime advantage.
+TABLE VII
+SUMMARY STATISTICS OF MRG CLASSIFICATION LATENCY ACROSS
+DATASETS, MEASURED IN SECONDS PER REQUEST (S/REQUEST). METRICS
+REFLECT TIMING PERFORMANCE OVER CSIC 2010, ATRDF, AND
+ATRDF2 DATASETS.
+Metric
+Value
+Count
+3
+Mean
+0.0002560
+Std
+0.0001371
+Min
+0.0001002
+25%
+0.0002050
+Median
+0.0003098
+75%
+0.0003339
+Max
+0.0003579
+Table VII summarizes the classification latency of MRG
+across three datasets. On average, MRG processes each request
+in 0.0002560 seconds, with the fastest case at 0.0001002 sec-
+onds and the slowest at 0.0003579 seconds. The low standard
+deviation indicates consistent performance, supporting real-
+time deployment.
+C. API Anomaly Detection Comparison
+We compare MRG with FT-ANN and classical/neural base-
+lines from Aharon et al. [15], evaluating binary classification
+performance (attacks vs. benign) using precision, recall, F1,
+and test time.
+CSIC 2010 Results:
+MRG achieves the highest precision (0.9877) and fastest
+runtime (0.00036s), outperforming all models in those aspects.
+However, recall (0.7092) and F1 (0.8256) lag behind FT-ANN
+and others due to false positives (e.g., strict rules, static DL
+thresholds).
+ATRDF Results:
+As shown in Table IX, on ATRDF Dataset MRG maintains
+strong precision (0.9723) and F1 (0.9644). However, it is
+outperformed by FT-ANN and most baselines in recall due to
+853 false negatives, mostly obfuscated LOG4J attacks. MRG
+remains among the most efficient (0.00031s), close to the
+fastest (PCA, OC-SVM).
+MRG demonstrates strong precision, outperforming on the
+CSIC dataset and remaining competitive on ATRDF. In terms
+of recall and F1-score, FT-ANN shows superior performance
+on both datasets, as MRG struggles with obfuscated or deeply
+nested body attacks. However, MRG is the most efficient,
+achieving the fastest classification time on CSIC and near-
+best on ATRDF, consistently surpassing FT-ANN in runtime
+performance.
+VIII. LIMITATIONS AND FUTURE WORK
+While MRG achieves strong results in detecting structural
+and content-based anomalies, it primarily focuses on analyzing
+URL paths and query parameters for anomaly detection. The
+core schema learning relies on regex-based generalization to
+distinguish static from dynamic segments, which may misclas-
+sify novel values (e.g., personal names like ”John” or ”Steve”)
+and lead to false positives or negatives. Parameter inference
+is heuristic-based and struggles with high-variance or weakly
+structured fields.
+Crucially, deep analysis of request bodies is delegated to
+a lightweight AI-based model, which limits detection depth,
+particularly for obfuscated or nested payloads (e.g., embedded
+JSON or XML). Enhancing body-level anomaly detection is
+a central focus for future work, including recursive payload
+parsing, summarization or chunking techniques, and integra-
+tion of few-shot models like FT-ANN to better generalize
+rare or unseen content patterns. Additionally, the absence of a
+dedicated, publicly available dataset for complex body/header-
+based attacks limits thorough evaluation and comparative
+research in this area.
+MRG also currently supports only REST over HTTP,
+lacking compatibility with GraphQL, gRPC, or WebSocket.
+Additionally, contextual metadata (e.g., User-Agent, re-
+quest IDs) remains underutilized. Future enhancements aim
+
+IEEE TRANSACTIONS ON INFORMATION FORENSICS AND SECURITY
+8
+TABLE VIII
+ANOMALY DETECTION ON CSIC 2010
+Model
+Precision
+Recall
+F1
+Time (s/request)
+FT-ANN [15]
+0.9538
+0.9954
+0.9713
+0.0075
+MCD
+0.9382
+0.9774
+0.9572
+0.0021
+CBLOF
+0.9318
+0.9589
+0.9445
+0.0010
+Isolation Forest
+0.9323
+0.9538
+0.9419
+0.0480
+HBOS
+0.9311
+0.9502
+0.9393
+0.0159
+PCA
+0.9304
+0.9504
+0.9391
+0.0025
+Autoencoder
+0.9303
+0.9502
+0.9389
+0.0668
+KDE
+0.9296
+0.9460
+0.9361
+0.3875
+OC-SVM
+0.9295
+0.9459
+0.9360
+0.0848
+Feature Bagging
+0.9303
+0.9444
+0.9354
+0.9365
+LOF
+0.9301
+0.9449
+0.9350
+0.0909
+DeepSVDD
+0.9381
+0.9126
+0.9235
+0.0486
+MRG (ours)
+0.9877
+0.7092
+0.8256
+0.0003579
+TABLE IX
+ANOMALY DETECTION ON ATRDF 2023
+Model
+Precision
+Recall
+F1
+Time (s/request)
+FT-ANN [15]
+1.0000
+1.0000
+1.0000
+0.0004
+DeepSVDD
+0.9921
+1.0000
+0.9960
+0.0332
+Autoencoder
+0.9893
+1.0000
+0.9946
+0.0512
+Feature Bagging
+0.9893
+1.0000
+0.9946
+0.0055
+Isolation Forest
+0.9893
+1.0000
+0.9946
+0.0307
+KDE
+0.9893
+1.0000
+0.9946
+0.0005
+LOF
+0.9893
+1.0000
+0.9946
+0.0006
+OC-SVM
+0.9893
+1.0000
+0.9946
+0.0002
+PCA
+0.9893
+1.0000
+0.9946
+0.0002
+HBOS
+0.9888
+1.0000
+0.9944
+0.0228
+MCD
+0.9885
+1.0000
+0.9942
+0.0005
+CBLOF
+0.9795
+1.0000
+0.9896
+0.0006
+LMDD
+0.8237
+0.1825
+0.2920
+0.0680
+MRG (ours)
+0.9723
+0.9566
+0.9644
+0.0003098
+to expand protocol coverage and integrate such metadata into
+the learning process.
+IX. CONCLUSION
+This paper presented MRG, an unsupervised framework
+for automatic API schema learning, anomaly detection, and
+OpenAPI generation. By combining tree-based decomposition,
+graph modeling, and deep learning, MRG learns API structure
+directly from traffic without labeled data or prior specifica-
+tions.
+MRG achieved perfect precision and high recall on struc-
+tured datasets such as ATRDF and ATRDF2, with fast infer-
+ence times—up to 20 times faster than FT-ANN. While recall
+drops on CSIC 2010 and obfuscated LOG4J payloads, MRG
+outperforms HRAL in accuracy on ATRDF and ATRDF2 and
+is faster than HRAL on every dataset evaluated.
+Beyond detection, MRG enhances API visibility by iden-
+tifying changed, new, and shadow APIs. It supports real-
+time schema updates, explainable OpenAPI generation, and
+visualization of evolving API behavior, making it suitable for
+dynamic environments.
+Future work will improve payload inspection using recursive
+parsing and integrate few-shot models like FT-ANN to boost
+recall on complex attacks. Protocol support and metadata
+integration will further expand MRG’s capabilities.
+Overall, MRG provides a fast, explainable, and fully au-
+tomated foundation for API visibility and anomaly detection,
+while continuously surfacing changed, newly introduced, and
+shadow APIs in real-world microservice ecosystems.

@@ -1,0 +1,1338 @@
+PoSME: Proof of Sequential Memory Execution
+via Latency-Bound Pointer Chasing
+with Causal Hash Binding
+David Condrey
+ORCID: 0009-0003-1849-2963
+WritersLogic Inc.
+San Diego, California
+david@writerslogic.com
+Abstract—We introduce POSME (Proof of Sequential Memory
+Execution), a cryptographic primitive that enforces sustained
+sequential computation via latency-bound pointer chasing over a
+mutable arena. Each step reads data-dependent addresses, writes
+a block whose value and causal hash are mutually dependent
+(symbiotic binding), and chains the result into a global transcript.
+This yields three properties: (1) Ω(K) sequential memory-step
+enforcement, (2) high TMTO resistance (10× at write density
+ρ=4, with a formal S · T = Ω(K2) space-time lower bound),
+and (3) a tight ASIC advantage bound by DRAM random-
+access latency rather than bandwidth. Benchmarks across 17
+CPU platforms and 4 GPU architectures demonstrate that hash
+computation is under 3.5% of step cost and GPU hardware is 14–
+19× slower than a consumer CPU. POSME requires no trusted
+setup and provides a foundation for verifiable delay, authorship
+attestation, and Sybil resistance.
+I. INTRODUCTION
+Many systems require proof that a party performed sus-
+tained, sequential computation under concrete resource con-
+straints [18], [28], [29]: ASIC-resistant mining, authorship
+attestation, Sybil resistance, and verifiable delay. Existing
+primitives each capture only part of this objective.
+VDFs [1] certify sequential time but are insensitive to mem-
+ory; a VDF ASIC gains arbitrary speedup via faster ALUs.
+PoSW [2] proves graph traversal but over static, immutable
+memory. Memory-hard functions such as Argon2id [3] raise
+per-evaluation cost via memory pressure, but are single-shot
+primitives with no chain proof system. Composing them (e.g.,
+chaining Argon2id with Merkle sampling) yields independent
+properties that do not reinforce each other. Table I summarizes
+the gap.
+TABLE I
+PROPERTY COMPARISON OF SEQUENTIAL PRIMITIVES.
+VDF
+PoSW
+MHF
+POSME
+Sequential steps
+✓
+✓
+×
+✓
+Memory-hard
+×
+×
+✓
+✓
+Mutable state
+×
+×
+×
+✓
+Efficient verify
+✓
+✓
+×
+O(1) IVC†
+No trusted setup
+×
+✓
+✓
+✓
+ASIC bound
+none
+none
+8–16×
+∼2×
+†Design validated (§II-J, §II-K); production Binius implementation pending.
+POSME fills this gap. Mutability is essential: in a static
+arena with independent blocks, any block can be recomputed
+from the seed in O(1), so the adversary need not store the
+arena at all. A mutable arena forces storage because block
+values evolve unpredictably under the ROM during execution.
+The persistent mutable arena is the computation state. Each
+step reads d blocks at addresses determined by the previous
+read’s hash output (pointer chasing), modifies the arena in-
+place, and chains a causal hash through the written block.
+Data and causal hash are symbiotically bound: neither can be
+fabricated without the other. The bottleneck is DRAM random-
+access latency (40–50 ns on DDR5), with hash computation
+(∼3 ns) under 3% of cost. HBM3 is only 1.3× faster than
+DDR5 at random access; GPU hardware is 14–19× slower
+than CPUs at this workload.
+Main Contributions.
+• Novel Construction: We define POSME, the first prim-
+itive combining mutable arena state, data-dependent
+pointer-chase addressing, and symbiotic causal hash bind-
+ing, formalized over a Boolean hypercube to enable
+binary-field folding.
+• Space-Time Security: We prove a formal S·T = Ω(K2)
+lower bound for dynamic causal DAGs (Theorems 3–4),
+extended to adaptive adversaries (Theorem 5) with no
+factor loss.
+• ROM Validation: We validate the ROM-uniformity as-
+sumption mathematically (Theorem 6) and empirically
+at the full recommended scale (N=224, 5.4×108 reads,
+χ2/df = 1.0004).
+• Hardware Validation: We validate ASIC resistance
+across 17 CPU and 4 GPU platforms, showing GPUs
+are 14–19× slower and GPU throughput is choked by
+VRAM capacity.
+• IVC Design: We provide a concrete Binius arithmetiza-
+tion (144,512 Boolean constraints per step) with analyzed
+fold cost and pipelining feasibility.
+Section II presents the construction, including the hypercube
+formulation and IVC design. Section III provides the security
+analysis (Theorems 1–6). Section IV gives the empirical
+validation. Section VII discusses limitations.
+arXiv:2604.15751v1 [cs.CR] 17 Apr 2026
+
+A. Related Work
+PoSW. Cohen and Pietrzak [2] prove traversal of a depth-
+robust graph via Fiat-Shamir [22] sampled Merkle proofs.
+POSME differs by introducing a mutable arena (not a static
+DAG), where the access pattern is data-dependent rather than
+fixed, and each node carries a causal hash binding its value to
+its write history.
+MHFs.
+scrypt
+[8],
+proven
+maximally
+memory-hard
+by [31], introduced memory-hardness; Argon2id [3] achieves
+bandwidth-hardness with ∼2× single-pass TMTO penalty and
+8–16× ASIC advantage [4]. RandomX [21] targets CPU-
+egalitarianism via random code execution, achieving 2–5×
+ASIC bound. POSME achieves higher TMTO resistance (10×
+at ρ=4) and a tighter ∼2× ASIC bound via latency-hardness
+rather than bandwidth- or compute-hardness.
+PoS/PoST. Proofs of Space [9] and Space-Time [2] enforce
+storage over static graphs. POSME extends to a mutable arena
+with per-block temporal binding. CMC. Alwen et al. [5]
+formalized cumulative memory complexity for static pebbling.
+POSME’s causal DAG is dynamic, requiring the new frame-
+work of §III-D.
+II. CONSTRUCTION
+A. Design Intuition
+Before presenting the formal algorithms, we outline the
+three core design principles that differentiate POSME from
+existing sequential primitives:
+1) Data-Dependent Pointer Chasing: The address of each
+subsequent read depends on the value of the current read.
+This enforces a strict sequential chain that cannot be
+parallelized.1
+2) Mutable Arena State: Unlike static graph-based proofs,
+the arena evolves at every step. Recomputing an evicted
+block requires replaying its write chain (O(ρ) hashes
+per miss; Theorem 2).
+3) Symbiotic Causal Binding: Every write binds the
+data value and its temporal write-history (causal hash)
+together. This ensures that an adversary cannot forge
+a single block without also forging its entire causal
+lineage.
+B. Hypercube Arena and Multilinear Mapping
+We map the arena to a Boolean hypercube of dimension
+dhc, where N = 2dhc, addressing each block by a binary
+coordinate vector v ∈{0, 1}dhc. The pointer chase becomes
+a data-dependent walk across hypercube vertices. The arena
+state at step t is expressible as a multilinear polynomial
+Pt(x1, . . . , xdhc) over F2 (or an extension tower), and each
+step’s writes are low-degree evaluations. This imposes no
+overhead on the physical Prover but provides the foundation
+for O(1) verification via binary-field folding (§II-J).
+1The hardness of parallelizing pointer chasing has a long history in
+communication complexity; Nisan and Wigderson [20] initiated this line;
+Viola [13] gives a recent tight Ω(n/k + k) bound for k-step pointer chasing.
+C. Formal Definition
+We
+formalize
+POSME
+as
+a
+triple
+of
+algorithms
+(Gen, Prove, Verify)
+operating
+over
+an
+arena
+A
+of
+N
+blocks.
+• Gen(s, N, K) →(TK, {rt}). The Prover initializes A via
+INIT(s, N) and executes K steps of STEP to produce the
+final transcript TK and root sequence.
+• Prove(TK, {rt}, A, Q, R) →Π. The Prover commits to
+the root sequence and generates Q witnesses of depth R
+for Fiat-Shamir challenged steps.
+• Verify(Π, s, N, K, Q, R)
+→
+{0, 1}. The Verifier re-
+derives challenges and checks witnesses against the initial
+seed and committed roots.
+Arena
+isolation.
+The
+seed
+s
+must
+bind
+a
+unique
+task identifier (nonce, block height, challenge, etc.): s =
+H(task_id∥nonce). Because INIT is deterministic, distinct
+seeds produce statistically independent arenas. This prevents
+an adversary from amortizing a single arena across multiple
+proof instances and is essential to the capacity-bandwidth
+bound analyzed in §IV-C.
+Proposition 1 (Completeness). For any seed s and parameters
+(N, K, Q, R), an honest Prover following the protocol will al-
+ways produce a proof Π such that Verify(Π, s, N, K, Q, R) =
+1.
+Proof. All algorithms are deterministic; an honest Prover
+computes roots and transcripts correctly, and all checks in
+Algorithm 4 compare honest values against themselves.
+D. Proof Size and Complexity
+The proof size |Π| is dominated by the Q witnesses. Each
+witness πi contains openings for the challenged step and its
+provenance ancestors to depth R.
+Proposition 2 (Proof Size). For a recursion depth R, the num-
+ber of blocks opened per challenge is B = PR−1
+ℓ=0 dℓ(d + 1).
+The total proof size is approximately Q · B · (λ + log N · |H|)
+bytes.
+For the recommended parameters (N=224, d=8, Q=128),
+a proof at R=2 opens B=81 blocks (∼8.5 MB). At R=3,
+B=657 blocks (∼70 MB). These proofs are post-quantum se-
+cure, require no trusted setup, and are generated autonomously
+during execution.
+E. Proof Size Optimization
+The recursion depth R and challenge count Q present a
+direct tradeoff between security margin and proof size. Table II
+provides concrete MiB-per-proof costs for implementers.
+TABLE II
+PROOF SIZE (MIB) FOR N = 224 (1 GIB ARENA).
+Recursion (R)
+Challenges (Q)
+Blocks (B)
+Size (MiB)
+2
+64
+81
+3.9
+2
+128
+81
+7.9
+3
+64
+657
+32.1
+3
+128
+657
+64.2
+
+While R = 3 yields larger proofs, it provides exponentially
+higher fabrication resistance by checking the witnesses of
+the writers’ writers. For bandwidth-constrained environments
+(e.g., light clients), R = 2 with Q = 128 offers a compact
+∼8 MB proof while maintaining high confidence.
+F. Arena and Initialization
+The arena consists of N = 2dhc blocks on a Boolean
+hypercube, each storing (data, causal), each λ=256 bits,
+initialized deterministically from seed s via Algorithm 1.
+Vertices are enumerated in standard binary order; the skip-link
+parent of vertex v is v ≫1 (right-shift by one bit), creating
+a binary DAG requiring Ω(
+√
+N) space to evaluate any single
+vertex.
+G. Step Function
+Each step t executes Algorithm 2. The coordinate vj+1
+depends on the block at vj; the d reads are strictly sequential.
+Symbiotic binding creates bidirectional dependency: new data
+incorporates the old causal hash, and the new causal hash
+incorporates the cursor. Addressing uses binary projection:
+the first dhc bits of the hash output yield a coordinate vector
+v ∈{0, 1}dhc, selecting a vertex on the Boolean hypercube.
+H. Roles of the Causal Hash
+The causal hash field h serves three distinct purposes in
+POSME. We enumerate them here to prevent conflation in
+the security analysis that follows.
+1) Operational binding (Construction, §II). Each block’s
+causal hash chains its write history into the block value,
+creating a per-block temporal lineage. The symbiotic
+bind (Algorithm 2, line 9) ensures data and causal
+hash are mutually dependent: neither can be computed
+without the other.
+2) Soundness amplification (Theorem 1, §III). Because
+the causal hash is folded into the cursor at every read
+(Algorithm 2, line 5), any forged block produces a diver-
+gent cursor, which propagates into a divergent transcript
+Tt. This tightens the reduction to collision resistance:
+the adversary must forge both data and causal lineage
+simultaneously.
+3) TMTO constant factor (Theorem 2, §III-C). When the
+adversary discards a block and must recompute it on a
+cache miss, the write chain must be traversed for both
+the data field and the causal field, doubling the per-miss
+recomputation cost (2ρ vs. ρ). This is a 2× constant, not
+an asymptotic improvement.
+These roles are complementary but logically independent:
+operational binding is a construction choice, soundness am-
+plification is a proof-theoretic consequence, and the TMTO
+constant is an empirical cost multiplier.
+I. Classical Verification (Merkle/Fiat-Shamir)
+POSME supports two verification modes. The classi-
+cal mode (Algorithms 3–4) uses Fiat-Shamir [22] sampled
+Merkle [23] witnesses and requires only a hash function; it is
+Algorithm 1 INIT(s, N): hypercube initialization
+Require: Seed s, arena dimension dhc with N = 2dhc
+Ensure: Arena A[v] for v
+∈{0, 1}dhc, Merkle root r0,
+transcript T0
+1: A[0].d ←H(“init”∥s∥0)
+▷seed data
+2: A[0].h ←H(“causal”∥s∥0)
+▷seed causal
+3: for i ←1 to N −1 do
+▷binary order
+4:
+v ←binary(i, dhc); vp ←v ≫1
+▷skip-link
+5:
+A[v].d ←H(“init”∥s∥i∥A[vp].d)
+6:
+A[v].h ←H(“causal”∥s∥i∥A[vp].h)
+7: end for
+8: r0 ←MERKROOT(A)
+▷commit all vertices
+9: T0 ←H(s∥N∥r0)
+▷init transcript
+10: return (A, r0, T0)
+Algorithm 2 STEP(t, A, Tt−1): hypercube edge walk
+Require: Step index t ∈[1, K], arena A of dimension dhc,
+transcript Tt−1
+Ensure: Updated arena A, transcript Tt, Merkle root rt
+1: c ←Tt−1
+▷init cursor
+2: for j ←0 to d −1 do
+▷d sequential reads
+3:
+vj
+←
+first dhc bits of H(“addr”∥c∥j)
+▷hypercube coord
+4:
+(dj, hj) ←A[vj]
+▷vertex read
+5:
+c ←H(c∥dj∥hj)
+▷chain cursor
+6: end for
+7: vw ←first dhc bits of H(“write”∥c)
+▷write coord
+8: (dw, hw) ←A[vw]
+▷read old vertex
+9: A[vw].d ←H(dw∥c∥hw)
+▷symbiotic bind
+10: A[vw].h ←H(hw∥c∥t)
+▷causal bind
+11: rt ←MERK.UPD(rt−1, vw, A[vw])
+▷update root
+12: Tt ←H(Tt−1∥t∥c∥rt)
+▷extend transcript
+13: return (Tt, rt)
+post-quantum secure and requires no trusted setup. The IVC
+mode (§II-J, Algorithms 5–6) achieves O(1) proof size via
+binary-field folding but introduces an additional cryptographic
+assumption (polynomial commitment soundness).
+In the classical mode, challenges are derived after the Prover
+commits to the complete root sequence, preventing selective
+disclosure.
+Classical verification cost: O(Q·dR·log N) hashes (∼6 ms
+desktop, 60–300 ms mobile). No arena allocation. For O(1)
+verification, see §II-J.
+J. Constant-Size Verification via Binary-Field Folding
+A fundamental limitation of legacy memory-hard functions
+and early POSME verification strategies is that proof size
+scales with sequence length K or requires O(Q · dR) Merkle
+path verifications. By explicitly structuring the arena as a
+
+Algorithm 3 PROVE(TK, {rt}, A, Q, R)
+Require: TK, roots {r0, . . . , rK}, arena A, Q, R
+Ensure: Π = (TK, C, {πi}i≤Q)
+1: C ←MERKROOT(r0, . . . , rK)
+▷commit roots
+2: σ ←H(TK∥C)
+▷Fiat-Shamir
+3: for i ←1 to Q do
+4:
+si ←H(σ∥i) mod K
+▷select step
+5:
+πi.wit ←(Tsi−1, {vj, dj, hj}, vw)
+▷witness
+6:
+πi.pre ←M.PF(rsi−1, {vj, vw})
+▷pre-state
+7:
+πi.post ←M.PF(rsi, vw)
+▷post-state
+8:
+πi.chain ←M.PF(C, si−1, si)
+▷root pair
+9:
+πi.prov ←PROV({vj}, vw, R)
+▷depth R
+10: end for
+11: return (TK, C, {π1, . . . , πQ})
+Algorithm
+4
+VERIFY(TK, C, {πi}, N, d, K, Q, R).
+Failed
+check ⇒REJECT.
+1: σ ←H(TK∥C)
+▷Fiat-Shamir
+2: for i ←1 to Q do
+3:
+si ←H(σ∥i) mod K
+▷re-derive step
+4:
+(r−, r+) ←roots from πi.chain
+5:
+check M.VFY(C, si−1, r−)
+▷root r−∈C
+6:
+check M.VFY(C, si, r+)
+▷root r+ ∈C
+7:
+check reads in r−via πi.pre
+▷pre-state
+8:
+(T ′, r′) ←STEP(si, πi.wit)
+▷replay step
+9:
+check write in r+ via πi.post
+▷post-state
+10:
+check r′ = r+
+▷root matches
+11:
+for ℓ←1 to R do
+12:
+for each b at depth ℓin πi.prov do
+13:
+check writer ∧Merkle proof ▷provenance
+14:
+end for
+15:
+end for
+16: end for
+17: return ACCEPT
+Boolean hypercube (§II), the construction natively integrates
+with recent breakthroughs in binary-field succinct arguments,
+notably Binius [12].
+Because Binius operates over towers of binary fields and
+utilizes multilinear polynomial commitments, the POSME
+step function maps directly to the prover’s arithmetic circuit
+without the heavy overhead of bit-decomposition required by
+prime-field SNARKs. This enables Incrementally Verifiable
+Computation (IVC) [25]: the Prover “folds” the proof of step
+t into the proof of step t−1. Upon completing the K-th step,
+the final proof is already generated. This reduces the proof
+size from tens of megabytes (Table II) to a constant size of
+a few kilobytes, achieving O(1) verification regardless of the
+number of steps K or the recursion depth R.
+Compatibility with BLAKE3. Binius was specifically de-
+signed to efficiently verify standard bitwise operations (XOR,
+rotation, addition mod 232), making it natively compatible
+Algorithm 5 IVC-PROVE(s, N, K): folded proof generation
+Require: Seed s, arena dimension dhc, steps K
+Ensure: Folded proof ΠIVC = (TK, UK)
+1: (A, r0, T0) ←INIT(s, N)
+2: U0 ←⊥
+▷empty accumulator
+3: for t ←1 to K do
+4:
+(Tt, rt) ←STEP(t, A, Tt−1)
+▷execute step
+5:
+Ut ←F(Ut−1, Tt−1, Tt, rt)
+▷fold step into proof
+6: end for
+7: return (TK, UK)
+Algorithm 6 IVC-VERIFY(s, N, K, TK, UK). Failed check
+⇒REJECT.
+Require: Seed s, parameters N, K, transcript TK, accumula-
+tor UK
+1: check UK is a valid Binius opening
+▷proof well-formed
+2: check F.VERIFY(UK, s, N, K, TK)
+▷O(1) check
+3: return ACCEPT
+with BLAKE3’s compression function. No change to the hash
+primitive is required to benefit from binary-field folding.
+IVC Prove and Verify. In IVC mode, the Prover maintains
+a folding accumulator Ut (Algorithm 5). Each step folds
+the state transition into Ut via the operator F. The Verifier
+(Algorithm 6) checks only the final accumulator, achieving
+O(1) verification independent of K.
+IVC verification cost: O(1) field operations plus a constant
+number of hash evaluations, independent of K. Proof size is
+a few kilobytes. The classical mode (§II-I) remains available
+as a fallback requiring only hash function security.
+K. Concrete Arithmetization and Pipelining
+To achieve the O(1) verification of §II-J without violating
+the latency bound, the POSME step function must be effi-
+ciently arithmetized over the binary-field tower.
+BLAKE3 Boolean trace. BLAKE3 operates on 32-bit
+words using three operations: XOR (⊕), right rotation (≫),
+and addition modulo 232 (⊞). In a prime-field SNARK, these
+require bit-decomposition (∼32 range-check constraints per
+32-bit operation). In the Binius F2 multilinear trace, XOR
+is native field addition and rotation is deterministic wire-
+routing; both incur zero non-linear constraints. The only
+non-trivial arithmetization arises from the carry bits in ⊞,
+represented via a low-degree carry-lookahead polynomial over
+F2. Consequently, the computational trace of the step function
+requires only a few thousand Boolean variables, minimizing
+the folding Prover’s sumcheck overhead.
+Log-derivative memory checking. To verify the multilinear
+memory evaluations without Merkle paths in the circuit, we
+employ log-derivative memory checking [24] over the hyper-
+cube [12]. Each read and write at coordinate v ∈{0, 1}dhc
+updates a running fractional sum in an extension field (e.g.,
+F2128). The step circuit verifies only the O(1) update to the
+running sum; the global memory consistency check (matching
+
+Read Set and Write Set permutation fingerprints) is deferred to
+the final Verifier. This replaces O(log N) Merkle constraints
+per access with a single finite-field addition.
+Prover pipelining and fold cost. Let Tmem ≈50 ns be the
+DRAM random-access latency and Tfold the time to compute
+the Binius IVC fold for a single step. The step function
+requires 2d+4 = 20 BLAKE3 evaluations. Each BLAKE3
+compression has 7 rounds × 8 G-functions × 4 additions mod
+232 × 32 carry bits = 7,168 AND gates. With 20 compressions
+plus ∼1,152 gates for log-derivative memory checking, the
+total is 144,512 Boolean constraints per step.
+With deferred commitment (standard in IVC; the polyno-
+mial commitment is generated only for the final proof, not
+per-step), the per-step cost is the Binius sumcheck alone.
+Over ⌈log2 144,512⌉= 18 rounds, the sumcheck evaluates
+∼2.6×106 F2 operations. Because F2 arithmetic (XOR, AND)
+is SIMD-vectorizable, a single AVX-512 instruction (512 bits)
+processes 512 F2 operations in parallel:
+Tfold = 2.6 × 106
+512
+×
+1
+fCPU
+≈5,078 instr.
+4 GHz
+= 1,270 ns.
+The per-step DRAM cost is Tmem = (d+1) × 50 ns = 450 ns.
+Since Tfold/Tmem ≈2.8, three fold threads (4 threads total
+on AVX-512) achieve aggregate fold throughput of 423 ns,
+keeping pace with the pointer-chase. On consumer AVX2
+hardware (256-bit SIMD), Tfold ≈2,540 ns, requiring 6 fold
+threads.
+Critically, this parallelism is asymmetric: the adversary can-
+not exploit it because the pointer-chase remains strictly single-
+threaded, and GPUs are 14–19× slower at the sequential
+bottleneck (§IV). The fold parallelism benefits only the honest
+Prover.
+III. SECURITY ANALYSIS
+A. Threat Model
+The adversary is PPT with ROM access to H [26], receiving
+(s, N, K, d, Q, R). Goals: (1) forgery (T ′
+K ̸= TK), or (2) space
+reduction (storage < N · B). Custom hardware permitted.
+B. Forgery Prevention
+Theorem
+1
+(Soundness).
+Any
+adversary
+producing
+(T ′
+K, C′
+roots, π′) with T ′
+K
+̸=
+TK that passes verification
+has advantage at most K · εcr.
+Proof sketch. Let
+t∗
+be
+the
+first
+step
+where
+the
+adversary’s
+transcript
+diverges.
+Then
+Tt∗
+=
+H(Tt∗−1∥t∗∥cursor∥roott∗)
+was
+computed
+with
+at
+least one differing input. Matching the honest output requires
+finding a collision in H. Union bound over K steps gives
+K · εcr.
+Causal hashes additionally double write-chain traversal cost
+(2ρ vs ρ per miss), a 2× constant factor (see §II-H, Role 3).
+Their primary contribution is soundness, not TMTO amplifi-
+cation.
+C. TMTO Lower Bound
+Write density constraint. Define the write density ρ =
+K/N, the expected number of times each arena block is
+overwritten during a K-step execution. When ρ < 1, a
+constant fraction of blocks are never written; the adversary can
+recompute them from the initialization seed at O(1) cost per
+block, defeating the storage requirement. Meaningful TMTO
+resistance therefore requires:
+ρ = K/N ≥1
+(K ≥N).
+(1)
+We recommend ρ ≥4; see the discussion after Theorem 2.
+Theorem 2 (TMTO). An adversary storing αN blocks (0 ≤
+α < 1) and all K cursors performs expected computation
+Tadv ≥Kd
+ 1 + (1−α)(2ρ+1)
+
+.
+Proof sketch. Fix a step t ∈[1, K]. The d read coordinates
+are derived as vj = first dhc bits of H(“addr”∥c∥j), where c
+depends on prior reads. In the ROM, each vj is uniform over
+{0, 1}dhc, independent of the adversary’s stored set S (since S
+was chosen before the ROM queries). Each read hits S with
+probability α and misses with probability 1 −α.
+On a miss, the adversary must reconstruct block A[vj] by
+replaying its write chain: the block was overwritten ρ times
+in expectation, each overwrite requiring one hash for the data
+field and one for the causal field, plus the final read itself,
+totaling 2ρ+1 hash evaluations per miss. (The 2× factor from
+causal hashes is the constant described in §II-H, Role 3.)
+Summing over K steps of d reads each:
+Tadv ≥
+K
+X
+t=1
+d−1
+X
+j=0
+
+α+(1−α)(2ρ+1)
+
+= Kd
+ 1+(1−α)(2ρ+1)
+
+.
+The bound is tight when the adversary stores the optimal αN
+blocks (those most frequently accessed); non-uniform strate-
+gies cannot improve the expectation because ROM-uniform
+addressing makes all blocks equiprobable targets.
+Why ρ ≥4. At ρ = 4 and α = 0 (no storage), the TMTO
+penalty is Tadv/Thonest = 1+(2·4+1) = 10×. This exceeds the
+measured ASIC advantage (∼2×) by 5×: a storage-reducing
+adversary is strictly worse off than one with faster hardware.
+Verification cost is independent of ρ (it depends on Q, d, R,
+N only), so increasing ρ adds Prover wall-clock time with no
+Verifier penalty. The bound assumes optimal cursor storage;
+sparse cursors strictly increase adversary cost.
+D. Dynamic Pebbling
+POSME’s causal DAG is dynamic: edges are created during
+execution at ROM-uniform targets, so the graph topology is
+not known until the computation completes. This distinguishes
+it from the static graphs analyzed by Alwen et al. [5] and
+Boneh et al. [15], where the edge set is fixed at construction
+time and classical pebbling lower bounds apply directly.
+The obstacle. Static-graph pebbling proofs (e.g., cumulative
+memory complexity bounds for Argon2 [5]) rely on two
+properties: (1) the graph is depth-robust, meaning no small set
+
+of nodes separates all long paths; and (2) the graph topology
+is known to the analyst a priori, enabling combinatorial
+arguments over its structure. In POSME, neither property
+holds in the standard sense. The edge from step t’s write
+target back to its read sources is determined by the ROM
+output projected onto {0, 1}dhc; the analyst cannot enumerate
+paths without fixing the ROM, which couples the combinato-
+rial argument to a specific oracle instantiation. Recent work
+by Blocki and Holman [14], extending the sustained-space
+framework of [27], establishes sustained-space tradeoffs for
+data-dependent MHFs in the parallel ROM, proving that any
+dynamic pebbling strategy either maintains Ω(N) memory
+for Ω(N) steps or incurs cumulative cost Ω(N 2.5−ε). Their
+model, which allows edges to be revealed online, directly
+informs our two-phase decomposition below.
+Two-phase decomposition. We resolve this obstacle by
+decomposing POSME’s computation graph into a static back-
+bone (the Init DAG, whose structure is known a priori)
+and a dynamic overlay (the Step writes, whose edges are
+revealed online). The static backbone provides a deterministic
+termination condition for recomputation; the dynamic overlay
+provides an exponentially growing recursive miss penalty.
+Theorem 3 (Space-Time Product). In the ROM, any adversary
+storing S = αN vertices (0 < α < 1) requires expected
+computation T satisfying:
+S · T ≥α(1−α) d W(α, ρ)
+ρ
+· K2
+where W(α, ρ) = Pρ
+ℓ=0[d(1−α)]ℓis the expected recursive
+recomputation cost per cache miss. For the recommended
+parameters (d=8, ρ=4), S · T = Ω(K2) for all constant α.
+Proof sketch. Phase 1: Static backbone (termination). The
+Init DAG has skip-link edges v →v ≫1, forming a binary
+tree of depth dhc. Reconstructing any Init-state vertex requires
+traversing its skip-link ancestry: O(log N) hash evaluations.
+This provides a deterministic floor for any recomputation that
+reaches a vertex still in its initialization state.
+Phase 2: Recursive cascade (dynamic overlay). Consider
+a cache miss at step t: the adversary must reconstruct vertex
+vj, which was last written at step t′ < t. That write read d
+vertices, each missing independently with probability (1−α)
+in the ROM (by the same uniformity argument as Theorem 2).
+0.1
+1
+10
+100
+1,000 10,000
+PoSME GPU
+PoSME ASIC
+Argon2id
+scrypt
+SHA-256
+Hardware advantage (× consumer CPU)
+Fig. 1. Hardware advantage over consumer CPU (log scale). POSME resists
+acceleration; existing primitives do not.
+Each secondary miss triggers further recomputation, forming
+a Galton-Watson branching process with expected offspring
+d(1−α).
+Depth bound. Under ROM-uniform writes (one write per
+step to a uniform random vertex), the time since the last write
+to any given vertex is geometric with success probability 1/N,
+giving expected gap N and standard deviation
+p
+N(N−1) ≈
+N. Each recursion level regresses the timeline by one such gap
+(∼N steps). After ρ = K/N levels, the cumulative regression
+covers ∼ρN = K steps, reaching the Init state, where Phase 1
+terminates the branch at O(log N) cost. The expected number
+of live misses at depth ℓis [d(1−α)]ℓ, giving total expected
+work per primary miss:
+W(α, ρ) =
+ρ
+X
+ℓ=0
+[d(1−α)]ℓ.
+When d(1−α) > 1 (i.e., α < 1−1/d), W grows exponentially
+in ρ.
+Product. Each of the K steps performs d reads, each
+missing with probability (1−α) and costing W expected hash
+evaluations. Total: T ≥Kd(1−α)W. Multiplying by S = αN
+and substituting K = ρN:
+S · T ≥α(1−α) d W(α, ρ)
+ρ
+· K2.
+Concrete evaluation (d=8, ρ=4). Table III shows the
+space-time product at representative storage fractions. The
+critical threshold is αc = 1 −1/d = 7/8: below this, the
+branching process is supercritical and W grows exponentially.
+Even at αc the bound exceeds K2.
+TABLE III
+SPACE-TIME PRODUCT S · T/K2 AT d=8, ρ=4 FOR VARYING STORAGE
+FRACTION α.
+α
+d(1−α)
+W
+S·T/K2
+Regime
+1/6
+6.67
+2324
+645
+supercritical
+1/4
+6
+1555
+583
+supercritical
+1/2
+4
+341
+171
+supercritical
+3/4
+2
+31
+11.6
+supercritical
+7/8
+1
+5
+1.09
+critical
+At the adversary-optimal storage α∗= 1/(ρ+2) = 1/6, the
+space-time product is 645 K2, over 300× the honest cost of
+2 K2. Even storing 7/8 of the arena (a mere 12.5% reduction)
+yields S · T ≥1.09 K2. Any meaningful storage reduction
+triggers exponential recomputation.
+Strengthened bound: temporal staleness. Theorem 3 con-
+servatively assumes the adversary’s cache hit rate is α at every
+recursion depth. This overstates the adversary’s capability. The
+adversary stores current vertex states (at execution step t), but
+reconstruction requires historical states (at step t′ < t). Under
+ROM-uniform writes, vertex u is rewritten in the interval
+(t′, t] with probability 1 −e−(t−t′)/N, rendering the stored
+value stale. Since each recursion level regresses ∼N steps,
+the effective hit rate at depth ℓdecays exponentially.
+
+Theorem 4 (Temporal Staleness). Under the conditions of
+Theorem 3, the effective cache hit rate at recursion depth ℓis
+at most αe−ℓ, and the expected recomputation cost per miss
+satisfies:
+W ∗(α, ρ) ≥
+ρ
+X
+ℓ=0
+ℓ−1
+Y
+k=0
+d
+ 1 −αe−k
+.
+For the recommended parameters (d=8, ρ=4), the branching
+factor d(1 −αe−k) > 1 for all k ≥1 and all α < 1.
+Proof sketch. The adversary maintains αN current vertex
+states. At recursion depth ℓ, reconstruction needs vertex u’s
+state from ∼ℓN steps in the past. Under ROM-uniform writes
+(one write per step to a uniform random vertex), the probability
+that u was not rewritten in ℓN steps is (1 −1/N)ℓN ≈e−ℓ.
+The stored state is valid only if u was not rewritten, so the
+effective hit rate is αe−ℓ.
+The expected offspring at depth ℓis d(1−αe−ℓ). For d = 8
+and ℓ≥1: d(1 −αe−1) = 8(1 −α/e) > 1 for all α <
+e(1−1/8) = 2.38, which holds for any α ∈[0, 1). Thus the
+branching process is supercritical at every depth beyond the
+first level, regardless of α.
+Elimination of the critical threshold. Under Theorem 3,
+the critical storage fraction αc = 1−1/d = 7/8 separates
+the supercritical and subcritical regimes. Temporal staleness
+eliminates this threshold entirely: even at α = 7/8, the
+level-1 branching factor is d(1−α/e) = 5.42, driving the
+recomputation cost from W = 5 to W ∗= 338. Table IV
+compares both bounds.
+TABLE IV
+TEMPORAL STALENESS STRENGTHENING (d=8, ρ=4). W = BASIC MISS
+COST (THM. 3), W ∗= STRENGTHENED (THM. 4).
+α
+W
+W ∗
+S·T
+K2
+S·T
+K2 (W ∗)
+Gain
+1/6
+2324
+3555
+645
+987
+1.5×
+1/2
+341
+1746
+171
+873
+5.1×
+7/8
+5
+338
+1.09
+74
+68×
+0.95
+1.6
+129
+0.16
+12.2
+77×
+The gain concentrates where it matters most: near the old
+critical threshold. An adversary storing 95% of the arena now
+faces S · T ≥12 K2, a 6× penalty over honest computation,
+versus the basic bound’s marginal 0.16 K2.
+Extension to adaptive strategies. Theorems 3 and 4 as-
+sume the adversary fixes a storage set before execution. We
+now show that adaptive caching provides no advantage under
+the ROM.
+Theorem 5 (Adaptive Bound). At each step t, the adaptive
+adversary’s storage set St is a function of {T0, . . . , Tt−1}
+and prior ROM queries. All d read addresses {v0, . . . , vd−1}
+satisfy Pr[vj ∈St] = α for every j ∈[0, d−1]. The adaptive
+adversary’s miss rate is identical to the static case.
+Proof sketch. The address v0 is computable from Tt−1 via a
+single ROM query: the adversary knows which vertex to read,
+but reading it requires v0 ∈St. Since |St| = αN and v0 is
+a ROM output uniform over {0, 1}dhc, Pr[v0 ∈St] = α, no
+better than any other read.
+For j ≥1: the cursor cj = H(cj−1∥A[vj−1].d∥A[vj−1].h)
+depends on A[vj−1], which is revealed only after the (j−1)-th
+read completes. The address vj = H(“addr”∥cj∥j) is therefore
+a ROM query whose output is independent of St (fixed before
+this query). Thus Pr[vj ∈St] = α for all j.
+Lookahead. Predicting read addresses for step t+1 requires
+computing Tt, which requires executing step t, which is the
+sequential work being bounded. The adversary has at most
+one-step lookahead, and that step’s addresses are already
+conditioned on values the adversary may not possess.
+Theorem 5 shows that the static-storage bounds of Theorems 3
+and 4 apply without modification to adaptive adversaries. No
+factor loss is incurred.
+E. Vertex Coverage and Mixing
+The TMTO analysis (Theorems 2–5) assumes ROM-
+uniform vertex access. We now validate this assumption both
+mathematically and empirically.
+Theorem 6 (Vertex Coverage). In the ROM with parameters
+N, K, d, ρ = K/N:
+(a) The write count Wv for each vertex v converges to
+Poisson(ρ) as N →∞. The read count Rv converges
+to Poisson(dρ).
+(b) The maximum read count satisfies maxv Rv < (1+δ) dρ
+with probability ≥1 −N · e−δ2dρ/3 for 0 < δ < 1.
+(c) Successive read addresses vj, vj+1 within a step are
+pairwise independent in the ROM (distinct oracle
+queries with distinct inputs).
+Proof sketch. (a) Write addresses are ROM-uniform over N
+vertices, one per step. The classical balls-in-bins Poisson
+limit gives Wv →Poisson(ρ). Read addresses are similarly
+uniform; d per step gives Rv →Poisson(dρ).
+(b) By the multiplicative Chernoff bound, Pr[Rv
+>
+(1+δ)µ] ≤e−δ2µ/3 where µ = dρ. Union bounding over N
+vertices, Pr[maxv Rv > (1+δ)µ] ≤Ne−δ2µ/3. For d=8, ρ=4
+(µ=32), N=224, δ=1: 224 · e−32/3 ≈3.7 × 10−6 · 224 ≈62.
+The probability that any vertex exceeds 2µ = 64 reads is
+< 62/N; no vertex exceeds 3µ with probability > 1 −2−40.
+(c) vj+1 = first dhc bits of H(“addr”∥cj+1∥(j+1)) where
+cj+1
+= H(cj∥A[vj].d∥A[vj].h). This is a distinct ROM
+query from vj’s (different cursor input), so the outputs are
+independent.
+Empirical validation. We executed the full POSME ad-
+dress generation chain with BLAKE3 at the recommended
+production parameters: N=224 (1 GiB arena), ρ=4, d=8,
+K=67,108,864 steps, 536,870,912 total reads. The Rust im-
+plementation completed in 244 s (3,637 ns/step), confirming
+latency-bound behavior. Table V summarizes the results.
+
+DDR4
+DDR5
+LPDDR5
+GDDR6
+HBM2e
+HBM3
+0
+20
+40
+Per-read cost (ns)
+Memory
+BLAKE3
+Fig. 2.
+Per-read cost across six memory technologies. Hash (3 ns, red) is
+a small fraction on all types. Values are tRCD+CL latency from JEDEC
+specifications.
+TABLE V
+EMPIRICAL MIXING-TIME VALIDATION AT PRODUCTION SCALE (N=224,
+ρ=4, d=8, BLAKE3, 5.4×108 READS).
+Metric
+Value
+Expected
+Read χ2/df
+1.000426
+1.000000
+Write χ2/df
+1.000065
+1.000000
+Read σ
+5.6581
+5.6569 (
+√
+32)
+Write σ
+2.0001
+2.0000 (
+√
+4)
+Unwritten frac.
+1.8337%
+1.8316% (e−4)
+Max read / µ
+2.06×
+< 3× (Chernoff)
+Max write / µ
+4.75×
+Poisson tail
+The chi-squared statistics are indistinguishable from perfect
+uniformity to four decimal places. The observed standard
+deviations match Poisson predictions (√dρ and √ρ) to four
+significant figures across all 224 vertices. The unwritten frac-
+tion matches the theoretical e−ρ to 0.12% relative error. These
+results confirm that BLAKE3’s address generation is empir-
+ically indistinguishable from the ROM at the recommended
+production parameters.
+F. ASIC Resistance
+POSME is designed to be latency-dominated: hash com-
+putation is a structural minority of per-step cost (< 3%
+at 1 GiB arena). The bottleneck is DRAM random-access
+latency. Fig. 2 shows the cost breakdown across six memory
+technologies. Hash cost (3 ns) is constant; memory latency
+varies by type but dominates in all cases. GDDR6 has the
+lowest CAS latency (∼8 ns) but GPU cores are 14–19× slower
+at sequential pointer-chasing (Table VII), negating the memory
+advantage entirely.
+Real random-access latency (tRCD + CL + controller
+overhead) raises the floor from ∼10 ns to 40–50 ns on any
+hardware. The measured HBM3-vs-DDR5 advantage is only
+1.3×. DRAM latency has improved 1.3× over two decades
+while bandwidth improved 20× [7], making POSME’s latency
+bound structurally more durable than bandwidth-based resis-
+tance [3], [4].
+IV. EMPIRICAL VALIDATION
+A. Experimental Protocol
+We benchmarked POSME on 17 platforms spanning
+ARM64 and x86 architectures, ranging from 1–32 vCPUs,
+utilizing both DDR4 and DDR5 memory. Our evaluation also
+included cloud-based GPU instances (NVIDIA T4, A10G,
+L4, A100, and H100) to measure the advantage of massively
+parallel hardware. The reference implementation was written
+in Rust with BLAKE3 as the underlying hash function. All
+tests were performed on a 1 GiB arena (N = 224) to ensure
+the working set exceeded the L3 cache of all tested processors.
+B. Performance Results
+Hash Fraction. Across all 17 CPU platforms, the hash
+computation fraction remained between 1.4% and 3.1%
+(Table VI). The CPU spends over 96% of step time waiting
+for DRAM random access.
+Prover Wall-Clock Time. For the recommended production
+parameters (N = 224 (1 GiB), K = 4N = 67 × 106 steps),
+the total Prover wall-clock time is approximately 120–200
+seconds (2–3.3 minutes) on modern hardware, consistent with
+the observed 1783–3000 ns per step. Step times varied 2.3×
+(1783–4047 ns), but the hash fraction remained in a tight band
+because both hash and memory scale together on any given
+machine. Step cost increases with arena size as the working
+set exceeds L3 cache, confirming memory-bound behavior.
+GPU Performance Gap. To directly measure the adver-
+sary’s hardware advantage, we ran the POSME pointer-chase
+loop as a CUDA kernel on GPU cores accessing GPU memory
+(HBM/GDDR), comparing against the host CPU running the
+identical algorithm on system DRAM. The results (Table VII):
+GPUs are 14–19× slower than the host CPU.
+TABLE VI
+CROSS-PLATFORM BENCHMARK (1 GIB, ρ=1, HASH < 3.5%). n =
+DISTINCT PLATFORMS PER ROW.
+Platform
+n
+Step (ns)
+Hash %
+Apple M-series (ARM64)
+1
+1783
+3.1
+Cloud x86 (2–16 vCPU)
+4
+2947–4047
+1.4–1.9
+Cloud x86 + GPU host
+5
+3218–4047
+1.4–1.7
+Cloud adversarial (NUMA)
+3
+2800–4100
+1.3–2.0
+Colab (Xeon + T4)
+1
+3485
+1.6
+Colab (AMD EPYC)
+1
+3585
+1.5
+RunPod CPU (EPYC 9655)
+1
+2644
+2.1
+RunPod GPU (i7 + RTX 4080)
+1
+1909
+2.9
+Total
+17
+TABLE VII
+CPU VS GPU POINTER-CHASE (64 MIB ARENA, 64K STEPS). GPUS ARE
+14–19× SLOWER THAN THE HOST CPU.
+GPU
+CPU (ns)
+GPU (ns)
+Ratio
+T4 (GDDR6)
+7062
+123019
+0.06×
+A100 (HBM2e)
+6431
+120636
+0.05×
+H100 (HBM3)
+5903
+82270
+0.07×
+L4 (GDDR6)
+5383
+98990
+0.05×
+GPU cores are optimized for parallel throughput, not se-
+quential pointer-chasing. A single CUDA thread at ∼1.5 GHz
+cannot compete with a CPU core at ∼3.5 GHz for sequential
+dependent loads. The GPU’s memory bandwidth advantage
+
+is irrelevant because the pointer-chase is latency-bound, not
+bandwidth-bound.
+The ASIC advantage (1.3× measured for HBM3 vs DDR5
+random access) requires a custom sequential core paired with
+HBM, hardware that does not exist commercially. All pur-
+chasable accelerators (GPUs) are strictly worse than consumer
+CPUs.
+C. Throughput and the Capacity-Bandwidth Bound
+The preceding analysis addresses per-instance latency. A
+sophisticated adversary may instead target throughput: running
+many independent POSME instances in parallel to amortize
+the per-instance GPU penalty. GPUs hide sequential latency
+behind massive memory bandwidth (e.g., 3 TB/s on the H100).
+However, arena isolation (§II) forces each instance to allocate
+a unique M-byte arena, converting the attack from a band-
+width problem into a capacity problem.
+Capacity choke. An NVIDIA H100 [32] has 80 GiB of
+HBM3 VRAM. With a 1 GiB arena per instance, the GPU
+accommodates at most 80 concurrent executions. At the
+physical HBM3 random-access floor of ∼20 ns per 64-byte
+read, each instance consumes 64 B/20 ns = 3.2 GB/s. The
+80 instances collectively use ∼256 GB/s, less than 9% of
+the H100’s 3 TB/s bandwidth. The GPU is memory-capacity-
+bound, not bandwidth-bound.
+Economic comparison. At comparable capital outlay, com-
+modity DDR5 platforms provide 10–20× more aggregate
+arena capacity per dollar than HBM3-equipped accelerators,
+with the exact ratio depending on market conditions. The
+disparity grows with arena size: a 4 GiB arena reduces an
+80 GiB GPU to 20 instances while a 16 GiB desktop still runs
+3.
+Table VIII summarizes the capacity-bandwidth mismatch
+across GPU architectures.
+TABLE VIII
+GPU THROUGHPUT CHOKE: CAPACITY LIMITS PARALLEL INSTANCES TO A
+FRACTION OF AVAILABLE BANDWIDTH (M = 1 GIB ARENA).
+GPU
+VRAM
+BW
+Max inst.
+BW used
+(GiB)
+(TB/s)
+(%)
+T4 (GDDR6)
+16
+0.3
+16
+17.1
+A100 (HBM2e)
+80
+2.0
+80
+10.2
+H100 (HBM3)
+80
+3.0
+80
+8.5
+As GPU bandwidth scales faster than capacity (a structural
+trend in HBM design [7]), the capacity-bandwidth mismatch
+worsens for the adversary. POSME’s 1 GiB arena is specifi-
+cally sized to exploit this gap.
+V. PARAMETERS
+Initialization. Arena initialization (skip-link DAG over N
+blocks) requires ∼4 s for 1 GiB (measured). This is a one-time
+cost per seed, amortized over the K-step computation.
+TABLE IX
+RECOMMENDED PARAMETERS
+Parameter
+Symbol
+Value
+Constraint
+Arena blocks
+N
+224
+Power of 2
+Arena memory
+M
+1 GiB
+> L3 cache
+Steps
+K
+4N
+ρ ≥4
+Reads/step
+d
+8
+≥4
+Challenges
+Q
+128
+≥64
+Recursion
+R
+3
+≥2
+Hash
+H
+BLAKE3 [10]
+Fixed
+Recursion depth. At R=2, the Verifier opens a challenged
+step’s d reads and each read’s writer, but not the writers’
+reads. An adversary can fabricate a block b by choosing an
+arbitrary writer step w with a plausible cursor, since w’s
+own reads are never checked. At R=3, the Verifier also
+opens w’s d reads and their writers, forcing the adversary to
+produce d3=512 mutually consistent causal hashes. The cost
+of fabrication grows as dR; higher R provides exponentially
+stronger soundness but linearly larger proofs.
+VI. FROM SEQUENTIAL WORK TO VERIFIABLE TIME
+A common misconception is that a proof of sequential work
+equivalently proves wall-clock time. While POSME enforces
+a lower bound on the number of sequential steps Ω(K), an
+adversary with specialized hardware can execute these steps
+faster than a commodity processor.
+A. The Economic Bound
+Our benchmarks show a ∼1.3× potential speedup for cus-
+tom sequential-core ASICs with HBM3 memory. However,
+the cost-to-performance ratio for such hardware is extremely
+prohibitive. Building a custom silicon tape-out simply to gain
+a 30% lead over a $500 consumer laptop is economically
+irrational for most attack scenarios. POSME thus provides an
+economic bound on acceleration that is structurally tighter than
+bandwidth-bound functions like Argon2id (8–16×).
+B. Bridging the Gap to VDFs
+To transform POSME into a true Verifiable Delay Function
+(VDF) or a high-precision time-binding primitive, we suggest
+three architectural wrappers:
+1) VDF-POSME Hybrid: The final transcript TK can
+be used as the input to a sequential VDF (e.g.,
+Wesolowski [11], Pietrzak [19]). The POSME compo-
+nent ensures the computation was memory-hard and
+ASIC-resistant, while the VDF provides a mathematical
+guarantee of the time elapsed.
+2) Hardware Attestation (TEE): If the Prover executes
+within a Trusted Execution Environment, the TEE can
+provide signed hardware timestamps for T0 and TK.
+This binds the cryptographic work to a physical, trusted
+clock.
+3) Randomness Beacons: Provers can be forced to peri-
+odically absorb unpredictable external data (e.g., Bitcoin
+block hashes) into the cursor c. This proves the compu-
+tation could not have completed before the beacon was
+released, pinning execution to real-world events.
+
+VII. LIMITATIONS
+Steps, not time. POSME proves sequential memory exe-
+cution, not elapsed wall-clock time. A custom sequential-core
+ASIC with HBM3 could gain ∼1.3×; such hardware does not
+exist commercially. Bridging the gap to verifiable time requires
+an external wrapper (§VI).
+ROM dependence. The security analysis (Theorems 1–
+5) assumes the Random Oracle Model. Theorem 6 validates
+the assumption empirically for BLAKE3 at the recommended
+parameters (χ2/df = 1.0004 at N=224), but proving the
+space-time bound in the standard model (e.g., under collision
+resistance alone) remains open, as it does for all memory-hard
+functions in current use [5].
+IVC implementation. The O(1) verification design (§II-J,
+§II-K) is validated analytically (1,270 ns fold, 144,512 con-
+straints) but not by a production Binius implementation. Three
+fold threads keep pace with the pointer-chase on AVX-512
+hardware.
+Side channels. Data-dependent addressing leaks access pat-
+terns via cache timing on shared hardware. Because POSME
+operates on public state derived from a public seed, the
+access pattern is public knowledge and provides no shortcut
+to forgery. The channel is informational, not exploitable.
+Reproducibility. A reference benchmark with pre-compiled
+binaries and CUDA source is provided as ancillary material
+in the repository’s anc/ directory. All code is licensed under
+Apache-2.0.
+VIII. CONCLUSION
+POSME fills a gap between VDFs, PoSW, MHFs, and PoST
+by combining mutable arena state, data-dependent pointer
+chasing, and symbiotic causal binding into a single latency-
+bound primitive. The construction requires no trusted setup
+and achieves three properties that no prior primitive provides
+simultaneously: Ω(K) sequential memory-step enforcement,
+10× TMTO resistance at ρ=4, and a ∼2× ASIC bound
+determined by DRAM physics rather than ALU speed.
+The security analysis resolves the principal open question
+for dynamic causal DAGs: a formal S · T = Ω(K2) lower
+bound (Theorem 3), strengthened by temporal cache staleness
+(Theorem 4) and extended to adaptive adversaries with no
+factor loss (Theorem 5). Empirical validation at the full
+recommended scale (N=224, 5.4×108 reads) confirms ROM
+uniformity to four significant figures (Theorem 6).
+Benchmarks across 17 CPU and 4 GPU platforms validate
+the core claim: no commercially available hardware, including
+NVIDIA’s H100, outperforms a consumer laptop at POSME.
+GPU throughput is choked by VRAM capacity, giving com-
+modity CPUs a 10–20× aggregate advantage per dollar.
+The binary-field algebraic structure is additionally compati-
+ble with emerging Processing-in-Memory architectures [30],
+where the latency bound would tighten from ∼50 ns (wire
+travel) to ∼10 ns (sense amplifier limit).

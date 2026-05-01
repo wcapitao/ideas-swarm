@@ -1,0 +1,1222 @@
+Privacy, Prediction, and Allocation
+Ben Jacobsen1 and Nitin Kohli∗2
+1Department of Computer Sciences, University of Wisconsin-Madison
+2Center for Effective Global Action, UC Berkeley
+April 2026
+Abstract
+Algorithmic predictions are increasingly used to inform the allocation of scarce resources.
+The promise of these methods is that, through machine learning, they can better identify
+the people who would benefit most from interventions. Recently, however, several works
+have called this assumption into question by demonstrating the existence of settings where
+simple, unit-level allocation strategies can meet or even exceed the performance of those
+based on individual-level targeting. Separately, other works have objected to individual-
+level targeting on privacy grounds, leading to an unusual situation where a single solution,
+unit-level targeting, is recommended for reasons of both privacy and utility. Motivated
+by the desire to fully understand the interplay of privacy and targeting levels, we initiate
+the study of aid allocation systems that satisfy differential privacy, synthesizing existing
+works on private optimization with the economic models of aid allocation used in the non-
+private literature. To this end, we investigate private variants of both individual and unit-
+level allocation strategies in both stochastic and distribution-free settings under a range
+of constraints on data availability. Through this analysis, we provide clean, interpretable
+bounds characterizing the tradeoffs between privacy, efficiency, and targeting precision in
+allocation.
+1
+Introduction
+Public institutions, humanitarian organizations, and private firms increasingly use data to design
+and deliver interventions across populations. Notable examples can be found across such varied
+domains as education [12, 54], humanitarian response [4, 5, 40, 41], housing assistance [49], and
+financial inclusion [10, 11, 41]. A common theme across these applications is the growing use
+of personal and behavioral data to decide how resources and benefits should be allocated to
+improve welfare outcomes.
+When designing such interventions, the level at which aid is targeted has far-reaching policy
+implications [1, 67]. Two choices are typical [60]: individual-level allocation (ILA) draws on
+detailed data about specific people – either directly observed or predicted – to assign benefits
+one person at a time. It is often praised for precision and efficiency [39] but criticized for its
+reliance on sensitive personal data [57]. Unit-level allocation (ULA) instead uses aggregated
+data about groups, such as geographic areas or demographic clusters, to allocate resources
+∗NK was supported by a grant from the Gates Foundation.
+1
+arXiv:2604.15596v2 [cs.CR] 23 Apr 2026
+
+collectively.
+It requires less personal information and may offer greater inclusivity, but this
+comes at the cost of coarser allocation precision [3].
+Privacy concerns arise at all levels of this process [18, 46, 65], but the focus of this work
+is on the privacy of the allocation itself. For example, when allocations are based on sensitive
+characteristics such as poverty status, the mere fact that an individual receives an anti-poverty
+benefit discloses that characteristic, which has been shown to provoke shame or jealousy among
+peers and to expose individuals to additional, well-documented privacy risks [35]. A promising
+approach to address this problem is to use differential privacy (DP), a rigorous mathematical
+framework for limiting the information that an algorithm leaks about its input. But although
+a number of prior works have investigated private variants of ILA from an optimization per-
+spective [29, 30, 17], and there are examples of systems that have employed DP for both ULA
+[40] and ILA [41] in specific applications, there is limited understanding on the fundamental
+tradeoffs between privacy and efficiency in allocation systems more broadly. In particular, it is
+not clear to what extent the addition of privacy requirements should influence how administra-
+tors navigate the fundamental tension between spending their limited budget on collecting more
+data vs. helping more people, which has been much discussed in recent works [60, 55, 23].
+In this paper, we help to close this gap by systematically analyzing the tradeoffs between ILA
+and ULA across different levels of data availability, subject to DP constraints. As a warm-up,
+we first consider an idealized setting with full access to each individual’s welfare where the only
+challenge is to satisfy DP (Section 3). We then turn our attention to more challenging settings
+where administrators have limited access to individual welfare scores and must balance paying
+for greater data access with allocating greater amounts of aid. In Section 4, we consider an
+administrator that can pay to sample welfare scores directly, and design strategies with robust
+worst-case bounds on regret even when those scores are fixed arbitrarily. Then, in Section 5,
+we introduce distributional assumptions by considering the setting (increasingly common in
+practice [4, 5, 41]) where an administrator has access to auxiliary information (features) on the
+whole population and samples individual welfare scores to train a predictive model. Building
+on sample complexity bounds for DP-SCO [21], we investigate when and how approaches based
+on statistical modeling can improve the efficiency of private allocations.
+For each setting we consider, we derive clean, interpretable bounds describing the asymptotic
+regimes where one strategy outperforms the other (Sections 4.3 and 5.3). Perhaps surprisingly,
+we find that the choice of DP parameter has little impact on the optimal choice of strategy: we
+present simple, practical DP algorithms for ULA and ILA whose regret relative to non-private
+baselines vanishes asymptotically. Beyond the level of privacy, we find that ULA is more efficient
+than ILA when budgets are small, data is expensive, average welfare is low, inequality is high,
+and individual welfare is difficult to predict. These results are consistent with and extend those
+of other recent works [60, 54, 55], indicating that many of the defining features of ILA and ULA
+carry over when privacy constraints are introduced. Taken together, our results provide the first
+general framework for navigating tradeoffs between privacy, efficiency, and targeting precision
+in the design of systems for fair allocation.
+2
+Preliminaries
+2.1
+Differential Privacy
+Differential privacy (DP) is a mathematical notion of privacy designed for statistical tasks [20].
+Informally speaking, a randomized mechanism satisfies DP if changing one individual’s data
+doesn’t change the distribution of the mechanism’s outputs by too much. Our privacy guarantees
+are stated in terms of zCDP, but can be easily translated to R´enyi DP or approximate DP using
+2
+
+standard results [15].
+Definition 1 (ψ-zero-Concentrated Differential Privacy [15]). A mechanism M : X n →Y
+is ψ-zCDP if, for all x, x′ ∈X n differing on a single entry and all α ∈(1, ∞), we have
+Dα(M(x)∥M(x′)) ≤ψα, where Dα(M(x)∥M(x′)) is the α-R´enyi divergence between the dis-
+tribution of M(x) and the distribution of M(x′).
+Definition 1 turns out to be slightly too strict for computing allocations [29]: if the output
+of our algorithm is a full allocation, then satisfying DP implies that the aid allocated to an indi-
+vidual cannot depend too much on that same individual’s welfare, which is clearly incompatible
+with effective targeting. It is therefore standard to use a slight relaxation of DP called Joint
+DP [37]. Essentially, instead of publishing our full allocation, we separately tell each individual
+whether or not they were chosen to receive aid. Satisfying Joint DP then requires that chang-
+ing one individual’s data won’t change the joint distribution of everybody else’s outputs by too
+much, but the original individual’s output can change arbitrarily.
+Definition 2 (Joint ψ-zero-Concentrated Differential Privacy; Adapted from
+[37]). Let M :
+X n →Yn be a randomized mechanism that produces n outputs y = (y1, . . . , yn) when provided
+x = (x1, . . . , xn). Let M(x)−i denote the output of M(x) without the ith component. We say
+that M satisfies Joint ψ-zCDP if for all i ∈[n], all x, x′ ∈X n differing in their ith entry, and
+all α ∈(1, ∞), we have Dα(M(x)−i∥M(x′)−i) ≤ψα.
+A classic result from Joint DP is the Billboard Lemma, which allows us to reduce the task
+of constructing Joint DP mechanisms to standard DP mechanisms.
+Lemma 3 (Billboard Lemma; Adapted from [29] Lemma 1). Let M : X n →Y satisfy ψ-
+zCDP. Then for any function f : Y × X →Z, the mechanism M ′ : X n →Zn defined by
+M ′(x)i = f(M(x), xi) satisfies Joint ψ-zCDP.
+2.2
+Related Work
+2.2.1
+Allocation Based on Prediction
+There is now a substantial body of work analyzing the promises and pitfalls of predictive systems
+for resource allocation. Some papers emphasize the benefits of predictive models in improving
+the efficiency and targeting of limited resources [39, 5, 12, 3, 49].
+Others have studied the
+theoretical tradeoffs of prediction-guided allocation [16, 33, 60, 55] and empirically investigated
+the value of prediction in allocation across different contexts [23, 54, 22].
+A distinct line of works has criticized the concept of predictive optimization on normative
+grounds, arguing contra [39] that such systems often fail on their own terms
+[64, 9, 44]. In
+parallel, a growing body of research has suggested that many aspects of life trajectories may be
+fundamentally difficult to predict regardless of the method used [58, 45, 38].
+Most relevant to our study is the framework proposed by Shirali et al. [60], who characterize
+the conditions necessary for ILA to outperform ULA. They develop a simple mathematical
+model for aid allocation and find that ILA only outperforms ULA when inequality across units
+is low and the budget is high. We extend their framework through a detailed examination of
+the impact of data constraints on efficiency, including constraints motivated by privacy.
+2.2.2
+Differentially Private Allocation and Matching
+Joint DP (Definition 2) was first formalized by [37] in the context of mechanism design for medi-
+ated games, but it was quickly observed that the same definition could also be used to compute
+3
+
+private matchings and allocations. The pioneering work in this direction is [29], which studied
+a setting where n agents each have private valuations over (subsets of) k goods. Subsequent
+works have extended these results to a wide range of matching and convex optimization problems
+under a variety of assumptions [30, 17, 19]. The main feature that distinguishes these works
+from our own is that they all begin with the assumption that agents’ valuations are known in
+advance, whereas we study tradeoffs between different strategies for learning those valuations.
+Our work can therefore be seen as a bridge between existing theoretical works on Joint DP
+allocation and the growing non-private literature, described above, that examines the tradeoffs
+inherent to targeted aid allocation.
+2.3
+Our Basic Model
+Our work expands on the model of allocation presented in Shirali et al [60]. Our main goal
+in this section is to introduce the key terms and concepts of this model; the motivation and
+limitations of our modeling choices are discussed in greater detail in Section 6.
+To start out, we assume that our population is divided M disjoint units U1, . . . , UM, each
+with population N, giving a total population size of P = MN. Each individual i ∈[P] has a
+welfare wi ∈[0, 1], and our goal is to maximize the sum of all welfare scores. To this end, we
+can pay a fixed cost of c to allocate aid to an individual, subject to a budget constraint of B.
+We use τi to denote the treatment effect of aiding individual i, defined as the marginal increase
+in their welfare after our intervention. Following [60], we assume that τi = min(1, wi + δw) −wi
+for some fixed δw, i.e. treatment effects are homogeneous and welfare is capped at 1. We say
+that an individual i is “low-welfare” if wi ≤1 −δw and “high-welfare” otherwise.
+Deciding on an allocation can be seen as a matching problem between an administrator
+with k = B/c indivisible, exchangeable goods and P potential recipients, where the value of
+allocating aid to individual i is τi. We represent allocations with index sets, and define the
+value of an allocation with index set I given a welfare vector w as Val(I, w) := P
+i∈I τi. This
+quantity represents the total improvement in welfare that occurs because of our intervention.
+To evaluate a particular allocation, we define its regret by how far it falls short of the best value
+we could have achieved:
+Regret(I, w; k) = max
+|J |=k Val(J , w) −Val(I, w)
+(1)
+Abusing notation, we will also define the regret of an algorithm A that outputs an allocation
+by Regret(A, w; k) := EI∼A(w)[Regret(I, w; k)], and likewise for Val(A, w). The normalized
+regret is defined as Regret(·, w; k) :=
+1
+δw Regret(·, w; k). In some contexts, we will consider
+welfare scores drawn i.i.d. from some distribution D, in which case the expectation is taken over
+the randomness of both our algorithm and the input.
+When discussing specific algorithms, we annotate a strategy with a hat when it is derived
+from estimated welfare scores, as in d
+ILA, and with a tilde when it satisfies DP, as in ]
+ULA. The
+exact nature of the estimation or privacy protection should always be clear from context.
+2.3.1
+Individual-Level Allocation (ILA)
+ILA aids individuals in ascending order by welfare. Let s(i) denote the index of the individual
+with the ith lowest welfare.
+Then the value of the optimal non-private allocation is given
+by Val(ILA, w) := Pk
+i=1 τs(i). This allocation is exactly optimal and so has zero regret by
+definition, but is also clearly not privacy-preserving.
+To remedy this, we design a variant of ILA that satisfies Joint DP (Definition 2). We begin
+by sorting individuals in ascending order by either true welfare scores (if they are known) or by
+4
+
+an estimate of the probability ηi := P[wi > 1 −δw] (if w must be estimated). We then learn a
+global decision rule f : [0, 1] →{0, 1} subject to central DP and output a single bit f(wi) (resp.
+f(ˆηi)) to each individual indicating whether they will receive aid.
+To match the non-private baseline, we want f to be a good approximation of the non-private
+decision rule f(w) ≈I[w ≤ws(k)], taking care to handle situations where scores may be highly
+concentrated or tied. The main technical challenge here is to ensure that our global budget
+constraint is still satisfied with high probability, given that each individual allocation decision
+must be made locally.
+When analyzing the regret of private variants of ILA, we will make
+frequent use of the following lemma:
+Lemma 4. Let ˆηi denote an estimate for the probability that wi ≤1 −δw, ηi be the true proba-
+bility, and let ˆs(j) be the index of the person with the jth lowest estimated probability. Suppose
+that our allocation only aids k′ ≤k individuals based on ascending estimated probabilities of
+having low welfare. Then we have:
+Regret( d
+ILA, w; k) ≤(k −k′) + k′¯ηk′ +
+X
+i∈I
+|ˆηi −ηi|
+(2)
+where I := {i = s(j) = ˆs(j′) | (j ≤k′ < j′) ∨(j′ ≤k′ < j)} is the set of individuals wrongly
+included or excluded from our allocation because of estimation error, and ¯ηk′ :=
+1
+k′
+Pk′
+i=1 ηs(i)
+is the probability that a randomly selected individual among those with the k′ lowest conditional
+probabilities of having high welfare does, in fact, have high welfare.
+Remark 5. In Section 3 and Section 4, we treat welfare scores as fixed, in which case ηi ∈{0, 1}
+and ¯ηk′ is typically equal to 0. We consider probabilistic welfare in Section 5.
+2.3.2
+Unit-Level Allocation (ULA)
+ULA targets aid allocation to the worst-off units without distinguishing between individuals
+within the same unit. Specifically, let ρj =
+1
+|Uj|
+P
+i∈Uj I[wi > 1 −δw] denote the probability
+that a randomly selected individual in unit j has high welfare. With no privacy constraints,
+ULA greedily allocates aid to everybody in the units with the lowest ρj scores until its budget
+is exhausted.
+To avoid complications from rounding, we permit ULA to allocate resources
+uniformly at random within the last chosen unit whenever k is not evenly divisible by N. We
+denote the total number of units treated by K = ⌈k/N⌉.
+Letting Tj denote the average treatment effect within unit j and using s(j) to denote the
+index of the unit with the jth lowest value in ρ, the value of the non-private allocation is:
+Val(ULA, w) :=
+⌊k/N⌋
+X
+j=1
+NTs(j) + (k mod N)Ts(⌊k/N⌋+1) ≥k
+
+1
+K
+K
+X
+j=1
+Ts(j)
+
+
+(3)
+In Lemma 4.1 of [60], the authors show that PK
+j=1 Ts(j) ≥PK
+j=1 δw(1−ρs(j)). This then implies
+that Regret(ULA, w; k) ≤k¯ρK, where ¯ρK := 1
+K
+PK
+j=1 ρs(j).
+The private variant of ULA operates in the same way, except that it first computes eρ, a
+ψ-zCDP estimate of vector of unit profiles ρ, and then allocates aid in ascending order based
+on this estimate. The following lemma allows us to decompose the worst-case regret of private
+ULA into the worst-case regret of non-private ULA plus the error from privacy:
+Lemma 6. Let x∗
+j denote the number of individuals in unit j that receive aid under ULA(w),
+and let ˜x∗
+j denote the same for ]
+ULA(w). Then for any p, q ∈[1, ∞] such that 1/p + 1/q = 1, we
+5
+
+can upper-bound the worst-case normalized regret of the allocation based on eρ by:
+Regret(]
+ULA, w; k) ≤k¯ρK + ∥x∗−˜x∗∥p∥eρ −ρ∥q
+(4)
+In particular, we can choose between any of the following bounds for this privacy term:
+
+
+
+
+
+
+
+2 min(k, P −k) maxj |eρj −ρj|
+p = 1, q = ∞
+q
+2 min(k, P −k)N PM
+j=1(eρj −ρj)2
+p = 2, q = 2
+N PM
+j=1 |eρj −ρj|
+p = ∞, q = 1
+(5)
+Remark 7. Lemma 6 generalizes the connection between Val(ULA, w) and error in unit-level
+statistics presented in [60, Appendix D.1], which corresponds to the case of p = ∞, q = 1.
+2.3.3
+Random Allocation
+Finally, we will also frequently consider the baseline strategy of allocating aid to individuals
+sampled uniformly without replacement from the population (RAND), which may be preferable
+to either ILA or ULA when privacy or budgetary constraints are too strict to permit any form
+of effective targeting.
+Lemma 8. Define ¯ρM =
+1
+M
+PM
+j=1 ρj, and let X be a hypergeometric random variable with
+population size P, number of samples k, and number of successes P(1 −¯ρM). Then
+Regret(RAND, w; k) ≤E[k −X] = k¯ρM
+2.3.4
+The Role of Inequality
+Prior works [60, 54] have identified inequality between units as a major factor determining the
+(in)efficiency of ULA. One way to understand the connection is to think of inequality between
+units as a measure of how informative unit membership is; inequality is high exactly when unit
+membership is a useful proxy for welfare.
+The following lemma formalizes this intuition by
+quantifying inequality in terms of the Gini coefficient of the unit profile vector, which was also
+studied in [60]:
+Lemma 9. Let ρ ∈[0, 1]M be a unit profile vector with Gini coefficient G, defined as G =
+1
+2M2 ¯ρM
+P
+i,j |ρi −ρj| =
+1
+M 2 ¯ρM
+P
+1≤i≤j≤M(ρs(j) −ρs(i)). Then ¯ρM −¯ρK ≥GM ¯ρM
+M−1 > G¯ρM
+Recall that the worst-case regret of ULA scales linearly with ¯ρK, while the worst-case regret
+of random allocation scales with ¯ρM. Lemma 9 can therefore be interpreted as either a lower
+bound on the marginal value of ULA relative to RAND, or, by rearranging, as an upper-bound
+on the marginal regret of ULA relative to ILA.
+3
+Private Allocation when Welfare is Directly Observable
+As a warm-up, we assume that the true welfare scores of all individuals are already known to
+the administrator. In this simple setting, the only challenge is to ensure that the final allocation
+we select satisfies Joint DP without exceeding our budget constraints.
+6
+
+Algorithm 1: Joint ψ-zCDP ILA
+Input:
+• Vector of welfare scores w = [w1, . . . , wn] ⊆[0, 1]n
+• Privacy parameter ψ > 0; bin width θ > 0; noise parameter s ≥0; aid budget k;
+failure probability β
+1 Sample noisy welfare scores ˆwi ∼Unif[wi −s, wi + s] for 1 ≤i ≤n
+2 Initialize interval R = [−s, 1 + s] and define B1 = [ℓ1, r1] = [−s, −s + θ].
+3 Recursively define bins Bj = (ℓj, rj] = (rj−1, rj−1 + θ] for 2 ≤j ≤(1 + 2s)/θ.
+4 Compute bin counts Cj = Pn
+i=1 I[ ˆwi ∈Bj]
+5 Let ˜S1, . . . , ˜S(1+2s)/θ = PrivatePartialSums
+
+[Cj](1+2s)/θ
+j=1
+; ψ
+
+(see Appendix D.1)
+6 Let j∗= min
+n
+j
+ ˜Sj +
+1
+√ψ
+
+1 + log( 1+2s
+θ
+)+γE
+π
+ q
+log
+  1+2s
+θ
+
++
+q
+log 2
+β
+
+≥k
+o
+7 Return the triple ( ˆwi, ℓj∗, I[ ˆwi ≤ℓj∗]) to each individual i ∈[n]
+3.1
+ILA
+Our strategy for privatizing ILA is presented in Algorithm 1; we compute a private estimate of
+the empirical CDF of welfare scores, from which we derive a high-probability lower bound on
+ws(k), the maximum welfare treated by the optimal allocation. Our own allocation assigns aid
+to everybody whose (possibly noisy) welfare falls below this bound. The following results show
+that Algorithm 1 is private and provide high probability upper and lower bounds on the number
+of individuals treated:
+Lemma 10. Algorithm 1 satisfies Joint ψ-zCDP for any valid w, ψ, θ, s, and k.
+Lemma 11 (Algorithm 1 does not exceed budget whp.). Fix w, ψ, θ, s, and k, and let ℓj∗be the
+threshold returned by Algorithm 1. Then with probability at least 1 −β/2, PP
+i=1 I[ ˆwi ≤ℓj∗] ≤k.
+Theorem 12 (Conditions for Algorithm 1 to achieve low regret.). Fix ψ, θ, s, and k, and let
+ℓj∗be the threshold returned by Algorithm 1. Define the random variable Yi,j = I[ ˆwi ∈Bj]. If
+(1) ∀j, {Yi,j}P
+i=1 are jointly independent and (2) ∃p ∈[0, 1] such that ∀i, j, E[Yi,j] ≤p, then
+with probability at least 1 −β/2, k −PP
+i=1 I[ ˆwi ≤ℓj∗] is at most:
+ks + np +
+ 2
+√ψ
+
+1 + log( 1+2s
+θ
+) + γE
+π
+
++ √np
+ r
+log 1 + 2s
+θ
++
+r
+log 2
+β
+!
+(6)
+Combining the preceding two results, we have that with probability at least 1−β, Algorithm 1
+simultaneously stays under budget and satisfies our regret bound.
+The next two corollaries
+combine Theorem 12 and Lemma 4 to bound the regret of Algorithm 1 against both stochastic
+and oblivious adversaries when run on the full population:
+Corollary 13 (Stochastic adversary regret). If s = 0 and welfare scores are sampled i.i.d. from
+a distribution with maximum density γ, then the conditions of Theorem 12 are satisfied with
+p = γθ. Under these assumptions, choosing θ =
+1
+P π√ψ yields:
+Regret( g
+ILA, w; k) ≤(1 + o(1)) ·
+"
+2 log3/2 P + γ + 2 log P
+p
+log(2/β)
+π√ψ
+#
+(7)
+7
+
+Corollary 14 (Oblivious adversary regret). If s > 0 and w is arbitrary, then the conditions of
+Theorem 12 are satisfied with p =
+θ
+2s. Choosing s =
+1
+kπ√ψ and θ = 2s log3/2 P
+P π√ψ
+yields:
+Regret( g
+ILA, w; k) ≤(1 + o(1)) ·
+"
+3 log3/2 P + 2 log P
+p
+log(2/β)
+π√ψ
+#
+(8)
+3.2
+ULA
+Algorithm 2: ψ-zCDP ULA with Public Unit Membership
+Input:
+• Vector of welfare scores w = [w1, . . . , wn] ⊆[0, 1]n
+• Partition of [n] into units U = {U1, . . . , UM} ; privacy parameter ψ > 0; aid budget k
+1 Sample eρj ∼N(ρj,
+1
+2|Uj|ψ); Initialize x1, . . . , xM = 0
+2 while k > 0 do
+3
+Choose j = arg min{eρj | Uj ∈U}
+4
+Allocate xj = min(|Uj|, k);
+5
+Update budget k = k −xj; Update remaining units U = U \ {Uj}
+6 end
+7 Return The unit-level allocation (x1, . . . , xM)
+Our strategy for privatizing ULA is comparatively straightforward. The replace-one sensi-
+tivity of the unit profile vector ρ is 1/N, and so by Lemma 31, adding Gaussian noise with
+variance σ2 = (2ψN 2)−1 suffices to satisfy ψ-zCDP. Denote the private unit profile vector by eρ.
+Using Lemma 6 alongside standard results about the mean and concentration of various norms
+of Gaussian vectors, we derive the following unified bound:
+Theorem 15. Fix ψ > 0. Then, with probability at least 1 −β, we have that:
+Regret(]
+ULA, w; k) ≤k¯ρK +
+1
+N√ψ · min
+
+
+
+
+
+2 min(k, P −k)
+p
+log(2M) +
+p
+log(1/β)
+p
+min(k, P −k)P +
+p
+log(1/β)
+P
+√π +
+p
+M log(1/β)
+(9)
+4
+Accounting for the Cost of Sampling Welfare Scores
+We next consider a setting where the administrator must pay an upfront cost of c2n to observe
+the welfare of n individuals, reflecting the cost of e.g. running an RCT or conducting a survey.
+This is in on top of the baseline cost of ck′ to allocate aid to k′ individuals, which introduces an
+exploration/exploitation-style tradeoff: we can improve the efficiency by collecting more data,
+but because our budget is fixed, this comes at the cost of aiding fewer people.
+4.1
+ILA
+For the remainder of this section, we fix k = B/c and define the ratio λ = c2/c. Our goal is to
+select parameters n, k′ to minimize our regret relative to the best k-allocation, subject to the
+budget constraint that ck′ + c2n = B ⇒k′ + λn = k. We derive matching upper and lower
+bounds for this problem, uncovering a sharp phase-transition: depending on how large λ is, it
+is optimal to either allocate uniformly at random, or else sample at least k/2 people.
+8
+
+Theorem 16. There exists a strategy for ILA with sampling with worst-case expected regret
+Regret(ILAλ, w; k) ≤
+(
+P λk
+P λ+k +
+q
+min(P k,P 2λ)
+16(P λ+k)
+λ < P −k
+P
+k
+ 1 −k
+P
+
+λ ≥P −k
+P
+(10)
+Moreover, any strategy for ILA with sampling must suffer worst-case regret of at least:
+Regret(ILAλ, w; k) ≥
+( (P λ−1
+4 )k
+P λ+k
+λ < P −k
+P
+k
+ 1 −k
+P
+
+λ ≥P −k
+P
+(11)
+Combining Theorem 16 and Corollary 14 yields the following corollary, which summarizes
+the utility guarantees of private ILA in this setting:
+Corollary 17. Let g
+ILAλ be the algorithm that samples n =
+P k
+P λ+k scores and then uses Al-
+gorithm 1 to approximately allocate aid to the people with the k′ =
+k2
+P λ+k lowest scores in the
+sample. Then M satisfies Joint ψ-zCDP and with probability at least 1−β, Regret( g
+ILAλ, w; k)
+is at most:
+P
+
+λk +
+p
+λk log(3/β)
+
+Pλ + k
++
+s
+min(Pk, P 2λ)
+16(Pλ + k)
++ (1 + o(1))
+"
+3 log3/2 P + 2 log P
+p
+log(3/β)
+π√ψ
+#
+4.2
+ULA
+We begin by conducting a stratified sample of n individuals across units, giving us n/M obser-
+vations per unit which can be provided as input to Algorithm 2. Our final error is a combination
+of the statistical error from sampling and the error from additive noise.
+An interesting feature of this problem (also observed in [16]) is that the worst case in a
+statistical sense would occur if ρj = 0.5 for all j, but in this case, the excess regret of our
+ranking would be 0. Building on this intuition, we show that for any fixed vector ρ, the average
+variance across all components must be small whenever inequality is high:
+Lemma 18. Let G be the Gini coefficient of the unit profile vector ρ.
+Then we have that
+1
+M
+PM
+j=1 ρj(1 −ρj) ≤¯ρM(1 −¯ρM) −3¯ρ2
+M · G2
+Combining this result with Lemma 6 yields the following theorem:
+Theorem 19. Fix k, λ, and ρ. Then Regret(]
+ULAλ, w; k) is at most:
+¯ρKk + (1 −¯ρK)λn + min
+
+
+
+
+
+
+
+
+
+q
+M 2
+2ψn2 + P −n
+4nN · 2 min(k, P −k)
+p
+2 log(2M)
+q
+M 2
+2ψn2 + (P −n)(¯ρM(1−¯ρM)−3¯ρ2
+MG2)
+nN
+·
+p
+2 min(k, P −k)P
+q
+M 2
+2ψn2 + (P −n)(¯ρM(1−¯ρM)−3¯ρ2
+MG2)
+nN
+· P
+q
+2
+π
+(12)
+Corollary 20. Let C = min
+
+2 min(k, P −k)
+p
+2 log(2M),
+p
+2 min(k, P −k)P, P
+q
+2
+π
+
+. Choos-
+ing n = max
+ 
+CM
+λ(2ψ)1/2
+1/2
+,
+
+C2M
+16λ2
+1/3 
+, the marginal increase in the expected normalized
+regret of ]
+ULAλ over non-private ULA is at most: 23/4  CMλ/√ψ
+1/2 + 2−4/3  C2Mλ
+1/3
+9
+
+4.3
+Asymptotic Regimes
+For both ULA and ILA, the price of privacy is asymptotically negligible provided that k = Θ(P).
+Understanding their asymptotic performance therefore boils down to a comparison of the linear
+terms in each strategy’s regret bound. By combining our previous results, we can define three
+possible asymptotic regimes in terms of the key parameters G, λ, and ¯ρM:
+• ULA > ILA > RAND. This occurs whenever k
+P ·
+¯ρM(1−G)
+1−¯ρM(1−G) < λ < 1 −k
+P ; sampling is
+cheap enough for ILA to be more effective than random allocation, but too expensive to
+justify the marginal cost of needing to sample a larger percentage of the population.
+• ULA > ILA = RAND. This occurs whenever 1 −k
+P ≤λ and G > 0; sampling is too
+expensive to meaningfully improve the efficiency of ILA, but ULA is still able to take
+advantage of the information conveyed by unit membership.
+• ILA ≥ULA ≥RAND. This occurs whenever λ < min(1−k
+P , k
+P ·
+¯ρM(1−G)
+1−¯ρM(1−G)); sampling is
+sufficiently cheap for ILA to make efficient use of it, while low inequality and high average
+welfare make unit membership a weak signal for identifying the worst-off.
+A particularly interesting consequence of the above is that ULA always dominates ILA when
+λ ≥1, which can be interpreted as representing settings where the only efficient means to
+measure welfare (or treatment effects) is to actually allocate aid and observe the result.
+5
+Learning Welfare Scores from Auxiliary Information
+In the final setting we consider, we can once again pay a cost of c2 = λc to observe a single
+individual’s welfare. But unlike in the previous setting, every individual also has a feature vector
+xi ∈X and a binary label yi = I[wi > 1 −δw] drawn i.i.d. from a joint distribution D over
+X × {0, 1}. We assume that features (but not labels) are already known to the administrator,
+whose goal is to learn a convex model to predict η := E[y | x] subject to DP, with both labels
+and features considered private. For this purpose, we make use of Algorithm 2 of Feldman et
+al. [21], which achieves optimal rates on population risk (see Theorem 32).
+Our final allocation is computed using only the data of individuals who weren’t included in
+the original sample. This allows us to use parallel composition [50], and because both ULA and
+ILA sample o(P) welfare scores, it induces only asymptotically negligible regret.
+For the purposes of relating our model’s risk to the downstream efficiency of the induced
+allocation, it is useful to additionally require that the loss functions we use are proper [14, 8, 52],
+meaning that L(θ) is minimized when ˆη := fθ(x) = η. In the sequel, we will focus primarily on
+the squared loss f(θ, x, y) = (y −fθ(x))2, a canonical proper loss function.
+We define regret in this stochastic setting against the best allocation in hindsight, i.e.
+Ew∼DP [max|J |=k Val(J , w)]. As a consequence, ILA with a Bayes’ optimal model could still
+suffer significant regret if the variance of y|x is high. It will emerge that ULA is much more
+robust to this sort of unpredictability, which we formalize with the following definition:
+Definition 21 (Excess-Risk Decomposition). Let ℓdenote the squared loss, and let L(θ) :=
+E[ℓ(θ, x, y)] = α. Then, if x, y ∼D,
+α = E[(fθ(x) −y)2] = E[(fθ(x) −E[y | x])2]
+|
+{z
+}
+E
++ E[(y −E[y | x])2]
+|
+{z
+}
+σ2
+(13)
+Where E is the excess risk, and σ2 is the irreducible or Bayes’ risk. The excess risk of the
+optimal classifier θ∗= arg minθ∈Θ L(θ) is denoted by E∗.
+10
+
+5.1
+ILA
+ILA proceeds by first learning a model to predict the probability that an individual is low-welfare,
+and then allocating aid according to the predicted probabilities in ascending order. To start
+out, we take the expected loss of the learned model as a constant, and then later incorporate
+the error bounds from Theorem 32 to derive the optimal choice of n.
+Lemma 22. Let f be a binary classifier with expected ℓ2
+2 loss α, and let d
+ILA denote the algorithm
+that allocates aid to individuals in ascending order based on ˆyi = f(xi). Then with probability
+at least 1 −β, we have:
+Regret( d
+ILA, w; k) ≤k′ · ¯ηk′ + P√α + P 3/4p
+log(1/β)/2
+(14)
+Theorem 23. Let g
+ILA be the algorithm that samples n individuals from the population uniformly
+at random, fits a model ˆθ with expected ℓ2
+2 error α subject to ψ-zCDP, and then runs Algorithm 1
+on the estimated scores of the remaining population with privacy parameter ψ. Then g
+ILA satisfies
+Joint ψ-zCDP, and:
+Regret( g
+ILA, w; k) ≤nλ + k′¯ηk′ + P√α + O
+ 
+log3/2 P
+√ψ
+!
+(15)
+Corollary 24. When g
+ILA is instantiated with Algorithm 2 of [21], its asymptotic normalized
+regret grows like:
+nλ + k′¯ηk′ + P
+s
+σ2 + E∗+ 10LD
+ 1
+√n +
+√p
+n√2ψ
+
++ O
+ 
+log3/2 P
+√ψ
+!
+(16)
+Choosing n = max
+
+P
+λ
+q
+10LD(2ψ)−1/2√p
+2/3
+,
+
+P
+λ
+√
+10LD
+4/5
+, we can guarantee a worst-
+case regret bound of:
+k′¯ηk′ + P
+p
+L(θ∗) + 2λ1/3
+ 
+Pp10LD√p
+(2ψ)1/4
+!2/3
++ 2λ1/5 
+P
+√
+10LD
+4/5
+(17)
+If we additionally have access to a lower bound on the risk of the optimal classifier L(θ∗) ≥L↓,
+then we can instead choose n = max
+r
+5P LD√p
+λ√
+2ψL↓,
+
+5P LD
+λ
+√
+L↓
+2/3
+for an instance-specific regret
+bound of:
+k′¯ηk′ + P
+p
+L(θ∗) + 2
+s
+5PLDλ√p
+p
+2ψL↓
++ 2
+5PLDλ
+√
+L↓
+2/3
+(18)
+5.2
+ULA
+In the previous settings we’ve considered, unit membership could be thought of as a particularly
+simple feature vector corresponding the standard basis of RM.
+We will generalize this idea
+by assuming we are given a partition P over the feature space X ⊆Rp, which induces a
+partition over individuals into |P| units.
+This modeling decision is motivated by the sorts
+of bureaucratically legible and overlapping categories that are frequently used to target aid in
+existing systems [33], such as “disabled veterans.” We treat this choice of categories as exogenous
+and do not consider the problem of trying to learn an efficient partition.
+11
+
+One minor complication is that up until this point, we have assumed that the unit mem-
+bership of each individual is publicly known, which may be inappropriate if units correspond
+to sensitive traits like poverty or disability rather than e.g. geographic regions. We therefore
+introduce Algorithm 3, a Joint DP variant Algorithm 2 that can accommodate private unit
+membership at essentially no cost, provided that no unit is too small.
+Algorithm 3: Joint ψ-zCDP ULA with Private Unit Membership
+Input:
+• Vector of welfare scores w = [w1, . . . , wP ] ⊆[0, 1]P
+• Partition of [P] into units U = {U1, . . . , UM} with minimum unit size N
+• Privacy parameters ψ1 + ψ2 = ψ; aid budget k
+1 Sample eρj ∼N(ρj,
+1
+N2ψ1 );
+2 For each individual i ∈[P] with corresponding unit j, set ˜wi = eρj
+3 Return Output of Algorithm 1 with input ˜w, ψ2 and s, θ set as in Corollary 14
+Lemma 25. Choosing ψ2
+ψ1 =
+
+3 log3/2 P
+π
+·
+N
+C
+√
+2
+2/3
+, the expected normalized regret of Algorithm 3
+is at most:
+k¯ρK +
+1
+√ψ
+
+
+ 3
+π
+2/3
+log P +
+ 
+C
+√
+2
+N
+!2/3
+
+3/2
+= k¯ρK + O
+
+C
+N√ψ
+
+(19)
+With C defined as in Corollary 20, which matches the rate achieved by Algorithm 2 in the public
+unit membership case up to constant factors.
+Because the irreducible error term from Definition 21 is independent and zero-mean, ULA is
+able to effectively ignore it when taking averages across many individuals in a single unit, which
+is reflected in the following lemma:
+Lemma 26. Let f be a binary classifier with expected ℓ2
+2 loss α, and let [
+ULA denote the
+algorithm that allocates aid to units in ascending order based on ˆρj =
+1
+Nj
+P
+i∈Uj f(ˆxi). Then in
+expectation, we have:
+Regret([
+ULA, w; k) ≤k¯ρK +
+p
+P|P|σ2 + P
+p
+α −σ2
+(20)
+Theorem 27. Let ]
+ULA be the algorithm that samples n individuals from the population uni-
+formly at random, fits a model ˆθ with expected ℓ2
+2 error α subject to ψ-zCDP, and then runs
+Algorithm 3 on the estimated welfare scores of the remaining population with privacy parameter
+ψ and partition P. Then ]
+ULA satisfies Joint ψ-zCDP in the replace-one adjacency definition
+with private unit membership, and:
+Regret(]
+ULA, w; k) ≤k¯ρK + P
+p
+α −σ2 +
+p
+P|P|σ2 + O
+
+C
+N√ψ
+
+(21)
+Incorporating the cost of sampling and the utility guarantees from Theorem 32 yields the
+following corollary:
+12
+
+Corollary 28. When ]
+ULA is instantiated with Algorithm 2 of [21], its asymptotic normalized
+regret grows like:
+k¯ρK + (1 −¯ρK)nλ +
+p
+P|P|σ2 + P
+s
+E∗+ 10LD
+ 1
+√n +
+√p
+n√2ψ
+
++ O
+
+C
+N√ψ
+
+(22)
+Choosing n = max
+
+P
+λ
+q
+10LD(2ψ)−1/2√p
+2/3
+,
+
+P
+λ
+√
+10LD
+4/5
+, we can guarantee a worst-
+case regret bound of:
+k¯ρK + P
+√
+E∗+
+p
+P|P|σ2 + O
+
+C
+N√ψ
+
+(23)
++ (2 −¯ρK)
+
+
+ 
+Pp10LDλ√p
+(2ψ)1/4
+!2/3
++ λ1/5 
+P
+√
+10LD
+4/5
+
+
+(24)
+If we additionally have access to a lower bound on the excess risk of the optimal classifier
+E∗≥E↓> 0, then we can instead choose n = max
+r
+5P LD√p
+λ√
+2ψE↓,
+
+5P LD
+λ
+√
+E↓
+2/3
+for an instance-
+specific regret bound of:
+k¯ρK + P
+√
+E∗+
+p
+P|P|σ2 + (2 −¯ρK)
+"s
+5PLDλ√p
+p
+2ψE↓
++
+5PLDλ
+√
+E↓
+2/3#
++ O
+
+C
+N√ψ
+
+(25)
+5.3
+Asymptotic Regimes
+As in Section 4, the price of privacy is asymptotically negligible for both ILA and ULA, and so
+it suffices to compare the leading linear terms. For ULA, our regret grows like k¯ρK + P
+√
+E∗≤
+k(1 −G)¯ρM + P
+√
+E∗, while for ILA it grows like P
+√
+E∗+ σ2 + k′¯ηk′ ≥P
+√
+E∗+ σ2. Using
+the first-order approximation
+√
+E∗=
+√
+E∗+ σ2 −σ2 ≤
+√
+E∗+ σ2 −
+σ2
+2
+√
+E∗+σ2 , we obtain the
+following sufficient condition for ULA to outperform ILA asymptotically:
+k(1 −G)¯ρM ≤
+Pσ2
+2
+√
+E∗+ σ2
+(26)
+2 k
+P (1 −G)¯ρM
+p
+L(θ∗) ≤σ2
+(27)
+If the special case where Θ contains the Bayes’ optimal classifier, L(θ∗) = σ2 and the
+condition simplifies to:
+ 1
+σ
+  k
+P
+
+(1 −G)¯ρM ≤1
+2
+(28)
+Each term on the left-hand side has a nice interpretation: 1/σ represents the intrinsic predictabil-
+ity of the outcomes we care about, k/P represents the size of our budget, 1 −G represents how
+equally welfare is distributed across units, and ¯ρM represents the average welfare across units.
+Taken as a whole, we see that ULA dominates ILA asymptotically whenever the product of
+these four terms is not too large.
+13
+
+5.4
+The Value of Modeling
+Since training a model to predict welfare implicitly requires the ability to sample welfare scores
+from the population, it would be possible to dispense with the modeling step entirely and use
+the algorithms from Section 4 even in this stochastic setting. We therefore consider one final
+comparison between the regret bounds obtained for each strategy in this section and those for
+the same strategy in Section 4.
+In the case of ILA, our linear regret term in the pure sampling setting scaled like
+P λk
+P λ+k, while
+the regret of the model-based approach scaled like P
+p
+L(θ∗). Modeling therefore emerges as a
+stronger strategy in settings where λ is relatively large. In particular, we saw that sampling-
+based strategies could do no better than random allocation for λ > 1−k
+P , while modeling-based
+strategies can in principle achieve near-optimal regret even for λ > 1.
+In the case of ULA, we ignore the common linear term of k¯ρK. Then, the excess regret of
+the sampling based approach grows like O(P 2Mλ)1/3, while the excess regret of the modeling
+approach grows like λ1/5P 4/5 + P
+√
+E∗.
+We can therefore identify three natural regimes of
+interest:
+• If E∗> 0 and M = o(P), then the modeling approach can never outperform pure sampling
+asymptotically. The key reason for this is that the error from sampling is purely driven
+by variance, whereas the error from modeling can involve bias as well.
+• If E∗= 0, then modeling can outperform sampling asymptotically only when M =
+Ω((P/λ)2/5). This is because when M is very large, the modeling based approach can
+leverage data from similar individuals across units to avoid sampling every unit directly.
+• If E∗> 0 and M = Θ(P), then it is possible for modeling to outperform sampling if
+λ ≳(E∗)3/2, which once again occurs because modeling allows us to avoid sampling many
+individuals from every unit at the cost of introducing some bias.
+It is interesting to note that the conditions for modeling to improve the performance of ULA
+seem to be considerably stricter than for ILA. One possible interpretation for this fact is that
+unit-level targeting in itself already constitutes a simple sort of model, and so the ability to
+leverage information about one individual to infer the welfare of another was already available
+to ULA even before making any distributional assumptions. In other words, ULA has less to
+gain than ILA from additional tools for making such inferences.
+6
+Discussion
+We conclude our analysis by reflecting on the strengths and limitations of our modeling choices
+and suggesting possible avenues for future work.
+6.1
+On Our Modeling Choices
+6.1.1
+Our Choice of Social Welfare Ordering
+For both ULA and ILA, the objective function we seek to maximize is PP
+i=1 wi, which corre-
+sponds to the classical Utilitarian social welfare ordering [51]. One limitation of this ordering is
+that it is indifferent to distributive concerns; a world where half of the population has welfare
+1 and the other half has welfare 0 is deemed just as desirable as a world where everybody has
+welfare 0.5. Possible alternatives that are more sensitive to distributive questions include the
+14
+
+Nash social welfare ordering, which corresponds to maximizing QP
+i=1 wi, and the egalitarian
+social welfare ordering, which (roughly) seeks to maximize mini wi.
+The main challenge with both of these alternative objectives in the context of DP is that
+they can be extremely sensitive to changes in a single individual’s welfare; one person with
+welfare 0 forces both objective functions to be 0 regardless of the remaining data. In contrast,
+the Utilitarian objective is a sum of bounded data points, which is a well-studied object in the
+DP literature. We therefore believe that the Utilitarian objective is the natural starting point
+for our investigation, and leave the design of DP algorithms for optimizing either of the other
+objectives (or choosing between multiple equal-value allocations [32]) to future work.
+6.1.2
+Statistical Estimation vs. Pure Selection
+The strategies that we consider all derive their allocations from privatized estimates of important
+statistics, such as the empirical CDF of welfare scores or the unit profile vector. Outputting a
+private aid allocation is fundamentally a selection task, however, and so one could argue that
+it would be more efficient to skip the estimation step and use methods, like those contained in
+in [24, 7, 62, 34], which optimize over the set of possible allocations directly. In the specific
+domain of aid allocation, however, we believe that approaches based on statistical estimation
+have major advantages in transparency: in addition to outputting an allocation, our algorithms
+can release a privatized statistic which justifies why that allocation is fair. A further benefit is
+that the intermediate statistics we compute are general enough to be repurposed for other tasks
+without expending any additional privacy budget.
+6.1.3
+What Our Model Does Not Capture
+Our model assumes a very simple and schematic relationship between welfare and treatment
+effects which may not hold exactly in real settings. The authors of [60] on whose work we build
+upon consider more complicated treatment effects and show that when τ(w) is Lipschitz and
+concave, and when the distribution of welfare scores is sufficiently smooth, estimating welfare
+alone is still sufficient to derive efficient allocations.
+An alternative approach, which others
+have advocated for on philosophical grounds, is to reframe the problem in terms of predicting
+treatment effects directly [9, 44]. To this end, there is a large body of works, spanning many
+sciences, which study how heterogeneous treatment effects can be learned [63, 43], including
+under DP constraints [53]. Although we do not directly pursue this point, we remark that one
+virtue of the simplicity of our model is that our results can be easily restated to take either
+treatment effects or welfares as primary.
+6.2
+Conclusion and Future Work
+In this work, we separately considered two possible constraints on data availability and found
+that in all cases, both ULA and ILA could be modified to satisfy DP without affecting their
+asymptotic regret.
+In Section 4, we imagined that welfare scores were fixed arbitrarily and
+designed robust algorithms for achieving low regret in the worst-case. Here, the key difference
+between ILA and ULA was that ULA required only a sublinear number of samples to achieve
+nearly-optimal targeting, while ILA was obliged to expend a constant fraction of its budget on
+sampling. As a result, the optimal choice of strategy depended strongly on λ, the relative cost
+of measuring welfare compared to the cost of treatment.
+Meanwhile, in Section 5, we assumed that welfare scores and features were sampled i.i.d.
+from some fixed joint distribution and designed learning-based algorithms that could estimate
+unseen welfare scores with high accuracy. Unlike the previous setting, we found that there was
+15
+
+essentially no difference between the sampling required by ILA vs. ULA; instead, the choice of
+optimal strategy depended on a new quantity, σ2, representing the fundamental unpredictability
+of welfare scores conditioned on the available data. Because ULA was able to “wash out” this
+uncertainty by averaging many measurements together, it was significantly more robust than
+ILA in settings where outcomes are fundamentally difficult to predict.
+A natural next step (with or without DP) is to combine these two settings as follows: imagine
+an administrator trying to select an allocation strategy.
+To start out, they have access to
+relatively coarse features that encode unit membership and nothing else. But by paying some
+cost cp, they can obtain p new features for a single individual — for instance, performance
+on standardized assessments [31] or proxies for socioeconomic status [41]. By expanding their
+model class in this way, the administrator can potentially decrease the irreducible error of their
+prediction problem, but this will come at the cost of increasing their estimation error and
+obliging them to spend more of their budget on acquiring extended feature vectors. Seen in this
+light, ILA and ULA might appear less as diametric opposites, and more as two points along a
+continuum of tradeoffs between the error arising from coarse targeting, sampling, and epistemic
+uncertainty.
+An alternative path to extend our model is to incorporate adaptive or strategic behavior.
+On the administrative side, this might involve conducting repeated rounds of sampling and/or
+intervention, which could enable meaningful reductions in sample complexity using techniques
+from the bandits literature [6, 34] or permit treatment effects and allocations to be learned
+jointly [36, 66]. On the population side, this might involve considering the possibility of strate-
+gic behavior from both individuals [13] and organized groups [26] wishing to influence the ad-
+ministrator’s decision. It would be particularly interesting to extend our model to incorporate
+insights from the large body of literature on performative prediction [61, 48, 27, 25], whereby
+forecasts can influence the very events they predict, and to investigate how the stability induced
+by DP impacts these dynamics.
+16

@@ -1,0 +1,1415 @@
+Bit-Flip Vulnerability of Shared KV-Cache Blocks
+in LLM Serving Systems
+Yuji Yamamoto1 and Satoshi Matsuura1
+1Institute of Science Tokyo, Tokyo, Japan
+yamamoto.y.dd03@m.isct.ac.jp, matsuura@cii.isct.ac.jp
+Keywords:
+LLM Serving, KV-Cache, Prefix Caching, Bit-Flip Vulnerability, Rowhammer, Integrity Protection.
+Abstract:
+Rowhammer on GPU DRAM has enabled adversarial bit flips in model weights; shared KV-cache blocks in
+LLM serving systems present an analogous but previously unexamined target. In vLLM’s Prefix Caching,
+these blocks exist as a single physical copy without integrity protection. Using software fault injection under
+ideal bit targeting, we characterize worst-case severity and identify three properties: (1) Silent divergence—13
+of 16 BF16 bit positions produce coherent but altered outputs, indistinguishable from legitimate responses
+without a clean baseline. (2) Selective propagation—only requests sharing the targeted prefix are affected.
+(3) Persistent accumulation—no temporal decay occurs, so cumulative damage grows linearly with subsequent
+requests. Together, these constitute a threat profile distinct from weight corruption: silent divergence and
+selective propagation enable detection evasion; persistent accumulation then proceeds unchecked, yielding
+damage amplification bounded only by how long the block remains cached. A checksum-based countermeasure
+detects any single-bit corruption at scheduling time, bounding cumulative damage to one batch independent
+of the block’s cache lifetime, with negligible overhead. These results argue for integrity protection of prefix
+blocks before end-to-end exploitation is demonstrated.
+1
+INTRODUCTION
+As large language models (LLMs) are increasingly
+deployed as production inference services, a key opti-
+mization has become standard practice: caching key–
+value (KV) tensors in GPU memory so that requests
+sharing a common prompt prefix need not recompute
+them. Because the cached blocks are stored as a single
+physical copy and shared across all referencing re-
+quests, a single corruption event—such as a hardware-
+induced bit flip—silently affects every request that
+reads the block. Yet no integrity mechanism (e.g.,
+checksums or ECC) guards this shared data.
+The most widely deployed implementation of this
+optimization is Prefix Caching in vLLM (Kwon et al.,
+2023), the de facto standard for open-source LLM serv-
+ing. When many requests share an identical prompt
+prefix (e.g., a system prompt or few-shot examples),
+vLLM computes the corresponding KV blocks once
+and reuses them for all subsequent requests. We refer
+to these shared blocks as prefix blocks (defined pre-
+cisely in Section 2.1). Prefix Caching has been enabled
+by default since vLLM v0.6.0, making prefix blocks a
+pervasive component of production serving.
+If a bit flip reaches a prefix block, the design of Pre-
+fix Caching and the structure of BF16 encoding give
+rise to three properties that distinguish prefix-block
+corruption from weight corruption. First, silent diver-
+gence: the BF16 floating-point encoding (Section 2.3)
+ensures that most bit positions produce only small per-
+turbations. The resulting outputs remain coherent but
+differ from the original, making them undetectable
+without a clean baseline. Second, selective propaga-
+tion: corruption is confined to requests sharing the tar-
+geted prefix; co-located workloads remain unaffected.
+Third, persistent accumulation: corrupted blocks are
+never invalidated during normal operation, so cumula-
+tive damage grows linearly with subsequent requests
+throughout the block’s residency (i.e., the duration it
+remains cached before eviction). Together, these prop-
+erties constitute a threat profile qualitatively distinct
+from that of weight corruption.
+No prior study has systematically characterized the
+severity of shared prefix block corruption, nor quanti-
+fied how these three properties compound into a dis-
+tinct threat profile (Al Nahian et al., 2025; Ganesh
+et al., 2025; Wu et al., 2026; Xia and Zhang, 2025)
+(Section 8). Meanwhile, recent work has narrowed—
+but not closed—the gap between demonstrated bit-flip
+arXiv:2604.17249v1 [cs.CR] 19 Apr 2026
+
+primitives and end-to-end exploitation (Sections 2.2
+and 7.2).
+To characterize worst-case severity before this gap
+is closed, we use software fault injection (SFI) under
+an ideal bit targeting assumption (Section 3). We ad-
+ditionally propose a lightweight countermeasure that
+bounds cumulative damage. Our contributions are:
+1. Bit-position sensitivity map. A systematic scan of
+all 16 BF16 bit positions (2,400 trials, Qwen3-8B)
+shows that 13 of 16 positions yield silent diver-
+gence1, with collapse concentrated in the upper
+exponent bits.
+2. Selective propagation verification.
+A mixed-
+prefix experiment (120 trials) confirms that corrup-
+tion affects only requests referencing the corrupted
+block; co-located requests with a different prefix
+are entirely unaffected.
+3. Temporal persistence analysis. Corruption track-
+ing over 24,000 post-injection requests across two
+models shows no temporal decay; cumulative dam-
+age grows strictly linearly with subsequent re-
+quests, bounded only by the block’s residency.
+4. Checksum-based
+countermeasure.
+A
+lightweight
+scheduling-time
+integrity
+check
+that detects any single-bit corruption, bounding
+cumulative damage to one batch independent
+of block residency, with negligible throughput
+overhead.
+2
+BACKGROUND
+2.1
+vLLM and Prefix Caching
+vLLM (Kwon et al., 2023) manages KV-cache memory
+using a block-based scheme. The KV-cache of each
+request is partitioned into fixed-size KV blocks, each
+holding a predetermined number of tokens (typically
+16) and storing the per-token key and value vectors
+across all attention heads. In vLLM’s current produc-
+tion engine (v1), once a block has been fully computed,
+it is treated as immutable by convention—new tokens
+are always written to freshly allocated blocks, while
+existing blocks are read but never overwritten by the
+serving framework itself. No hardware or OS-level
+mechanism enforces this invariant; the GPU memory
+remains fully writable, leaving cached blocks vulnera-
+ble to external bit-flip faults.
+1Bits 0–11 and 15, all with collapse rates below 1%; see
+Section 5.1.
+2.1.1
+Block Management and GPU Layout
+On the CPU side, a block pool manages block meta-
+data, including a hash-to-block map for prefix cache
+lookups and an LRU free-block queue that governs
+eviction and reuse. On the GPU side, KV-cache ten-
+sors are stored in a single contiguous buffer of shape
+[2×Nblocks×B×H ×D], where the leading dimension
+indexes keys (k=0) and values (k=1), B denotes the
+block size, H the number of KV heads, and D the head
+dimension. Block identifiers are fixed at initialization,
+so the GPU virtual address of any block can be com-
+puted deterministically as base+block id×page size.
+2.1.2
+Prefix Caching
+Prefix Caching leverages the fact that many requests to
+an LLM service share a common prompt prefix—e.g.,
+a system prompt or few-shot examples. When enabled
+(the default since vLLM v0.6.0), the framework caches
+fully computed KV blocks and indexes them by a chain
+hash. Each block’s hash is computed over the parent
+block’s hash, the block’s token IDs, and optional extra
+keys (LoRA identifiers, multimodal input hashes, or a
+per-request cache salt). This chaining ensures that
+a cache hit requires an exact token-by-token match
+of the entire prefix up to and including the candidate
+block.
+When a new request arrives, the scheduler walks
+the request’s block hashes from the first block forward,
+looking up each hash in the block pool’s hash map.
+On a hit, the existing physical block is touched: its
+reference count (ref cnt) is incremented and, if it
+was previously unreferenced, it is removed from the
+free-block queue. On the first miss, the search termi-
+nates and all subsequent blocks are allocated fresh. At
+request completion, ref cnt is decremented; blocks
+that reach zero are returned to the tail of the free queue
+but retain their hash, remaining available for future
+cache hits until evicted by LRU replacement. A block
+with ref cnt > 0 is absent from the free queue and
+hence immune to eviction, so popular prefix blocks
+can remain cached indefinitely.
+Not every cached block is reliably shared, however:
+a block at the prefix–suffix boundary may incorpo-
+rate request-specific tokens, preventing cross-request
+reuse. We therefore define prefix blocks as the full
+KV blocks that are reliably shared across requests via
+Prefix Caching, excluding such boundary blocks.
+2.2
+Bit-Flip Threats to GPU Memory
+Rowhammer (Kim et al., 2014) is a DRAM vulnera-
+bility where rapidly activating a row induces bit flips
+in physically adjacent rows. First demonstrated on
+
+commodity DDR3, Rowhammer has since been ex-
+tended to a wide range of targets (Section 8). GPU
+GDDR6 memory is no exception: recent work has
+confirmed bit flips on GPUs (Lin et al., 2025; Coalson
+et al., 2025; Lin et al., 2026). Hardware ECC mitigates
+single-bit errors but does not protect against multi-bit
+flips (Lin et al., 2026); moreover, consumer and work-
+station GPUs lack ECC entirely, and even on server
+GPUs, cloud providers permit tenants to disable it (Lin
+et al., 2025), leaving GPU-resident data—including
+KV-cache tensors—exposed to bit-flip corruption.
+2.3
+BF16 Floating-Point Representation
+The bfloat16 (BF16) format (Kalamkar et al., 2019) is
+the standard storage format for KV-cache tensors in
+current LLM serving systems. The BF16 uses 16 bits:
+a 1-bit sign (S), an 8-bit exponent (E7–E0), and a 7-
+bit mantissa (M6–M0), thereby retaining the full FP32
+dynamic range while halving the memory footprint.
+Table 1 maps each bit index to its semantic role. This
+encoding creates a strong hierarchy in bit-flip impact,
+with expected perturbation magnitude following the
+ordering mantissa < sign < exponent. A sign-bit flip
+yields a perturbation of 2|v|—larger than any mantissa
+shift, but proportional to the original value. In the
+extreme case, an upper-exponent flip can push the
+biased exponent to 255, producing NaN or ±∞.
+3
+THREAT MODEL
+We consider a multi-tenant GPU serving environment
+in which an LLM inference provider deploys vLLM
+with Prefix Caching enabled on a shared GPU. Multi-
+ple tenants submit requests that share a common sys-
+tem prompt, causing vLLM to cache the corresponding
+KV blocks and serve them to all subsequent requests
+referencing the same prefix.
+3.1
+Attacker Model
+The adversary is a co-located tenant whose goal is to
+corrupt prefix blocks so that other tenants’ responses
+silently deviate from expected behavior—an integrity
+violation. The adversary induces bit-flip corruption
+in GPU DRAM via hardware fault injection, with
+Rowhammer (Lin et al., 2025) as the primary demon-
+strated mechanism (Section 2.2). This requires no soft-
+ware privileges beyond those of a normal tenant and
+leaves model weights, application code, and API-level
+inputs unaffected.
+3.2
+Attack Surface
+The target is the value tensors of prefix blocks in
+vLLM’s KV-cache. Prefix blocks are shared across
+all referencing requests as a single physical copy with-
+out integrity protection, so a single bit flip immediately
+affects all concurrent and future requests that reference
+the corrupted block. This attack surface exists when-
+ever attacker and victim share a salt group—including
+both the default configuration and deployments adopt-
+ing vLLM’s single-barrier salting (dr75, 2025) at orga-
+nization or tenant-group granularity.
+3.3
+Scope
+We frame the vulnerability as an integrity violation,
+in which undetected modification of KV-cache data
+causes outputs to deviate from expected behavior. A
+single BF16 bit flip can range from a sub-1% mantissa
+perturbation to an exponent overflow producing NaN
+or ±∞(Section 2.3). The key qualitative distinction is
+therefore between collapse (degenerate output, overtly
+detectable) and silent divergence (coherent but altered
+output, undetectable without a clean baseline).
+Physically reaching a specific prefix block via
+Rowhammer remains undemonstrated. We therefore
+characterize worst-case severity across this spectrum
+under an ideal bit targeting assumption (i.e., a single
+bit at any position can be flipped). This deliberately
+relaxes physical Rowhammer constraints, and we do
+not claim or demonstrate end-to-end exploitation. The
+remaining gap is discussed in Section 7.2. Confiden-
+tiality threats (e.g., prompt extraction (Wu et al., 2025))
+are outside our scope.
+4
+METHODOLOGY
+4.1
+Software Fault Injection Framework
+We characterize the KV-cache vulnerability through
+SFI under the ideal-bit-targeting assumption stated in
+Section 3—the standard methodology for characteriz-
+ing vulnerability severity prior to end-to-end exploita-
+tion (Rakin et al., 2019; Al Nahian et al., 2025). Our
+framework flips individual bits in the BF16 representa-
+tion of KV-cache tensors via XOR masking.
+4.1.1
+Injection Target Selection
+We target the value tensors of prefix blocks. Value-
+side and key-side bit flips propagate through funda-
+mentally different pathways: a value-side perturbation
+δ on element vj reaches the attention output directly as
+
+Table 1: BF16 bit layout. Each of the 16 bits is shown with its field (sign, exponent, or mantissa), symbol, and value-level
+weight; bit 0 is the LSB.
+Bit
+15 14 13 12 11 10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+0
+Field
+S
+Exponent
+Mantissa
+Symbol
+s
+E7 E6 E5 E4 E3 E2 E1 E0
+M6
+M5
+M4
+M3
+M2
+M1
+M0
+Weight
+±
+27
+26
+25
+24
+23
+22
+21
+20 2−1 2−2 2−3 2−4 2−5 2−6 2−7
+αt,j δ, whereas a key-side perturbation passes through
+softmax normalization, producing an indirect, redis-
+tributed effect. We therefore select value tensors as
+the most direct propagation pathway, consistent with
+CACHETRAP (Al Nahian et al., 2025).
+The targeted prefix blocks are determined by the
+prompt construction (Section 4.3). Preliminary experi-
+ments that sampled all cached blocks confirmed that
+injections into prefix blocks produced substantially
+higher output change rates (∼64%) than those into
+non-prefix blocks (∼7%), as expected from the shared
+single-copy design. We therefore restrict the injection
+surface to prefix blocks.
+4.1.2
+Injection Mechanism
+We instrument vLLM by dynamically patching the
+execute model() method of GPUModelRunner. At
+the point of injection, our framework locates the target
+KV-cache tensor—a contiguous GPU buffer of shape
+[2×Nblocks ×B×H ×D] —and reinterprets the target
+element as a 16-bit integer. A single-bit XOR mask is
+then applied in-place:
+ˆv = v⊕(1 ≪p),
+(1)
+where v is the original BF16 value (reinterpreted as
+int16), p ∈{0,...,15} is the target bit position, and
+ˆv is the corrupted value. This operation modifies the
+shared physical block directly, so all requests refer-
+encing the block observe the corrupted data on their
+next read—a direct consequence of the single-copy, no-
+integrity-check design. The resulting bit-level pertur-
+bations are identical to those caused by Rowhammer-
+induced charge leakage (Kim et al., 2014).
+4.1.3
+Trial Flow
+Each trial proceeds in four phases (Fig. 1): warm-up,
+baseline generation on the same requests, bit-flip in-
+jection, and post-injection generation. The injection
+targets bit position p while the remaining coordinates
+(block, layer, head, token position, channel) are ran-
+domized uniformly within the prefix blocks, so that
+the effect of p is isolated. Post-injection outputs are
+then compared token-by-token against the baseline
+(Section 4.2).
+4.1.4
+Framework Validation
+Before conducting attack experiments, we establish
+the framework’s noise floor. Across 60 injection-free
+trials spanning six batch sizes (nc ∈{1,2,4,8,16,32},
+10 trials each), every post-injection output matched
+its baseline token-for-token under deterministic de-
+coding, confirming that the framework introduces no
+measurement artifacts. Any divergence observed in
+the subsequent experiments is therefore attributable
+solely to injected bit flips.
+4.2
+Evaluation Metrics
+We define three corruption-specific metrics and two
+standard similarity metrics.
+4.2.1
+Token Change Rate (TCR)
+TCR measures propagation breadth: the fraction of
+nc concurrent requests whose token sequences change
+after injection.
+TCR = 1
+nc
+nc
+∑
+i=1
+⊮
+
+tok(yi) ̸= tok(ˆyi)
+
+.
+(2)
+4.2.2
+Token Diff Ratio (TDR)
+TDR measures per-request impact depth: the fraction
+of token positions that differ between clean and post-
+injection outputs, with out-of-range positions treated
+as mismatches.
+TDRi = 1
+L
+L
+∑
+j=1
+⊮
+
+tj ̸= ˆtj
+
+,
+(3)
+where L = max(|tok(yi)|, |tok(ˆyi)|).
+4.2.3
+Output Change Rate (OCR)
+OCR aggregates across T trials under the same condi-
+tion:
+OCR = 1
+T
+T
+∑
+t=1
+⊮
+
+TCRt > 0
+
+.
+(4)
+
+1. Cache
+warm-up
+2. Baseline
+generation
+3. Bit-flip
+injection
+4. Post-injection
+generation
+Populate prefix
+blocks in KV-cache
+Serve from shared
+cache →clean output
+ˆv = v⊕(1 ≪p)
+on prefix block
+Corrupted output
+discard outputs
+compare
+Figure 1: Trial flow for a single experimental condition. Each trial proceeds through four sequential phases; the warm-up
+outputs are discarded and only phases 2 and 4 contribute to the evaluation metrics.
+Table 2: Summary of experiments. p: target bit position; nc:
+concurrent requests per trial; Trials: number of trials (30 per
+condition).
+Experiment
+Variable
+Trials
+Bit-position sensitivity
+p: 0–15, nc: 2–32
+2,400
+Selective propagation
+p ∈{0,6,14,15}
+120
+Temporal persistence
+p ∈{0,6,14,15}, 2 models
+240
+4.2.4
+Similarity Metrics
+We report ROUGE-L (F1 with stemming) (Lin,
+2004)
+for
+surface-level
+textual
+similarity
+and
+BERTScore (F1) (Zhang et al., 2020) for semantic
+similarity. High values on outputs with TCR > 0 indi-
+cate silent divergence—plausible alternative outputs
+rather than incoherent text.
+4.3
+Experimental Setup
+We conduct three experiments, each targeting a differ-
+ent property of prefix-block corruption.
+4.3.1
+Experimental Conditions
+Table 2 summarizes the three experiments. Bit-position
+sensitivity maps per-bit severity across the full BF16
+layout.
+The remaining two target four represen-
+tative positions spanning the BF16 bit-significance
+hierarchy—mantissa LSB, mantissa MSB, exponent
+MSB, and sign (Section 2.3). Selective propagation
+compares two request groups referencing different pre-
+fix sets, testing whether corruption is confined to the
+block that is actually read. Temporal persistence tracks
+corruption over 100 successive requests on both mod-
+els to test for decay.
+4.3.2
+Hardware and Software
+All experiments run on an NVIDIA DGX Spark work-
+station equipped with 128 GB of unified GPU mem-
+ory. We use vLLM v0.18.1rc02 with Prefix Caching
+2Commit 298e510; the most recent version available at
+the time of the experiments.
+enabled (enable prefix caching=True) and cache
+salting disabled (cache salt=None), maximizing
+cross-request block sharing. Decoding is determin-
+istic (temperature=0) with a maximum generation
+length of 128 tokens.
+4.3.3
+Models
+We evaluate two open-weight 8B-parameter models
+stored in BF16: Qwen3-8B (Qwen Team, 2025) and
+DeepSeek-R1-Distill-Llama-8B (DeepSeek-AI, 2025)
+(hereafter DeepSeek-R1). Qwen3-8B serves as the
+primary model for all experiments; DeepSeek-R1 is
+added in the temporal persistence experiment to assess
+cross-model consistency (Section 5.3).
+4.3.4
+Prompt Construction
+Every request shares a common system-prompt prefix
+of 337 characters (≈103 tokens), which spans seven
+contiguous KV blocks at a block size of 16 tokens.
+The first six blocks contain exactly 16 prefix tokens
+each and are always eligible for cross-request cache
+hits. Block 6 is a boundary block containing only
+the last seven prefix tokens with nine remaining slots;
+whether it receives cross-request cache hits depends on
+whether per-request suffix tokens fill those slots before
+decoding. Because block 6 is not reliably shared, the
+injection surface comprises the first six prefix blocks.
+Per-request suffixes are drawn from the ShareGPT
+conversational dataset (anon8231489123, 2023), pro-
+viding diverse user queries that exercise the model’s
+general-purpose generation capability.
+5
+EVALUATION
+5.1
+Bit-Position Sensitivity Analysis
+We systematically evaluate all 16 BF16 bit positions
+across five concurrency levels (nc ∈{2,4,8,16,32})
+on Qwen3-8B, yielding 16×5 = 80 experimental con-
+ditions with 30 trials each (2,400 trials in total). In
+
+M0
+M1
+M2
+M3
+M4
+M5
+M6
+E0
+E1
+E2
+E3
+E4
+E5
+E6
+E7
+S
+Bit position
+0
+20
+40
+60
+80
+100
+Mean TCR (%)
+Mantissa (M0 M6)
+Exponent (E0 E7)
+Sign (S)
+Figure 2: Mean TCR by bit position, averaged across all five
+concurrency levels (error bars: SD across nc levels).
+each trial, a single bit at position p is flipped in the
+value tensor of a uniformly random element within the
+prefix blocks. We organize the findings into four parts:
+overall bit-position sensitivity, trial classification, qual-
+itative output analysis, and concurrency independence.
+5.1.1
+Overall Sensitivity Hierarchy
+Figure 2 shows that mean TCR generally increases
+from mantissa LSB to exponent MSB, with the sign
+bit falling between them—consistent with the BF16
+perturbation magnitude hierarchy (Section 2.3). The
+remaining metrics in Table 4 confirm this ordering:
+TDR tracks the same hierarchy while ROUGE-L and
+BERTScore decrease accordingly. Except at bit 14,
+BERTScore ≥0.93 and ROUGE-L ≥0.71 at every
+position, confirming the silent divergence property
+hypothesized in Section 3.
+5.1.2
+Four-way Trial Classification
+Section 3 hypothesized two corruption modes—
+collapse and silent divergence. Based on TCR and
+mean ROUGE-L, we refine this distinction into four
+categories:
+• No effect (TCR = 0): the bit flip did not alter any
+concurrent request’s output.
+• Partial divergence (0 < TCR < 1): some but not
+all concurrent requests were affected.
+• Complete divergence (TCR = 1, ROUGE-L ≥
+0.1): all concurrent requests diverged, but outputs
+constitute coherent natural language.
+• Collapse (TCR = 1, ROUGE-L < 0.1): all con-
+current requests produced incoherent or repetitive
+output bearing no resemblance to the baseline. We
+set this threshold at 0.1 because collapse trials clus-
+ter near ROUGE-L = 0.0, well separated from the
+lowest-scoring divergence trials.
+Table 4 reports the per-bit classification counts. Partial
+divergence is the dominant outcome across all 2,400
+trials.
+Table 3: Representative corrupted outputs. Underlined spans
+highlight differences from the baseline.
+Silent divergence (bit 3,
+M3;
+nc=2,
+TCR=1.0,
+ROUGE-L=0.951)
+Baseline: “...The atom should have a name, such as
+“Hydrogen” or “Helium”, displayed at the top. . . . ”
+Corrupted: “...The atom should have a name, such as
+“Hydrogen” or “Oxygen”, displayed at the top. . . . ”
+Collapse
+(bit
+14,
+E7;
+nc=2,
+TCR=1.0,
+ROUGE-L=0.000)
+Baseline: “How is it calculated? What are its advantages
+and disadvantages compared to impact factor? The Cita-
+tion Success Index (CSI) is a metric designed to compare
+the citation capacity of pairs of journals. . . ”
+Corrupted: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!
+Collapse is overwhelmingly concentrated at bit 14
+(about 72% of all collapse events); the remainder oc-
+curs exclusively in the upper exponent bits (bits 11–13;
+only 1 event at bit 11), with no collapse observed at
+any mantissa bit or the sign bit. This pattern is consis-
+tent with the BF16 encoding: bit 14 flips can produce
+NaN or ±∞, which propagate through attention compu-
+tations as degenerate values, while lower exponent bits
+typically yield perturbations within the representable
+range.
+Complete divergence is rare and broadly dis-
+tributed across exponent and sign bits, representing
+cases where the perturbation was large enough to shift
+generation to an entirely different but linguistically
+valid trajectory.
+5.1.3
+Qualitative Output Analysis
+The two dominant corruption regimes produce quali-
+tatively distinct outputs, illustrated in Table 3. In the
+collapse regime (bit 14), corrupted outputs degenerate
+into repetitive token sequences that bear no semantic
+relation to the prompt and are readily detectable by
+simple heuristics (e.g., repetition ratio or perplexity
+thresholds). In the silent divergence regime (bits 0–11
+and 15), corrupted outputs are grammatically correct,
+topically relevant, and often differ from the baseline
+only in minor lexical or syntactic variations, making
+them qualitatively indistinguishable from legitimate
+responses; the security implications are discussed in
+Section 5.4.
+5.1.4
+Concurrency Independence
+The preceding analyses pool results across five con-
+currency levels. To verify that this aggregation is justi-
+
+fied, we test whether TCR depends on nc. Mean TCR
+remains within a narrow range (43.9–46.7%) across
+nc ∈{2,4,8,16,32}, and Kruskal–Wallis tests show
+no significant effect at either the aggregate (H = 8.04,
+p = 0.090) or per-bit level after Bonferroni correction
+(Table 4). TCR is therefore independent of nc within
+the tested range, meaning the absolute number of af-
+fected requests scales linearly with batch size.
+5.2
+Selective Propagation
+The sensitivity analysis above establishes that, depend-
+ing on bit position, a single bit flip alters 20–92% of
+requests sharing the corrupted prefix blocks. To con-
+firm that corruption does not propagate beyond those
+blocks, we run the selective propagation experiment:
+for each of the four representative bit positions, 30 tri-
+als inject one bit flip into the first group’s prefix blocks
+and measure output divergence for both groups.
+Across all 120 trials, every request referencing
+the corrupted prefix blocks exhibited the expected bit-
+position-dependent divergence (affected-group TCR:
+28.3% at bit 0, 43.3% at bit 6, 90.0% at bit 14, 46.7% at
+bit 15), while requests referencing the separate prefix
+blocks produced outputs identical to their clean base-
+lines (TCR = 0.0 in all 120 trials). This confirms that
+corruption propagates exclusively through the shared
+block and does not affect co-located workloads with
+different prefixes.
+5.3
+Temporal Persistence
+The preceding analyses characterize the immediate
+impact of a single bit flip on one batch of concurrent
+requests. In practice, however, a corrupted prefix block
+remains in the cache and is read by every subsequent
+request that shares the same prefix. This subsection
+quantifies how long the corruption effect persists over
+successive requests.
+For each of the four representative bit positions
+(p ∈{0,6,14,15}) and each of the two models
+(Qwen3-8B and DeepSeek-R1), we execute 30 inde-
+pendent runs. Each run injects one bit flip into the
+prefix block and then sends 100 sequential requests
+through the corrupted cache, yielding 240 runs and
+24,000 post-injection requests in total. Block survival
+is monitored at 25-request intervals. A separate base-
+line condition (no injection) is run once per model.
+We define a per-request corruption indicator for the
+i-th request in run r:
+c(r)
+i
+= ⊮
+
+ˆy(r)
+i
+̸= yi
+
+,
+(5)
+and report two derived metrics: the per-request corrup-
+tion rate ¯ci = R−1 ∑r c(r)
+i , averaged across R=30 runs,
+and the cumulative affected count C(r)
+N = ∑N
+i=1 c(r)
+i . Un-
+like TCR, which measures the fraction of concurrent
+requests affected within a single batch, ¯ci is a binary in-
+dicator for whether the i-th sequential request diverged
+from its baseline.
+5.3.1
+No Temporal Decay
+Figure 3 plots the per-request corruption rate ¯ci over
+100 sequential requests for each bit position and model.
+Across all eight conditions, the corruption rate fluctu-
+ates around a constant mean with no systematic trend.
+To test for a monotonic trend without assuming nor-
+mality, we compute the Spearman rank correlation be-
+tween ¯ci and the request index i. One condition (bit 14
+on DeepSeek-R1) produces a constant 100% corrup-
+tion rate, for which the correlation is undefined; the
+remaining seven conditions show weak negative corre-
+lations (|ρ| ≤0.24), none significant after Bonferroni
+correction (all adjusted p > 0.05; Table 5). We there-
+fore conclude that, over the 100-request horizon tested,
+there is no intrinsic temporal decay in the corruption
+effect: the corrupted prefix block affects subsequent
+requests at a statistically constant rate. Whether this
+stability extends beyond our 100-request window is
+left to future work.
+5.3.2
+Linear Cumulative Damage
+Figure 4 plots the mean cumulative affected count
+¯CN as a function of N. All conditions exhibit a lin-
+ear growth pattern: ordinary least-squares regression
+yields R2 ≥0.992 for every condition, with the slope
+approximately equal to the mean per-request corrup-
+tion rate.
+The enabling condition for this linear growth is
+sustained residency: across all 240 injection runs, the
+corrupted prefix block remained in the cache at every
+checkpoint (25, 50, 75, and 100 requests), with no
+eviction observed—consistent with vLLM’s eviction
+policy. In the most severe case (bit 14 on DeepSeek-
+R1), the per-request corruption rate reaches 100.0%:
+every subsequent request served from the corrupted
+block produces altered output.
+5.3.3
+Cross-model Consistency
+Table 5 shows that the sensitivity hierarchy (M0 <
+M6 ≈S < E7) is preserved on both models. Absolute
+corruption rates differ, but the qualitative pattern—
+collapse concentrated at bit 14 and strict temporal
+linearity—is consistent across both, supporting the hy-
+pothesis that the hierarchy is a consequence of BF16
+encoding rather than an artifact of a single architecture.
+Generalization beyond the 8B scale is discussed in
+Section 7.2.
+
+Table 4: Bit-position sensitivity summary for Qwen3-8B (150 trials per row; all metrics are means across all trials at the given
+bit position). None = no effect; Part. = partial divergence; Comp. = complete divergence; Coll. = collapse. praw: uncorrected
+Kruskal–Wallis p-value for concurrency independence of TCR at each bit position.
+Bit
+Field
+TCR
+TDR
+BS
+RL
+OCR
+None
+Part.
+Comp.
+Coll.
+praw
+0
+M0
+19.8%
+10.5%
+.990
+.940
+64.0%
+54
+93
+3
+0
+.852
+1
+M1
+27.1%
+14.8%
+.985
+.916
+69.3%
+46
+99
+5
+0
+.439
+2
+M2
+32.4%
+17.3%
+.983
+.906
+80.0%
+30
+119
+1
+0
+.298
+3
+M3
+39.0%
+20.9%
+.978
+.880
+88.0%
+18
+128
+4
+0
+.120
+4
+M4
+37.4%
+21.1%
+.977
+.874
+81.3%
+28
+117
+5
+0
+.042
+5
+M5
+42.0%
+24.7%
+.973
+.861
+87.3%
+19
+121
+10
+0
+.137
+6
+M6
+42.7%
+24.8%
+.974
+.864
+88.0%
+18
+123
+9
+0
+.055
+7
+E0
+45.0%
+25.4%
+.974
+.860
+92.0%
+12
+127
+11
+0
+.087
+8
+E1
+40.9%
+23.5%
+.975
+.864
+86.7%
+20
+125
+5
+0
+.269
+9
+E2
+44.9%
+25.9%
+.972
+.850
+89.3%
+16
+129
+5
+0
+.034
+10
+E3
+47.6%
+28.3%
+.970
+.843
+91.3%
+13
+127
+10
+0
+.159
+11
+E4
+49.9%
+31.4%
+.960
+.804
+91.3%
+13
+120
+16
+1
+.417
+12
+E5
+56.9%
+39.6%
+.930
+.713
+92.7%
+11
+111
+4
+24
+.793
+13
+E6
+54.2%
+38.6%
+.930
+.710
+92.7%
+11
+111
+4
+24
+.212
+14
+E7
+91.9%
+88.9%
+.749
+.129
+100.0%
+0
+21
+2
+127
+.098
+15
+S
+45.9%
+27.2%
+.971
+.843
+89.3%
+16
+126
+8
+0
+.084
+Total (2,400)
+325
+1,797
+102
+176
+Table 5:
+Temporal persistence results per condition.
+Init TCR: initial batch TCR (nc=2); CR: mean per-request
+corruption rate over 100 requests; Spearman: rank corre-
+lation ρ between ¯ci and request index (uncorrected p in
+parentheses).
+Model
+Bit
+Init TCR
+CR
+Spearman ρ (p)
+Qwen3-8B
+M0
+.250
+.317
+−.093 (.357)
+Qwen3-8B
+M6
+.500
+.523
+−.114 (.259)
+Qwen3-8B
+E7
+.883
+.914
+−.203 (.043)
+Qwen3-8B
+S
+.367
+.499
+−.112 (.268)
+DeepSeek-R1
+M0
+.167
+.338
+−.187 (.063)
+DeepSeek-R1
+M6
+.483
+.467
+−.239 (.017)
+DeepSeek-R1
+E7
+1.000
+1.000
+—
+DeepSeek-R1
+S
+.350
+.487
+−.227 (.023)
+5.4
+Interpretation of Results
+The three properties do not merely coexist; they form a
+causal chain. Silent divergence bypasses content-level
+quality filters (Section 5.1) and selective propagation
+dilutes aggregate anomaly signals (Section 5.2), to-
+gether constituting detection evasion. An operator
+monitoring overall service quality sees most requests
+unaffected, while the corrupted subset produces out-
+puts that individually appear legitimate. Because un-
+detected corruption cannot be remediated, persistent
+accumulation (Section 5.3) proceeds unchecked, yield-
+ing damage amplification bounded only by the block’s
+residency.
+This chain has no analogue in weight corruption,
+where every inference is affected uniformly and cross-
+request comparison readily reveals the fault (Lin et al.,
+2025; Coalson et al., 2025).
+0
+20
+40
+60
+80
+100
+ci (%)
+M0 (bit 0)
+M6 (bit 6)
+20
+40
+60
+80
+100
+Request index (i)
+0
+20
+40
+60
+80
+100
+ci (%)
+E7 (bit 14)
+20
+40
+60
+80
+100
+Request index (i)
+S (bit 15)
+Qwen3
+DeepSeek-R1
+Figure 3: Per-request corruption rate ¯ci over 100 sequential
+requests, split by bit position (circles: Qwen3-8B; trian-
+gles: DeepSeek-R1). Shaded bands: mean ±1 SD (darker:
+Qwen3-8B; lighter: DeepSeek-R1).
+6
+COUNTERMEASURES
+The linear damage growth established in Section 5.3
+stems from the absence of integrity verification
+on cached blocks.
+Adding integrity verification—
+detecting and invalidating corrupted blocks before
+reuse—directly addresses this gap. Complementary
+operator-level mitigations are discussed in Section 7.1.
+We impose three requirements on the detection
+mechanism:
+1. Complete detection of any single-bit modification,
+regardless of bit position.
+2. Zero false positives under normal operation.
+3. Negligible throughput overhead.
+
+20
+40
+60
+80
+100
+Request index (N)
+0
+20
+40
+60
+80
+100
+Cumulative affected count (CN)
+Qwen3-8B
+20
+40
+60
+80
+100
+Request index (N)
+DeepSeek-R1-Distill-Llama-8B
+M0 (bit 0)
+M6 (bit 6)
+E7 (bit 14)
+S (bit 15)
+Figure 4: Mean cumulative affected count ¯CN over 100
+requests. Shaded regions: ±1 SD; dashed lines: OLS linear
+fits.
+To the best of our knowledge, no prior work has pro-
+posed runtime integrity verification of cached KV ten-
+sors.
+6.1
+Detection Mechanism
+6.1.1
+Mechanism
+To meet these requirements, the mechanism verifies
+block integrity via hash comparison at two lifecycle
+events in vLLM’s block pool. On cache: when a pre-
+fix block becomes fully computed, a hash digest is
+computed over its KV-cache tensor data (copied to
+CPU) across all model layers and stored alongside the
+block’s metadata. Because block metadata is regis-
+tered in the hash map before the GPU tensor write
+completes, digest computation is deferred until after
+execute model() returns. On access: every cache hit
+triggers recomputation and comparison of the digest;
+a mismatch evicts the block and forces recomputation
+from clean model weights (a single prefill pass).
+The mechanism is activated by an optional flag
+and comprises approximately 100 lines of new code
+across five source files in vLLM v1. We adopt SHA-
+256—already present in vLLM’s dependency chain—
+as the digest algorithm. Because bit flips alter only a
+small number of bits rather than arbitrary bytes, crypto-
+graphic collision resistance is unnecessary; faster alter-
+natives (xxHash3, BLAKE3) are drop-in replacements.
+The end-to-end overhead is quantified in Section 6.3.
+6.1.2
+Security Guarantee
+The mechanism guarantees that any single-bit cor-
+ruption present at the start of a scheduling cycle is
+detected and invalidated before the block is served
+to any request in that cycle. Let N denote the num-
+ber of requests served from a corrupted block during
+its residency; detection bounds cumulative affected
+requests by one batch, independent of N, reducing
+Θ(N) growth to O(1) in N. Residual gaps—time-of-
+check-to-time-of-use (TOCTOU) windows, deferred
+sealing, and GPU floating-point non-determinism after
+recomputation—are discussed in Section 7.2.
+6.2
+Detection Evaluation
+To validate implementation soundness—correct se-
+rialization, block-boundary alignment, and digest
+storage/retrieval—we run 120 injection trials on
+Qwen3-8B (nc=2; same four bit positions and 30 trials
+per position as Section 5.3). All 120 injected bit flips
+were detected and invalidated before block reuse, with
+zero false positives.
+6.3
+Throughput Overhead
+We measure throughput overhead by comparing gener-
+ation speed with and without the integrity mechanism
+enabled. Each condition consists of 30 runs of 100 se-
+quential requests (batch size 1) on Qwen3-8B (BF16)
+with no injection, yielding 3,000 data points per con-
+dition. The metric is tokens per second per request,
+measured on follow-up requests only (warm-up, base-
+line, and injection phases excluded).
+Mean throughput was 13.80±0.07 tok/s with the
+mechanism enabled and 13.69±0.05 tok/s with it dis-
+abled. The 0.11 tok/s difference is comparable to each
+condition’s standard deviation and attributable to mea-
+surement noise, so the overhead of integrity verifica-
+tion is negligible under sequential serving. Across
+all 3,000 verified requests with the mechanism en-
+abled, zero false positives were observed. Measure-
+ment caveats are discussed in Section 7.2.
+7
+DISCUSSION
+The threat chain identified in Section 5.4—detection
+evasion enabling unchecked damage accumulation—
+motivates both operational mitigations and further in-
+vestigation of the remaining gap between our SFI anal-
+ysis and physical exploitation.
+7.1
+Practical Implications
+Existing operational mitigations address adjacent lay-
+ers: hardware ECC (Section 2.2) mitigates bit-flip risks
+in KV-cache memory, and vLLM’s cache salt (dr75,
+2025)—introduced as a confidentiality defense against
+timing side channels (Song et al., 2025)—eliminates
+cross-salt-group sharing but forfeits the caching bene-
+fit. Our checksum is orthogonal: it preserves sharing
+while detecting corruption. Beyond these known miti-
+gations, our results motivate three additional measures:
+
+• Output-quality monitoring. Repetition ratio or
+perplexity thresholds can detect collapse-mode cor-
+ruption (bit 14), but are inherently blind to silent
+divergence: 13 of 16 bit positions produce coherent
+outputs that pass any quality filter (Section 5.1).
+• TTL-based block recomputation. Imposing a
+time-to-live on prefix blocks caps cumulative dam-
+age at O(NTTL) without integrity-checking infras-
+tructure, at the cost of increased prefill overhead.
+• Runtime integrity verification. Our checksum-
+based countermeasure (Section 6.1) is the only
+measure that addresses silent divergence directly
+without sacrificing cache effectiveness, reducing
+cumulative damage to O(1).
+7.2
+Limitations
+7.2.1
+Gap from SFI to Physical Exploitation
+Our ideal-bit-targeting assumption (Section 3) estab-
+lishes an upper bound on impact severity by deliber-
+ately relaxing physical Rowhammer constraints—row
+adjacency, fixed flip direction, and undocumented ad-
+dress mappings (Kim et al., 2014; Lin et al., 2025).
+End-to-end exploitation requires three capabilities:
+(1) cache-presence detection, demonstrated via side-
+channel attacks (Song et al., 2025; Wu et al., 2025;
+Pennas et al., 2026); (2) physical targeting of a spe-
+cific shared prefix block—partially addressed by CA-
+CHETRAP (Al Nahian et al., 2025) on transient caches
+but not extended to long-lived prefix blocks; (3) bit
+flip, confirmed by CACHETRAP on KV-cache value
+tensors via GPUHAMMER (Lin et al., 2025).
+7.2.2
+Generality
+We evaluate two 8B-parameter BF16 models on a sin-
+gle GPU, targeting value tensors. The qualitative sen-
+sitivity hierarchy follows from BF16 encoding and
+should hold across scales, but quantitative rates may
+vary; generalization to larger models (70B+), lower-
+precision formats (e.g., FP8, INT4), multi-bit flips,
+multi-GPU parallelism, and diverse tasks—including
+safety-aligned system prompts, whose KV blocks are
+commonly shared in production—remains unexplored.
+Key-side flips may yield qualitatively different fail-
+ure modes (e.g., attention misrouting). Although this
+work addresses adversarial bit flips, the same sensitiv-
+ity hierarchy applies to non-adversarial faults (DRAM
+retention errors, soft errors), with implications for reli-
+ability engineering.
+7.2.3
+Residual Detection Gaps
+The checksum mechanism verifies blocks at CPU-side
+scheduling time, leaving a one-cycle window: a flip
+occurring after verification but before the GPU-side
+attention read, or a cache hit on a newly registered
+block before deferred sealing. A GPU-side hashing
+kernel would narrow both gaps. Separately, block
+recomputation after checksum-triggered eviction may
+introduce bit-level differences due to non-deterministic
+GPU floating-point reduction; injection-free controls
+(210 runs) confirmed this is inherent non-determinism,
+not residual corruption.
+7.2.4
+Measurement Caveats
+Throughput overhead (Section 6.3) is measured at
+batch size 1 on unified memory (NVIDIA DGX
+Spark). For Qwen3-8B, the per-block data volume
+is ≈2.25 MiB; on discrete GPUs, each verification
+requires a PCIe round trip of this size, and concur-
+rent cache hits would multiply the cost, making the
+reported overhead a lower bound.
+7.3
+Ethical Considerations
+All experiments were conducted on locally hosted
+models using software fault injection; no real user traf-
+fic or production systems were affected. Prior to pub-
+lication, we disclosed the vulnerability to the vLLM
+maintainers on April 8, 2026 via a GitHub Security
+Advisory, along with a proposed patch. The maintain-
+ers declined the proposal, regarding the threat scenario
+as not plausible in current deployments. Source code
+and data will be made available upon publication; the
+release will not include tools for physical Rowhammer
+exploitation or GPU memory address translation.
+8
+RELATED WORK
+8.1
+Bit-Flip Attacks
+Rowhammer (Section 2.2) has been exploited to cor-
+rupt a range of in-memory targets: page tables for priv-
+ilege escalation (Seaborn and Dullien, 2015), browser-
+based remote exploitation (Gruss et al., 2016), cryp-
+tographic keys via read-side leakage (Kwong et al.,
+2020), bypasses of in-DRAM mitigations (Frigo et al.,
+2020), and—on GPUs—GDDR6 memory (Lin et al.,
+2025) and page tables for cross-context privilege esca-
+lation (Lin et al., 2026).
+Neural network weights are another instance of
+in-memory data, and bit-flip attacks on them have
+
+followed two complementary tracks.
+SFI studies
+characterize vulnerability under ideal bit targeting:
+BFA (Rakin et al., 2019) established this method-
+ology for DNN weights, and subsequent work has
+applied it to LLMs—collapsing accuracy via evolu-
+tionary search (Das et al., 2025) or achieving collapse
+with a single stealthy flip (Guo et al., 2025). Physical
+Rowhammer studies demonstrate end-to-end exploita-
+tion: DEEPHAMMER (Yao et al., 2020) first attacked
+DNN weights on CPU DRAM, ONEFLIP (Li et al.,
+2025) showed that a single Rowhammer-induced flip
+suffices to backdoor full-precision DNNs, and PRIS-
+ONBREAK (Coalson et al., 2025) extended this to GPU
+GDDR6 memory, jailbreaking safety-aligned LLMs.
+Further physical demonstrations include remote ex-
+ploitation via information-theoretic bit search (Yan
+et al., 2025) and targeted content steering (Guo et al.,
+2026).
+All of these studies—whether SFI or physical—
+target static model weights, whose corruption affects
+every subsequent inference uniformly; none considers
+the dynamic, shared KV-cache structures that our work
+addresses, where corruption impacts only the requests
+sharing the corrupted block.
+8.2
+KV-Cache Security and Resilience
+Two studies target KV-cache tensor data through bit
+flips. CACHETRAP (Al Nahian et al., 2025) is the clos-
+est to our work, sharing a value-side single-bit fault
+model; however, it targets a single request’s transient
+cache rather than shared prefix blocks, and evaluates
+on classification tasks where corruption is binary (cor-
+rect or targeted misclassification) rather than coherent
+but altered natural language. KELLE (Xia and Zhang,
+2025) observes a coarse-grained MSB > LSB sensi-
+tivity hierarchy for KV-cache bit flips, but under non-
+adversarial eDRAM retention errors in an edge setting,
+without per-bit-position characterization or shared pre-
+fix blocks.
+The remaining studies target different attack sur-
+faces. HISTORY SWAPPING (Ganesh et al., 2025) cor-
+rupts KV-cache tensor data, but assumes direct read–
+write access to swap entire blocks rather than single-
+bit corruption via hardware faults. CACHEME (Wu
+et al., 2026) addresses vulnerabilities in shared caching
+within LLM serving frameworks, but targets cache in-
+dexing through API-level attack vectors rather than the
+cached tensor data itself.
+None of the four works considers silent divergence,
+selective propagation, or persistent accumulation—the
+properties central to our threat characterization.
+9
+CONCLUSION
+This paper presents the first systematic severity charac-
+terization of shared prefix blocks in LLM serving sys-
+tems under adversarial single-bit corruption. Through
+2,400 fault injection trials and 24,000 post-injection
+requests across two 8B-parameter models, we showed
+that a single bit flip in a shared prefix block yields
+three compounding properties—silent divergence, se-
+lective propagation, and persistent accumulation—that
+together enable detection evasion and unbounded dam-
+age amplification, a threat profile with no analogue
+in weight corruption. Our checksum-based counter-
+measure breaks this chain, detecting all 120 injected
+faults with zero false positives and negligible overhead,
+bounding cumulative damage to one batch independent
+of block residency. Prefix blocks therefore warrant in-
+tegrity protection before the gap between SFI analysis
+and physical exploitation is closed.
+Two directions merit further investigation. First,
+our severity characterization should be broadened to
+include key-side sensitivity, lower-precision formats,
+and multi-GPU tensor parallelism. Second, the reach-
+ability gap remains open: analyzing block placement
+predictability and combining GPU virtual-to-physical
+address translation with demonstrated cache detection
+techniques would enable assessment of end-to-end ex-
+ploitation feasibility.

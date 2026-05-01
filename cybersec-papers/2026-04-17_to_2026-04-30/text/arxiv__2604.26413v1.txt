@@ -1,0 +1,711 @@
+1
+Quantum Gatekeeper: Multi-Factor Context-Bound
+Image Steganography with VQC Based Key
+Derivation on Quantum Hardware
+*Sahil Tomar1, Sandeep Kumar2
+1,2Central Research Laboratory, BEL, Ghaziabad, India
+*Corresponding author mail Id: sahiltomar893@gmail.com
+Abstract
+This paper presents Quantum Gatekeeper, a context-bound image steganography framework where successful
+payload recovery depends on both cryptographic decryption and the reconstruction of a precise extraction path.
+The system integrates lossless least significant bit (LSB) embedding with a deterministic variational quantum
+circuit (VQC)-derived gate key, multi-factor contextual binding, and authenticated encryption. Payload extraction is
+contingent upon four requisite factors: a password, a shared secret, a user-supplied context string, and a reference
+image signature. Any deviation in these factors causes the system to read from an incorrect pixel sequence or
+fail authentication, resulting in silent rejection rather than partial disclosure. The proposed method derives a gate-
+controlled extraction key from a seed-conditioned variational circuit, with parameters generated via cryptographic
+hash expansion and context-dependent image features. To ensure encode/decode consistency, the cryptographic key
+path is generated via exact statevector simulation; concurrently, IBM superconducting quantum hardware is utilized
+to evaluate the statistical behavior of the circuit family under physical noise. We introduce a dual-region image
+layout to resolve the nonce bootstrapping dependency, separating header recovery from payload recovery through
+independently derived keys. The implementation is built using PennyLane, qiskit.remote, AES-GCM, and
+PBKDF2-based key strengthening. Experimental results confirm successful end-to-end message embedding and
+recovery on PNG images, demonstrating deterministic success under correct conditions and failure otherwise. The
+framework supports both text and image payloads; in the image-in-image configuration, a secret image is resized to
+a fixed resolution prior to embedding, enabling exact pixel-level recovery under correct contextual reconstruction.
+In the reported execution, the local simulator completed the shot-based comparison circuit in 0.0127 s, while IBM
+Quantum hardware (ibm_pittsburgh) completed the same circuit in 7.81 s for 2048 shots. Both platforms
+produced the same modal bitstring |1000⟩, maintaining agreement with the deterministic key state. Measured metrics
+include Shannon entropy (2.9408 simulator, 3.0723 hardware) and a linear cross-entropy benchmarking (XEB) score
+(2.0487 simulator, 1.9192 hardware). A total variation distance (TVD) of 0.0566 between the simulator and hardware
+indicates a measurable device-specific distribution shift. These results demonstrate that quantum circuit structures
+can serve as robust context-sensitive control mechanisms while remaining resilient to the physical noise of NISQ-era
+hardware.
+Index Terms
+Image Steganography, Quantum Steganography, Variational Quantum Circuit, AES-GCM, Authenticated Encryp-
+tion, Context-Bound Security, Physical Unclonable Function, Total Variation Distance, Cross-Entropy Benchmarking,
+Hybrid Quantum-Classical Cryptography, Image-in-Image Steganography, Secret Image Recovery, Multi-Modal
+Payload.
+I. INTRODUCTION
+Image steganography aims to conceal the existence of information by embedding payload data within an innocuous
+carrier such as an image, audio stream, or video frame. Among spatial-domain approaches, least significant bit
+(LSB) substitution remains one of the most widely used techniques because of its simplicity, reversibility, and high
+embedding capacity [1], [2]. Foundational studies established LSB embedding as an effective baseline for image-
+based hiding, although its statistical regularities also make it vulnerable to steganalysis when applied without
+sufficient randomness or adaptive control [3]–[5]. In most practical systems, however, security is concentrated
+primarily in the encryption stage: once an adversary obtains the correct key or embedding pattern, the hidden
+payload can be extracted deterministically. This creates a structural weakness in which confidentiality protects
+arXiv:2604.26413v1 [quant-ph] 29 Apr 2026
+
+2
+message content, but the extraction mechanism itself remains insufficiently guarded. Furthermore, most practical
+steganographic systems restrict the hidden payload to text or binary data; the ability to embed and recover an entire
+image as the secret payload introduces additional capacity and fidelity requirements that conventional single-key
+pipelines do not address.
+Classical steganography research has explored a broad range of enhancements, including block-based LSB
+embedding, transform-domain hiding using discrete cosine transform (DCT) and discrete wavelet transform (DWT),
+edge-guided embedding, and cryptographic-steganographic hybrids [6]–[9]. Information-theoretic analyses have also
+formalized the trade-offs between payload rate, detectability, and reliability in secure data hiding systems [10]. These
+methods improve imperceptibility and, in some cases, resilience to distortion, but they still generally assume that
+extraction is a direct inverse of embedding once the controlling secret is known. As a result, the dominant security
+model in conventional steganography remains content protection, not extraction-path control.
+The recent deep learning wave has significantly expanded the design space of image steganography. Instead of
+explicitly selecting pixel positions or transform coefficients, many modern systems learn embedding and extraction
+mappings directly from data. Early work such as deep steganography demonstrated end-to-end hiding of images
+within images using convolutional neural networks [11]. Subsequent approaches introduced adversarial and invertible
+architectures to improve embedding realism, payload capacity, and recovery quality [12]–[15]. Contemporary surveys
+indicate that learned steganographic systems now span convolutional, attention-based, generative, and coverless
+paradigms, while deep learning has also strengthened the opposing field of steganalysis [16]–[24]. CNN-based
+steganalysis in particular has shown that repeatable embedding artifacts can be learned effectively from data, even
+when visual distortion is negligible [25], [26]. This progression strengthens the case for steganographic systems that
+do more than merely obscure payload bits; it motivates architectures in which access itself becomes conditional.
+Quantum information processing introduces a different security perspective. Foundational protocols such as BB84
+demonstrated that secure communication can be rooted in physical measurement behavior rather than solely in
+computational hardness assumptions [27], [28]. In the image-processing domain, quantum image representation
+models such as Flexible Representation of Quantum Images (FRQI) and Novel Enhanced Quantum Representation
+(NEQR) provided formal mechanisms for encoding pixel location and intensity into quantum states [29], [30]. These
+representations are important in establishing how visual data can be structured in quantum computational form, but
+they are not directly designed for practical steganographic access control over conventional digital images.
+Recent work in quantum steganography has explored embedding strategies based on quantum search, quan-
+tum image representations, and hybrid classical-quantum schemes. Existing quantum-image steganography studies
+have examined Grover-assisted hiding, color-image embedding over quantum image models, and integrated hiding
+mechanisms for quantum image states [31]–[35]. These contributions are relevant to the broader development of
+quantum-assisted information hiding, but they remain largely centered on embedding efficiency, image representa-
+tion, or simulator-based hiding. They do not directly address a deployment-oriented question central to practical
+steganography: under what jointly verifiable conditions should a hidden payload become recoverable? Many such
+frameworks are also difficult to translate into a conventional image-steganography pipeline operating under noisy
+intermediate-scale quantum (NISQ) constraints.
+This practical gap becomes more apparent when moving from simulated quantum workflows to real hardware.
+Contemporary superconducting quantum processors allow parameterized circuits to be executed on physical devices,
+but the resulting output distributions are influenced by calibration drift, readout error, decoherence, and gate noise.
+These effects are not merely implementation nuisances; they create measurable statistical behavior that differs from
+ideal simulation in structured ways. Cross-entropy benchmarking (XEB) has been used to quantify the deviation
+between ideal and hardware-executed output distributions in superconducting quantum systems [36]. Likewise, Bell-
+type tests such as the Clauser–Horne–Shimony–Holt (CHSH) inequality remain central to validating non-classical
+correlations in entangled states [37]. Together, these tools make it possible to treat quantum hardware not only as
+a computational substrate, but also as a source of physically distinct statistical signatures.
+That perspective intersects naturally with the concept of a physical unclonable function (PUF), in which micro-
+scopic physical variation produces challenge-response behavior that is difficult to duplicate or predict exactly [38]. A
+quantum processor is not a classical PUF in the manufacturing-security sense, but its measured output distributions
+under fixed circuit families can still exhibit chip- and run-dependent deviations from idealized simulation. This
+suggests a useful security analogy: quantum hardware can provide a physically grounded statistical fingerprint even
+when deterministic cryptographic recovery must remain anchored to a stable classical path.
+
+3
+Motivated by this gap, this paper introduces Quantum Gatekeeper, a context-bound image steganography frame-
+work that shifts the security objective from content protection to extraction-path control. Instead of relying solely
+on ciphertext secrecy, the proposed system ensures that payload recovery is possible only when multiple contextual
+factors are simultaneously correct. These factors include a password, a pre-shared secret, a user-defined context
+string, and a reference image signature derived from the original image buffer. If any one of these inputs is incorrect,
+the extraction process yields an incorrect bit sequence or fails authenticated decryption, resulting in silent rejection.
+The gate key controlling the extraction path is derived from a seed-conditioned variational quantum circuit (VQC).
+To preserve deterministic behavior during encoding and decoding, the key derivation process uses exact statevector
+simulation rather than hardware sampling. This is a necessary design choice because direct shot-based hardware
+measurement would make the key path stochastic and therefore unsuitable for reliable recovery. At the same time,
+the same circuit structure is executed on IBM Quantum hardware through PennyLane’s qiskit.remote interface
+to evaluate the statistical divergence between simulated and physical execution. This split architecture preserves
+deterministic functionality while still incorporating experimentally observable quantum behavior.
+A second architectural issue addressed in this work is the dependency between key reconstruction and payload
+access. The nonce required to rebuild the gate key must itself be recoverable before the payload can be read, but
+storing that nonce only inside the gate-controlled payload region would create a circular dependency. The proposed
+design resolves this by introducing a dual-region embedding layout in which the header and payload are embedded
+in independently keyed image regions. The header region is extracted using a separately derived header key, while
+the payload region is controlled by the VQC-derived gate key. This separation eliminates bootstrapping failure and
+enables a stable decode path.
+The framework integrates AES-GCM authenticated encryption and PBKDF2-based password strengthening in
+accordance with established cryptographic standards [39], [40]. The implementation reported in this paper performs
+deterministic encode/decode successfully and additionally evaluates simulator-versus-hardware behavior using Shan-
+non entropy, total variation distance (TVD), and linear cross-entropy benchmarking. In the recorded experimental
+run, the same dominant bitstring was observed in both local simulation and IBM hardware execution, while the
+measured output distributions still differed in a quantifiable manner, indicating physically distinct yet functionally
+compatible behavior.
+The main contributions of this work are summarized as follows:
+• A context-bound image steganography framework is introduced in which payload recovery is controlled at the
+extraction-path level rather than by decryption alone.
+• A deterministic variational quantum circuit-based mechanism is used to derive a gate key that governs the
+shuffled pixel access order required for payload extraction.
+• A four-factor recovery model is enforced using a password, shared secret, user context string, and reference
+image signature.
+• A dual-region embedding architecture is designed to resolve nonce-dependent bootstrapping constraints while
+preserving independent access control for header and payload recovery.
+• A hybrid execution strategy is implemented in which exact statevector simulation is used for deterministic key
+derivation and IBM superconducting quantum hardware is used for statistical validation.
+• Simulator and hardware output distributions are compared using entropy, total variation distance, and cross-
+entropy benchmarking to characterize physically distinct device behavior.
+• Silent failure is demonstrated as a system property: incorrect reconstruction conditions do not reveal partial
+payload information and instead lead to extraction-path failure or authenticated decryption rejection.
+The remainder of the paper is organized as follows. Section II presents the system architecture and workflow.
+Section III describes the mathematical formulation. Section IV details the experimental setup. Section V reports
+image-level, cryptographic, and quantum execution results. Section VI provides security analysis and ablation
+studies. Section VII discusses limitations and future work, followed by the conclusion in Section VIII.
+II. SYSTEM ARCHITECTURE
+Quantum Gatekeeper is a hybrid quantum-classical image steganography system that controls not only pay-
+load confidentiality but also the conditions under which extraction becomes possible. The architecture combines
+authenticated encryption, context-dependent feature binding, deterministic quantum-derived key generation, and
+
+4
+Fig. 1. Overall architecture of the proposed Quantum Gatekeeper framework. User-defined inputs are transformed into context-bound seed
+material driving quantum gate derivation, authenticated payload encryption, and dual-region image embedding. The stego image is decodable
+only by reconstructing the same contextual state and completing authenticated recovery.
+shuffled pixel-domain embedding within a conventional RGB image. Four interacting layers constitute the pipeline:
+a context-binding layer converting user and image metadata into cryptographic material; a quantum gate layer
+deriving a deterministic gate key from a variational quantum circuit (VQC); an authenticated embedding layer
+encrypting and inserting the payload; and a verification and recovery layer reconstructing keys and validating
+integrity during extraction. The overall structure is illustrated in Fig. 1.
+A. Design Objectives and System Inputs
+The architecture satisfies four practical objectives: deterministic recovery independent of hardware fluctuations;
+context-bound extraction requiring reconstruction of all embedding conditions; integrity-aware failure that exposes
+no partial payload on incorrect input; and deployability on present-day tools without compromising deterministic
+behavior.
+
+5
+During embedding the system accepts a cover image I, a secret payload (plaintext message M or secret image
+IS), password P, pre-shared secret S, and context string C. When the payload is an image, IS is resized to
+512×512, PNG-compressed, and base64-encoded before encryption, making the capacity requirement deterministic
+and recovery comparable at a fixed reference resolution. An image-specific signature RI is computed from the
+original buffer prior to any modification, binding extraction to the exact cover instance. Recovery is therefore
+conditioned on four jointly required factors (P, S, C, RI); a mismatch in any one causes traversal divergence and
+authenticated decryption failure.
+B. Operational Pipeline and Context Binding
+The workflow has three phases. In the encode phase the payload is encrypted, metadata is packed, and the
+resulting bitstream is embedded using context-derived and quantum-derived traversal orders. In the decode phase
+the decoder reconstructs traversal logic, extracts header and payload regions, and attempts authenticated recovery. In
+the quantum validation phase the same circuit family is run under both exact simulation and IBM Quantum hardware
+to compare ideal and physical output behavior. Only the validation phase uses stochastic hardware measurements;
+encode and decode paths rely exclusively on exact statevector probabilities.
+The embedding and extraction workflow is shown in Fig. 2. The context-binding layer hashes the password,
+shared secret, context string, and image signature into a composite seed, then expands it into role-specific sub-seeds
+governing header traversal, payload traversal, quantum circuit parameters, and encryption keying. This domain
+separation prevents a partial compromise of one sub-seed from exposing the full extraction path. Because RI is
+computed from the unmodified cover, any substitution or recompression of the image alters the seed and invalidates
+recovery even when all other credentials are correct.
+C. Quantum Gate Layer and Payload Preparation
+The quantum gate layer derives a deterministic gate key governing decoder traversal order rather than encrypting
+the payload directly. A compact VQC is instantiated with parameters generated from the context-bound seed via
+cryptographic hash expansion, making it a reproducible transformation rather than a trainable model. The circuit
+is evaluated through exact statevector simulation during both embedding and decoding; the dominant output state
+and associated distribution statistics yield a stable bit-level control signal KQ. Shot-based hardware measurement
+is deliberately excluded from the encode/decode path because stochastic outcomes would break key reproducibility
+under identical inputs.
+Before embedding, the payload is processed through PBKDF2 password strengthening and AES-GCM authen-
+ticated encryption, producing ciphertext C, tag T, and nonce N packaged as Π = (N, C, T, |M|). AES-GCM
+guarantees that incorrectly reconstructed payloads fail authentication cleanly rather than decoding into corrupted
+plaintext. For image payloads, the byte sequence passed to AES-GCM is the base64 encoding of the PNG-
+compressed 512 × 512 image, keeping the cryptographic layer identical across payload types.
+D. Dual-Region Embedding, Traversal, and Recovery
+A bootstrapping problem arises if the nonce and payload length required for recovery are stored inside the
+quantum-gated payload region itself. The dual-region architecture resolves this by partitioning the pixel index space
+into disjoint header region ΩH and payload region ΩP . The header, keyed independently via σh, stores N and
+|M| and is recovered first. The payload, keyed via σp∥KQ, is then accessed using the metadata retrieved from the
+header.
+Bits are written into least significant positions of RGB channels in a key-conditioned, non-sequential order
+determined by the full contextual state. PNG lossless saving preserves the embedded bitstream exactly. During
+decoding the header traversal is rebuilt first, the VQC is reconstructed to regenerate KQ, the payload region is
+traversed, and AES-GCM decryption is attempted. Incorrect inputs cause failure at traversal reconstruction or
+authentication, producing no partial output. The system enforces a strict all-or-nothing recovery model: a hidden
+payload is not merely concealed but locked behind a reconstruction path derived jointly from user credentials and
+image-bound context.
+The hardware validation subsystem runs the same circuit on a noiseless local simulator and on IBM Quan-
+tum hardware with finite shots, comparing output distributions via Shannon entropy, TVD, and cross-entropy to
+characterize physically distinct device behavior without affecting the deterministic decode path.
+
+6
+Fig. 2. Embedding and extraction workflow of the proposed Quantum Gatekeeper framework. During embedding, an image-bound signature
+and internal seeds parameterize the VQC and authenticated encryption. During extraction, the same contextual inputs reconstruct the gate
+key, recover embedded regions, and perform AES-GCM verification.
+III. MATHEMATICAL FORMULATION
+The proposed Quantum Gatekeeper framework is formalized as a constrained steganographic recovery process
+combining context-bound seed generation, deterministic variational quantum key derivation, keyed spatial permu-
+tation, and authenticated payload recovery [28], [39], [40].
+A. Preliminaries and Context-Bound Seed
+The cover image is denoted I ∈{0, 1, . . . , 255}H×W×3. The secret payload is a byte string M = (m1, . . . , mL)
+of length L, representing either a text message or a secret image IS encoded as
+M = Base64
+ PNG-compress
+ Resize(IS, 512 × 512)
+
+.
+(1)
+
+7
+User security inputs form the tuple U = (P, S, C), where P, S, C denote password, pre-shared secret, and context
+string respectively. An image-specific signature RI = H(I) is derived from the original image buffer prior to
+embedding, giving the complete recovery state
+X = (P, S, C, RI).
+(2)
+A correct decode occurs only when the decoder reconstructs the identical state X.
+The composite seed is formed by hashing all recovery factors:
+σ = H(P ∥S ∥C ∥RI),
+(3)
+and expanded into role-specific sub-seeds via key-domain separation [40]:
+(σh, σp, σq, σe) = KDF(σ),
+(4)
+where σh, σp, σq, σe govern header traversal, payload traversal, quantum circuit parameters, and encryption keying
+respectively.
+B. Cryptographic Key Derivation and Payload Encryption
+The password is strengthened via PBKDF2 [40], KP = PPBKDF2(P), and the authenticated encryption key is
+derived as
+KE = H(KP ∥σe).
+(5)
+The payload is encrypted using AES-GCM [39]:
+(C, T) = AES-GCMKE(N, M),
+(6)
+producing ciphertext C, authentication tag T, and nonce N. The protected payload is packed as Π = (N, C, T, |M|).
+C. Variational Quantum Circuit and Gate Key
+The VQC operates on n qubits with depth d. Gate parameters are derived deterministically from σq:
+Θ = (θ1, . . . , θ3nd) = F(σq),
+θi ∈[0, 2π),
+(7)
+yielding the unitary
+U(Θ) =
+d
+Y
+ℓ=1
+ Eℓ· Rℓ(Θℓ)
+
+,
+(8)
+where Rℓare parameterized single-qubit rotations and Eℓthe entangling layer. Applied to |0⟩⊗n, the circuit produces
+state |ψ(Θ)⟩= U(Θ)|0⟩⊗n with Born-rule distribution
+pΘ(z) = |⟨z | ψ(Θ)⟩|2,
+z ∈{0, 1}n.
+(9)
+These probabilities are evaluated via exact statevector simulation, never stochastic sampling, to preserve decode-time
+reproducibility. The gate key is then derived as
+KQ = H
+
+z⋆ Enc(pΘ)
+
+,
+z⋆= arg max
+z
+pΘ(z),
+(10)
+where KQ controls payload traversal order rather than acting as a direct cipher key.
+
+8
+D. Dual-Region Embedding and Keyed Permutation
+The flattened RGB channel index space Ω= {0, . . . , 3HW −1} is partitioned into disjoint header and payload
+regions:
+Ω= ΩH ∪ΩP ,
+ΩH ∩ΩP = ∅.
+(11)
+Deterministic permutations are constructed over each region:
+πH = Permute(ΩH; σh),
+πP = Permute(ΩP ; σp ∥KQ).
+(12)
+Bits are embedded via standard LSB substitution [1]:
+E(I[k], b) = I[k] −(I[k] mod 2) + b,
+(13)
+applied along πH for header bits BH = Bits(N∥|M|) and along πP for payload bits BP = Bits(C∥T), producing
+stego image
+I′ = Embed(I, BH, BP ; πH, πP ).
+(14)
+The dual-region design resolves the bootstrapping dependency: the header region, keyed independently via σh, is
+recovered first to obtain N and |M| before the quantum-gated payload region is accessed.
+E. Decoding and Recovery Condition
+Given candidate stego image ˆI and recovery state ˆ
+X = ( ˆP, ˆS, ˆC, ˆRI), the decoder reconstructs ˆσ = H( ˆP∥ˆS∥ˆC∥ˆRI),
+expands it via Eq. (4), rebuilds ˆπH to extract ˆBH, reconstructs ˆKQ via Eq. (10), forms ˆπP , and extracts ˆBP . The
+decryption key ˆKE = H(PPBKDF2( ˆP)∥ˆσe) is then used in:
+ˆ
+M =
+(
+AES-GCM−1
+ˆ
+KE( ˆN, ˆC, ˆT),
+if authentication succeeds,
+∅,
+otherwise.
+(15)
+Valid recovery requires
+ˆ
+X = X ∧ˆπH = πH ∧ˆπP = πP ∧ˆKE = KE.
+(16)
+Any mismatch causes traversal divergence or AES-GCM rejection, producing silent failure with no partial payload
+exposure.
+F. Hardware Validation Metrics
+The same circuit is executed on shot-based simulator and IBM Quantum hardware for statistical characterization
+[36]. Let psim(z) and phw(z) denote the respective output distributions. Three metrics quantify their divergence:
+H(p) = −
+X
+z
+p(z) log2 p(z),
+(17)
+TVD(p, q) = 1
+2
+X
+z
+|p(z) −q(z)|,
+(18)
+LXE(p, q) = −
+X
+z
+p(z) log q(z).
+(19)
+These metrics serve hardware characterization only and play no role in production key generation. Together, Eqs. (3)–
+(16) establish that valid decode demands simultaneous agreement across contextual inputs, quantum gate derivation,
+keyed traversal, and authenticated decryption.
+IV. EVALUATION METHODOLOGY
+Performance of the proposed Quantum Gatekeeper framework is assessed across three dimensions: cover image
+imperceptibility, payload recovery fidelity, and quantum execution consistency. Each dimension targets a distinct
+aspect of the system that cannot be captured by a single metric.
+
+9
+A. Cover Image Imperceptibility and Recovery Fidelity
+Imperceptibility is measured by comparing the original cover image I against the stego image I′ using four
+metrics: SSIM, PSNR, RMSE, and MAE. Higher SSIM and PSNR indicate better visual preservation; lower RMSE
+and MAE indicate less pixel-domain distortion. These metrics are applied consistently across DIV2K, COCO, and
+ImageNet to benchmark the proposed method against 4bit-LSB, CAIS, HiNet, and a GAN-based approach.
+Recovery fidelity is evaluated separately for text and image payloads. For text, recovery is binary: the decoded
+byte sequence either matches exactly or fails authenticated decryption. For image payloads, the same four metrics are
+computed between the original secret image resized to 512×512 (denoted IS,512) and the recovered image IR. Since
+the system performs lossless LSB embedding over PNG-saved stego images, the recovered byte sequence under
+correct contextual reconstruction is expected to be bit-identical to the embedded payload, yielding SSIM = 1.000,
+PSNR = ∞, and zero error. Recovery fidelity is treated as a separate dimension from stego-image quality because
+the decode path is conditioned on password-derived cryptography, image-bound signature matching, and quantum-
+gated traversal simultaneously.
+B. Quantum Execution Consistency
+The same VQC family used for deterministic gate-key derivation is additionally executed under two environments:
+noiseless local simulation and real IBM Quantum hardware. This comparison does not replace statevector-based
+key derivation; it determines whether the circuit family remains behaviorally stable under physical noise.
+A key indicator is the dominant measured bitstring, defined as
+z⋆
+sim = arg max
+z
+psim(z),
+z⋆
+hw = arg max
+z
+phw(z),
+(20)
+reported in experimental tables as SIM Peak and HW Peak. Agreement between these values indicates that the
+dominant control state contributing to gate-key derivation remains unchanged despite hardware noise, confirming
+functional stability of the quantum-conditioned extraction path. Distributional metrics including Shannon entropy,
+TVD, and cross-entropy are reported alongside peak agreement to characterize the degree of simulator-hardware
+deviation.
+Together, the three evaluation dimensions jointly verify that the framework achieves imperceptibility, exact
+payload reconstruction, and stable quantum control behavior simultaneously rather than optimizing any single
+objective in isolation.
+V. RESULTS AND DISCUSSION
+This section reports the experimental performance of the proposed Quantum Gatekeeper framework across
+three evaluation criteria: cover image imperceptibility, payload recovery fidelity, and simulator-versus-hardware
+consistency.
+A. Cover Image Imperceptibility
+Table I compares the proposed method against 4bit-LSB [2], CAIS [14], HiNet [15], and a GAN-based method
+[41] in terms of cover/stego image quality.
+The proposed method consistently achieves the best imperceptibility across all three datasets. On DIV2K it
+reaches SSIM = 0.999872 and PSNR = 64.25 dB, substantially exceeding the strongest baseline. Similar trends hold
+on COCO and ImageNet, confirming that the dual-region embedding strategy and quantum-conditioned traversal
+introduce no meaningful perceptual artifacts despite embedding encrypted payload data alongside recovery metadata.
+B. Payload Recovery Fidelity and Multi-Modal Capacity
+Table II reports similarity between the original secret image IS,512 and the recovered output IR. The recovered
+image is pixel-identical to IS,512 in all cases, yielding SSIM = 1.000, PSNR = ∞, and zero RMSE and MAE. These
+results hold for both text and image payload configurations; the fixed 512 × 512 normalization ensures comparison
+at a canonical resolution, eliminating ambiguity from varying source dimensions. Unlike learning-based systems
+that tolerate minor reconstruction errors, the present framework enforces exact recovery or authenticated rejection.
+
+10
+TABLE I
+COMPARISON OF COVER/STEGO IMAGE QUALITY ACROSS DATASETS. BEST RESULTS IN BOLD. HIGHER IS BETTER FOR SSIM AND
+PSNR; LOWER IS BETTER FOR RMSE AND MAE.
+Dataset
+Metric
+4bit-LSB [2]
+CAIS [14]
+HiNet [15]
+GAN-Based [41]
+Proposed
+DIV2K
+SSIM ↑
+0.895
+0.965
+0.993
+0.995
+0.999872
+PSNR ↑
+24.99
+36.10
+46.57
+47.12
+64.2452
+RMSE ↓
+18.16
+5.80
+1.32
+1.25
+0.1564
+MAE ↓
+15.57
+4.36
+0.84
+0.78
+0.0245
+ImageNet
+SSIM ↑
+0.896
+0.943
+0.960
+0.965
+0.996569
+PSNR ↑
+25.00
+33.54
+36.63
+37.10
+52.4013
+RMSE ↓
+17.90
+6.33
+6.07
+5.80
+0.6116
+MAE ↓
+15.27
+4.70
+4.16
+4.00
+0.3741
+COCO
+SSIM ↑
+0.894
+0.944
+0.961
+0.968
+0.998708
+PSNR ↑
+24.96
+33.70
+36.55
+37.20
+58.2635
+RMSE ↓
+17.93
+6.13
+6.04
+5.90
+0.3114
+MAE ↓
+15.31
+4.55
+4.09
+3.95
+0.0970
+TABLE II
+SECRET/RECOVERY FIDELITY OF THE PROPOSED METHOD.
+Secret Image
+SSIM ↑
+PSNR ↑
+RMSE ↓
+MAE ↓
+DIV2K
+1.000
+∞
+0.000
+0.000
+COCO
+1.000
+∞
+0.000
+0.000
+ImageNet
+1.000
+∞
+0.000
+0.000
+TABLE III
+SECRET RECOVERY PERFORMANCE AFTER SIMULATOR AND IBM QUANTUM HARDWARE EXECUTION.
+Image
+Simulator
+IBM Hardware
+SIM Peak
+HW Peak
+SSIM
+PSNR
+RMSE
+MAE
+SSIM
+PSNR
+RMSE
+MAE
+DIV2K
+1.000
+∞
+0.000
+0.000
+1.000
+∞
+0.000
+0.000
+1101
+1101
+COCO
+1.000
+∞
+0.000
+0.000
+1.000
+∞
+0.000
+0.000
+0011
+0011
+ImageNet
+1.000
+∞
+0.000
+0.000
+1.000
+∞
+0.000
+0.000
+0111
+0111
+Regarding payload capacity, for a cover image of dimensions H × W the usable LSB budget is
+Bmax ≈3HW −2 · Bheader
+8
+−200 bytes,
+(21)
+where Bheader is the header region bit length. A 512 × 512 secret image PNG-compressed and base64-encoded
+occupies approximately 260–700 KB depending on content complexity. Cover images of 1024 × 1024 or larger
+comfortably accommodate this budget while maintaining the imperceptibility metrics in Table I.
+C. Quantum Execution and Hardware Consistency
+Table III shows that both simulator and hardware executions yield perfect secret recovery, with SIM Peak and HW
+Peak matching exactly in all cases. This confirms that the dominant basis state contributing to gate-key derivation
+remains stable under physical hardware noise, preserving deterministic decode behavior.
+Table IV further summarizes entropy and divergence metrics across execution environments. Hardware entropy
+is consistently slightly higher than simulator entropy, reflecting readout noise and decoherence in NISQ hardware.
+The TVD between simulator and hardware remains low (0.0371–0.0825), and cross-entropy and linear XEB values
+confirm strong distributional alignment. Critically, these deviations do not interfere with payload recovery; instead
+they provide a measurable physical execution signature while preserving dominant-state stability.
+Taken together, the results confirm that the proposed framework simultaneously satisfies all three evaluation
+objectives: cover-image fidelity exceeding compared baselines, exact payload recovery under correct contextual
+
+11
+TABLE IV
+QUANTUM DISTRIBUTION COMPARISON BETWEEN SIMULATOR AND IBM HARDWARE.
+Image
+Shannon Entropy
+Cross-Entropy
+Linear XEB
+TVD
+HW Runtime (s)
+SIM
+HW
+SIM
+HW
+SIM
+HW
+DIV2K
+3.3854
+3.4507
+3.3729
+3.3750
+1.1038
+1.0281
+0.0391
+9.9958
+COCO
+2.9783
+2.9991
+2.9752
+2.9777
+2.1447
+2.1258
+0.0371
+9.0323
+ImageNet
+2.7934
+2.9734
+2.8343
+2.8490
+2.0005
+1.8420
+0.0825
+8.9702
+reconstruction for both text and image payloads, and stable quantum-conditioned extraction behavior under real
+IBM Quantum hardware. The non-zero simulator-hardware divergence further suggests that the hardware layer
+retains physically distinct behavior suitable for future extensions in device fingerprinting and hardware-bound
+access control.
+VI. SECURITY ANALYSIS AND ABLATION STUDY
+This section analyzes the security properties of the proposed Quantum Gatekeeper framework and evaluates
+individual component contributions through controlled ablation experiments, focusing on failure behavior, resistance
+to partial information leakage, and architectural integrity.
+A. Multi-Factor Security Model and Failure Behavior
+Unlike conventional steganographic systems that rely on a single secret key, the proposed framework enforces a
+multi-factor recovery condition requiring simultaneous reconstruction of the password P, shared secret S, context
+string C, and image-derived signature RI. As formalized in Eq. (16), recovery is achieved only when all components
+match their embedding-time values. Even if one or more inputs are known, the absence of any remaining factor
+causes the reconstruction process to diverge, tying traversal, key derivation, and decryption into a unified dependency
+chain. The system was tested under controlled perturbations of each required input. An incorrect password causes
+the PBKDF2-derived key to differ from the embedding-time value per Eq. (5), resulting in AES-GCM authentication
+failure even when pixel traversal is reconstructed correctly. An incorrect context string changes the composite seed in
+Eq. (3), corrupting both permutation functions and quantum circuit parameters and producing a structurally invalid
+ciphertext. An incorrect shared secret alters both traversal order and gate-key derivation, effectively randomizing the
+extracted payload. An incorrect reference image produces a different RI, causing both header and payload traversal
+orders to diverge and blocking reconstruction entirely. Across all tested failure modes, the system exhibited silent
+failure behavior: incorrect inputs produced no partially correct outputs, failing cleanly at either the extraction
+or authentication stage. These properties hold identically for image payloads, since the secret image is base64-
+encoded and encrypted before embedding. Incorrect reconstruction causes AES-GCM failure before any image data
+is accessible, enforcing the same all-or-nothing recovery model regardless of payload type.
+B. Resistance to Leakage and Quantum Gate Role
+The proposed design introduces multiple layers of dependency that jointly protect the payload. Without the correct
+traversal order the extracted bitstream is scrambled; even with correct traversal the payload remains encrypted under
+AES-GCM; and authenticated encryption ensures invalid ciphertexts are rejected entirely rather than producing
+approximate outputs, enforcing a strict all-or-nothing recovery model. The quantum gate layer influences payload
+traversal order through gate key KQ, whose dependence on the context-bound seed introduces additional variability
+into the traversal mechanism. The system does not rely on quantum randomness for security; rather, the circuit
+acts as a structured transformation mapping contextual inputs into a non-trivial control signal. Experimental results
+confirm that the dominant circuit state remains stable across simulator and hardware execution, preserving recovery
+consistency while retaining measurable hardware-specific distributional differences.
+
+12
+C. Ablation Study
+Ablation experiments were conducted by removing or simplifying specific components while keeping the rest of
+the pipeline unchanged. The details are as follows:
+• Removal of context binding: Excluding C from seed construction reduced required recovery factors and
+simplified Eq. (3). The system remained functional but became more vulnerable to unauthorized extraction,
+confirming that context binding directly contributes to security.
+• Removal of quantum gate layer: Replacing KQ with a purely classical permutation derived from σp preserved
+deterministic recovery but eliminated the circuit-dependent traversal variability that distinguishes the proposed
+method from standard keyed permutation schemes.
+• Single-region embedding: Replacing the dual-region architecture with a single unified region introduced a
+dependency between metadata recovery and payload extraction. Incorrect traversal reconstruction prevented
+simultaneous recovery of both header and payload, confirming the necessity of region separation.
+• Removal of authenticated encryption: Replacing AES-GCM with a non-authenticated scheme allowed incor-
+rect inputs to occasionally produce partially decodable outputs, highlighting the importance of authenticated
+encryption in enforcing strict failure conditions and preventing partial information leakage.
+The framework provides layered protection across the full pipeline: context-bound seed generation ties recovery to
+both user input and image identity; keyed permutations prevent direct bitstream extraction; authenticated encryption
+enforces integrity and clean failure; and the quantum gate layer introduces structured traversal complexity without
+compromising determinism. Together these interdependent mechanisms produce a system in which payload recovery
+is tightly controlled and resistant to partial compromise, with the all-or-nothing failure model extending uniformly
+across both text and image payload configurations.
+VII. CONCLUSION AND FUTURE WORK
+This work presents Quantum Gatekeeper, a hybrid quantum-classical image steganography framework in which
+payload recovery depends not only on correct decryption but also on reconstructing precise contextual conditions.
+Unlike conventional approaches that focus solely on concealment, the proposed method controls both access and ex-
+traction through multiple factors, including a password, shared secret, context string, and image-bound signature. The
+framework integrates context-based key generation, deterministic variational quantum circuit (VQC) driven traversal
+control, AES-GCM authenticated encryption, and dual-region embedding. Together, these components ensure that
+recovery requires reconstruction of the correct extraction path rather than simple bit retrieval. Experimental results
+demonstrate high stego-image imperceptibility alongside exact payload recovery for both text and image inputs. In
+the image-in-image configuration, the recovered image is identical to the original, indicating that enhanced security
+does not compromise visual quality. The quantum layer remains stable across both simulation and real hardware
+execution. Although minor statistical variations are observed, the dominant output remains consistent, preserving
+deterministic behavior. Security analysis shows that incorrect inputs result in complete failure without partial data
+leakage. Ablation studies further confirm that each component contributes to the robustness of the system. While
+effective, this work represents an initial step. Future directions include more expressive quantum circuits, extended
+payload types such as audio and video, and formalized adversarial models. In summary, the proposed framework
+extends steganography beyond data concealment into controlled recovery, where successful extraction depends on
+reconstructing the correct cryptographic and contextual state.

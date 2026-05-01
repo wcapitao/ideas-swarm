@@ -1,0 +1,1440 @@
+PRIVATAR: ENABLING PRIVACY-PRESERVING REAL-TIME MULTI-USER VR
+THROUGH SECURE OFFLOADING
+Jianming Tong 1 2 3 Hanshen Xiao 4 Krishnakumar Nair 3 Hao Kang 1 Ziqi Zhang 5 Ashish Sirasao 6
+G. Edward Suh 7 Tushar Krishna 1
+ABSTRACT
+Multi-user virtual reality (VR) applications such as football and concert experiences rely on real-time avatar
+reconstruction to enable immersive interaction. However, rendering avatars for numerous participants on each
+headset incurs prohibitive computational overhead, fundamentally limiting scalability. This work introduces a
+framework, Privatar, to offload avatar reconstruction from headset to untrusted devices within the same local
+network while safeguarding sensitive facial features against adversaries capable of intercepting offloaded data.
+Privatar builds on the insight that “domain-specific knowledge of avatar reconstruction enables provably private
+offloading at minimal cost”. (1) System level. We observe avatar reconstruction is frequency-domain decomposable
+via block-wise DCT with negligible quality drop, and propose Horizontal Partitioning (HP) to keep high-energy
+frequency components on-device and offloads only low-energy components. HP offloads local computation
+while reducing information leakage to low-energy subsets only. (2) Privacy level. For individually offloaded,
+multi-dimensional signals without aggregation, worst-case local Differential Privacy requires prohibitive noise,
+ruining utility. We observe users’ expression statistical distribution are slowly changing over time and trackable
+online, and hence propose Distribution-Aware Minimal Perturbation (DAMP). DAMP minimizes noise based
+on each user’s expression distribution to significantly reduce its effects on utility and accuracy, retaining formal
+privacy guarantee. Combined, HP provides empirical privacy protection against expression identification attack.
+And DAMP further augments it to offer a formal guarantee against arbitrary adversaries.
+On a Meta Quest Pro, Privatar supports up to 2.37× more concurrent users at 5.7∼6.5% higher reconstruction loss
+and ∼9% energy overhead, providing a better throughout-loss Pareto frontier over SotA quantization, sparsity,
+and local reconstruction baseline. PRIVATAR further provides both provable privacy guarantee and stays robust
+against both empirical attack and NN-based Expression Identification Attack, proving its resilience in practice.
+Our code is open-sourced at https://github.com/georgia-tech-synergy-lab/Privatar.
+1
+INTRODUCTION
+Virtual Reality (VR) is rapidly evolving to support shared,
+immersive 3D environments for applications ranging from
+concerts (Park et al., 2024), sports games (Huang et al.,
+2025), cinemas (Kim et al., 2024) to collaborative de-
+sign(Zhou et al., 2025). Central to this evolution is the
+ability to render photorealistic avatars of multiple users in
+real-time, enhancing social interaction.
+1Georgia Institute of Technology, Atlanta, Georgia, USA
+2Massachusetts Institute of Technology,
+Cambridge,
+Mas-
+sachusetts, USA 3Google, Mountain View, California, USA
+4Purdue University/NVIDIA, West Lafayette, Indiana, USA
+5University of Illinois Urbana-Champaign, Champaign, Illinois,
+USA 6AMD, Santa Clara, California, USA 7Cornell Univer-
+sity/NVIDIA, Westford, Massachusetts, USA. Correspondence
+to: Jianming Tong <jianming.tong@gatech.edu>.
+Proceedings of the 7th MLSys Conference, Bellevue, WA, USA,
+2026. Copyright 2026 by the author(s).
+An ideal multi-user VR system must achieve four competing
+goals: i) high fidelity, ii) strong user privacy, iii) power and
+heat efficiency for better user experience, and iv) scalability
+to multiple users. In current paradigm, avatar reconstruc-
+tions of all users happen locally within a single VR headset,
+which satisfies i)-iii) but fails to scale as the rendering work-
+load from multiple users quickly overwhelms the limited
+computational resources of mobile devices. This paper ex-
+plores an alternative of offloading local computation to a
+powerful but untrusted external device for throughput im-
+provement. However, offloading introduces privacy leakage,
+as it exposes private user facial input individually to the local
+network, potentially leading to confidentiality and integrity
+risks. An adversary on the same local network (communica-
+tion) or residing at other devices (compute) can eavesdrop
+on, infer from, or tamper with offloaded data.
+arXiv:2604.17476v1 [cs.CR] 19 Apr 2026
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+1.1
+Technical Challenges
+Broadly speaking, there are three lines of provable privacy
+protection for offloading in untrusted servers: cryptograph-
+ically based encryption, trusted hardware based isolation,
+and information-theoretical based perturbation. But they all
+fall short in either efficiency or utility (quality of avatar).
+Cryptographic solutions enable a user to encrypt their per-
+sonal VR data without leakage, and the server to perform
+computation over ciphertexts without decryption, which per-
+fectly satisfies i) accuracy and ii) privacy. However, SotA
+solutions (Tong et al., 2026a) cannot satisfy iii) efficiency
+and iv) scalability requirements listed above. For example,
+Homomorphic Encryption (HE) encrypts offloaded data and
+its computation, leading to 3 magnitude higher computation
+latency (Tong et al., 2026a), hardly supporting more users.
+Multiple Party Computation (MPC) leverages more than
+one non-colluding servers to collaboratively compute the
+private data, but requiring up-to Giga-Bytes of communica-
+tion overhead to forbid real-time processing (Keller & Sun,
+2022; Knott et al., 2021).
+Confidential computing, using technologies like Trusted
+Execution Environments (TEEs) in CPU Intel SGX (Intel
+Corporation, 2014) and AMD SEV-SNP or SME (Advanced
+Micro Devices, Inc., 2020), offers sufficient privacy guaran-
+tee and somewhat throughput improvement, (1.79× in our
+experiments) because of slow throughput on CPU and extra
+encryption overhead.
+Information-theoretical privacy preservation largely relies
+on adding noise to obfuscate release. Compared to crypto-
+graphic encryption or confidential computing, noise does not
+cause any efficiency loss but it hurts utility and introduces
+privacy risk. In this line, Differential Privacy (DP) (Dwork
+et al., 2006) is one of the most representative frameworks.
+DP aims to ensure that, in the worst case for an adversary
+with arbitrary prior belief, they cannot gain additional knowl-
+edge from the release to distinguish an individual’s partici-
+pation in a data processing. Operationally, DP requires first
+determining an upper bound of the sensitivity of the process-
+ing function (Xiao et al., 2023b), i.e., the worst-case change
+on the release when one arbitrarily replaces one datapoint.
+Afterwards, noise is calibrated according to both sensitivity
+and security parameters (Xiao et al., 2023a). However, de-
+pending on the application, finding a usable noise solution
+without significantly hurts utility is non-trivial (Xiong et al.,
+2020; Near et al., 2025).
+1.2
+Our Contributions
+We introduce PRIVATAR, the first framework to enable
+privacy-preserving offloading without sever utility degrada-
+tion, ensuring private, high-fidelity, and real-time multi-user
+avatar reconstruction at scale. We systemically protect pri-
+vacy of individually released facial data in two levels.
+On the System Level, PRIVATAR’s core innovation is a
+strategic partitioning of the avatar reconstruction pipeline.
+It separates the frequency representation of an avatar’s tex-
+ture, assigning different components to either the local VR
+headset or an untrusted external device based on variance.
+The facial mesh and the high-variance frequency compo-
+nents of the texture are processed securely on the local VR
+headset. Conversely, the reconstruction of the low-variance
+frequency components is offloaded to untrusted third-party
+devices to minimize the noise required by provable privacy
+protection. This physical isolation reduces the sensitivity
+of offloaded data by only exposing a subset of components,
+providing empirical protection against expression identifica-
+tion attack (Kopalidis et al., 2024; Zhang et al., 2023).
+On the Privacy Level, PRIVATAR roots in using exploita-
+tion of data entropy for privacy protection. Compared to
+DP, which fully relies on algorithmic randomness to en-
+sure indistinguishability, we further consider incorporating
+the data entropy for privacy enhancement. That is to say,
+we consider formalizing the adversarial inference hardness
+based on the randomness from both the data distribution and
+the additional noise perturbation instead of purely on noise
+perturbation in DP. Based on this, we propose Distribution-
+Aware Minimal Perturbation to reduce the amount of noise
+required by local DP by up-to 17.6× for the same level of
+provable privacy guarantee, reducing utility degradation.
+Intuitively, PRIVATAR leverages the temporal invariant na-
+ture of users’ facial expression to reduce the required noise,
+i.e. users turn to make the similar expressions as they did
+recently (analogue to user’s quirk) and all expressions a
+user could make cannot change drastically over time. Us-
+ing users’ historical expression statistics and PAC Privacy
+(Xiao & Devadas, 2023; 2025; Xiao, 2024), we compute
+per-dimension, provably minimal perturbations that meet a
+target privacy guarantee. Our contributions are:
+• Horizontal Partitioning (HP): Horizontally split of the
+avatar reconstruction into two independent paths for locally
+processing on device and offloading to untrusted devices,
+and a frequency-domain split of unwrapped facial textures
+that enables fine-grained data/compute relocation among
+two paths. This reduces local computation while only re-
+stricts the untrusted devices to see an incomplete view of
+the private data for privacy protection, improving scalability
+while maintaining privacy.
+• Distribution-Aware Minimal Perturbation (DAMP): A
+dimension-wise noise determination mechanism that ex-
+ploits the entropy of private data (statistical distributions)
+into minimizing perturbation (noise) needed to achieve
+provable privacy protection.
+DAMP calibrates multi-
+dimensional noises for individually released data via PAC
+privacy, yielding markedly better reconstruction quality (less
+reconstruction loss) than local DP at the same privacy level.
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+(a) Truth
+(b) Baseline
+(c) FO
+(d) Quantize
+(e) Sparsity
+(f) PRIVATAR
+0.075
+0.080
+0.085
+0.090
+Reconstruction Loss
+2.5
+3.0
+3.5
+4.0
+4.5
+5.0
+5.5
+# Users - Quest Pro
+Ideal
+Baseline: Local Avatar Reconstruction
+Quantization: Int8
+Sparsity: 10% Channel Pruning
+Privatar: Secure 'Partial' Offloading
+(g) Latency–accuracy tradeoff in all settings.
+Figure 1. A visual and quantitative comparison among efficient avatar reconstruction techniques. PRIVATAR (Secure Partial
+Offloading, 1f) achieves 2.37× throughput (#users per second) than SotAs (1b∼1e) under similar quality (loss). FO: Fully Offloading.
+• PRIVATAR: Combined, HP reduce offloaded information
+to an incompleted subset, reducing noises needed by DAMP,
+and DAMP further augments the empirical privacy protec-
+tion of HP to a formal guarantee against arbitrary adver-
+saries. Our evaluation on commercial VR hardware (Meta
+Quest Pro) shows that PRIVATAR supports up-to 3 more
+users (2.37×) with negligible 5.7% accuracy degradation
+and only a minor (9%) increase in energy consumption, as
+shown in Fig. 1. PRIVATAR enables a better throughput-
+loss Pareto frontier over quantization, sparsity, and local
+processing baseline, and is empirically robust against NN-
+based expression identification attacks, and provable robust
+against arbitrary block-box attacks.
+2
+BACKGROUND
+0.49 Mbps
+per user
+Encoder
+Unwrapped Texture
+Flatten
+7306 
+Vertex
+Flatten
+1024
+1024
+Input Mesh
+texture
+Transposed
+Convolution
+View
+Latent Code
+FLOPS Ratio:
+99.4%
+0.3‰
+Conv
+Encoder of a single user
+Concatenation
+Fully Connected
+ (FC)
+FC
+FC
+Decoder of a single user-364 GOPs
+Concatenation
+FC
+FC
+FC
+Decoder
+Sender
+Render
+8
+8
+Receiver
+Latent Code
+View
+Predicted
+mesh
+mesh
+texture
+1.3 MB
+per user
+1.3 MB
+per user
+mesh
+texture
+Figure 2. Overview of the Variational Auto-Encoder (VAE) ar-
+chitecture used for avatar reconstruction. Takeaway: The tex-
+ture reconstruction stage (transposed convolution) accounts for
+99.4% of the decoder’s FLOPs, forming the primary computational
+bottleneck that PRIVATAR mitigates through partial offloading.
+2.1
+Facial Avatar Reconstruction Pipeline
+An avatar needs two key data: a high-resolution unwrapped
+texture (the “facial skin”, ∼1.3 MB) and a detailed facial
+mesh (the 3D model structure, ∼1.3 MB) in Fig. 2. Trans-
+mitting raw data for every user at a smooth 60 frames per
+second (FPS) is impractical. It would require ∼1.25 Gbps
+per user, which far exceeds the limited and unstable band-
+width of internet connections, which can be as low as 200
+Mbps, as shown in Fig. 3a. To reduce bandwidth, modern
+VR systems use a Variational Auto-Encoder (VAE) (Lom-
+bardi et al., 2018; Ma et al., 2021).
+• On the sender’s end, an encoder compresses texture and
+mesh into a compact “latent code”. This reduces required
+bandwidth by over 99%, to just 0.49 Mbps per user, mak-
+ing transmission over limited-bandwidth submarine cable
+feasible, as shown in Fig. 3a.
+• On the receiver’s end, a decoder receives this compact
+latent code and decompresses it to reconstruct the original
+high-resolution texture and mesh for avatar rendering.
+2.2
+Compute Bottleneck in Multi-user Reconstruction
+While VAE solves the bandwidth problem, it introduces a
+new one: a severe computational bottleneck on the receiver’s
+headset. In a multi-user session, the headset must decode
+the latent code from all senders simultaneously.
+The computation demand of decoder quickly overwhelms
+the limited computational budget of a standalone VR head-
+set, restricting the number of users that can be supported.
+For instance, a commercial headset like the Meta Quest Pro
+has a computational capacity of 902 GFLOPS, which sup-
+ports a maximum of two users at 60 FPS before losing FPS.
+The bottleneck is the decoder of the pipeline. Within the
+decoder, a series of eight transposed convolution layers re-
+sponsible for reconstructing the unwrapped texture accounts
+for 99.4% of the total computation, as shown in Fig. 2. In
+contrast, reconstructing the facial mesh is computationally
+trivial, contributing only 0.6% overall FLOPS of a decoder.
+2.3
+Vulnerability of Facial Avatars
+Facial avatars, built from textures and expression-driven
+meshes, introduce additional risks of identity leakage (via
+facial recognition or soft-biometric profiling) and expression
+leakage (revealing emotion or cognitive state).
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+Untrusted 
+3rd-party
+Devices
+Receiver
+Senders
+PC
+laptop
+local router
+trust
+trust
+untrust
+VR Headset
+20 Gbps
+Submarine
+Communication
+Cable
+200 Mbps ~ 10 Gbps
+WiFi-7
+(a) Setup and Threat Model
+Unwrapped
+Texture (
+)
+Input Mesh
+Encoder
+Encrypted
+Latent Code
+Senders
+Receiver
+trust
+trust
+untrust
+Decoder
+(b) Baseline: Local Reconstruction
+Frequency Representation of
+Unwrapped Texture (
+)
+Input Mesh
+local
+Encoder
+noisy
+Latent Code
+Senders
+Receiver
+laptop
+trust
+trust
+untrust
+Offload
+Encoder
++
+PAC Noise
+Encrypted
+Latent Code
+Offload
+Decoder
+local
+Decoder
+(c) Privatar (Local + Offloading)
+Figure 3. Overview of PRIVATAR against baseline under realistic threat model. (3a) Setup and Threat Model: In a multi-user
+VR session, each user only trust its own VR headset. (3b) Baseline processes entire decoder locally on receiver headset. It ensures
+privacy but the limited compute on device is not sufficient to support many users. (3c) Privatar (This work): Our framework introduces
+Horizontal Partitioning, which splits the reconstruction into two paths and offloaded one path to untrusted PC to reduce local computation.
+Local Path (Green): The relatively privacy-sensitive data, such as the facial mesh and the highly identifying frequency components of
+the texture, are processed securely on the trusted receiver headset. Offloaded Path (Red): Less-sensitive, but computationally intensive,
+frequency components are perturbed with minimal, precisely calibrated noise and offloaded to untrusted devices. Key Innovation: Privatar
+prevents the untrusted device from ever accessing the complete private facial data. By only processing a partial and obfuscated frequency
+components, it cannot reconstruct user’s sensitive expression, achieving both scalability and privacy without sacrificing quality.
+Identity Leakage: The facial texture carries rich biomet-
+ric information that uniquely identifies individuals, similar
+to a face image in traditional vision datasets. Leveraging
+facial textures, adversaries can recover identity through fa-
+cial recognition models or soft-biometric profiling, linking
+avatars back to real-world users (Nair et al., 2023). In large-
+scale multi-user environments, this enables cross-session
+tracking and deanonymization attacks.
+Expression and Emotion Leakage: Facial meshes encode
+temporally dynamic expression parameters, such as smiles,
+frowns, and subtle muscle movements, which can reveal a
+user’s mood, cognitive state, or reactions to specific stimuli.
+Studies show that such motion telemetry can leak private
+emotional or health-related information, even when identity
+is obfuscated (Nguyen et al., 2024).
+In summary, reducing local computational overhead of de-
+coder is the critical challenge for enabling VR experiences
+with a higher number of simultaneous users. This work
+proposes a secure partial offloading mechanism to achieve
+this without compromising user privacy or visual quality.
+3
+CHALLENGES AND KEY INSIGHTS
+This section presents multi-user VR setup in Fig. 3a, defines
+corresponding threat model, outlines two key challenges
+in secure offloading, and highlights two observations that
+guide Privatar’s innovations on what to offload and how to
+add noise to offloaded data for privacy protection.
+3.1
+Threat Model of Reconstruction Offloading
+Setup: In multi-user VR session, each participant wears
+a headset located at a different physical site (e.g., user’s
+homes or offices). Headsets communicate with one another
+through the Internet via a local router, which represents
+the household or institutional network gateway connecting
+the headset to external infrastructure and nearby personal
+devices (e.g., PC, laptop). All traffic leaving the headset
+traverses this local router and wide-area links (e.g., subma-
+rine communication cables), exposing the data to untrusted
+local and network-side devices that can intercept or analyze
+offloaded information, as shown in Fig. 3a.
+Trust Boundary: We aim to provide provable and strong
+privacy definitions similar to local DP (Xiong et al., 2020),
+where a user only trusts its own local headset, and may not
+trust any other devices even under the same local network,
+and will randomize his private data locally to ensure privacy
+before releasing, which leads to:
+• Untrusted network and hence any third-party device
+connected to network, including the router, laptops and
+PCs. Only VR headsets involved are trusted.
+• Untrusted communication channel between any de-
+vice and receiver VR headsets, as shown in Fig. 3a.
+Protected Asset: facial expressions are primary assets re-
+quiring protection. A leakage can reveal personal identifica-
+tion (Carr et al., 2023) and motion (Yang et al.).
+Adversary: We consider a computationally-unbounded ad-
+versary who can observe users’ release and has full knowl-
+edge on the following: 1) encoding and noise mechanism
+applied by the user, 2) the underlying distribution of each
+user’s facial data. That is to say, the only thing the adversary
+does not know is the randomness in both user’s facial data
+generation and encoding and perturbation mechanisms. For
+the formal, provable privacy analysis (§4.2.3), PRIVATAR
+ensures protection of any selected private asset (e.g., iden-
+tity, expression etc.) from user’s release against an arbitrary
+adversary attempting to extract that asset. To complement
+this formal guarantee with concrete empirical validations,
+we instantiate two adversaries as “expression identification
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+attacker”, whose goal is to correctly infer the user’s facial ex-
+pression (Fig. 9, detailed in §D). This represents real-world
+attack to demonstrate the effectiveness of PRIVATAR.
+3.2
+Challenges in Reconstruction Offloading
+Offloading reconstruction requires sending latent codes of
+users and decoder from the receiver VR headset to untrusted
+devices. This involves exposing sensitive user facial data
+and introduces privacy concerns. Privacy protection requires
+increasing the ambiguity of offloaded data, i.e. force differ-
+ent offloaded data to appear similar, thus making it difficult
+for adversaries to distinguish between them.
+Arguably, noise is the most popular way of randomizing
+data to increase ambiguity. For individually released latent
+code, the SotA local Differential Privacy (DP)-based ran-
+domization solutions (Croft et al., 2021; Fan, 2019; Zhao &
+Chen, 2022) mostly apply uniform noise to all dimensions of
+offloaded data, also called isotropic noise. However, adding
+DP-based noise perturbation into offloaded latent codes ei-
+ther suffers from privacy leakage or ruins reconstruction
+quality. Our empirical results show:
+• With low noise, an ML attacker can identify expressions
+with 86.15% accuracy (Tab. 3), a clear privacy breach.
+• With enough noise for privacy, the reconstruction quality
+is ruined, as shown in Fully Offloading (FO in Fig. 1),
+with a 105× increase in reconstruction loss compared
+to the baseline (local avatar reconstruction).
+Such a flaw of imbalance between privacy and utility (qual-
+ity) boils down to two key reasons.
+• Offloading the Entire Asset: It is contradictory to make
+entire offloaded data to be ambiguous for high privacy
+protection and accurate for high reconstruction quality at
+the same time. High ambiguity requires high noises while
+high accuracy calls for low noises.
+• Prohibitive Isotropic Noise: In avatar reconstruction,
+data are released individually without being aggregated.
+This invalidates typical DP for lack of a aggregation of
+users to hide the private data of a single one. The local-
+DP (Xiong et al., 2020) is the only viable solution, which
+typically uses isotropic noise, applying uniform level of
+randomization across all dimensions of the data. This noise
+is conservatively calibrated to worst-case sensitivity (the
+maximal possible change in data). As a result, dimensions
+with small values receive the same large amount of noise as
+the max-value dimension, causing the noise to overwhelm
+the actual signal and severely degrade reconstruction quality.
+These two challenges make secure offloading a non-trivial
+open question, motivating PRIVATAR (Fig. 3c).
+Base Frequency Component 
+ 94.9% overall L2 Norm Variance
+(a) L2 Norm of Components
+4
+2
+0
+2
+4
+Latent Code Values
+0.0
+0.1
+0.2
+0.3
+0.4
+Density
+2s Video Clip
+Historical Distribution
+(b) Distribution Comparison
+Figure 4. Illustration of two key observations. Takeaway: (4a)
+The energy (L2 norm) has extremely imbalanced distribution over
+frequency. Base frequency component contains 94.9% energy of
+entire data. (4b) Historical distribution (training dataset, §5) are
+similar to distribution of random 2 second clip of avatar trace.
+3.3
+Two Key PRIVATAR Observations and Insights
+PRIVATAR balances the privacy and accuracy by addressing
+two failures with two core insights.
+3.3.1
+Insight 1: Imbalanced Frequency Distribution
+We observe that entropy of private facial information has
+extreme imbalanced distribution over frequency, as illus-
+trated in Fig. 4a. Specifically, after decomposing the facial
+unwrapped texture into a spectrum of sixteen frequency
+components, the L2 norm1 of the base frequency component
+contributes to 94.9% of that in the original unwrapped facial
+texture while these other 15 frequency components overall
+contribute to ∼5%, as shown in Fig. 4a. This indicates
+the base frequency component contains higher energy than
+the union of all remaining frequency components. There-
+fore, instead of offloading the entire unwrapped texture,
+Privatar only offloads a partial set of non-base components
+with less L2 norm, keeping the high-energy components
+exclusively on the trusted VR headset. Privacy is therefore
+achieved through the inherent difficulty of reconstructing
+a complete face from incomplete data, offering empirical
+privacy protection for the expression identification attack,
+detailed in §D.
+3.3.2
+Insight 2: User-Unique Slowly Drifting Distribution
+To further provide a proved guarantee for arbitrary attacks,
+PRIVATAR adds noise to offloaded frequency components.
+Albeit the reduction of information from the offloaded par-
+tial frequency components, the noise required for provable
+privacy protection could still be prohibitive when following
+local DP-based noise determination. It is because noise
+of all dimensions has to be the same large to hide poten-
+tial highest possible dimensional value to ensure privacy
+guarantee for arbitrary cases, i.e. isotropic noise without
+consideration of the data distribution. We observe that such
+1L2 norm (squared Euclidean length) often serves as a proxy
+for “energy” as it measures energy in an orthonormal basis.
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+Encrypted
+Latent Code
+Unwrapped
+Texture (
+)
+Flatten
+Flatten
+1024
+1024
+Input Mesh
+256
+256
+High-Variance
+Components
+Low-Variance
+Components
+Flatten
+Noisy
+Latent Code
+Frequency
+Spliter (BDCT)
+Sender user
+Receiver VR Headset
+User 1
+Noisy
+Less-Private
+Components
+Frequency
+   Merger
+Untrusted Devices 
+connected to untrusted Router
+7
+9
+10
+3
+View
+Texture
+Mean
+Texture Diff
+Texture Mean
+Texture Diff
+Secret 
+Sharing
+Low-var.
+Components
+Encoder
+5
+PAC
+Noise
+Injection
+6
+High-var.
+Components
+Encoder
+2
+7306 Vertex
+High-
+Variance
+Components
+Decoder
+4
+Noisy
+Reconstruction
+8
+Render
+1
+PC
+laptop
+Figure 5. Overview of PRIVATAR avatar reconstruction flow. VR reconstruction is horizontally partitioned into two paths, running on
+the local device (bottom right) and untrusted devices (upper right red dashed box), separately. Noisy reconstruction is highlighted in red.
+worst-case protection is over conservative for avatar recon-
+struction, as the distribution of each user’s expression is
+slowly changing over time, i.e. being relatively static within
+a short duration, which could be used to reduce noises for
+dimensions with less entropy.
+Intuitively, the extreme dynamite of expressions a person
+could make cannot drastically change from what he could
+make before, e.g. a person could not suddenly make his
+mouth to be 2× wider than the largest mouth that he could
+make before. Quantitatively, this is reflected by a slowly
+changing distribution. Specifically, for a randomly selected
+user, we show in Fig. 4b that the distribution of latent code
+for expressions in training dataset is almost identical to
+that for expressions of randomly selected 2 seconds (120
+frames). This motivates the PRIVATAR’s Distribution-Aware
+Minimal Perturbation (DAMP), which leverages the latest
+statistical distribution of each user’s expressions to apply
+non-uniform, minimum noise, i.e. more for high-variance
+dimensions, less for low-variance ones. And DAMP keeps
+updating the statistical distribution with new expressions
+online to track distribution in the long run. This tailored ap-
+proach provides a formal privacy guarantee while reducing
+required noise by up-to 17.6× compared to DP, preserving
+high reconstruction accuracy, as quantified later in Fig. 10c.
+4
+PRIVATAR
+Goal. Enable secure offloading a subset of frequency com-
+ponents in private facial unwrapped texture to reduce com-
+putation overhead in the receiver VR headset, so that (i)
+the high-energy frequency components of texture and facial
+mesh never leave the trusted headset, (ii) low-energy compo-
+nents are safely offloaded with minimal noise perturbation.
+4.1
+Horizontal Partitioning (HP)
+4.1.1
+HP Overview
+HP splits the encoder–decoder pair of VAE (Fig. 2) into two
+independent parallel paths: a local path runs on the trusted
+receiver headset and an offloaded path runs on untrusted
+devices under the same local network with receiver headset
+(Fig. 5). The private facial texture is split in frequency,
+reconstructed independently, then merged for rendering.
+Local Path (❷→❸→❹) The encoder and decoder for se-
+lected frequency components run on trusted sender and
+receiver VR headset, separately, with the latent code to be
+encrypted during the communication for privacy protection.
+Encryption/decryption key are shared once ahead of actual
+transmission (Shamir, 1979), and runtime encryption and
+authentication lead to negligible overhead (Dworkin, 2007).
+Offloaded Path (❺→❻→❼→❽→❾) The sender VR head-
+set encodes the remaining components locally, injects
+distribution-aware noise (§4.2), and then offloads noisy la-
+tent codes for decoding to untrusted devices. Only partial
+and obfuscated view is ever exposed to reduce leakage.
+4.1.2
+Frequency Partitioning of Unwrapped Texture
+Frequency Decomposition of Unwrapped Texture: Un-
+wrapped facial texture is a 3 dimensional image in RH×W×3.
+HP first subtracts it by the average texture in training dataset
+and applies a block Discrete Cosine Transform (DCT) (Ji
+et al., 2022; Strang, 1999) of size B × B to each non-
+overlapping block, yielding B2 frequency components, each
+of shape H
+B × W
+B ×3. Each component is
+1
+B2 the size of un-
+wrapped texture, so splitting across paths preserves the total
+size of data while enabling compute relocation.
+Variance-Based Partitioning of Freq. Components: PRI-
+VATAR uses the L2 norm as a proxy of the energy contained
+in each frequency component to partition all components
+among local and offloaded paths.
+Step 1: Given the goal of local computation reduction,
+PRIVATAR computes the number of components to offload.
+Step 2: PRIVATAR selects required number of components
+with lower L2 norm (variance) for offloading. Note that
+facial mesh is always kept local for privacy protection.
+Differences to original VAE: Compared to Fig. 2, PRI-
+VATAR reduces local compute and memory by: (1) down-
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+94.9% 1.7% 0.5% 0.3% 1.1% 0.2% 0.2% 0.1% 0.2% 0.1% 0.1% 0.1% 0.1% 0.1% 0.1% 0.1%
+Figure 6. Illustration of 16 frequency components and ratio of energy of each in overall components after applying block DCT
+with B = 4 to the difference between input unwrapped texture and its average value in Fig. 5. Frequency increases from left to the right.
+Visually, all components look like random data, protecting the privacy of user expression information. The bottom bar shows profiled
+L2 norm variance of each frequency component. The base frequency component has the highest L2 norm (94.9% of overall L2 norm),
+indicating a highest energy. Other frequency components have similarly small L2 norm, much lower than that of the base frequency
+component. Takeaway: the base frequency component carries the most energy. HP keeps it local and only offloads low-energy components
+to reduce noises needed for obfuscation, improving utility. HP gives empirical protection as only subset instead of all components are
+offloaded, exposing a partial view of information, while formal privacy guarantee is obtained from DAMP through noise perturbation.
+sampling the texture input to 1
+B spatial resolution, which
+removes log2(B) layers from both the local encoder (❷)
+and decoder (❹). This lowers the per-component recon-
+struction cost to ≈1
+B2 of the original VAE, so reconstruct-
+ing all B2 components has comparable total cost; (2) of-
+floading X of the B2 components leaves only B2−X
+B2
+locally
+(X! ∈![2,B2!−!2]), reducing both local memory footprint
+and computation.
+4.1.3
+Utility Effects of Horizontal Partitioning
+Partitioning has negligible utility (quality) effects. By parti-
+tioning B2 components across two paths, PRIVATAR gives
+robust privacy protection against expression identification
+attack (Fig. 9). As a result, different choices of partitioning
+create the design space to trade off privacy, local compute
+latency, and communication latency.
+4.1.4
+Privacy Protection of Horizontal Partitioning
+HP only provides empirical protection. Achieving provable
+privacy for the individually released user latent codes still re-
+quires noise perturbation; however, HP reduces the required
+noise by exposing only a subset of texture information.
+As shown in Fig. 6, each post-transform component appears
+noise-like, which suppresses direct expression cues from
+any single component or any incomplete subset. Empir-
+ically, HP splits private information across two paths so
+the offloaded path observes only an incomplete, low-energy
+view, mitigating expression identification attacks (Fig. 9).
+By limiting exposed content, HP also reduces identity leak-
+age.
+4.2
+Distribution-Aware Min. Perturbation (DAMP)
+Even with HP, providing provable privacy for individually
+released user latent codes can require prohibitive noise.
+We introduce DAMP, which reduces the required noise by
+leveraging the statistical distribution of the offloaded data,
+thereby minimizing utility loss while maintaining the same
+provable privacy level for any selected sensitive asset (e.g.,
+identity, expression etc.).
+0
+16
+32
+48
+64
+80
+96
+112
+128
+144
+160
+176
+192
+208
+224
+240
+1
+10 102103104105106
+latent code
+DP Noise
+PAC Privacy
+(a) Statistical Visualization
+0
+16
+32
+48
+64
+80
+96
+112
+128
+144
+160
+176
+192
+208
+224
+240
+150
+100
+50
+0
+50
+100
+(b) Single Entry Visualization
+Figure 7. Statistical noise comparison between Differential Pri-
+vacy based noise or PAC Privacy based noise in DAMP. Each
+direction of the chart shows one dimension of the 256-dimensional
+latent code. Takeaway: Statistically, DAMP leverages the actual
+distribution of the latent code, blue in (7a), to reduce the trace
+of covariance (reflecting the amount of noise statistically) of DP
+based noise, orange in (7a), by 103 into PAC based noise, green
+in (7a). For each individual released latent code, PAC Privacy
+reduces the overall noisy value of DP (orange) by 17.6× into green
+curve in (7b), reflected by less fluctuation in the wave, significantly
+reducing accuracy degradation caused by noise.
+4.2.1
+Key Idea
+Fig. 7 highlights the core problem: a fundamental mismatch
+between standard Differential Privacy (DP) and the data’s
+distribution. DP typically injects isotropic noise (uniform
+variance in all dimensions), as shown by the orange ring
+in Fig. 7a. However, the actual distribution of the latent
+codes is highly anisotropic (non-uniform, concentrated in
+specific dimensions), shown in blue. This mismatch forces
+DP to add excessive, unnecessary noise in low-variance di-
+mensions, inflating the total “noise energy” (covariance of
+generated noise) and severely degrading data utility. DAMP
+solves this by being distribution-aware. It is the first tech-
+nique to leverage PAC privacy (Xiao & Devadas, 2023) for
+time-series facial data, enabling the generation of calibrated,
+anisotropic noise. As shown by the green ring in Fig. 7a,
+DAMP aligns the noise’s dimensional distribution with the
+data’s statistical distribution, allocating minimal perturba-
+tion to low-variance dimensions. This reduces the covari-
+ance of noise by three orders of magnitude. Consequently,
+in Fig. 7b, DAMP shrinks the per-sample perturbation error
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+by 17.6× (green vs. orange wave). DAMP thus preserves
+data utility for the same provable privacy guarantee.
+4.2.2
+Initial Distribution and Runtime Update
+DAMP initializes with user’s historical distribution, and
+then updates this distribution continuously as the user gen-
+erates new expressions. During runtime, DAMP tracks the
+latest distribution, computes the minimum noise needed to
+meet the target privacy guarantee, and adds this noise to the
+offloaded latent code. By recalibrating noise as the distri-
+bution drifts slowly over time, DAMP preserves provable
+privacy protection throughout long-term use.
+Crucially, latent code distribution is computed and stored
+entirely on user’s local device (e.g., VR headset). This distri-
+bution is never shared and only used to calibrate the noise
+injected into the latent codes before they are offloaded, en-
+suring the distribution statistics themselves remain private.
+4.2.3
+Provable Formal Privacy Guarantee
+To model privacy leakage and provide formal privacy guar-
+antee, DAMP adopts the PAC Privacy framework (Xiao &
+Devadas, 2023; Xiao et al., 2024; Xiao, 2024; Xiao et al.,
+2025), which characterizes privacy through adversary’s in-
+ference hardness. The privacy risk is quantified by posterior
+success rate, i.e. the probability that an adversary can cor-
+rectly infer private information after observing the leakage.
+Definition [PAC Privacy (Xiao & Devadas, 2023), (Xiao
+& Devadas, 2025)] A processing function F satisfies
+(δρ,ρ,D)-PAC Privacy (terminology listed in Tab. 1) if the
+following experiment is impossible:
+A user samples X from the distribution D and sends F(X)
+to an adversary who knows D and F. The adversary returns
+an estimate ˆX such that
+Pr
+
+ρ( ˆX,X) = 1
+
+≥1−δρ,
+where ρ(·,·) is a correctness criterion (e.g., correctly guess-
+ing the expression in expression identification attack).
+A smaller δρ, i.e., an impossibility of a stronger adversarial
+reconstruction, intuitively implies a higher privacy risk.
+In multi-user avatar reconstruction, each user’s private tex-
+ture X (e.g., facial expression) is drawn from a distribution
+D. When the encoded latent code F(X) is offloaded to
+the cloud, we must ensure that any adversary can NOT re-
+construct the exact sensitive expression ˆX from F(X), i.e.
+ρ( ˆX,X) ̸= 1. For instance, under an Expression Identifica-
+tion Attack, ρ( ˆX,X) = 1 if the adversary correctly classifies
+the user’s expression (e.g. laughing or surprised).
+The posterior success rate (1−δρ) quantifies this risk. To
+bound it below a desired threshold for arbitrary adversary,
+DAMP introduces minimal perturbation noise e to the latent
+Table 1. Formal Privacy Analysis Terminology
+Term (Symbol)
+Definition
+Private Data (X)
+Unwrapped Texture in avatar reconstruction.
+Data Distribution (D)
+Distribution of Private Data (X).
+Processing Function (F)
+Encoder (❸) in avatar reconstruction.
+Observation (O)
+The offloaded noisy latent code.
+Estimation of Secret ( ˆX)
+The guess of adversary after observing O.
+Prior Successful Rate (1−δρ,o)
+The Successful Rate of correct guess before observing O.
+Posterior SR (PSR, 1−δρ)
+The Successful Rate of correct guess after observing O.
+noise e
+The multi-dimensional noise e, same shape as F(X).
+mutual information bound v
+The mutual information between X and F(x)+e.
+code F(X), as illustrated in ❻of Fig. 5.
+To calibrate e, we first define the optimal prior success rate,
+the adversary’s best guess before seeing the leakage:
+δρ,o = min
+X′∈X ∗Pr
+X∼D
+
+ρ(X′,X) ̸= 1
+
+where X ∗denotes a uniform distribution of private samples.
+Once D and ρ are fixed, (1−δρ,o) is determined. According
+to (Xiao & Devadas, 2023), the posterior success rate (1−
+δρ) is bounded by the mutual information between X and
+its noisy representation F(X)+e:
+δρ ln
+ δρ
+δρ,o
+
++(1−δρ)ln
+ 1−δρ
+1−δρ,o
+
+≤MI(X;F(X)+e) (1)
+where MI(·;·) denotes mutual information, noted as v.
+This inequality directly links the added noise e to an upper
+bound on adversarial inference capability, forming the theo-
+retical foundation for DAMP noise calibration. We provide
+detailed step-by-step noise calculation in §B.
+5
+EXPERIMENTS
+In this section, we evaluate whether PRIVATAR maintains
+utility (quality of avatar) and privacy while improving
+throughput under realistic VR hardware constraints.
+5.1
+Setup
+Dataset. We use Multiface (hsin Wuu et al., 2023). The
+training set contains 13 identities, 65 or 143 labeled expres-
+sions per identity, 40 views per expression from various
+angles, in total ∼1.7 million frames and ∼15 TB data. The
+synthetic test set has 1,172 consecutive frames.
+Hardware We evaluate on a Meta Quest Pro (902 GFLOPS
+GPU). The untrusted offload host is a PC with RTX 5090
+(non-TEE GPU) and AMD Threadripper 7985WX (secure
+memory encryption, SME) (Advanced Micro Devices, Inc.,
+2020) as CPU TEE. Additional results for Quest 3 are in §F.
+Headset and PC are connected by WiFi-7 (≤20 Gbps).
+PRIVATAR configuration. We adopt a VAE (Lombardi
+et al., 2018; hsin Wuu et al., 2023) and set B=4, yielding 16
+frequency components. We rank components by L2 norm
+variance and offload the 14 lowest-variance components.
+The base component is always local. The offloaded branch
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+(1)
+Clean Reconstruction of
+Local Frequency Components
+(2)
+Noisy Reconstruction of
+Offloaded Freq. Components
+LocalMerge
+encrypted
+latent code
+all comp.
+(5)
+Clean local Reconstruction of
+All Frequency Components
+Headset
+encrypted
+latent code
+local comp.
+noisy
+latent code
+offloaded comp.
+Display
+(3)
+(4)
+Time
+Download
+Figure 8. Latency breakdown of avatar reconstruction in PRI-
+VATAR. (1–4) show collaborative headset–PC reconstruction. (5)
+represents full local reconstruction for highest throughput.
+Offloaded Decoder
+     in Fig. 5
+Estimated frequency
+components of
+unwrapped texture
+Similarity based 
+Expression Estimation
+Guessed Expression
+Empirical Attack
+8
+7
+Noisy Latent Code
+(a) Empirical Att.
+                   in Fig. 5
+5
+Randomly  Selected
+        two  samples
+Expression 1
+Expression 65
+Guess Expression
+Guessed Expression
+NN Attacker
+Intercepted 
+Outsourced
+Latent code
+Trained
+NN Attacker
+Training!
+Attacking!
+7 Noisy Latent Code
+6
+1
+Linear
+ReLU
+Linear
+ReLU
+Linear
+7 Noisy Latent Code
+(b) NN-based Attacker
+Figure 9. Illustration of empirical attackers. (9a) Empirical at-
+tacker takes in reconstructed offloaded components and estimate
+the expression based on its similarity to all frequency components
+of two random samples from all expressions. It achieves 86.5%
+PSR when offloading all components. (9b) NN attacker has three
+fully connected layers, and guesses expression from offloaded
+noisy latent code. Constructions are detailed in §D.
+is trained for 2 epochs, batch size 10. Noise is calibrated by
+MI budget v following §B (default v = 0.1), and injected into
+the offloaded latent code. The choices of partitioning should
+be selected to maximize on-device compute utilization. For
+reconfigurable hardware (Tong et al., 2026b; 2024b) support-
+ing diverse workload shapes with high compute utilization,
+finer-grained partitioning exposes a richer tradeoff space.
+Baseline. The entire decoder runs locally on the headset
+(de-facto VR deployment). On Quest Pro at 60 FPS, the
+baseline supports 2.48 users with loss as L0 = 0.072.
+Metrics for Loss, Throughput, Privacy, Energy.
+• Loss: Mean-squared error (MSE) between reconstructed
+texture and ground truth. We report normalized loss relative
+to L0 = 0.072 of the unpartitioned VAE baseline.
+• Latency: We breakdown latency as in Fig. 8: (1/4/5) Lo-
+cal compute (measured by roofline model (Williams et al.,
+2009)), (2) Offloaded compute (measured on RTX 5090 or
+AMD 7985WX), (3) Communication (download offloaded
+frequency components from PC to headset via WiFi-7).
+• Throughput: We report max concurrent users at 60 FPS,
+i.e. throughput = #users/(critical-path-latency×60).
+• Privacy: the maximal Posterior Success Rate (PSR) of
+guessing an expression correctly. A PSR bound π means
+that for any adversary, the probability of correctly guess-
+ing the expression after observing the release is ≤π. We
+provide (a) t-PSR: a theoretical upper bound on posterior
+success rate following PAC Privacy (§B). (b) e-PSR: the
+empirical PSR, i.e., the maximum success rate across both
+(a) empirical attacker and (b) NN-based attacker in Fig. 9.
+• Energy: compute and communication use 32 GOP/s/W
+(Guo et al., 2024) and 13.94 nJ/bit (Sun et al., 2014).
+5.2
+PRIVATAR vs SotAs
+We compare normalized loss, #users and empirical PSR of
+PRIVATAR against SotAs in Tab. 2.
+• PRIVATAR vs Quantization: Post-training weight-only
+8-bit quantization of the decoder primarily reduces weight
+storage and memory loads of it. Total MAC count, i.e. lo-
+cal compute, is unchanged as activations (facial unwrapped
+texture) require floating-point data type to preserve fidelity.
+Hence PRIVATAR achieves 2.27× more throughput improve-
+ment over compute-bounded quantization at the same pri-
+vacy protection level of random guess.
+• PRIVATAR vs Sparsity: Channel pruning (He et al., 2017)
+(remove 10% channels and associated kernels with smallest
+L2 norm). It does effectively reduce local computation but
+makes the shape of workload irregular, which requires dedi-
+cated hardware support that is not available on Qualcomm
+Snapdragon XR2+ Gen 1 on Quest Pro. Hence PRIVATAR
+provides 2.05× higher throughput over sparsity. Higher
+sparsity ratio introduces unbearable loss increase, and being
+impractical, and thus we did not compare against it.
+• PRIVATAR vs CPU TEE: We offload the same com-
+ponent set as PRIVATAR to a CPU (AMD 9950X3D with
+SME). We use CPU because GPU TEEs are unavailable
+on RTX 5090. While secure memory encryption offers
+stronger privacy guarantee than PRIVATAR, the CPU with
+SME runs slower than GPU without TEE. Therefore PRI-
+VATAR achieves 1.32× higher throughput at the same level
+of privacy guarantee (random guess).
+• Fully Offload (FO): FO applies isotropic Gaussian DP
+noise to the latent code of entire facial texture, and offloads it
+to the GPU. This is distribution-agnostic and thus conserva-
+tive for anisotropic latent code. Consequently, it introduces
+prohibitive 105× loss increase and becomes impractical.
+In summary, with 14 offloaded components, PRIVATAR
+reaches 2.37× users and 2.17× users/watt, and achieves
+2.06×, 2.27×, 1.32× higher throughput than sparsity (10%
+channel pruning), quantization (8-bit weights) and TEE-like
+(CPU with secure memory encryption) under the same pri-
+vacy guarantee of e-PSR bound of random guess (1.54%).
+Key Takeaway: At equal e-PSR (random-guess, 1.54%),
+PRIVATAR lies on the throughput–loss Pareto frontier: par-
+tial offloading reduces headset decode cost, while DAMP
+achieves the target e-PSR with minimal noise perturbation.
+5.3
+PRIVATAR Ablation Study
+PRIVATAR has two design choices (1) number (m) of fre-
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+2
+4
+6
+8
+10
+12
+14
+Number of Offloaded Components
+0.07
+0.08
+0.09
+0.10
+Reconstruction Loss
++6.4%
++9.5%
++5.7%
++12.5%
++5.9%
++6.9%
++18.6%
++5.7%
++7.5%
++27.5%
++4.6%
++7.9%
++6.1%
++13.3%
++6.0%
++8.3%
+baseline
+Baseline
+No Noise
+Low Noise
+High Noise
+Medium Noise
+(a) Loss – m
+2
+4
+6
+8
+10
+12
+14
+Number of Offloaded Components
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+Latency (s)
+Compute on GPU
+GPU->headset
+Compute on headset
+Overall # Users
+0
+2
+4
+6
+8
+# Users Supported
+2.83
+3.26
+3.80
+4.47
+5.76
+5.83
+5.88
+2.37x
+(b) Latency/Throughput – m
+100K
+1M
+17.6x 17.6x 17.6x 17.7x 17.6x 17.7x 17.6x
+Low Noise Perturbation - PSR=0.4
+100K
+1M
+2M
+L2 Norm of Noise
+4.1x
+4.1x
+4.1x
+4.1x
+4.1x
+4.1x
+4.1x
+Medium Noise Perturbation - PSR=0.09
+2
+4
+6
+8
+10
+12
+14
+Number of Offloaded Components
+3.3M
+3.4M
+3.5M
+3.6M
+1.1x
+1.1x
+1.1x
+1.1x
+1.1x
+1.1x
+1.1x
+High Noise Perturbation - PSR=0.035
+DP-based noise
+PAC-based noise
+(c) Noise L2 Norm – m
+2
+4
+6
+8
+10
+12
+14
+Number of Offloaded Components
+1.54%
+Posterior Successful Rate
+Random Guess
+Privatar
+(d) e-PSR – m
+Figure 10. Effects of number of offloaded components (m) on (a) Reconstruction Loss, (b) latency (left bar) and throughput (right
+red line) of avatar reconstruction, (c) the amount of noises needed for given privacy guarantee, and (d) Robustness against
+empirical attack. (10a) Curves show normalized reconstruction loss relative to the unpartitioned VAE used in baseline (L0=0.072) for
+PRIVATAR with no noise and with DAMP at low/medium/high noise. HP alone increases loss by only 5.7∼6.4% across m. Low and
+medium DAMP settings keep degradation modest (often visually indistinguishable), while high-noise settings trade accuracy for tighter
+PSR bounds. (10b) The latency breakdown of reconstructing a single user while the overall throughput (number of users, # user per
+second) are shown on left and right axis. (10c) Noise efficiency: For the same PSR bound, DAMP leverages per-user latent anisotropy to
+shrink the required L2 norm of noise by up-to 17.6× (PSR= 0.4), 4.1× (0.09), and 1.1× (0.035) relative to isotropic DP-based noise.
+(10d) Empirical PSR: The e-PSR remains at random-guess (≈1.54%) for PRIVATAR across all m (with or without DAMP), since the base
+frequency never leaves the headset and the offloaded view is low information.
+Table 2. PRIVATAR vs. SotAs. Note: Loss is MSE ratio to local
+baseline (↓: lower is better); #Users is a ratio to baseline (↑: higher
+is better). e-PSR: max PSR over two empirical attackers. Take-
+away: PRIVATAR offers highest #users and invisible loss increase.
+Technique
+Loss (↓)
+# Users (↑)
+e-PSR
+(Baseline) Local Reconstruction
+1×
+1×
+1.54%
+(Sparsity) 10% Channel Pruning
+1.25×
+1.15×
+1.54%
+(Quantization) 8-bit Weights
+1.004×
+1.04×
+1.54%
+(TEE) CPU w/ Secure Memory Encryption
+1×
+1.79×
+1.54%
+(FO) Fully Offloading + Isotropic Noise
+105×
+2.3×
+85.6%
+(PRIVATAR) Partial Offloading + DAMP Noise
+1.08×
+2.37×
+1.54%
+quency components to be offloaded, and (2) the amount
+of noises to be added into the offloaded components. We
+sweep m ∈{2,4,6,8,10,12,14} and three t-PSR targets
+{40%, 9%, 3.5%}, corresponding to mutual information
+bound as v = {1,0.1,0.01}, plus a no-noise reference and a
+fully-offloading all components reference in Tab. 3.
+5.3.1
+Knob 1: Offloaded Frequency Components
+Loss:
+With no noise, partitioning in the frequency domain
+increases reconstruction loss by ≈6% because local/offload
+path only sees partial frequency components. Qualitatively,
+this increase is visually subtle in our examples (see Fig. 1).
+We further conduct perceptual study using LPIPS (Zhang
+et al., 2018), where various partitioning choice only lead to
+negligible 0.72% LPIPS increase. This proves the negligible
+utility effects of different partition choices. At low noise
+(e.g., v = 1, t-PSR = 40%), the loss is similar to the no-noise
+case since the local merger (❿in Fig. 5) can suppress small
+perturbations of offloaded low-energy components using
+local high-energy components. As v decreases (tighter pri-
+vacy, larger effective noise), loss grows and the loss increase
+is more pronounced at larger m because a higher fraction
+of components are reconstructed from the noisy latent code
+(yellow/green curves in Fig. 10a).
+Table 3. Ablation setup. We sweep the number of offloaded com-
+ponents m and the MI budget v that calibrates DAMP. t-PSR is the
+certified PSR bound; e-PSR is the maximum observed empirical
+PSR bound across the empirical and NN attackers.
+Privacy Level
+# offloaded components (m)
+e-PSR
+t-PSR
+Fully Offload + No Noise
+16
+85.6%
+None
+HP + No Noise
+{2,4,6,8,10,12,14}
+1.54%
+None
+HP + Low Noise (v = 1)
+{2,4,6,8,10,12,14}
+1.54%
+40%
+HP + Medium Noise (v = 0.1)
+{2,4,6,8,10,12,14}
+1.54%
+9%
+HP + High Noise (v = 0.01)
+{2,4,6,8,10,12,14}
+1.54%
+3.5%
+Latency / Throughput: Increasing m shifts more decoding
+work off the headset, reducing local compute latency and
+improving overall throughput (red curve in Fig. 10b). The
+latency breakdown for one user (bars in Fig. 10b) shows: (i)
+local latency decreases with m (green), (ii) communication
+latency increases with m due to downloading more noisy
+reconstructed frequency components from PC to the headset
+(blue), and (iii) offloaded compute on RTX 5090 is small
+relative to the (i) and (ii). Takeaway: higher m improves
+throughput until communication dominates.
+Noise: Noise is injected only in the offloaded latent (❼in
+Fig. 5). The PC decodes noisy frequency components which
+are sent back to the headset. Thus, changing m alters how
+many components are affected by noise, not the per-latent
+noise calibration. Total noise energy per frame scales with
+the count of offloaded components rather than changing the
+noise distribution itself.
+5.3.2
+Knob 2: Amount of DAMP Noises
+For a fixed m, decreasing the MI budget v (stronger privacy)
+increases the required noise. Across all m, DAMP requires
+noise with up to 17.6× less L2 norm than isotropic DP
+at t-PSR = 40%, 4.1× less at 9%, and 1.1× less at 3.5%
+(Fig. 10c). Empirically, as long as the base component
+stays local, the attacker’s e-PSR remains at random-guess
+
+PRIVATAR: Enabling Privacy-preserving Real-time Multi-user VR through Secure Offloading
+≈1.54% for all tested m and v (Fig. 10d). DAMP preserves
+this empirical behavior while certifying tighter t-PSR. The
+noise reduction gets smaller with increase of the noise, be-
+cause distribution matters less with larger noise.
+In short, PRIVATAR picks configuration of v=0.1 (t-PSR=
+9%) and m=14, and increases loss by 8.3% over the local
+baseline (in Fig. 3b) while ensuring e-PSR at random-guess.
+6
+RELATED WORK
+6.1
+Security and Privacy of Avatars
+Multi-user avatar reconstruction in AR/VR exposes rich mo-
+tion and interaction data that inherently reveal user identity
+and behavior. Prior work shows that even without visual
+access to the face, users can be re-identified from head
+and hand trajectories (Nair et al., 2023), private activities
+can be inferred from motion traces (Nguyen et al., 2024),
+and typed text can be reconstructed through subtle move-
+ments (Slocum et al., 2023; Luo et al., 2024; Ni et al., 2025).
+These findings highlight the privacy risks in motion-driven
+avatar reconstruction.
+6.2
+Secure Offloading Techniques
+Secure offloading strategies fall into three categories: en-
+cryption, partitioning, and perturbation.
+Encryption: Homomorphic Encryption (HE) (Chou et al.,
+2018; Reagen et al., 2021; Lloret-Talavera et al., 2022; Lou
+et al., 2020) offers strong privacy by encrypting both data
+and computation, but incurs orders-of-magnitude overhead
+in compute and memory (Tong et al., 2026a; 2024a). Multi-
+Party Computation (MPC) (Goldreich, 1998) reduces the
+computational cost but requires multiple trusted parties,
+making both impractical for real-time VR workloads.
+Partitioning: Input partitioning separates sensitive and less-
+sensitive features for selective offloading. Block partition-
+ing (Vishwamitra et al., 2017; Yuan et al., 2024) masks
+facial regions, while frequency partitioning (Wang et al.,
+2020; Ji et al., 2022) transmits high-frequency components.
+However, avatar reconstruction depends on complete facial
+recovery, lacking formal privacy guarantees.
+Perturbation: Offloading noisy data and related compu-
+tation to untrusted devices causes utility degradation. The
+minimal noise required for a given privacy level is preferred.
+Privacy protection of individually released data would re-
+quire local Differential Privacy (LDP) (Xiong et al., 2020).
+LDP adds noise before offloading to protect user data with-
+out trusting the collector (Gadotti et al., 2022; Cheu et al.,
+2021). Yet, LDP noise grows with data dimensionality, sig-
+nificantly degrading utility for 256-dimensional latent code
+used in Variational Auto-Encoder. To address this, PRI-
+VATAR optimizes multi-dimensional noise allocation and
+applies PAC Privacy (Xiao & Devadas, 2023) to achieve
+minimal noise with provable privacy bounds.
+7
+CONCLUSION
+This work presents PRIVATAR, the first framework enabling
+secure partial offloading of avatar reconstruction to un-
+trusted devices, reducing headset computation and scaling
+multi-user VR. PRIVATAR reframes privacy as a represen-
+tation decision by introducing two key components: (1)
+Horizontal Partitioning (HP), which splits the private data
+so untrusted devices never see a complete, identifying view,
+and (2) Distribution-Aware Minimal Perturbation (DAMP),
+which minimizes injected noise while providing formal pri-
+vacy guarantees. Combining, Privatar enables VR headset to
+support 2.37× users with 9% more energy, and being robust
+against both empirical attacker and NN-based attacker.
+7.1

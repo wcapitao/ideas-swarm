@@ -1,0 +1,985 @@
+ARIstoteles – Dissecting Apple’s Baseband
+Interface
+Tobias Kr¨oll1, Stephan Kleber2, Frank Kargl2, Matthias Hollick1, and Jiska
+Classen1
+1 TU Darmstadt, Secure Mobile Networking Lab, Germany
+tkroell,mhollick,jclassen@seemoo.de
+2 Ulm University, Institute of Distributed Systems, Germany
+{stephan.kleber,frank.kargl}@uni-ulm.de
+Abstract. Wireless chips and interfaces expose a substantial remote
+attack surface. As of today, most cellular baseband security research is
+performed on the Android ecosystem, leaving a huge gap on Apple de-
+vices. With iOS jailbreaks, last-generation wireless chips become fairly
+accessible for performance and security research. Yet, iPhones were never
+intended to be used as a research platform, and chips and interfaces
+are undocumented. One protocol to interface with such chips is Ap-
+ple Remote Invocation (ARI), which interacts with the central phone
+component CommCenter and multiple user-space daemons, thereby pos-
+ing a Remote Code Execution (RCE) attack surface. We are the first
+to reverse-engineer and fuzz-test the ARI interface on iOS. Our Ghidra
+scripts automatically generate a Wireshark dissector, called ARIstoteles,
+by parsing closed-source iOS libraries for this undocumented protocol.
+Moreover, we compare the quality of the dissector to fully-automated ap-
+proaches based on static trace analysis. Finally, we fuzz the ARI interface
+based on our reverse-engineering results. The fuzzing results indicate that
+ARI does not only lack public security research but also has not been
+well-tested by Apple. By releasing ARIstoteles open-source, we also aim
+to facilitate similar research in the future.
+Keywords: Apple Remote Invocation · Baseband · iPhone · Fuzzing
+1
+Introduction
+Any component on a mobile system that is reachable over the air poses a secu-
+rity risk. On smartphones, the largest attack surface is functionality related to
+the cellular baseband—they pose the longest wireless range and most complex
+codebase. However, many wireless components are closed-source and undocu-
+mented, such as wireless firmware and vendor-specific system extensions on all
+This is the accepted manuscript of a chapter published in Springer. The final au-
+thenticated version is available online at: https://link.springer.com/chapter/10
+.1007/978-3-030-88418-5_7
+arXiv:2604.23457v1 [cs.CR] 25 Apr 2026
+
+2
+Kr¨oll et al.
+mobile platforms or wireless daemons on iOS. Thus, these complex components
+are often untested by public security research.
+We focus on iOS since it experienced significantly less public testing than
+Android. Recent iPhones come with basebands from either Qualcomm or In-
+tel. Intel basebands are predominant on the European market and are at least
+shipped in the iPhone 7, 8, Xs, 11, and SE2 models. The same chip as in the
+iPhone 11 and SE2 is used by the iPad Air 2020, but telephony functionality
+is restricted. Moreover, the Apple Watch 6 GPS+Cellular has a feature-reduced
+Intel baseband variant. The management protocol for Qualcomm chips is called
+Qualcomm MSM Interface (QMI), which open-source libraries support [12]. On
+Android devices, Intel chips use AT commands as control interface [6]. Likely
+for better interoperability and a feature set closer to QMI, Apple introduced Ap-
+ple Remote Invocation (ARI). Security of the ARI interface is unstudied, even
+though it resides in the heart of the iOS baseband ecosystem.
+Understanding ARI enables baseband research on Apple devices. Via de-
+bug profiles [3], it supports passive baseband analysis on non-jailbroken devices.
+Moreover, on jailbroken devices, this knowledge can be used to control the base-
+band chip. Basic protocol structure information is already sufficient to inject
+mutated ARI payloads for fuzzing purposes. However, more fine-grained control
+requires understanding all protocol internals in detail. To establish the under-
+standing, we reverse-engineered iOS ARI parsing libraries. We instrumented
+them with our Ghidra scripts to automatically extract type information to gen-
+erate a Lua-based Wireshark dissector [19,28], which we name ARIstoteles. More
+precisely, the contributions of this paper are as follows:
+– We are the first to publicly reverse-engineer and document the ARI
+protocol, resulting in the Wireshark dissector ARIstoteles.
+– Our Ghidra scripts generate ARIstoteles, which automatically detect new
+protocol fields added in future iOS updates.
+– We compare the Ghidra-based dissector generation approach to fully au-
+tomated dissector generation based on static analysis of protocol
+traces.
+– By fuzzing the ARI interface in user space with f
+r
+ida [20], we encounter
+various parsing errors and crashes in iOS binaries.
+Overall, we identify 42 unique crashes in CommCenter and ARI-related pars-
+ing libraries. Due to the central role of CommCenter within iOS—the telephony
+daemon in the iPhone—these crashes caused by the fuzzer also affect 12 daemons
+communicating with CommCenter via Cross-Process Communication (XPC). We
+emphasize that we disclosed all fuzzing results to Apple, who started patching
+in iOS 14.2 and added further patches in iOS 14.6. ARIstoteles and crashing
+example payloads are available online.3
+This paper is structured as follows. Section 2 explains the baseband security
+model and security research in this field. Before diving into further details, Sec-
+tion 3 describes the basic ARI packet structure, which helps understanding why
+3 https://github.com/seemoo-lab/aristoteles
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+3
+static traffic-based approaches are not optimal to dissect ARI automatically in
+Section 4. Thus, we create Ghidra scripts in Section 5, which extract protocol
+information from shared libraries. These scripts work across 10 different iOS
+versions. We use this protocol knowledge to fuzz CommCenter via ARI in Sec-
+tion 6 and show that the ARIstoteles dissector can be used to understand these
+crashes. We conclude our results and outline the security impact in Section 7.
+2
+Background and Related Work
+The following section provides background information on the iOS baseband
+architecture as well as previous security-related research in this area.
+2.1
+Baseband Security Architecture
+When a wireless packet from a base station reaches a modern smartphone, it
+usually passes several data processing layers. First, the baseband chip performs
+initial processing. Then, it passes management information and data to the mo-
+bile operating system kernel running on the main processor. Usually, the kernel
+component is as minimalistic as possible since it runs with high privileges. Hence,
+most protocol parsing is outsourced to sandboxed daemons running in user space.
+A concrete example of this separation on modern iOS devices is shown in
+Figure 1. The baseband chip processes data, which in turn passes information
+to CommCenter. Due to intermediate data processing, some contents are not di-
+rectly passed on to iOS. This abstraction layer might prevent some over-the-air
+attacks but can also introduce further mistakes. For example, the baseband chip
+scans for nearby cells and measures their signal strength, and then further as-
+sembles this information into a list sent to CommCenter. Parsing issues could be
+on-chip, when directly processing cell information, but also within CommCenter,
+when parsing the list reported by the chip. If abstraction by the chip prevents
+exploitation, an on-chip RCE is required to escalate into iOS. Typically, wireless
+Shared libraries loaded by CommCenter depending on the chip.
+CommCenter
+wireless
+locationd
+root
+Other Daemons
+mobile
+XPC
+XPC
+Intel
+...
+libARI.dylib
+libARIServer.dylib
+Qualcomm
+...
+libABMCommandDriversEUR.dylib
+libATCommandStudioDynamic.dylib
+Kernel Drivers
+User Space
+Kernel Space
+ARI
+QMI
+ARIHostRt::InboundMsgCB
+R
+R
+QMuxState:handleReadData
+Fig. 1: Simplified baseband packet parsing architecture on iOS 12–14.
+
+4
+Kr¨oll et al.
+chips are optimized towards performance rather than security. Thus, baseband
+chips miss common mitigation mechanisms and are a common exploitation tar-
+get [5,9,14,22]. In the following, we assume that the attacker either already has
+code execution on the baseband chip (e.g., they can create an arbitrary list of
+cells with invalid entries and report it to CommCenter) or that data injected
+by an over-the-air attacker is not abstracted by the baseband chip (e.g., the
+cell identifiers are not further processed by the chip and directly forwarded to
+CommCenter). Depending on the chip type, Intel or Qualcomm, ARI or QMI is
+the baseband management interface.
+While this paper does not cover Android in detail, the overall architecture
+is very similar. However, Android has a more diverse device landscape and en-
+ables vendors to add new wireless chips. To this end, Android defines a Radio
+Interface Layer (RIL) [2]. Depending on the chip, a vendor-specific library parses
+custom chip commands and translates them to RIL calls. Data between these
+components is passed as Binder parcels. Binder abstracts communication be-
+tween kernel and user space. Thus, it has been a popular research target for
+automated fuzzing in the past [13,26].
+In contrast to Android, baseband components on iOS were not extensively
+researched. In 2009, Mulliner and Miller approached iOS fuzzing over the air by
+injecting SMS [18]. Besides Denial of Service (DoS), they were able to gain code
+execution via an SMS parsing issue in CommCenter [17]. This bug was found on
+one of the very first iOS releases—the first iPhone was released in 2007—and iOS
+2 already had a CommCenter daemon but running as root without sandboxing.
+Inspired by this bug, Silvanovich revisited SMS parsing on the significantly more
+hardened iOS 11 but could not find any issues [25]. SMS fuzzing is related to
+ARI fuzzing, since ARI also carries SMS payloads. Apart from SMS parsing,
+we are not aware of any public security research revolving around CommCenter,
+which is surprising given that it poses a zero-click RCE attack surface.
+2.2
+Baseband Interface Analysis Options on iOS
+Apple provides a baseband debug profile on the developer website [3]. After
+installation on any iPhone, it is possible to observe the baseband–CommCenter
+interface. Not all capabilities of debug profiles are documented. The documen-
+tation for the baseband debug profile only states the location of baseband chip
+crash logs, which are stored in the undocumented Intel System Trace Proto-
+col (ISTP) format. Surprisingly, after installing a baseband debug profile on an
+iPhone—even if not jailbroken—all QMI respectively ARI packets are printed
+to the system log as hexadecimal bytes. Packets can be interpreted on the fly by
+parsing the log during runtime.
+On jailbroken devices, it is furthermore possible to inject custom QMI and
+ARI payloads. Silvanovich instrumented an undocumented XPC interface for
+internal SMS testing [25], which injects SMS without passing the QMI and ARI
+parsing layer. Instead of XPC interfaces, we use f
+r
+ida to directly hook into the
+CommCenter libraries responsible for parsing baseband messages [20]. Similar
+to a debugger, f
+r
+ida can attach to a running process. It features support for
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+5
+modifying a process, injecting payloads, and tracing program execution. Thus,
+by hooking into a process with f
+r
+ida, we are not restricted to pre-defined XPC
+interfaces and can even rewrite parts of the program code.
+2.3
+iOS Shared Libraries
+Usually, iOS shared libraries are stored within one large dyld_shared_cache
+binary file. After attaching an iPhone to Xcode on macOS and setting it up
+for development, separated shared library files are extracted to the folder ~/
+Library/Developer/Xcode/iOSDeviceSupport/. In contrast to most other iOS
+binaries, shared libraries are meant to be loaded and called by external processes.
+Thus, they export many function signatures, making them easily accessible with
+tools like Ghidra despite being closed-source. The shared libraries handling ARI
+are called libARIServer.dylib and libARI.dylib.
+libARIServer.dylib is the last instance aware of protocol internals before
+passing packets to kernel drivers. Thus, it is the perfect library for injecting
+arbitrary payloads. When sending information to the baseband, the function
+AriHostRt::SendRaw is called, and the opposite direction uses the function
+AriHostRt::InboundMsgCB. We will use these library functions for fuzzing in
+Section 6. However, this library only performs a few final checks, such as check-
+ing sequence numbers, likely to prevent out-of-order packets caused by multi-
+threading.
+libARI.dylib is closer to CommCenter and performs most of the parsing and
+message abstraction. It contains human-readable names of all message groups as
+well as definitions of most Type Length Value (TLV) types. Hence, it is a great
+resource to automatically generate a Wireshark dissector, as shown in Section 5.
+3
+Apple Remote Invocation Protocol
+ARI is an Apple-internal protocol without any public documentation. While we
+are the first to analyze ARI, it would be hard to follow our reverse engineering
+process and problems encountered using different approaches without a basic
+understanding of the protocol structure. Technical details about how most of
+the information was obtained will follow in Section 5.
+0
+32
+37
+40
+47 48
+Magic Bytes
+Group
+Sequence
+Number
+G
+0xdec07eab
+00111
+000
+0000000
+0
+0
+7
+8
+16
+18
+21
+24
+32
+48
+Length
+S
+N
+Length
+T
+S
+N
+Type
+001000
+0
+00000000
+10
+000
+000
+01000101
+0000001000001010
+Fig. 2: ARI header format, 12 B split into according bits with example values.
+
+6
+Kr¨oll et al.
+0
+7
+8
+11
+16
+22
+24
+32
+48
+Type
+Vers
+Type
+Length
+Length
+Value
+0000010
+0
+001
+00000
+000010
+00
+00000000
+0000000000000000
+Fig. 3: ARI TLV format with example payloads.
+As a management protocol, ARI only carries commands and information of
+a more general nature without large amounts of data. For example, it signals
+incoming phone calls—but the audio is sent over a different interface. Moreover,
+network traffic is not handled by ARI. Nonetheless, ARI carries lightweight in-
+formation besides connection management, including SMS, location, and time.
+Each ARI packet has a fixed-length header with a group and type identifier.
+The group defines the overall purpose, e.g., SMS processing, making calls, SIM
+access, diagnostics, and more. Group types define further actions, such as ac-
+knowledging an SMS, a request to send an SMS, or the delivery status of an
+SMS. Furthermore, the header defines the remaining packet length, which is
+filled with multiple Type Length Value (TLV) structures. TLVs can be manda-
+tory or optional. The minimum packet length is 12 B for packets that only have
+a header and no TLV payload.
+Since ARI is for Apple-internal use only, the protocol structure has grown
+historically. This shows in the header format in Figure 2. For example, the se-
+quence number was probably added to unused bits within three non-consecutive
+bytes. This makes the header extremely hard to understand.
+TLVs following the header are shown in Figure 3. In addition to a type,
+length, and value, they also have a version number. This packet structure still
+does not reflect protocol semantics. However, it outlines that ARI is rather com-
+plex and historically grown, making further security research challenging.
+4
+Fully-Automated Protocol Dissection
+Manually analyzing large packet traces and spotting patterns is a tedious task.
+Despite being experienced with protocol reverse engineering, we failed to identify
+most fields in the header manually in the beginning when we did not have the
+information from Section 3. Thus, as a first step, we use a heuristics-based seg-
+mentation only relying on traffic traces, which has been very successful on various
+other protocols, including the proprietary Apple Wireless Direct Link (AWDL)
+protocol [27]. In this process, which is based on nemesys and nemetyl [11,10],
+we identify segment boundaries that are the basis to classify packet types.
+We run both algorithms on a trace with 1000 packets. The trace is collected
+from an iPhone when making a phone call and receiving SMS. The overall trace
+contains 2497 packets, and we reduce it by subsampling the recorded trace to
+1000 messages to make the classification computationally feasible. For retaining
+most of the variance across the reduced amount of messages, we select the most
+dissimilar packets. We measure the dissimilarity by the number of uncommon
+byte sequences per message. Subsampling reduces the groups from 22 to 20. The
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+7
+by far most frequent group is net_cell (labels obtained during later analysis)
+with 312 occurrences. Almost 95 % of all messages are of 9 different groups.
+Figure 4 shows the manually reverse-engineered header format on top and
+the result of the nemesys segmentation on the bottom. With one exception in
+the magic bytes, all segment boundaries are correct. However, the segmentation
+algorithm only tries to find boundaries on a byte level and not on a bit level.
+Moreover, the segmentation algorithm is not aware of non-continuous segments.
+It is important to note that these two properties, bit-level and non-continuous
+segments, are scarce for most protocols, with a few exceptions like flag fields
+that would not lead to such a high fragmentation. While bit-level segmentation
+would be easy to integrate into the existing segmentation algorithm, identifying
+split segments and grouping them into one seems hard to achieve. Adding more
+freedom to segmentation also increases the likelihood of detecting additional false
+segment boundaries in general. Especially the bit-fragmented fields spread over
+multiple offsets are particular to ARI and very uncommon for other protocols.
+These disjoint short chunks of bits make it almost impossible to apply statistical
+methods in static traffic analysis.
+Next, we use nemetyl to identify the message type automatically. In contrast
+to a traditional packet parser, nemetyl does not rely on detecting the group and
+type field in the header. Thus, even if the header segmentation with nemesys
+fails, correctly segmenting parts of the remaining packet and classifying them by
+the overall message similarity can be successful. As shown in Figure 5, nemetyl
+0
+32
+37
+40
+47 48
+Magic Bytes
+Group
+Sequence
+Number
+G
+Segment 1
+Segment 2
+Segment 3 ...
+0
+7
+8
+16
+18
+21
+24
+32
+48
+Length
+S
+N
+Length
+T
+S
+N
+Type
+... Segment 3
+Segment 4
+Segment 5
+Fig. 4: Heuristic-based analysis results for the ARI header.
+Noise
+0
+10s0
+10s1
+11
+12
+13
+14
+15
+16
+17
+18
+19
+2
+20
+21
+22
+23
+24
+26
+27
+28
+29
+30
+3s0
+3s1
+3s2
+4
+5
+6
+8
+9
+{1, 25, 7}
+Clusters + Groups
+net_rat
+call_ps
+call_ps
+sim_access
+ice_awds
+sim_pb
+sys_res
+net_plmn
+net_plmn
+net_rat
+net_rat
+call_ps
+security
+net_rat
+sim_sec
+call_ps
+ims_me
+sim_sec
+ims_me
+sim_tk
+ims_me
+ice_audio
+sms
+net_rat
+net_rat
+net_rat
+-
+sim_access
+net_rat
+net_rat
+sim_access
+-
+Fig. 5: Message type classification results showing multiple clusters.
+
+8
+Kr¨oll et al.
+indeed locates multiple clusters in the message trace. A unique color indicates a
+cluster. To plot the dissimilarities of the messages, their relative positions to each
+other are projected into a two-dimensional plane using Multi-dimensional Scaling
+(MDS) [24]. The absolute positions in the plot are insignificant, therefore we omit
+any axis labels. nemetyl identifies 32 clusters. Only two of these clusters contain
+messages of multiple groups, and the remaining 30 clusters belong to exactly
+one group, meaning that the group classification is highly accurate. Some of
+the correctly identified group clusters contain multiple message types. Six group
+clusters contain two message types, and one group contains four message types.
+Such mistakes can be explained with similar packets belonging to different groups
+or types, for example, an SMS in send versus receive direction.
+We conclude that static traffic analysis shows a high potential to identify
+message types correctly. Since ARI is a protocol with uncommon properties, the
+analysis would need further optimizations and very specific adaptions to work
+properly. Some of the required changes are likely to only apply for ARI. Thus,
+instead of overfitting the heuristics, we continue with manual reverse-engineering
+and automate these findings with Ghidra scripts. As future work, we plan to
+improve the static traffic analysis method with the insights gained in this use
+case to ease its application for other specialized unknown protocols.
+5
+Automated Reverse-Engineering
+Packet structure information is sufficient for basic security research, such as
+generation-based fuzzing. However, to understand what exactly ARI does and
+utilize the baseband, additional information is required. iOS needs some of this
+information since it parses ARI packets coming from the baseband and creates
+commands sent to the baseband. Depending on the underlying chip, Qualcomm
+or Intel, CommCenter loads shared libraries for parsing QMI or ARI. In the fol-
+lowing, we automatically analyze ARI parsing in the libARI.dylib library to
+create a Lua-based dissector. First, we manually locate and reverse-engineer the
+central data structures and functions, which we then parse automatically. The
+automated analysis even enables us to track protocol changes in iOS updates.
+While the initial parser generation needs manual work, it could be applied for
+other proprietary protocols parsed by shared libraries. In addition to shared
+libraries, some macOS binaries contain more symbols than iOS binaries. Some-
+times, Apple accidentally releases a kernel without stripping symbols like in an
+early iOS 14 Beta release.
+5.1
+Group and TLV Definitions
+Message parsing starts at the function AriMsg::AriMsg. After checking that the
+message starts with the magic bytes 0xdec07eab and is at least 12 B long, it
+passes the message to Ari::MsgDefById. This function assigns group informa-
+tion via a lookup in the array called ARIMSGDEF_GROUPS. This array contains 63
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+9
+pointers to group definitions on iOS 14.5. Each group definition contains an ar-
+ray of fixed-length message type objects. Likely, they were structures and arrays
+before compilation and only contained data, no code.
+Figure 6 shows one of these message type objects in the net_cell group. Each
+object contains the group number, which is the same as the array index. This
+is followed by a unique message type identifier. Moreover, each group definition
+contains three pointers: a list of mandatory TLVs, a full list including optional
+TLVs, and a human-readable type name.
+The first entry in the list of TLVs is shown in Figure 7. Each TLV definition
+starts with an incrementing index number and a type identifier. Then, the actual
+definition follows, consisting of a pointer to the encoding and the name.
+We extract both structures, shown in Figure 6 and 7, with a Ghidra script.
+This way, we can access all information with a decompiler despite not hav-
+ing any source code. The script starts at the symbol ARIMSGDEF_GROUPS in
+libARI.dylib, which is exported and, thus, easy to locate. Then, the script
+follows the pointers to the group and TLV definitions. Since the actual defini-
+tion structure is removed during the compilation process, we apply the reverse-
+engineered structural information from Figure 6 and 7. The script finishes infor-
+mation extraction when a null entry terminates a list. Finally, all information
+is written into a Lua table, which is included by the Wireshark dissector.
+5.2
+Type Definitions
+As of iOS 14.5, the shared ARI library defines 290 asString methods. The
+method definitions differ by the parameter type, which corresponds to an encod-
+ing. An encoding specifies a human-readable format of a type. For example, a
+phone call can be disconnected due to 226 reasons, represented by an integer, and
+the corresponding asString method transforms this number to a more descrip-
+tive reason. The asString methods are code and, thus, do not follow the same
+simple memory structure as the group and TLV definitions. Moreover, likely
+due to compiler optimizations, each asString method looks slightly different.
+During a manual comparison, we identify three variants:
+1. A lookup table, where the input is used as index in a list of strings.
+2. An if-not construct, where strings are set to a default value and changed if
+the default does not apply in a fall-through manner.
+3. A switch-case construct containing early returns, if statements, and jumps.
+0
+4
+8
+16
+24
+32
+48
+Group Type
+Padding
+Mandatory
+TLVs
+Available
+TLVs
+Unknown
+Name
+0x9
+0x101
+0x0
+0x1C6B4D468
+0x1D9507480
+0x0003...00
+0x1C6B847E0
+msg101 mtlvs msg101 tlvs
+IBINetSet...
+Fig. 6: First message object in ARIMSGDEF GROUP09 net cell, defining the mes-
+sage structure of IBINetSetRadioSignalReportingConfiguration.
+
+10
+Kr¨oll et al.
+0
+4
+8
+16
+24
+Index
+Type
+Padding
+Encoding
+Name
+0x1
+0x101
+0x0
+0x1DE283508
+0x1C6B666E5
+ARI IBIUInt32 1 CODEC
+nInstance t1
+Fig. 7: First TLV object in msg101 tlvs, defining the type structure of
+nInstance t1.
+The first two variants account for 240 of 290 asString methods and can
+be automatically extracted with Ghidra. Due to the inconsistent structure of
+the third variant, we have to extract these definitions manually. It would also
+be possible to emulate the asString methods. However, their input range is
+undefined, and without analyzing their code, emulation might miss some inputs.
+1
+char* asString( IBIImsMEAudioEVSBandWidthType t) {
+// at
+address 0x1e0d2ab38
+2
+if (t - 1 < 8) {
+3
+return
+*( char
+**)(( long)&PTR s IBI IMS ME AUDIO BAND NB 1e0d2ab38 + (long)(int)(t
+- 1) * 8);
+4
+}
+5
+return "???";
+6
+}
+Listing 1.1: asString method with a look-up table (variant 1).
+We show how to extract the first variant, but all scripts and the Wireshark
+dissector are available online. Each lookup table has a wrapper function like the
+one shown in Listing 1.1. It optionally adds an offset to the type prior to the
+lookup in the string list. If the value is undefined, the string ??? is returned.
+Mapping strings requires locating the lookup table as well as the range of input
+values. To this end, we need to interpret Ghidra P-Code instructions, which are
+the internal architecture-independent code representation within Ghidra. On a
+more detailed level, the extraction script works by iterating over all P-Code
+operands of the asString function.
+5.3
+Integrating Existing Dissectors
+ARI embeds further formats that are well-known, such as SMS. After adding
+these dissectors manually, the Wireshark output becomes even more readable.
+Figure 8 shows how the resulting dissector looks after adding TLV and type
+definitions as well as SMS parsing.
+5.4
+iOS Version Change Tracking
+Using the resulting Ghidra scripts enables tracking changes in the ARI proto-
+col over multiple iOS versions. The results in Table 1 show that automated
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+11
+Fig. 8: ARIstoteles dissecting an SMS.
+Wireshark dissector generation does not only save manual reverse-engineering
+overhead during initial dissector generation but with every iOS update. This
+especially applies to TLV types. The similar numbers indicate that the scripts
+run flawless, independent of slight differences introduced by the different com-
+pilation processes. Tracking changes within ARI allows determining if and when
+new features were added to the protocol and test these in specific. Interestingly,
+the last ARI update was applied in iOS 13.5, released in parallel to the iPhone
+SE 2020.
+Table 1: Extracted data structures for different iOS versions.
+iOS Version
+Types asString (total) asString (extracted)
+12.5.1 (16H22)
+783
+290
+249
+13.3 (17C54)
+874
+290
+249
+13.5 (17F75)
+879
+290
+249
+6 versions skipped
+—
+—
+—
+14.5 (18E199a)
+879
+290
+249
+
+12
+Kr¨oll et al.
+6
+Fuzzing
+Based on the protocol knowledge, we can now inject messages into CommCenter.
+We leverage this for smart fuzzing, compare ARI results to QMI, and outline
+how to build high-performance iOS fuzzers. Finally, we analyze these crashes.
+6.1
+Initial Fuzzing Considerations
+There are only a few options for fuzzing closed-source iOS daemons. Corel-
+lium, the most advanced commercial iOS emulation, does not support cellular
+daemons and hardware as of May 2021 [4]. Open-source emulators can only
+boot parts of the kernel but not the entire system [1]. Thus, we need to fuzz
+CommCenter on a physical iPhone. Non-emulated fuzzing has various draw-
+backs [16], such as non-scalability and no possibility to reset the system state.
+Nonetheless, running on physical hardware can find more realistic bugs. Given
+these circumstances, we present the considerations that led to our setup for
+fuzzing ARI messages in the following.
+In-process Fuzzing on a Physical Device Our fuzzer is based on f
+r
+ida, which in-
+jects a new thread into the target process. This means that a partial or complete
+fuzzer is running within the CommCenter process. Listing 1.2 shows a minimal
+code example that injects a single message using the JavaScript API. The pay-
+load is injected into the target function AriHostRt::InboundMsgCB within the
+libARIServer.dylib shared library. The example only calls the target function
+once. For fuzzing, payloads would need to be generated and the function had to
+be called repeatedly. Moreover, we attach a so-called interceptor to the target
+function, which can read and modify input parameters before execution. This
+is necessary to keep track and adjust the sequence numbers since the physical
+baseband continues sending messages during the fuzzing process, resulting in
+out-of-order sequence numbers. Additionally, the f
+r
+ida stalker can trace exe-
+cuted functions or code blocks, enabling coverage collection [21]. Execution is
+traced by dynamic binary rewriting during runtime and executing copies of the
+original code that have additional tracing instructions.
+1
+//
+define
+hook
+for ARI
+messages
+chip (BB) -> iOS (AP)
+2
+var
+InboundMsgCb_addr = Module. getExportByName (’libARIServer .dylib ’, ’
+_ZN9AriHostRt12InboundMsgCBEPhm ’);
+3
+var
+InboundMsgCb = new
+NativeFunction (InboundMsgCb_addr , "int64", ["pointer",
+"int64"]);
+4
+5
+Interceptor.attach(InboundMsgCb_addr , {
+//
+optional
+hook
+customization
+6
+onEnter: function(args) {
+7
+// fix ARI
+sequence
+number , collect
+basic
+block
+coverage , etc.
+8
+}});
+9
+10
+InboundMsgCb (payload , length);
+// call
+the
+target
+once
+Listing 1.2: Injecting an ARI packet within the CommCenter process with f
+r
+ida.
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+13
+Payload Injection Payloads can either be generated (1) by an external device
+and sent to the target or (2) within the f
+r
+ida thread. The first option enables
+fast development and reusing existing fuzzing libraries without adapting them
+to f
+r
+ida. If the target process CommCenter crashes, the external device is still
+aware of the last packet sent prior to the crash. Furthermore, the external device
+might have larger storage for packet and crash logs. However, the second option is
+significantly faster. We explore and compare both strategies in the next section.
+Payload Mutation Creating new payloads requires a mutation strategy, which
+can be (1) coverage-based, (2) generation-based, or a combination of both. Even
+without much knowledge about a protocol, the f
+r
+ida stalker can collect basic
+block coverage and use this as a metric to improve the quality of injected packets.
+Whenever a packet reaches a new basic block, it is added to the corpus. However,
+collecting coverage with f
+r
+ida slows down the fuzzer. Another issue that arises
+is inconsistent coverage. Most binary parsers that process files would always
+produce the same coverage for the same input, and processing the current file
+does not depend on the previous file. Protocols are very different and highly
+state-dependent. For example, if a multi-part SMS is injected, the last message
+part would increase the coverage, but injecting this message part again would
+not increase the coverage. Thus, even injecting the same packet twice in a row
+can lead to different coverages. Furthermore, processes have an inconsistent state
+that is not solely controlled by packets injected by the fuzzer but configurations,
+external daemons, or user interaction like enabling a mobile hotspot and dialing
+a number, again leading to inconsistent coverage. The second option, which is
+generating new messages based on protocol knowledge, is significantly faster
+and does not lead to any issues with inconsistent coverage. We also compare
+coverage-based to generation-based approaches.
+6.2
+Building and Optimizing Fuzzers
+We compare five fuzzers with multiple injection and mutation strategies. These
+variants lead to significantly different speeds, as we verified by fuzzing a com-
+parable SMS payload with the performance results presented in Table 2. These
+fuzzers do not only differ in speed but also type of crashes they are able to find.
+Table 2: Fuzzing speed depending on the f
+r
+ida setup on an iPhone 7 with an
+iOS 14.3 Beta and f
+r
+ida 14.1.2.
+Speed Test Scenario
+Fuzz Cases per Second
+(5a) Local JavaScript SMS bit flipper
+17 000
+(5b) Local JavaScript SMS bit flipper with additional array copy
+11 000
+(4)
+Local JavaScript SMS bit flipper collecting basic block coverage
+250
+(2)
+External Python SMS injection
+400
+(3b) External Python SMS injection collecting basic block coverage
+100
+(3a) External ToothPicker variant with radamsa mutator and coverage
+20
+
+14
+Kr¨oll et al.
+The prior reverse-engineering of the protocol internals enables us to fix certain
+aspects of the message, such as the sequence number. Moreover, we leave the
+magic bytes in the header intact, and have options to only mutate the TLVs.
+(1) Replacing Existing Messages This approach randomly changes a few bytes
+after a random amount of messages. Ideally, the target iPhone has a SIM card
+installed and is actively used to make phone calls, send messages, browse the
+Internet, and so on. The total amount of messages highly depends on user in-
+teraction, thus, we do not list it in Table 2, but it is significantly slower than all
+other variants. When setting a good ratio of mutated versus original messages,
+the iPhone works almost normally, and the fuzzer can reach states rather deep
+within the protocol. Using this method, we found various crashes that cannot
+be reproduced by replaying a message trace. For example, one null pointer issue
+in the audio controller can only be triggered when the user previously initi-
+ated a phone call—which requires user interaction and cannot be reproduced by
+injecting ARI messages alone.
+(2) External Message Generation In this approach, we collect a large message
+corpus from typical baseband interaction. Then, we replay this corpus, either
+ordered or unordered, and mutate a subset of the messages based on the protocol
+structure. All messages are logged on the external device since some crashes only
+occur on a packet sequence. This fuzzer reaches around 400 fuzz cases per second
+(fcps).
+(3) External Coverage-based radamsa Mutation One of our previous projects,
+ToothPicker, fuzzes the Bluetooth daemon on iOS [8]. We adapt it to fuzz
+CommCenter and observe a slightly slower speed than for the Bluetooth dae-
+mon, around 20 fcps (3a). Note that when injecting payloads without the smart
+radamsa mutation strategy, this could be improved up to 100 fcps (3b). Even
+when initializing the radamsa mutator with different payloads, it tends to find
+the same crashes over and over again. Usually, mutators are trying to fuzz crashes
+again to determine the underlying issue further. However, in the case of an in-
+process fuzzer based on f
+r
+ida, crashing CommCenter also leads to a crash of
+the fuzzer. A CommCenter restart takes around 20–30 s. After a crash, we remove
+the payload that lead to the crash from the corpus and reinitialize the fuzzer
+by collecting coverage. On a large corpus, this can take several minutes, further
+reducing the fuzzer’s speed.
+(4) Local Coverage-based AFL++ Mutation Another option is to mutate the
+payloads with AFL++ on the target device. This is meanwhile supported by
+fpicker [7], and we were allowed to use an early pre-release version. Running
+locally leads to a significant speedup of around 250 fcps, now primarily limited
+by the f
+r
+ida stalker collecting coverage. This fuzzer is 10 × faster than Tooth-
+Picker while supporting a similar feature set.
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+15
+(5) Local High-speed Mutation We test the upper limit of achievable fuzzing
+speed by randomly flipping bits within a provided message. This is not a powerful
+mutator but shows that the fuzzing speed could be increased up to 17 000 fcps
+(5a). Already very small changes, such as copying the payload array slightly
+more inefficient (5b), lead to a speed reduction, as shown in Table 2.
+Overall, we found the rather naive second approach the best to uncover new
+crashes. Mutating payloads based on a large corpus and keeping structural pro-
+tocol information intact reaches both a comparably fast fuzzing speed and high
+bug density. Approaches collecting coverage were rather slow and suffered from
+inconsistent coverage information, thereby not compensating massive slowdown
+introduced by coverage collection.
+CommCenter
+42/14/4
+9/3/0
+Intel
+Qualcomm
+locationd
+5/1/0
+3/2/0
+sharingd
+1/0/0
+abm-helper
+1/1/0
+awdd
+1/0/0
+imagent
+1/0/0
+misd
+4/0/1
+2/0/1
+gpsd
+1/0/0
+suggestd
+1/0/0
+mediaserverd
+2/0/0
+WirelessRadioMangerd
+1/1/1
+abmlite
+1/0/0
+photoanalysisd
+2/0/0
+Individual crashes found: Total / Replayable / Fixed in iOS 14.3. Colors indicate ARI vs. QMI fuzzing.
+Fig. 9: Fuzzing results, also affecting various daemons due to XPC.
+6.3
+Crash Evaluation
+Every time a process crashes, iOS creates a crash log containing the exception
+type, the name of the crashed thread within the process, as well as a backtrace of
+each thread. Thus, we can identify unique crashes even without coverage-based
+fuzzing. Figure 9 shows all crashes found by fuzzing QMI and ARI, including
+processes that communicate with CommCenter using XPC. Even though QMI
+has fewer bugs, components residing on top of the QMI protocol parser and in
+external daemons crash as well, sometimes similar as during ARI fuzzing.
+Due to state issues, not all crashes are replayable by injecting the same
+messages as during fuzzing. For example, we find a crash in the Mobile Internet
+Sharing Daemon misd, caused by invalid memory access to an address that looks
+like a configuration string. This bug frequently occurs on Qualcomm and Intel
+iPhones, meaning that it is chip-independent. However, it cannot be reproduced
+by replaying packets. Apple rated the misd parsing issue as security-critical but
+did not assign a Common Vulnerabilities and Exposures (CVE) number since
+they discovered it in parallel to our research. This bug was present in iOS 13.7
+and fixed in iOS 14.2.
+
+16
+Kr¨oll et al.
+Fig. 10: Crash within reported network cells during a scan.
+Even when a bug is replayable, it is often hard to understand its root cause.
+In contrast to the shared library we were parsing in Section 5, CommCenter
+itself does not contain exported symbols. Thus, we only know the crash location
+in a binary without function or variable names. Reading code in the binary
+is further complicated by inaccuracies in the decompilation process, resulting
+in wrong pseudo-code output. Understanding payloads significantly speeds up
+manual crash analysis.
+We illustrate this with a crash that occurs in the CellMonitor thread. It
+accesses an invalid offset in the function processGsmCellInfo. Converting the
+crashing packet into a Wireshark dump and opening it reveals which part of the
+payload causes the crash, as shown in Figure 10, detailing the IBIGsmCellInfoT
+contents. However, Apple did not assign a CVE number without a full proof of
+concept showing if this bug is actually exploitable beyond denial of service.
+While not assigning high priority to most bugs found by our fuzzer, Apple
+did indeed fix all replayable crashes as of iOS 14.6. We assume that they were
+running our fuzzer, which we provided to them, and most likely with further
+internal analysis tools.
+7
+Conclusion
+Proprietary and undocumented interfaces pose a huge security risk if not tested
+thoroughly by manufacturers. Our fuzzing results let us assume that Apple did
+not perform any fuzz testing on ARI. Given that this interface is reachable via
+wireless components, this is surprising. We hope that Apple will improve wireless
+interface security in future releases and run—among other security testing—
+internal fuzzing campaigns.
+
+ARIstoteles – Dissecting Apple’s Baseband Interface
+17
+The Wireshark dissector we provide will be a helpful research tool also after
+ARI parsing issues got fixed within iOS. It enables debugging baseband interac-
+tions on the fly and provides insights on network operation, SIM interaction, and
+more. We hope that the open-source release of ARIstoteles will support wireless
+security research in general. It is the first step towards a low-level cellular exper-
+imentation framework comparable to projects that already exist for Bluetooth
+and Wi-Fi [15,23]. Additionally, the Ghidra scripts will enable researchers to
+build similar dissectors based on shared library information or leaked symbols.
+
+18
+Kr¨oll et al.
+Availability
+The ARIstoteles source code as well as the Ghidra extraction scripts are avail-
+able on https://github.com/seemoo-lab/aristoteles. This repository also
+contains the f
+r
+ida scripts that can record ARI packets during runtime and in-
+ject packets, including replayable crashing packets and packet sequences found
+with the fuzzers.

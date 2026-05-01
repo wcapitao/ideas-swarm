@@ -1,0 +1,1012 @@
+Montgomery Multiplication
+in Signed Redundant Representations
+Thomas Pornin
+NCC Group, thomas.pornin@nccgroup.com
+19 April, 2026
+Abstract. In this paper, we explore the use of Montgomery multiplication with a
+multi-limb redundant representation of integers, in particular in combination with
+signedreductionfactors.Wedeveloptechniquesthatareparticularlysuitedtosoftware
+platforms on which carry propagation is expensive, in particular RISC-V CPUs which
+lack hardware support for carries. We also show how to perform a whole-primitive
+range analysis that demonstrates that overflows are not possible, thus allowing lib-
+eral use of unreduced limb-wise additions and subtractions, which are small and fast.
+Theimplementationandanalysistechniquesareillustratedinacodegolfingexercise,to
+produce size-optimized implementations of ECDSA signature verification over NIST
+curve P-256; use of a virtual CPU with a custom instruction set with byte-size encod-
+ing (“bytecode”) allows the production of an implementation as small as 848 bytes on
+x86 CPUs (in 64-bit mode); RISC-V (984 bytes), Armv8-A (1136 bytes) and portable
+C implementations (about 2200 to 2800 bytes) are also provided. In the process, an
+AI is utterly discomfited.
+1
+Introduction
+Computationsovermodularintegersarepervasivetomanycryptographicschemes,including
+classic algorithms such as RSA[19] and Diffie-Hellman[8], elliptic curve signature schemes
+(ECDSA[13,1], EdDSA[5]) and key echange methods (ECDH[2]), pairing-based cryptog-
+raphy over pairing-friendly curves, but also lattice-based algorithms such as ML-KEM[14],
+ML-DSA[15], Falcon[17] (soon-to-be FN-DSA) and schemes relying on isogenies between
+supersingular curves. There is an ample literature on the subject; a most popular method for
+implementing arithmetic operations modulo some (odd) integer is the use of Montgomery
+multiplication[12].
+This work is, at its core, an exploration of some variations on the use of redundant big in-
+teger representations with Montgomery multiplication: values are split into limbs which are
+strictly shorter than the machine word size, and they are allowed to extend beyond their nom-
+inal range. Redundant representations have long been studied, even before computers were
+invented[7], for efficient computations[6,9] and in particular for bounded carry propagation
+techniques in custom hardware (ASIC)[16]. Redundant representations with signed limbs
+can efficiently support operations modulo some special-format moduli[4]. The main poten-
+tial advantage is the ability to perform additions and subtractions in a limb-wise way, without
+any reduction; moreover, the extra limb range can be leveraged to perform fewer carry propa-
+gations, which are detrimental to out-of-order and parallel execution, and also lack hardware
+support in some platforms (e.g. RISC-V). We furthermore consider use of signed values for
+
+the Montgomery multiplicative factors, as well as signed or unsigned normalization. These
+variants are described in section 2.
+To get a concrete context for the discussion, we implemented ECDSA signature verifi-
+cation over the NIST curve P-256 with optimization for code size rather than speed; this is
+a somewhat uncommon goal, which has some niche usages (e.g. boot-time verification of a
+signature on Flashable firmware, the verification code must fit in a small ROM). This was the
+occasion of a competition in which a developer (myself) was pitted against an LLM-based
+AI (Claude Code) over the course of about 8 days, with Intel x86 architecture as target (in
+64-bit mode). The long history of the x86 platform made its instruction set especially rich in
+abstruse size optimizations, for which the pattern-matching behaviour of the LLM should be
+effective, especially since x86 assembly writing is a subject for which the Internet provides an
+extremely large corpus of examples. The bot was ultimately defeated, though it did provide
+some tough opposition; it also got it wrong at some point and produced code which deviated
+from the ECDSA specification. This is described in section 3. The outcome is instructive
+about what can and cannot be expected from LLMs, and how they may fail in the context of
+implementing cryptographic primitives.
+In section 4, my own implementations are described, not only the x86-optimized code,
+but also 64-bit Arm (Armv8-A architecture) and 64-bit RISC-V (RV64 with I, M and C
+extensions), as well as C code with 64-bit and 32-bit words. The assembly implementations
+use a custom dedicated virtual machine with a few instructions that fit in a single byte each
+(“bytecode”), allowing to pack all the needed operations for ECDSA in a compact format.
+Use of limb-wise additions and subtractions with no reduction implies that if too many
+such operations are performed in sequence, with no interleaved multiplications, then limb
+values may overflow. An implementation using that method can be deemed correct only if
+it can be proven never to reach an overflow condition. This requires an extensive and tight
+enough range analysis. In section 5, the bytecode from the previous section is leveraged into a
+Python-based interpreter which makes a comprehensive range analysis for all values through-
+out the entire ECDSA operation. This framework can moreover be reused over other word
+sizes, radices, and number of limbs; this is how my implementations with 32-bit words were
+produced.
+All the implementations described here, as well as the range analysis framework, are avail-
+able at:
+https://github.com/pornin/small-ecdsa
+2
+
+2
+Montgomery Multiplication and Variants
+We describe here the classic Montgomery multiplication, and how it can be used in a redun-
+dantrepresentationwithsignedlimbs.Forawell-knowndescriptionoftheclassicalgorithms,
+see the famous Handbook of Applied Cryptography ([11], section 14.3). Of all the discussion
+presented here, about none is really novel, except possibly the use of signed Montgomery
+factors fi, and the pre-shifting of operands to ease the low/high split in long multiplication
+results.
+2.1
+Notations
+For an integer m > 0, and two integers x and y, we write “x ≡y [m]” to express that m
+divides x −y without prescribing a particular range on either x or y. For modular unsigned
+reduction, we write “x mod+ m” to designate the unique integer y such that x ≡y [m] and
+y ∈[0, m −1]; for signed reduction, “x mod± m” is the unique integer y such that x ≡y [m]
+and −m/2 ≤y < +m/2. Note in particular that when m is even, the lower end −m/2 is
+included in the signed reduction output, but the upper end +m/2 is not: this corresponds to
+how usual software platforms interpret signed words with two’s complement notation, but
+it differs from the “mod±” notation used in the ML-DSA scheme.
+By extension, we may use these notations with rationals: for integers x, y and z such that
+y is coprime with m, we write x/y ≡z [m] to signify that x ≡yz [m]; values x/y mod+ m
+and x/y mod± m denote integers z such that x/y ≡z [m], with 0 ≤z < m and −m/2 ≤z <
++m/2, respectively.
+2.2
+Montgomery Multiplication and Representation
+Let m > 0 be an integer; we want to perform arithmetic operations with integers modulo m.
+Let R > m be some constant which is relatively prime to m, and such that Euclidean division
+by R on integers is easy. In all of the following, m is an odd integer, and R is a power of 2, so
+that the quotient and remainder of a division by R can be obtained with a right-shift and a
+truncation on the binary representation, respectively; however, the concept can be used with
+other values of R, as long as Euclidean division by R is efficient.
+Montgomery reduction of an integer z consists in computing f = −z/m mod+ R, then
+z′ = (z + fm)/R. The computation of f (the “Montgomery factor”) is done by multiplying
+z with the value C = −1/m mod+ R, which depends only on the modulus m and is assumed
+to be precomputed (C exists because m is relatively prime to R); this multiplication is done
+modulo R, which is efficient (by definition of R). This specific factor f implies that z + fm ≡
+0 [R]; the division (z + fm)/R is therefore exact: the output z′ is an integer.
+If we consider values modulo m, then z′ ≡z/R [m] (adding a multiple of m does not
+change the value modulo m). The point of Montgomery reduction is seen by considering
+ranges: since 0 ≤f < R, we obtain that |z′| < |z/R| + m; in particular, if 0 ≤z < Rm, then
+0 ≤z′ < 2m.
+MontgomerymultiplicationisthecombinationofplainintegermultiplicationandMont-
+gomery reduction. Given two operands x and y, Montgomery multiplication computes z =
+xy then applies Montgomery reduction and returns z′ = (xy + fm)/R. If x and y are both
+in [0, m −1], then 0 ≤z′ < 2m and can be fully reduced modulo m with a single condi-
+3
+
+tional subtraction of m (subtract m from z′ if and only if z′ ≥m). We denote with “∗” the
+Montgomery multiplication; for inputs x and y, we thus obtain that x ∗y ≡xy/R [m].
+Montgomery representation of an integer x is another integer M(x) such that M(x) ≡
+xR [m]. Montgomery representation is compatible with addition, and with multiplication,
+provided that we use Montgomery multiplication: for all integers x and y, M(x) +M(y) ≡
+M(x + y) [m], and M(x) ∗M(y) ≡M(xy) [m]. This finally yields the classic imple-
+mentation method based on Montgomery representation:
+– All values are kept in Montgomery representation, normalized to [0, m−1]. Conversion
+to Montgomery representation from a freshly decoded x integer is done by computing
+x ∗(R2 mod+ m) = M(x), the constant R2 mod+ m being precomputed.
+– Additions are done with a plain integer addition, followed by a conditional subtraction
+of the modulus m to ensure a result in [0, m −1]. Similarly, subtractions are done over
+plain integers, then adding back m if the result is negative.
+– Multiplications are performed with Montgomery multiplication, which yields the cor-
+rect result since we work with Montgomery representations. A conditional subtraction
+of the modulus m is applied at the end of the Montgomery multiplication to ensure that
+the output is in [0, m −1].
+– On output, right before encoding results, values are converted back from Montgomery
+representation to normal representation by applying Montgomery reduction. This can
+be implemented with a Montgomery multiplication: x ≡M(x) ∗1 [m].
+One may note that if x ∈[0, m −1] then Montgomery reduction of x is also in [0, m −1]:
+we have 0 ≤f ≤R −1, hence 0 ≤x + fm ≤m −1 + (R −1)m = Rm −1; therefore, the
+final division by R necessarily yields a value strictly lower than m. This means that the final
+Montgomery reduction does not need the conditional subtraction of the modulus to ensure
+a canonical output. Notwithstanding, such operations are usually not time-critical, and it is
+easier to simply use the Montgomery multiplication routine with the constant 1, even though
+that implies some useless operations (plain multiplication by 1 is a no-operation).
+2.3
+Multi-Limb Montgomery Multiplication
+For some cryptographic schemes (typically lattice-based schemes), all involved integers fit in
+a machine word and the implementation can follow the formulas described above. However,
+some others need to work with larger integers, which must then be split over several words.
+Let w be the machine word size, in bits; the implementation platform can compute additions
+and subtractions over values by working, implicitly, modulo 2w. Each w-bit word can be con-
+sidered as either signed or unsigned:
+– In signed representation, the word contains a value in [−2w−1, 2w−1 −1] (with two’s
+complement notation for negative values).
+– In unsigned representation, the word contains a value in [0, 2w −1].
+A given pattern of w bits can be converted between the two representations by implicit rein-
+terpreting, which usually has no reality at the assembly level: the CPU does not care whether
+you think of some values as signed or not, it changes nothing to the additions, subtractions,
+4
+
+and multiplications modulo 2w. Mathematically, if we number bits from 0 to w −1 (in low-
+to-high order), then unsigned representation means that bit w−1 has weight 2w−1, but weight
+−2w−1 if the value is signed.
+“Long multiplications” are multiplications with an output that spans over two words
+(that is, multiplications which are done over plain integers, not modulo 2w). For these oper-
+ations, signedness matters; thus, CPUs usually offer two instructions, one for multiplication
+of signed values, and one for multiplication of unsigned values1. For input integers a and b,
+each being the signed or unsigned interpretation of a w-bit word, long multiplication returns
+two words, the “low word” and the “high word”. The low word is to be interpreted as an
+unsigned value cL ∈[0, 2w −1]; the high word is interpreted as value cH with unsigned rep-
+resentation if both a and b are unsigned, or signed representation otherwise. We then have
+ab = cL + 2wcH.
+These operations map to the abilities of usual software platforms, at least at the hard-
+ware level. In programming languages, signed and unsigned interpretations are usually dis-
+tinguished with types, but explicit conversions (e.g. with Rust’s “x as u32” syntax, or Go’s
+“uint32(x)”) can be used to move between the two interpretations at no cost at the hard-
+ware level.
+In the following, we will use a Python-based pseudocode notation with arithmetic oper-
+ations on words specified with dedicated functions; in the descriptions below, we use xs and
+xu to denoted the contents of the word x interpreted as signed and unsigned, respectively (i.e.
+−2w−1 ≤xs < 2w−1 −1, 0 ≤xu < 2w, xs = xu mod± 2w and xu = xs mod+ 2w).
+add(a, b)
+Addition: returns au + bu mod+ 2w.
+add_carry(a, b, c_in)
+Addition with carry: this computes d = au + bu + 1 if cin is
+True, or d = au + bu if cin is False. Two values are returned:
+d mod+ 2w, and the output carry cout which is True if d ≥2w,
+or False if d < 2w.
+sub(a, b)
+Subtraction: returns au −bu mod+ 2w.
+sub_borrow(a, b, c_in) Subtraction with borrow: this computes d = au −bu −1 if cin
+is True, or d = au −bu if cin is False. Two values are returned:
+d mod+ 2w, and the output borrow cout which is True if d < 0,
+or False if d ≥0.
+lsh(a, n)
+Left-shift: returns 2nau mod+ 2w. Shift count n must be a non-
+negative constant integer. At the binary level, bits are shifted to
+the left (toward more significant places), and zeros are injected
+in the vacated low positions.
+rsh_s(a, n)
+Right-shift (arithmetic): returns ⌊as/2n⌋mod+ 2w. Shift count
+n must be a non-negative constant integer. At the binary level,
+bits are shifted to the right (toward less significant places) and
+copies of the sign bit (leftmost bit) of the input are injected in
+the vacated high positions.
+rsh_u(a, n)
+Right-shift (logical): returns ⌊au/2n⌋mod+ 2w. Shift count n
+mustbeanon-negativeconstantinteger.Atthebinarylevel,bits
+1RISC-V CPUs also have a third kind, for mixed signed/unsigned multiplications.
+5
+
+are shifted to the right (toward less significant places) and zeros
+are injected in the vacated high positions.
+mul(a, b)
+Multiplication: returns aubu mod+ 2w.
+longmul_s(a, b)
+Long multiplication (signed): this computes d = asbs, then re-
+turns that value as two words: the low word d mod+ 2w and
+the high word ⌊d/2w⌋mod+ 2w. The inputs are interpreted as
+signed values for the purpose of computing the product d.
+longmul_u(a, b)
+Long multiplication (unsigned): this computes d = aubu, then
+returns that value as two words: the low word d mod+ 2w and
+the high word ⌊d/2w⌋mod+ 2w. The inputs are interpreted as
+unsigned values for the purpose of computing the product d.
+is_zero(x)
+Comparison against zero: returns True if xu = 0, or False
+otherwise.
+These functions correspond to hardware instructions offered by common CPUs, with
+some variations, in particular how carries and borrows are handled:
+– On x86 and Arm CPUs, there is a single carry flag, stored in the flags register, which all
+instructions must share. Recent x86 support extra instructions (adcx and adox) which
+allow maintaining two interleaved addition chains with separate carries, though there is
+no corresponding support for subtractions.2
+– On Arm CPUs specifically, the CPU carry flag is reversed for borrows: the carry flag is set
+whenthereisnoborrow,andisclearedwhenthereisaborrow.Thisisanimplementation
+detail which is not relevant to Montgomery multiplication, since we do not mix carry
+flags between additions and subtractions. In this paper, we treat carries and borrows as
+Boolean values True or False.
+– PowerPC CPUs (and later POWER CPUs) offer eight separate carry flags. It should
+be noted that some PowerPC implementations (especially the “PPE” core found in the
+PlayStation 3 and Xbox 360 consoles) handle only the first flag natively, and resort to
+slow microcode for the other seven flags.
+– As opposed to PowerPCs’ great trove of carry flags, RISC-V CPUs do not have a carry
+flag at all. For these CPUs, add_carry() requires no fewer than five instructions in all
+generality (but only two instructions if either the input carry is known to be False, or
+the output carry is ignored). The inefficiency of carry propagation on RISC-V was the
+initial motivation for this work.
+– SIMD instructions (SSE2/AVX2/AVX-512 on x86, NEON on Arm, etc) typically do
+not have carry flags. Implementation using these instructions must resort to solutions
+similar to those for RISC-V code.
+With these notations, the pseudocode in listing 1 shows how a classic multi-limb modular
+integer implementation would compute additions, subtractions and Montgomery multipli-
+cations. Each value x is represented in radix 2w as an array of k words (xi)0≤i<k, which are
+2It should be understood that on modern large CPUs, with out-of-order execution, the physical
+CPU contains many separate carry flags to which the programming-level unique flag is dynamically
+mapped.Havingasinglecarrystillimpliessomeconstraintsonboththecompilerorassemblydeveloper,
+and on how much parallelism the CPU can infer from the code.
+6
+
+Listing 1: Multi-limb modular arithmetics (classic representation)
+1
+# k limbs (unsigned), radix 2**w
+2
+# m0i = -1/m mod 2**w, for modulus m (odd)
+3
+4
+# Add multi-limb integers a and b, with output carry (True on overflow).
+5
+def bigint_add_carry(a, b):
+6
+d = [ZERO]*k
+7
+carry = False
+8
+for i in range(0, k):
+9
+(d[i], carry) = add_carry(a[i], b[i], carry)
+10
+return (d, carry)
+11
+12
+# Subtract multi-limb integer b from a, with output borrow (True on overflow).
+13
+def bigint_sub_borrow(a, b):
+14
+d = [ZERO]*k
+15
+borrow = False
+16
+for i in range(0, k):
+17
+(d[i], borrow) = sub_borrow(a[i], b[i], borrow)
+18
+return (d, borrow)
+19
+20
+# d <- d + g*x
+21
+# g is 1 word, x is k words, d is at least k+1 words and large enough
+22
+def bigint_add_mul(d, g, x):
+23
+delayed = ZERO
+24
+for i in range(0, k):
+25
+(cL, cH) = longmul_u(g, x[i])
+26
+(cL, carry) = add_carry(cL, delayed, False)
+27
+(cH, _) = add_carry(cH, ZERO, carry)
+28
+(d[i], carry) = add_carry(cL, d[i], False)
+29
+(delayed, _) = add_carry(cH, ZERO, carry)
+30
+(d[k], carry) = add_carry(d[k], delayed, False)
+31
+if carry:
+32
+(d[k + 1], _) = add_carry(d[k + 1], ZERO, carry)
+33
+34
+# Modular addition.
+35
+def mod_add(a, b):
+36
+(d, carry) = bigint_add_carry(a, b)
+37
+(e, borrow) = bigint_sub_borrow(d, m)
+38
+return e if carry == borrow else d
+39
+40
+# Modular subtraction.
+41
+def mod_sub(a, b):
+42
+(d, borrow) = bigint_sub_borrow(a, b)
+43
+(e, _) = bigint_add_carry(d, m)
+44
+return e if borrow else d
+45
+46
+# Montgomery multiplication.
+47
+def mod_montymul(a, b):
+48
+t = [ZERO]*(2*k + 1)
+49
+for i in range(0, k):
+50
+bigint_add_mul(t, a[i], b)
+51
+f = mul(t[0], m0i)
+52
+bigint_add_mul(t, f, m)
+# this ensures that t[0] = 0
+53
+t = t[1:]
+# word shift: this is division by 2**w
+54
+d = t[0:k]
+55
+(e, borrow) = bigint_sub_borrow(d, m)
+56
+return d if (is_zero(t[k]) and borrow) else e
+7
+
+implicitly considered unsigned (in [0, 2w −1]). The words (xi) encode x with the rule that
+x = Ík−1
+i=0 xi2iw. Modular integers are kept in canonical unsigned format: inputs and outputs
+of modular addition, subtraction and Montgomery reduction are always in [0, m −1], with
+m being the modulus.
+The internal functions bigint_add_carry() and bigint_sub_carry() compute
+multi-limb additions and subtractions on non-modular integers, and return the result mod-
+ulo2kw aswellasanoutputcarryorborrow;theyareusedformodularaddition(mod_add())
+and subtraction (mod_sub()) to ensure that the output is canonical. The internal routine
+bigint_add_mul() is used for Montgomery multiplication; it adds gx to a mutable value
+d, with g being a single word, x an integer over k words, and d being “large enough”, meaning
+that it has at least k + 1 words, possibly k + 2 (it can be shown that within the Montgomery
+multiplication as implemented here, d is always large enough). Montgomery multiplication
+itself is mod_montymul() and uses R = 2kw. Implicitly used parameters are the number of
+limbs k, the modulus m, and the Montgomery coefficient −1/m mod+ 2w (denoted m0i in
+the code). Since the inputs are canonical, the core of the Montgomery multiplication always
+returns a value in [0, 2m−1] and a single conditional subtraction of the modulus (lines 55-56
+in the code) is sufficient to ensure a canonical output.
+Notshowninlisting1arethedecodingfunction(splitoftheinputintokwordsofwbits),
+conversion to Montgomery representation (done with mod_montymul() and the precom-
+puted constant R2 mod+ m), Montgomery reduction (mod_montymul() with 1 as second
+operand), and reassembly of the words into a suitable output format, e.g. a sequence of bytes.
+Some variants are possible; in particular, the implementation might not insist on a strictly
+canonical output, and may instead work internally with a somewhat larger range, e.g. [0, R−
+1] (all sequences of k words being then possible). Code working with a fixed compile-time
+modulus,asistypicalofoptimizedellipticcurveimplementations,maychoosetounrollloops
+and use statically assigned registers rather than arrays for values; the routines may also be sub-
+ject to different degrees of inlining. A contrario, for a large modulus, and especially for a mod-
+ulus whose contents and even size are known only at runtime, actual arrays and indexing are
+likely to be used, and the two bigint_add_mul() routines called in each iteration of the
+mod_montymul() loop may be interleaved so as to minimize such memory traffic.
+The salient point of the classic implementation is its reliance on carry propagation, both
+at the hardware level (the add_carry() and sub_borrow() primitives) and through the
+propagation of the “delayed” word on bigint_add_mul(). Modular addition and sub-
+traction both involve two chains of instructions with linear dependencies (along each chain,
+the carry/borrow output of an instruction is used as input for the next), which reduces par-
+allelism opportunities, especially when using SIMD instructions or out-of-order execution;
+on platforms without support for carries (such as RISC-V), these operations are particularly
+expensive, both in code size and in execution speed. Additions in bigint_add_mul() also
+representlongdependencychains(eachvalueofthedelayedvariabledependsontheoutput
+of the previous iteration, which itself depends on the previous value of delayed). The con-
+ditional choices (“if” clauses in mod_add(), mod_sub() and mod_montymul(), on lines
+38, 44 and 56, respectively) may moreover involve an extra value scan to support a constant-
+time implementation, in case the involved values are secret. Our improved implementation
+method with a redundant representation was designed in particular to avoid most of these
+carry propagation issues.
+8
+
+2.4
+Redundant Representation
+A redundant representation of a big integer uses a radix which is strictly smaller than the word
+size. Here, we will use radix 2s for some integer s < w (with w being the word size). Re-
+dundancy comes from the idea that individual limbs may have values beyond the nominal
+[0, 2s −1] range, which implies that a given integer may have several possible representations.
+Redundant representations are a well-known area (see section 1 for references). In the version
+described here, we are investigating the effect of some variants that involve use of signed values
+in various places.
+In all generality, the mathematical description is the following. For a given integer x, we
+use a representation over k limbs in radix 2s:
+x =
+k−1
+Õ
+i=0
+xi2si
+The limbs are, at this level, plain integers which are not limited to the [0, 2s −1] range; they
+can be larger than 2s −1, or negative. The representation of x as (xi) is not unique. We can
+do additions and subtractions in a limb-wise way:
+x + y =
+k−1
+Õ
+i=0
+(xi + yi)2si
+In a redundant representation, we can move some bits from a limb to the next, using:
+xi + xi+12s = (xi mod+ 2s) + (xi+1 + ⌊xi/2s⌋)2s
+In plain words, we can split a limb into its low s bits (a value in [0, 2s −1]) and its upper
+bits, which can be added to the next limb with a right-shift by s bits. Since limb values are
+potentially negative, we of course consider an arithmetic right shift here. A signed analog
+exists, in which we force the lower limb into [−2s−1, 2s−1 −1]:
+xi + xi+12s = (xi mod± 2s) +
+
+xi+1 + xi −(xi mod± 2s)
+2s
+
+2s
+This analog will be considered in an implementation variant (“signed normalization”).
+Montgomery multiplication uses the s-bit Montgomery coefficient g = −1/m mod+ 2s,
+which depends on the modulus m but not on the operands x and y. The process starts with
+an integer t0, as a k-limb sequence (t0,j), with all limbs equal to zero. Then, for i = 0 to k −1,
+we define:
+ui,j = ti,j + (xiyj mod+ 2s) + ⌊xiyj−1/2s⌋
+fi ≡gui,0 [2s]
+vi,j = ui,j + (fimj mod+ 2s) + ⌊fimj−1/2s⌋
+ti+1,0 = vi,1 + vi,0/2s
+ti+1,j = vi,j+1 (for j ≥1)
+9
+
+These equations are to be understood with j ranging from 0 to k (inclusive), with the con-
+vention that limbs with an out-of-bounds index (e.g. m−1 or xk) have value zero. Interme-
+diate values ui and vi expand over k + 1 limbs. The values fi are the Montgomery factors;
+note that they are defined above only as a congruence class modulo 2s: the operation works
+regardless of which modular reduction is used. Classic Montgomery reduction would set
+fi = gui,0 mod+ 2s (factor in [0, 2s −1]), but here we will use fi = gui,0 mod± 2s (factor in
+[−2s−1, 2s−1 −1]). The core idea of the Montgomery multiplication still applies: if we work
+modulo 2s, then:
+vi,0 ≡ui,0 + fim [2s]
+≡ui,0 + m(−1/m)ui,0 [2s]
+≡0 [2s]
+so that the division of vi,0 by 2s (in the definition of ti+1,0) is exact, and the dropped value
+vi,0 mod+ 2s is in fact zero. This implies that ti+1 = (ti + xiy + fim)/2s, and the k iterations
+collectively compute tk = (xy + fm)/2ks for an integer f whose k-limb representation is (fi).
+This follows the classic Montgomery multiplication for the values, with R = 2ks, though
+most carry and upper bits propagations have been removed (only the upper bits of vi,0 are
+propagated). Since the output limbs (in tk) tend to be quite large, we follow Montgomery
+multiplication with a single upper bits propagation pass, which we will later call “normaliza-
+tion”.
+Listing 2 shows a pseudocode implementation of modular addition, subtraction and
+Montgomery multiplication in a redundant representation. We will now highlight some op-
+timizations and other implementation variants.
+Limb-wise additions and subtractions.
+The functions for addition (mod_add())
+and subtraction (mod_sub()) operate in a limb-wise way, with no carry/borrow propaga-
+tion; in fact, listing 2 uses no add_carry or sub_borrow at all, which improves speed and
+reduces code size on platforms that don’t have hardware support for carries. The limb addi-
+tions and subtractions are also independent of each other and can be carried in parallel, which
+may efficiently leverage SIMD units such as SSE2. The flip side of this parallelism is that limbs
+grow beyond the nominal range; if too many such operations are performed in a row, limbs
+may overflow the representable range in w-bit words. Most of the range analysis in section 5
+is about proving that such overflows cannot happen in the code that uses these redundant
+integers.
+Apart from limb growth, unreduced additions and subtractions also entail value growth:
+if the two source operands live in ranges [aL, aH] and [bL, bH], then their limb-wise sum is
+in [aL + bL, aH + bH]. Excessive value growth is also a concern, and calls for intermediate
+reduction steps that help prevent it. As will be detailed below, limb growth can be controlled
+with normalization, and Montgomery multiplication (which includes a normalization step)
+reduces both limb and overall value ranges.
+Signed limbs.
+Limb values are interpreted as signed integers; this is apparent in the use
+of longmul_s in the Montgomery multiplications (line 21), and an arithmetic right-shift in
+normalization (line 33). Support of negative limb values allows a simple limb-wise subtrac-
+tion; if limbs had to be kept non-negative at all times, then subtraction would involve either
+10
+
+Listing 2: Multi-limb Montgomery arithmetics (redundant representation)
+1
+# k limbs (signed), radix 2**s, with s < w
+2
+# sh1 = floor((w - s)/2)
+3
+# sh2 = w - s - sh1
+4
+# m0i_sh = (-1/m mod 2**s)*2**(w-s), for modulus m (odd)
+5
+# Two possible variants, depending on whether multiplication output limbs
+6
+# are normalized to [0, 2**s - 1] or to [-2**(s-1), 2**(s-1) - 1].
+7
+8
+# Limb-wise addition.
+9
+def mod_add(a, b):
+10
+return [add(a[i], b[i]) for i in range(0, k)]
+11
+12
+# Limb-wise subtraction.
+13
+def mod_sub(a, b):
+14
+return [sub(a[i], b[i]) for i in range(0, k)]
+15
+16
+# d <- d + g*x
+(limb-wise)
+17
+# g is 1 word, x is k words, d is at least k+1 words
+18
+def rr_add_mul(d, g, x):
+19
+delayed = ZERO
+20
+for i in range(0, k):
+21
+(cL, cH) = longmul_s(g, x[i])
+22
+d[i] = add(rsh_u(cL, w - s), add(d[i], delayed))
+23
+delayed = cH
+24
+d[k] = add(d[k], delayed)
+25
+26
+# d <- a
+27
+# Limbs 0 to k-2 are normalized to [-2**(s-1), 2**(s-1) - 1] (if signed = True)
+28
+# or [0, 2**s - 1] (if signed = False).
+29
+def normalize(a, signed):
+30
+d = [ZERO]*k
+31
+cc = ZERO
+32
+for i in range(0, k - 1):
+33
+cc = add(a[i], rsh_s(cc, s))
+# VARIANT: add old cc to d[i], not a[i]
+34
+z = lsh(cc, w - s)
+35
+if signed:
+36
+z = rsh_s(z, w - s)
+37
+cc = sub(cc, z)
+38
+else:
+39
+z = rsh_u(z, w - s)
+40
+d[i] = z
+41
+d[k - 1] = add(a[k - 1], rsh_s(cc, s))
+42
+return d
+43
+44
+# Montgomery multiplication.
+45
+def mod_montymul(a, b):
+46
+b_sh = [lsh(b[i], sh2) for i in range(0, k)]
+47
+t = [ZERO]*(2*k)
+48
+for i in range(0, k):
+49
+rr_add_mul(t, lsh(a[i], sh1), b_sh)
+50
+f = mul(t[0], m0i_sh)
+51
+rr_add_mul(t, f, m)
+52
+t[1] = add(t[1], rsh_s(t[0], s))
+53
+t = t[1:]
+54
+return normalize(t, False)
+# VARIANT: normalize(t, True)
+11
+
+carry propagation, or at least adding extra multiples of the modulus, which would entail fur-
+ther limb growth, as well as more instructions to execute.
+Normalization.
+To contain limb growth, normalization and Montgomery multiplica-
+tion are used. We say that a value x = Ík−1
+i=0 xi2si is signed-normalized (respectively unsigned-
+normalized) if limbs x0 to xk−2, i.e. all limbs except the most significant one xk−1, are in the
+signed s-bit range [−2s−1, 2s−1 −1] (respectively, the unsigned s-bit range [0, 2s −1]). The
+normalize() function transforms an input integer into another representation of the same
+integer value, but normalized. The shown pseudocode supports both signed and unsigned
+normalization, depending on the value of the signed parameter, but any actual implemen-
+tation might not necessarily need both. The size-optimized implementations of ECDSA sig-
+nature verification shown in sections 4 use only unsigned normalization; a variant described
+in section 5.3 uses both.
+Normalization does not modify the integer value; it efficiently contains limb growth ex-
+cept for the top limb xk−1, which can be said to receive the excess bits. Normalization does
+nothing about overall value growth, for which the main tool is Montgomery multiplication,
+which also reduces the range of the output, as explained in section 2.2. Section 5 includes
+more details on limb and value growth.
+Normalization, as presented in normalize(), uses a sequence of successive operations
+with dependencies (the value cc is obtained from the previous addition and needed as input
+for the next). These dependencies could be removed by delaying the addition of the upper
+bits from the previous limbs (cc) to after the truncation of z to s bits, rather than before. In
+such a case, the normalization is only partial (output limbs may slightly exceed their nominal
+range) but partial normalization could be enough to contain limb growth, and the removal of
+dependencies can only help CPUs with out-of-order execution and SIMD implementations.
+Full normalization will still be needed for canonicalization purposes, typically right before
+encoding output values.
+Pre-shifting.
+The longmul operations return the product over a pair of machine words;
+that value must then be split into two limb-sized parts. When the representation is non-
+redundant and the radix matches the word size, the two words returned by longmul_u are
+these low and high parts, and the split is implicit and free. This is no longer the case with a
+redundant representation. Given a product c which is obtained as two w-bit words c0 and c1,
+we have c = c0 + 2wc1, and we want the low and high radix-2s halves cL and cH such that
+cL ∈[0, 2s −1] and c = cL + 2scH. The low half cL can be obtained from c0 by masking
+out the top w −s bits, which can be done with a bitwise and operation (which is inexpen-
+sive); however, cH requires combining bits from both c0 and c1. Some CPUs have dedicated
+instructions to extract a word value straddling over two registers (e.g. shld on x86, or extr
+on Armv8-A), but some others do not, and computing cH then needs two shifts and a bitwise
+or (RISC-V, as usual, is in that situation). In order to make this split easier and faster, we use
+pre-shifting:
+– Operands for a multiplication are left-shifted by some bits prior to the multiplication:
+the limbs of the first operand (a[i]) are left-shifted by sh1 bits (line 49) and those of
+the second operand (b[i]) are left-shifted by sh2 bits (line 46), for two fixed constants
+12
+
+sh1 and sh2 whose sum is equal to w −s. The constants must be chosen so that these
+shifts do not overflow the represented limb values, which depends on limb growth.
+– The net effect of pre-shifting is that the longmul_s operation returns not the formal
+productc,but2w−sc.Inparticular,thisimpliesthatthehighoutputwordc1 nowcontains
+exactly cH, so that no complicated word extraction is necessary. As for the low word cL,
+it can be obtained with a single right-shift of c0 (the rsh_u operation on line 22).
+– For the addition of the modulus m multiplied by the Montgomery factor, all the pre-
+shifting is done in the factor, while the modulus is unshifted.
+In total, pre-shifting requires 2k extra left shifts for the operands, but each of the 2k2 splits
+of longmul_s outputs only needs a single right-shift operation.
+Signed Montgomery factor.
+A not immediately obvious feature of the Montgomery
+multiplication shown in listing 2 is that the Montgomery factor f is signed. Formally, the
+overall Montgomery factor f (in the computation of (ab + fm)/R) is obtained limb by limb,
+and each limb fi is, in the classic description, a non-negative value (it is in [0, 2s −1] when
+limbs are in radix 2s). In the redundant representation:
+– The factor fi (in variable f in the code, line 51) is obtained by multiplying the low limb
+t[0] with the constant m0i_sh which is equal to 2w−s(−1/m mod+ 2s) (that is, the
+Montgomerycoefficientg,left-shiftedbyw−s bits).Awrappingmultiplication(modulo
+2w) is used. Thus, the output f really contains an s-bit value, but stored in a w-bit word
+and left-shifted by w −s bits.
+– The addition of the modulus multiple is done with the sub-function rr_add_mul()
+(the same function as for adding the partial product aib), which uses longmul_s (line
+21). This interprets the w-bit word f as a signed value, in the [−2w−1, 2w−1 −1] range.
+This value is equal to the formal fi multiplied by 2w−s, therefore fi is really in the signed
+[−2s−1, 2s−1 −1] range.
+The fact that the fi values are signed is crucial for the range analysis. It means that the overall f
+factor cannot be (much) larger than R/2 in absolute value, which makes Montgomery multi-
+plication output values smaller, and helps with value growth. For instance, if m is a 256-bit in-
+teger, w = 64, k = 5, and s = 54 (values are over five limbs in radix 254), then R = 2ks = 2270;
+if the input operands a and b are at most 30m in absolute value, then (ab+fm)/R is less than
+about 0.55m (in absolute value), which allows for up to 54 successive limb-wise additions be-
+fore value growth reaches 30m again. With unsigned fi values, Montgomery multiplication
+outputs could reach up to about 1.055m (with inputs at most 30m) and only 28 unreduced
+additions would be allowed until a 30m value growth is again obtained.
+Post-multiplication normalization.
+Montgomerymultiplication,aspresentedinlist-
+ing 2, uses the extra room in each limb to accumulate partial results without carry propaga-
+tion. However, the resulting values can be quite large, and a normalization step is normally
+required after the core Montgomery loop. In mod_monymul(), the normalize() func-
+tion is called with a False second parameter, to perform unsigned normalization. A variant
+would be to use signed normalization. Signed normalization yields smaller limbs (in absolute
+value), and thus allows more downstream unreduced additions and subtractions to be per-
+formed (with regard to limb growth and potential overflows), until the next multiplication.
+13
+
+However, signed normalization is slightly more expensive (there is an extra subtraction per
+limb, line 37), and unsigned normalization is usually also needed (for integer canonicalization
+purposes), so that size-optimized implementations will usually prefer to use only unsigned
+normalization throughout.
+14
+
+3
+Human vs AI
+In mid-March 2026, over the course of about 8 days, a human developer (myself) battled
+against an AI (Claude Code) in a contest for producing the most size-optimized implemen-
+tation of ECDSA signature verification. On my part, one of the main points of the exercise
+was to find out whether the redundant representation with signed Montgomery factors was
+novel or not, the assumption being that the AI has extensive knowledge of everything that
+has ever been published on the Internet. Claude access and operation were provided by Steve
+Weis, who thought that the experiment was fun and had some spare compute tokens.
+3.1
+ECDSA
+We consider ECDSA signature verification only, not key pair nor signature generation. In
+particular, all values are public, and there is no applicable notion of a side-channel informa-
+tion leak. A useful mental model for a size-optimized ECDSA signature verification code is a
+system that needs to verify a signature on its own reflashable firmware 
+
+[…middle truncated for length…]
+
+or if H mod+ 2t < L mod+ 2t (which implies that both 0 and 2t −1 are
+possible, thus encompassing the whole range, even if some of the values in the range are not
+actually possible); otherwise, the relevant sub-range of [0, 2t −1] is returned. Signed masking
+uses unsigned masking with an appropriate offset applied before and after the operation.
+Building on ZRange, the ZWord class represents a machine word of w bits. Each instance
+encapsulates two ZRange instances: one represents the possible range for the value stored in
+the word, and the other is the container range, which is either [−2w−1, 2w−1 −1] (the word is
+interpreted as a signed integer) or [0, 2w −1] (the word is interpreted as an unsigned integer).
+Arithmetic operations are implemented on the value range, and automatically raise an excep-
+tion if the output value range would not entirely fit within the container range: this is how
+overflows on word operations are tracked. Explicit “wrapping” operations are also provided,
+which truncate the output as appropriate instead of raising an exception; this is used for the
+computation of the Montgomery factors fi, for which the truncation, and reinterpretation
+of an unsigned value as a signed integer, are part of the operation semantics.
+The MLInt class builds on ZRange and ZWord to implement a multi-limb redundant
+representation of an integer. Each MLInt instance has three fields:
+– A reference to an overall context structure which contains parameters such as k (number
+oflimbs),s(forradix2s)orflagssuchaswhethersignedorunsignednormalizationshould
+follow a Montgomery multiplication.
+– The integer limbs, as an array of k instances of ZWord (with signed interpretation): we
+keep track of the individual ranges of all limbs separately.
+– An overall integer range (as a ZRange), which qualifies the represented big integer. This
+may be a strict sub-range of the possible values that could be inferred from the ranges of
+the individual limbs.
+Again, addition, subtraction and negation are implemented, as well as Montgomery multipli-
+cations. This last operation uses a modulus as extra parameter, provided as a MLIntModulus
+instance, which contains the modulus limbs — as ZWord values, which are not necessarily
+exact if we want to do range analysis with moduli which are not known at compile-time —
+and some extra parameters such as the Montgomery coefficient −1/m mod+ 2s.
+All the ZRange, ZWord and MLInt instances are immutable; all mathematical operations
+return new instances with the result. Using immutable instances increases memory allocation
+traffic (hence garbage collection costs) but avoids all possible issues with concurrent modifi-
+cations to the same object.
+Since ZWord instances automatically check for overflows, executing the operations with-
+out any thrown exception implies a correct result for all input values fitting in the provided
+input ranges.
+5.2
+Application to ECDSA Verification
+We can use MLInt in a full ECDSA verification: we set the input ranges for signature ele-
+ments, public key coordinates, and hash value to the full 256-bit range [0, 2256 −1], and then
+run the algorithm to completion. This requires a representation of the ECDSA code as a se-
+quence of operations that the Python script can map to operations on MLInt instances. But
+we already have such a representation: the bytecode described in section 4.
+42
+
+The rr_ecdsa_range.py thus includes a textual copy of the bytecode (as found in
+the assembly implementations) coupled with a minimal parser that turns it into an internal
+representation of the bytecode instructions; a bytecode interpreter then executes the instruc-
+tion just like the virtual machine assembly implementations, except that it maintains the state
+variables as MLInt instances. Two API functions are provided:
+– test_ecdsa() uses exact ranges as inputs (signature, public key, hash value), i.e. ranges
+that pinpoint a single value, obtained from a test vector. All 492 Wycheproof test vectors
+are used. Since the input values are exact, all derived values in the bytecode execution are
+also exact, and this just runs the ECDSA verifier. Going through all the test vectors is
+meant to confirm that the bytecode interpreter in rr_ecdsa_range.py is properly
+implemented13.
+– range_analysis() instead sets inputs to the full 256-bit range. As the code unfolds,
+maximum possible ranges for all words and big integers are computed at all points of
+the execution; if the end of the computation is reached (the final _OK or _FAIL) with-
+out triggering any overflow check, then this proves that no overflow is indeed possible in
+the implementation. Additionally, extra tests are hooked on calls to the canonicalize
+routine, to check that the obtained big integer value range is indeed [0, m −1] for the
+relevant modulus m (n or p, depending on the location of the call).
+One non-trivial point about this range analysis must be explained: the executed code se-
+quence does not always run the same list of instructions, since conditional execution is used
+through the three provided “skip” instructions (_SKIPBITZ, _SKIPNZ and _SKIPNEG).
+When the tested value is known with an exact range, or at least with a range that is precise
+enough to yield the information (e.g. for _SKIPNEG, if the top limb range is entirely negative
+or entirely non-negative), then the interpreter can apply the skip semantics; otherwise, the
+skip operation is said to be unresolved and the interpreter must assume that both behaviours
+(skip and non-skip) are possible, run both, and merge the resulting states. Two MLInt values
+are merged by pairwise merging the ranges of their limbs and overall values, the merge of two
+ranges being the smallest range that includes both source ranges. This process must handle a
+few situations:
+– Whentheskipoperationisovera_CALLinstruction,thecalledfunctionmustbeinvoked
+with a fresh copy of the VM state, so that after the function execution, the output state
+resulting from the function invocation can be merged into the saved state.
+– Unresolved skips over _OK or _FAIL are simply ignored, since then the no-skip branch
+exits the VM and contributes no state to merge.
+– To handle conditional returns in functions (unresolved skips over _RET), the call stack
+records not only the caller’sinstructionpointer,butalsoaslotfora“mergedstate”which
+corresponds to the output states of all conditional returns. This allows computing the
+overall output state of the function, for all possible ways the function may exit.
+– For_SKIPNEG,thetwobranchesareexecutedoverstatesthattakeintoaccounttheresult
+of the test: the skipped instruction uses a state that includes the information that the top
+limb of the value in the accumulator was non-negative (the overall integer value range is
+13Running all 492 tests can take a lot of time, more than one hour for some choices of k and s, due
+to the inherent inefficiency of keeping track of ranges and allocating all these values.
+43
+
+also adjusted accordingly), while the saved state (for the “instruction skipped” branch)
+includes the information that the top limb of the value in the accumulator was negative.
+This is needed in order to prove that canonicalization works properly.
+– Ifthe skipinstruction appliesto _NEXT,_FNEXT,oranotherskipinstruction,thenthisis
+explicitly detected and an exception is thrown. This case does not happen in the ECDSA
+verifier bytecode. Supporting these cases would complicate the range analysis, since the
+simple execute-and-merge process would no longer suffice.
+The test_ecdsa() and range_analysis() functions accept the same parameters,
+the first three of which being mandatory:
+k
+Number of limbs (integer).
+s
+Limb radix size, in bits (integer).
+w
+Machine word size, in bits (integer).
+slf
+If True, then the Montgomery factors use signed interpretation (a longmul_s is
+used for multiplying fi with modulus limb mj, as shown in listing 2). For the integer
+canonicalization, as implemented in listing 5, to work properly, slf must be set to
+True. Default value is False.
+slv
+If True, then signed normalization is applied at the end of Montgomery multipli-
+cation; default value is False, which means that unsigned normalization is applied
+(as in listing 2).
+slm
+If True, then the moduli (p and n) are stored and used in signed-normalized rep-
+resentation; default value is False, which implies that the moduli are unsigned-
+normalized.
+spec
+A set of flags, as an integer which is a bitwise or of individual flags (flag j has numer-
+ical value 2j). When set, each flag adds a _NORM instruction at a specific place; these
+extra unsigned normalization instructions are needed in some cases, depending on
+the values of the other parameters (this will be detailed below). Default value is 0 (all
+flags cleared).
+A sample usage in a Python command-line prompt is the following:
+$ python3
+Python 3.12.3 (main, Mar
+3 2026, 12:15:18) [GCC 13.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> from rr_ecdsa_range import *
+>>> range_analysis(5, 54, 64, slf=True)
+OK
+>>> test_ecdsa(5, 54, 64, slf=True)
+................................ (etc)
+The fact that range_analysis() prints “OK” and exits without raising an exception
+shows that when k = 5, s = 54 (54-bit limbs), w = 64 (64-bit limbs), and Montgomery fac-
+tors fi are interpreted as signed values, then the entire ECDSA implementation never over-
+flows for any input. Running test_ecdsa() furthermore shows that the computation is
+correct enough for all 492 test vectors.
+44
+
+5.3
+Variants and Flags
+The effect of the slf, slv, slm and spec parameters is best explained with examples. If we
+try the calls above without slf=True, then Montgomery factors are unsigned and the calls
+fail. For instance:
+>>> range_analysis(5, 54, 64)
+<current IP = 8 [line 14]: ST 5>
+(...)
+assert x.low >= 0 and x.high <= mod_N - 1
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+The designated instruction is the _ST that immediately follows a call to canonicalize
+(with modulus n): the canonicalization relies on Montgomery reduction to return a value in
+[−γn, +γn] for some constant γ < 1, and this is ensured only if the Montgomery factors are
+signed; otherwise, the overall reduction factor f can become greater than R/2, and on output
+of Montgomery reduction, one may obtain an integer equal to or slightly greater than the
+modulus, which is not correctly handled by the current implementation of canonicalize,
+which does only one conditional addition of the modulus, but not a conditional subtraction.
+All our implementations thus use slf=True.
+The (k, s, w) = (5, 54, 64) setting with slf=True is what we implement in the 64-bit C
+code (gen64) and all three 64-bit assembly implementations (amd64, arm64 and rv64).
+If we set slm=True, then range analysis still passes successfully, but unit tests fail:
+>>> range_analysis(5, 54, 64, slf=True, slm=True)
+OK
+>>> test_ecdsa(5, 54, 64, slf=True, slm=True)
+(...)
+assert status == 'F'
+^^^^^^^^^^^^^
+AssertionError
+The effect of setting slm to True is that the moduli are internally signed-normalized in-
+stead of unsigned-normalized. For instance, in signed-normalized format, the two low limbs
+of p are −1 and 242, instead of 254 −1 and 242 −1, respectively. Signed normalization of
+the modulus has the effect that when adding fim to the intermediate result in Montgomery
+representation, the integer products fimj are smaller in absolute value, which can help with
+avoiding an integer overflow in the limbs. The effect is usually marginal, but with some com-
+binations of k, s and w, it can potentially help succeed through a sequence of operations that
+would otherwise potentially trigger an overflow. Unfortunately, using a signed-normalized
+modulus breaks the invert_mod implementation (listing 6) because the FLT code needs the
+exponent m −2 in canonicalized (unsigned-normalized) format and expects to obtain it by
+simply subtracting 2 from the low limb, which does not work if m is signed-normalized. The
+solution is to add an extra _NORM instruction to unsigned-normalize the exponent, which we
+can do by setting the special flag 0 through the spec parameter:
+>>> test_ecdsa(5, 54, 64, slf=True, slm=True, spec=1)
+................................ (etc)
+This enlarges the bytecode by 1 byte.
+45
+
+If we try to make a 32-bit version, we can find that with only slf=True, range analysis
+finds no workable solution with k ≤12. For instance:
+>>> range_analysis(12, 22, 32, slf=True)
+<current IP = 198 [line 217]: MUL 23>
+<current IP = 54 [line 50]: SKIPBITZ 4>
+(...)
+Exception: value range [-2273312274, 1056964453] exceeds
+container range [-2147483648, 2147483647]
+This indicates that a limb potentially overflows. The printed reference to the offending
+instruction points to a _MUL opcode which is near the end of the point_add_to_W routine.
+We can then try to put a _NORM call right before this multiplication: unsigned normalization
+makes individual limbs smaller, and the extra _NORM will do that on the accumulator, which
+is one of the operands of the _MUL. In the bytecode embedded in rr_ecdsa_range.py, we
+placed such a _NORM instruction, enabled with special flag 2 (i.e. by setting spec to 4):
+>>> range_analysis(12, 22, 32, slf=True, spec=4)
+OK
+>>> test_ecdsa(12, 22, 32, slf=True, spec=4)
+................................ (etc)
+This extra _NORM enlarges the bytecode by 1 byte. This is the setting used in the alternate
+x86 assembly implementation (amd64alt).
+Another option for a 12-limb 32-bit implementation is to use signed normalization at
+the end of each Montgomery multiplication (with slv=True). Signed normalization makes
+output limbs smaller (in absolute value) and thus should allow more successive additions and
+subtractions before the next multiplication. However, this would predictably break canoni-
+calization: the canonicalize routine (listing 5) uses Montgomery reduction (_MRED) then
+tests the sign of the output with _SKIPNEG, under the assumption that the top limb will
+contain the value sign, which is true for unsigned-normalized values, but not for signed-
+normalized values. When slv=True, we thus need an extra _NORM between the _MRED and
+the_SKIPNEG,whichinrr_ecdsa_range.pyisobtainedbysettingthespecialflag1(value
+2 into spec):
+>>> range_analysis(12, 22, 32, slf=True, slv=True, spec=2)
+OK
+>>> test_ecdsa(12, 22, 32, slf=True, slv=True, spec=2)
+................................ (etc)
+This specific setup is what is used in the 32-bit portable C implementation (gen32). In
+general, it is slightly less desirable than the previous option (with slv=False and an extra
+_NORM in point_add_to_W) because it means that the compiled code will contain instruc-
+tions for both signed and unsigned normalization, instead of just unsigned normalization.
+Anintriguingthirdoptionfora12-limb32-bitimplementationistouseasignedmodulus
+(slm=True, and special flag 0 set). It fails range analysis, but test vectors pass successfully,
+which can only mean one of two things: either the range analysis is not tight enough, and
+its inherent approximations lead it to reject a valid solution; or the value overflow is in fact
+possible, but rare, and the test vectors do not exercise the faulty condition. Avoiding rare edge
+case is exactly why we are doing an extensive range analysis, and we must therefore reject that
+option until an actual correctness proof can be established.
+46
+
+6
+Conclusion
+In this paper, we described an implementation technique for Montgomery multiplications
+that avoids most carry propagations and should be desirable for computations on platforms
+for which carry propagation is expensive, in particular RISC-V CPUs. The use of redun-
+dant representations with signed limbs also opens the possibility of performing unreduced
+limb-wise additions and subtractions, which may yield non-negligible performance bene-
+fits in a speed-oriented implementation of relatively complex code sequences, as is common
+in schemes using elliptic curves. This should be applicable, in particular, to post-quantum
+schemes based on isogeny graphs.
+An additional potential benefit of redundant representations is, for moduli with a spe-
+cial format, selection of an alternate representation that would allow more efficient opera-
+tions; for instance, the parameters proposed for the 128-bit security level of FESTA[3], a post-
+quantum isogeny-based public key encryption scheme, use a modulus m such that m + 1 is
+a multiple of 2632; in a classic unsigned and non-redundant representation, this leads to a se-
+quence of low limbs with a large value. However, in a signed redundant representation, we
+could set the lowest limb to −1, and then quite a few limbs beyond it will have value 0. Multi-
+plicationby−1isefficient,multiplicationby0evenmoreso.Theextentofsuchoptimizations
+depends on the modulus value, but might lead to non-negligible speed improvements. Best
+case seems to be moduli whose binary representation includes a very long sequence of ones,
+so that signed limbs may turn all these into zeros.
+We illustrated the technique with an example of questionable usefulness (a codegolfed
+implementation of ECDSA signature verification over NIST curve P-256), but appropriate
+for highlighting how a comprehensive range analysis can be performed, as is required in or-
+der to use the unreduced limb-wise additions and subtractions. Python-based tooling can in
+particular pinpoint where overflows may occur, and help decide where extra normalization
+steps need to be placed. The proof of impossibility of overflows, combined with the removal
+of most carry propagation, should help in making correct implementations.
+In the implementation process, we also estimated how reliable and useful the current
+crop of AIs can be for implementing cryptographic primitives. Verdict is: they produce re-
+sults quickly, but be very cautious, they tend to focus on test vectors, which cannot guar-
+antee correctness. You really should ask the AI to produce a companion verifiable proof of
+correctness.

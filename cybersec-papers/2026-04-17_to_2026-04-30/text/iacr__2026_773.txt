@@ -1,0 +1,1481 @@
+Practical Attacks on Session Messenger and Oxen Blockchain
+Tingfeng Yu
+School of Computing
+Australian National University
+Canberra, Australia
+Tingfeng.Yu@anu.edu.au
+Thomas Haines
+School of Computing
+Australian National University
+Canberra, Australia
+Thomas.Haines@anu.edu.au
+Abstract—Session is a decentralised secure (anonymous) mes-
+senger that combines onion routing with the Oxen Proof-of-
+Stake blockchain to provide metadata-private communica-
+tion. Our study presents the first comprehensive analysis
+of Session’s messaging protocol and its integration with the
+Oxen blockchain. In analysing Session and the underlying
+Oxen blockchain, we uncovered seven vulnerabilities.
+Most notably we discovered flaws in the Oxen consen-
+sus protocol which could allow network takeover in a realistic
+setting, thereby undermining the integrity guarantees on
+which Session’s anonymity layer depends. We also discovered
+serious vulnerabilities in Version 1 of Session’s group chat
+protocol. We conducted extensive simulations to analyse the
+impact of these vulnerabilities and provide recommendations
+to reinforce both the Oxen protocol and the Session client
+to mitigate these attacks.
+Index Terms—Session, Oxen, Proof-of-Stake, Blockchain,
+anonymity, Onion Routing, secure messengers.
+1. Introduction
+The ongoing interest in secure communication has
+instigated the development of various protocols and ap-
+plications to provide robust security guarantees under
+different settings. Some widely adopted protocols such as
+the Signal Protocol, including the subprotocols X3DH [1],
+Double Ratchet [2], and Sesame [3], have been analysed
+extensively by past research [4]–[6], and their end-to-end
+guarantees (confidentiality, authenticity, forward and post-
+compromise secrecy) are now fairly well understood.
+However, their threat models implicitly assume an
+adversary who can intercept or tamper with traffic, but:
+• either gains no value in identifying the patterns of
+communication, or
+• cannot observe the entire network.
+In practice, state–level surveillance [7] and large-scale
+traffic correlation by vendors [8] already stretch this as-
+sumption. A global passive adversary who can eavesdrop
+on every link in the network can gain valuable information
+solely from the metadata associated with the end-to-end
+encrypted message content. Protecting metadata therefore
+demands protocols that offer an additional notion of se-
+curity, metadata privacy or anonymity, in addition to the
+content-layer security.
+Session [9] is an instant messenger developed by
+the Oxen Project in 2020. It aims to meet this stronger
+goal by leveraging a decentralised onion routing network
+to minimise metadata exposure. Session’s onion network
+relies on Oxen, a Proof-of-Stake (PoS) blockchain, as an
+append-only public ledger that reflects network changes,
+e.g., new nodes joining the network, nodes being removed
+from the network, aiming to provide a resilient and trans-
+parent view of the network; a security compromise of
+Oxen can be exploited to break anonymity in Session.
+Despite having an open-source codebase and mil-
+lions of users [10], Session and its underpinning Oxen
+blockchain still lack an up-to-date, systematic description
+of its protocols, and have never been subjected to peer-
+reviewed study. The public whitepapers for Session and
+Oxen omit implementation details and have not been
+revised to reflect protocol changes introduced by later
+hard-forks; also missing are detailed security claims and
+argumentation. The lack of existing analysis, esoteric de-
+sign, and large user base make it an interesting object of
+study. The only publicly available assessment of Session
+to date was a security audit commissioned from Quarkslab
+in May 2021 [11], where auditors examined the Session
+client implementation for different platforms. However,
+the analysis was limited to the client software and focused
+on classical application security issues, such as local data
+protection and certificate handling. Crucially, assessment
+of Session’s protocol design was out of scope of the
+assessment. We aim to close these gaps by providing the
+first protocol security assessment of the Session and the
+Oxen blockchain and uncover vulnerabilities hidden from
+pure application testing.
+1.1. Contributions
+We present the first security analysis of Session and
+its integration with Oxen. Our main contributions are:
+Comprehensive view of Session’s protocol stack (§3)
+We extract and formally document the core protocols
+of Session and Oxen, filling numerous gaps in the
+public whitepaper.
+Four consensus-layer vulnerabilities in Oxen (§4)
+• OV1 and OV2. Quorum bias: We discovered that
+two Oxen quorums (Pulse for block production,
+and Obligation for performance monitoring) are
+mutually influential.
+OV1 and OV2 show how an attacker-dominated
+quorum can deterministically skew the member-
+ship of the other quorum in the very next block,
+snowballing its control over future rounds.
+
+• OV3. Insufficient vote validation: The network ac-
+cepts duplicate, early or late quorum votes, al-
+lowing malicious quorums to create repeated or
+premature/overmature network state changes to its
+advantage, vastly exacerbating OV1 and OV2.
+• OV4. Immediate deregistration: missing protocol
+integrity checks allow malicious obligation quo-
+rums to bypass the intended pipeline for punishing
+under-performing nodes, by irreversibly removing
+honest nodes from the network.
+We combine OV1–OV4 into practical network-
+takeover attacks and evaluate their feasibility under
+both simulation and emulation (§6), showing that
+≤30% adversarial stake suffices to control the entire
+network within ≈4 days; should such an attack occur
+it would force the system to hard-fork to recover,
+possibly irreversibly undermining trust in the system.
+Three client-level attacks on Session (§5)
+• SV1. Seed-node bias: Session clients rely on seed
+nodes to learn the onion routing network. We dis-
+covered that a single malicious seed node can sup-
+ply a fully adversarial service-node list to clients,
+subverting onion-path anonymity.
+• SV2. Inadequate rekeying: In group chat protocol
+version one, an incomplete re-key procedure allows
+departed members to read future messages.
+• SV3. Closed-group privilege escalation: In group
+chat protocol version one, inadequate access con-
+trol lets any member impersonate the sole admin
+when inviting new users; in the current protocol
+version (version two), we observe a weaker privi-
+lege escalation where an attacker can impersonate
+admin actions in members’ UI, though without
+altering actual group state.
+Mitigations (§7) We propose changes which either patch
+or partially mitigate the vulnerabilities in Oxen and
+Session; unfortunately, in several cases a complete
+patch is not possible because the vulnerability is
+inherent to the design.
+1.2. Responsible disclosure
+All confirmed vulnerabilities were privately disclosed
+to the Oxen developers on the 16th of July 2025, along
+with outlined mitigations that eliminate the demonstrated
+exploits. At the time of writing, the developers have
+implemented mitigations which are currently deployed on
+the testnet and staged for release to the mainnet.
+1.3. Paper Structure
+In Section 2 we provide the necessary preliminary
+knowledge on relevant constructions (onion routing and
+blockchain) and survey literature on secure messengers.
+In Section 3, we present the protocol details for the
+implementation of Session and Oxen. Section 4 and
+Section 5 detail the seven protocol-level and consensus-
+level vulnerabilities we uncover. Section 6 shows how
+these consensus-level vulnerabilities compose into prac-
+tical network-takeover attacks and evaluates their impact
+through both simulated and emulated experiments. Sec-
+tion 7 presents defences for each identified vulnerability,
+and Section 8 concludes our work.
+2. Background
+This section covers both preliminary background ma-
+terial for the techniques used in Oxen and Session, and
+related work on other secure messengers.
+2.1. Preliminaries
+Session and Oxen combine several common tech-
+niques in unusual ways. Our preliminaries will first cover
+the relevant techniques related to onion routing before
+covering those related to blockchain.
+2.1.1. Onion Routing. Onion routing [12] is a classic
+approach to achieve sender–receiver unlinkability by lay-
+ering secure public-key encryption with multi-hop for-
+warding. A client who wishes to message dest picks a
+random path of k relay nodes h1, . . . , hk and wraps the
+payload in k nested encryptions:
+ck = Encpkhk
+ addrdest, m
+
+ci−1 = Encpkhi−1
+ addrhi, ci
+
+for i = 2 . . . k
+with c0 sent to N1. Each relay Ni uses its private key
+to decrypt ci, learns the next hop addr Ni+1, and forwards
+ci+1 onwards; the final relay then passes the message m,
+which is normally also encrypted, to the destination.
+Early designs of onion routing assumed a known and
+static set of relays, leaving the peer discovery process
+outside the protocol model. However, it has become an
+important component in deployed onion routing networks,
+as network topology and node availability likely change
+over time. Modern implementations such as Tor [13] rely
+on trusted directory authorities to publish relay informa-
+tion and maintain network consensus.
+Onion routing provides effective protection against a
+local or partially-observing adversary, but breaks down
+under a global passive attacker who can observe the
+traffic on every link in the network, e.g., (Alice →N1,
+N1 →N2 →Bob). Leveraging timing correlations be-
+tween outgoing and incoming packets of every node in the
+network allows them to infer the origin and destination of
+a message despite the layered encryption and relaying.
+To mitigate simple intersection or timing attacks, many
+onion networks may inject dummy/cover messages at
+random intervals, so that an observer cannot tell which
+packets carry real payloads (as in modern Tor clients).
+2.1.2. Blockchain Fundamentals. A blockchain is an
+append-only, distributed ledger in which every block con-
+tains a hash pointer to its predecessor, forming a chain.
+Following Nakamoto’s foundational Bitcoin proposal [14],
+blockchains have been generalised into many settings.
+A secure blockchain offers two key properties under
+partially-synchronous network and Byzantine faults [15]:
+• Consistency (Safety): Honest nodes eventually agree
+on the same prefix of blocks; no two honest nodes
+will indefinitely maintain conflicting histories.
+• Liveness: New, valid transactions submitted by hon-
+est clients will eventually be accepted and finalised
+in the ledger; the chain will not stall forever.
+Achieving both properties under realistic network con-
+ditions, with message delays, dropped packets, and po-
+tentially malicious actors, is what consensus protocols
+
+like Proof-of-Work (e.g. Bitcoin) or Proof-of-Stake (e.g.
+Ouroboros) are designed to guarantee.
+Consensus definitions. The consensus mechanism
+is a fundamental component of a blockchain. It defines
+how a distributed network agrees on the next block in
+the presence of Byzantine faults like message delays and
+active adversaries. Consensus mechanisms in distributed
+systems are often analysed in the Byzantine fault tolerant
+(BFT) model, where nodes may behave arbitrarily due
+to faults or adversarial control. Classical results show
+that deterministic consensus can tolerate at most f mis-
+behaving nodes among 3f + 1 participants [16], [17].
+Therefore, classical BFT protocols tolerate fewer than
+one third Byzantine participants. However, blockchain
+protocols rely on different models and may aim to tolerate
+different adversarial thresholds. There are two widely
+used paradigms for consensus mechanisms, Proof-of-
+Work (PoW) and Proof-of-Stake (PoS).
+Proof-of-Work was introduced by Nakamoto in Bit-
+coin [14], PoW ties voting power to computational effort:
+the more hash rate a node controls, the greater its proba-
+bility of mining the next block. While this approach has
+proven robust, it carries two well-known drawbacks:
+• the energy cost of sustained hash computation, and
+• a tendency towards centralisation as economies of
+scale favour large mining pools.
+Proof-of-Stake was proposed on the Bitcoin Forum
+[18] as a natural alternative to the energy-intensive mining
+of PoW. It was subsequently implemented in PeerCoin
+[19] and formalised in later works [20], [21]. In PoS
+blockchains, voting power is proportional to the stake
+of a participant rather than computational power; the
+definition of stake varies between implementations but the
+idea is that the validators’ voting power is constrained
+by their share of the currency and if they misbehave
+they can be financially penalised. By shifting the resource
+from computing power to capital at risk, PoS aims to
+broaden participation, reduce energy consumption, and
+mitigate miner centralisation. Part of the success of PoS
+blockchains could be attributed to the fact that entities
+who are capable of mounting attacks must hold significant
+stake, and the stake value is tied to the reputation of the
+system, which would be undermined by attacks.
+2.1.3. Proof-of-Stake Mechanics. Proof-of-Stake (PoS)
+uses a stake-weighted lottery, meaning that the probability
+of participants being elected to create the next block is
+proportional to the stake they own. A PoS blockchain
+needs to solve the following problems:
+Committee election. How to sample block pro-
+posers and validators based on stake? An example is
+the VRF-based self-sortition used by Algorand [22] and
+Ouroboros Praos [23], where each node self-checks eli-
+gibility with a sortition function. Let s denote the user’s
+stake, S the total stake, R the public randomness derived
+from the current chain state. the sortition function outputs
+a hash vsel, a proof πsel, and a selection result jsel:
+(vsel, πsel, jsel) ←Sortitionsk
+ s, R, S
+
+.
+The Sortition function has two layers:
+• Verifiable Random Function (VRF): A VRF [24] is
+a pseudorandom function with a publicly verifiable
+proof of correctness. Sortition algorithm evaluates
+a VRF on the public randomness R, produces a
+hash and proof: (vsel, πsel) ←VRFsk(R). The proof
+allows anyone to verify the hash using the public key
+corresponding to sk but does not allow the adversary
+to predict ahead of time what effect the randomness
+will have on the honest user’s selection.
+• Stake-Proportional Selection: An algorithm that pro-
+duces a selection outcome jsel given the VRF output,
+with the likelihood of selection proportional to the
+user’s stake Pr[jsel > 0] ∝s/S. A node is eligible
+in the round iff jsel = 1.
+Honest nodes reveal their eligibility by broadcasting
+(vsel, πsel, jsel). Because the VRF output is unpredictable,
+and the threshold depends only on the public stake ratio
+s/S, the election is provably fair as no adversary can bias
+vsel after seeing the public randomness.
+Randomness maintenance. How to generate unbi-
+ased public randomness for future committee election?
+The security of a PoS blockchain relies on its randomness,
+which must be unpredictable until the current block is
+final and bias-resistant such that no adversary can skew
+the randomness to gain advantages in future committee
+selections. Randomness maintenance in deployed PoS
+blockchains (e.g., Praos and Algorand) often involves two
+scales: per-block randomness produced by each block
+proposer, and the public randomness aggregated from a
+window of per-block randomness. The latter is used for
+committee selection.
+2.2. Related Work
+Messaging systems without extensive analysis are
+prone to security vulnerabilities, even when they are de-
+ployed in applications used by millions of users globally;
+we discuss a few examples. Signal’s double-ratchet and
+X3DH handshake protocols have been formalised and
+proven to provide strong guarantees such as forward and
+post-compromise secrecy [25], [26]. However, implemen-
+tation analysis of the Signal Android client and server
+code from [27] discovered that the notion of forward
+secrecy and future secrecy are too weak at a code level,
+despite both properties being proven to hold in theoretical
+evaluation of the protocol. Additionally, researchers dis-
+covered that the Signal app does not have one of its docu-
+mented features: the Sesame algorithm, a session manage-
+ment algorithm developed to extend the Signal Protocol
+to a multi-device setting [3], was not fully implemented in
+the app as the session recovery mechanism was missing.
+Similarly, reverse-engineering and formal analysis work
+on Threema, a proprietary secure messenger, uncovered
+design flaws that enable message duplication, denial-of-
+service, and key-recovery attacks [28].
+Another strand of research on secure messengers fo-
+cuses on anonymity. While most secure messengers aim to
+provide strong security guarantees to protect the message
+content, the network-level metadata associated with these
+packets often reveals sensitive information, such as the
+sender and receiver information (e.g., IP address), and
+other details that can potentially be used to infer the
+nature of the conversations, or the sender-receiver identity.
+Several deployed messengers have taken network-level
+privacy into their security goals:
+
+• Bridgefy [29] uses a mesh-network design to facili-
+tate decentralised messaging;
+• xxMessenger [30] uses cMix [31], [32], a low latency
+mixnet as its anonymity layer;
+• Briar [33], Ricochet [34], and Session [9] use onion
+routing.
+Tor [13], the most widely deployed onion-routing
+network, has influenced the design of several instant
+messengers. Both Ricochet and Briar use Tor to provide
+metadata privacy. However, Tor’s peer discovery process
+relies on a small set of trusted directory authorities which
+raises concerns about centralisation and single points of
+failure. Motivated by these concerns, the Loki Foundation
+(later rebranded to the Session Foundation) proposed the
+LokiNet, a custom onion routing network for Session [35],
+to replace directory servers with the Oxen proof-of-stake
+blockchain, where Oxen provides a decentralised public
+record of the onion relay network state.
+Despite the widely recognised importance of metadata
+hiding in the field of anonymity research, systems that
+promise metadata privacy remain relatively understudied.
+Among the four metadata-private messengers listed above,
+only Briar and Bridgefy have received published security
+analyses. Song’s study of Briar [36] provides the first com-
+prehensive documentation of its bespoke protocol stack,
+while Albrecht et al. [37] reverse-engineered Bridgefy’s
+Bluetooth-mesh protocol and uncovered multiple flaws
+that break the application’s privacy claims.
+However, findings of these works are closely tied to
+the design of the respective systems. Session differs sub-
+stantially in its architecture, and therefore insights from
+these studies are not directly transferable. Session is not
+the first messenger that relies on Onion-routing, but the
+first that uses a blockchain consensus layer to govern the
+routing infrastructure. To our knowledge, Oxen’s proof-of-
+stake consensus has not previously been studied. Vulnera-
+bilities at this layer could allow adversaries to manipulate
+quorum decisions and influence the composition of the
+routing network itself, fundamentally undermining the
+privacy of Session. To bridge the gap, we provide the
+first in-depth analysis of Session and Oxen, focusing on
+the quorum mechanisms that determine the set of service
+nodes operating the onion routing network.
+3. Implementation Analysis
+In this section, we first describe what security claims
+Sessions and Oxen make, before presenting the core
+protocols of both systems as implemented. We begin
+with Session’s decentralised architecture: its end-to-end
+encrypted messaging protocol, swarm-based storage, and
+onion-routing network. We then turn to Oxen, the PoS
+blockchain that underpins Session’s integrity.
+3.1. Security Properties
+Ratings of secure messengers are a common topic in
+blog posts, published by various companies and media
+outlets; such rankings often rate Session very highly for
+security [38]–[41]. However, to the best of our ability to
+tell Session makes only a few informal security claims and
+no formal (in the academic sense) claims. It is possible to
+infer certain security objectives from the design decisions
+and by analogy to other PoS blockchains.
+Before introducing these security properties, we first
+explain the role of Oxen blockchain in relation to Session.
+Session uses an onion routing network to provide metadata
+privacy, which relies on the Oxen blockchain to maintain
+a decentralised and consistent view of active peers/service
+nodes and to incentivise the peers to participate. This is
+similar to the blockchain network underlying the deploy-
+ment of cMix [30]. While the developers do claim that
+“By using this network, Session doesn’t have a central
+point of failure, and Session’s creators have no capacity
+to collect or store personal information about people using
+the app." [42] the references in the white paper focus on
+the financial incentive side more than security [43]. Our
+analysis, particularly vulnerability SV1 (5.1), suggests that
+the Session approach does not offer any advantages over
+the centralised directory service approach taken by Tor.
+In this study, we focus on the security properties of
+Oxen’s consensus mechanisms for Pulse and Obligation
+quorum (discussed later), both quorums produce decisions
+that affect service node state. Since Oxen does not appear
+to publish a formal security model for either quorum,
+we extract the following intended properties from the
+design rationale in oxen-improvement-proposals, and the
+implementation oxen-core:
+P1 Deterministic quorum selection: Given
+the
+same
+chain state, all nodes deterministically derive the
+same quorum composition.
+P2 Threshold authorisation: A
+quorum
+decision
+is
+valid only if it is authorised by the protocol-defined
+threshold of members.
+P3 Temporal quorum authority: A quorum can exer-
+cise its authority only for its designated round, height,
+or bounded validity window.
+P4 Quorum selection fairness: A party’s influence over
+quorum selection outcome should be determined only
+by its stake fraction and the distribution induced
+by protocol randomness, it cannot be increased by
+deviating from honest execution.
+Oxen service nodes may undergo state changes autho-
+rised by Obligation quorums, which implies:
+P5 State change integrity: Every accepted state change
+must represent a legal transition given the service
+node’s state.
+3.2. Methodology
+We studied Session and its surrounding stack based on
+the official specification and implementations:
+• session-android
+(commit:
+bdb6e7d
+and
+e4c16ae): the Android client of Session. Commit
+bdb6e7d corresponds to the group chat protocol v1
+(the version current at the start of our study), while
+e4c16ae implements v2, which we also examined
+to assess the current state of the protocol.
+• oxen-core (hard fork: 22, commit: 55f6f10): im-
+plementation of the Oxen blockchain protocol, in-
+cluding the consensus protocol, transaction valida-
+tion, and peer-to-peer communication with service
+node management (e.g., swarm updates).
+
+Our methodology combined specification review with an
+implementation-level audit. We conducted a manual code
+review of the Session and Oxen repositories to extract
+the underlying protocols, cross-checking them against the
+official specifications and reconstructing missing/outdated
+details; some properties of the protocol only become
+apparent during our emulation and simulation. To further
+our analysis and provide empirical proof of our findings:
+• we developed a patched Session client for validating
+attacks on group chat;
+• we deployed a local testnet to validate the presence
+of several Oxen protocol vulnerabilities;
+• we implemented a lightweight simulation of Oxen,
+parameterised
+to
+reflect
+mainnet
+conditions,
+to
+demonstrate the practical exploitability of network-
+takeover attacks (Section 6).
+3.3. Session
+In Session, messages are relayed and stored by a
+distributed onion-routing network of Service Nodes. Each
+Service Node fulfills three roles:
+• Onion router: forwards layered (onion) encryption
+packets across three-hop paths.
+• Storage server: stores offline messages for its as-
+signed users.
+• Blockchain worker: validates Oxen consensus and
+records state changes, which in turn drive swarm
+rebalancing and node-register/deregister events.
+Service Nodes are logically grouped into swarms for
+message storage. Each swarm has 5–9 Service Nodes.
+Oxen’s deterministic, block-triggered swarm assignment
+algorithm uses a pseudorandom generator seeded by the
+block’s hash to rebalance underfull (< 5 nodes) and
+overfull (≥10 nodes) swarms toward the ideal size of
+seven. All incoming Session messages are redundantly
+distributed across nodes in that swarm.
+Figure 1 defines the key notations and data types
+for later references. Each service node maintains a local
+view of the network state S : State. In addition, we
+use snsa and snsd to represent the list of active ser-
+vice node (nodes that are currently participating in the
+network) and decommissioned service nodes (nodes that
+have failed performance checks but have not yet been de-
+registered from the system), where S.sns = snsd
+S snsa
+and ∅= snsd
+T snsa. We now illustrate Session’s core
+protocol by tracing the workflow from onboarding to
+sending the first end-to-end message.
+3.3.1. Onboarding. A new client generates a random
+seed, from which it derives two long-term key pairs:
+• An Ed25519 signing key pair (skid
+s , pkid
+s ), computed
+from the padded seed. The public key pks serves as
+the user’s Session ID.
+• An X25519 keypair (skenc
+s , pkenc
+s ), derived from the
+Ed25519 key pair via Curve25519 conversion, is used
+as the client’s identity key within libsignal (imple-
+menting the end-to-end encryption part of the Signal
+protocol) for end-to-end encryption.
+To use Session’s onion routing network, a new client
+would also fetch the snsa via one or more seed nodes (a
+hard-coded service node that bootstraps network entry);
+the exact details lead to a vulnerability (Section 5.1).
+3.3.2. Contact Discovery. To send a message, the sender
+must first obtain the recipient’s public identity key pkid
+r
+and encryption key pkenc
+r
+out-of-band.
+3.3.3. Message Sending. The complete message-sending
+flow is illustrated in Figure 2, which corresponds to the
+five steps described below.
+1) E2E encryption: Let pkid
+s be the sender’s signing
+key/Session ID and pkenc
+r
+the recipient’s encryption
+key. The sender binds the message to itself and the
+recipient by signing
+σ ←Signskid
+s
+ m∥pkid
+s ∥pkenc
+r
+
+.
+Form the payload p ←m∥pkid
+s ∥σ, then E2E encrypt
+p with Enc(·) (Algorithm 1):
+ce2e ←Enc(pkenc
+r
+, p),
+where Enc(pk, p) denotes a hybrid encryption that
+takes a payload p and an X25519 public key pk as
+input. It first generates an ephemeral X25519 key-
+pair; then derives a symmetric key from ECDH and
+HMAC, and encrypts the payload with AES-GCM.
+Algorithm 1: Enc(pk, p)
+Output: c∥epk: ciphertext c and ephemeral
+public key epk
+Operation:
+1
+(esk, epk) ←X25519.EphemeralKeyGen()
+2
+k ←HMAC“LOKI”
+ ECDH(esk, pk)
+
+3
+c ←AES-GCM.Enck(p)
+4
+return c∥epk
+2) Peer Swarm Discovery: To contact a recipient, the
+client must resolve the recipient’s Session ID pkid
+r to
+the recipient’s swarm. The client submits pkid
+r to a
+Service Node in snsa via the getSwarm(pkid
+r ) API.
+The node deterministically maps pkid
+r 7→idswarm and
+returns the swarm description swarmr, i.e., a set of
+Service Nodes specified by onion address, port, and
+public key:
+swarmr : SNode[] ←getSwarm(pkid
+r )
+3) Onion construction: The client selects three random
+Service Nodes (h1, h2, h3) and one destination node
+d from the recipient’s swarm, then constructs the
+onion-encrypted ciphertext by wrapping the E2E en-
+crypted payload (pe2e ←pkid
+r ∥ce2e) outward, from
+the destination node to the guard, by repeated ap-
+plications of Enc(·) (Algorithm 1). The resulting
+layered onion construction is as follows:
+cd ←Enc(pkenc
+d , pe2e), pd = pkid
+d ∥cd
+. . .
+ch1 ←Enc(pkenc
+h1 , p2), onion = ch1
+4) Relay: The onion is sent to the guard h1; each hop
+hi peels off its layer using the encryption secret key,
+revealing the next hop (addressed by its public key
+pkid
+hi+1) and the remaining onion. The peeled onion
+is then forwarded along the path until the destination
+node, which fully decrypts the innermost payload,
+
+• SNode := {pk, lastPulse, active, . . . }: a service node record consisting of the node’s public key, the block
+height (lastPulse) at which it last participated in Pulse (see Sec.3.4.1), and its activeness active ∈{⊤, ⊥}.
+• Block := {blockHash, pulseRand, txs, . . . }: a blockchain block containing its hash, a randomness field, and
+transaction references.
+• OQ := {V, W}: an Obligation quorum, containing the validators’ public keys V , workers’ public keys W.
+• PQ := {p, V }: a Pulse quorum, containing the block producer’s key p and validators’ keys V .
+• StateChange ∈{REG, DEREG, DECOM, RECOM, NOOP}: the type of service node state transition.
+• Tx := {height, sc, iw, votes}: a state-change transaction record, where height is the cached height for the
+Obligation quorum, sc is the state change operation, iw is the index of the target worker within the relevant
+Obligation quorum, and votes = [(v1, σ1), . . . , (vm, σm)] is the list of validator indices and signatures.
+• State : {B : Block[], sns : SNode[], txs : Tx[], Q : OQ[]}: The network state, consisting of the blockchain, service
+nodes in the network, pending transactions, and cached Obligation quorums.
+Figure 1: Notation
+obtaining the E2E encrypted message addressed to
+the receiver: pe2e := pkid
+r ∥ce2e. The destination node
+d broadcasts the message to all nodes in the swarm,
+each will retain the message for retrieval.
+5) Message Retrieval: The receiver polls its swarm for
+incoming messages. The requested swarm node will
+return any messages with a matching Session ID pkid
+r .
+It is clear that if all three Service Nodes in the chosen
+path are adversarially controlled then the message sending
+protocol provides no anonymity; this is a common limi-
+tation of any system attempting to distribute trust but the
+vulnerabilities in Oxen allow the adversary to control all
+active Service Nodes within the threat model.
+3.4. Oxen
+The Oxen blockchain serves as a public ledger for the
+network state, where blocks are produced through quorum
+consensus and state changes are logged on-chain as trans-
+actions. The two quorums that are particularly relevant to
+this paper are the Pulse quorum for block creation, and the
+Obligation quorum for node activity monitoring. Table 1
+shows the essential network parameters used by Oxen’s
+mainnet and their values at time of this study.
+Parameter
+Value
+Pulse quorum size nPulse
+12
+Pulse threshold kP
+7
+Obligation validators nv
+10
+Obligation workers nw
+Max(0.01 × |S.sns|, 50)
+Obligation threshold kO
+7
+Pulse entropy lag pulseLag
+21 blocks
+Obligation vote lifetime voteLife
+60 blocks
+Cache delay reorgBuffer
+11 blocks (Appendix C.3)
+TABLE 1: Network Parameters ρ
+Oxenρ(Si) models the core Oxen protocol as a lo-
+cal state-transition function parameterised by the network
+parameters ρ. Our model presents Oxen at the level of
+successive chain states, while omitting lower-level im-
+plementation details such as network communication and
+low-level data format. Appendix C.1 discusses these ab-
+stractions in more detail.
+Given a service node’s pre-state Si : State, Oxenρ
+returns the post-state Si+1 obtained after the next accepted
+block is produced. The protocol proceeds as follows: First,
+it yields a new valid block b through RunPulseρ(Si),
+which abstracts the block production process involving
+Pulse quorum (Sec. 3.4.1). Then, the protocol updates
+the state using b: it appends b to the chain, removes
+transactions in b from the mempool, updates the ser-
+vice node list, derives and caches the Obligation quorum
+(Sec. 3.4.2) for the new height, and runs the Obligation
+quorum. Any state-change transactions produced by the
+running Obligation quorum are validated then added to the
+mempool. Next, we present the details of each quorum.
+Algorithm 2: Oxenρ(Si)
+Input: Current state Si
+Output: Next state Si+1
+Operation:
+1
+b ←RunPulseρ(Si)
+▷Alg. 3
+2
+Si+1.B ←Si.B ∪{b}
+3
+Si+1.txs ←Si.txs \ b.txs
+4
+Si+1.sns ←UpdateSNS(Si.sns, b.txs)
+▷App. C.2
+5
+Si+1.Q[b.height] ←GenOblρ(b, Si+1.sns)
+▷Alg. 8
+6
+txsobl ←RunOblρ(Si+1)
+▷Alg. 10
+7
+Si+1.txs ←Si+1.txs ∪{tx ∈txsobl :
+ValidTx(tx, Si+1)}
+▷Alg. 11
+8
+return Si+1
+3.4.1. Pulse quorum. RunPulseρ(Si) models the proto-
+col’s top-level behaviour for block production with Pulse
+consensus, the protocol runs up to 255 rounds (an internal
+counter for each height) to produce a valid block, then
+falls back to PoW (Proof-of-Work) if no valid block is
+produced. At each round, the protocol generates and runs
+a Pulse quorum.
+Quorum Generation. GenPulseρ(Si, r) and its
+helper functions illustrates the Pulse quorum generation
+process, which involves the following steps:
+• sorts the active node list snsa by lastPulse to
+favour nodes that have waited longer;
+• GetPulseEntropyρ(Si.B, r) computes entropy values
+using randomness from a fixed window of blocks
+([bstart, . . . , bend]);
+• GetSIρ(E, |snsa|) maps the resulting entropy vector
+E to SI, a list of indices within [0, ⌊|snsa|
+2
+⌋);
+• The indices SI are then applied directly to the sorted
+active node list to finalise the pulse quorum selec-
+tion via SN ←ApplySIρ(SI, snsa). The resulting
+
+Sender (knows
+snsa, (skid
+s , pkid
+s ),
+(pkenc
+r , pkid
+r ))
+Active Nodes snsa
+Path: [h1, h2, h3, d]
+Receiver’s Swarm: swarmr
+Receiver
+σ ←Signskids
+ m∥pkid
+s ∥pkenc
+r
+
+;
+ce2e
+r←−Enc(pkenc
+r
+, m∥pkid
+s ∥σ)
+1. E2E Encryption
+swarmr ←GetSwarm(pkid
+r )
+2. Get Swarm
+[h1, h2, h3]
+r←−snsa;
+d
+r←−swarmr;
+Constructs onion-encrypted ciphertext onion
+3. Onion Construction
+Sender →h1: onion
+decrypt-then-relay: h1 →· · · →d: cd
+d: decrypt cd then broadcast the decrypted message pe2e := pkid
+r ∥ce2e;
+4. Relay
+swarmr ←getSwarm(pkid
+r )
+s
+r←−swarmr
+Receiver →s: pkid
+r
+s →Receiver: me2e
+5. Retrieval
+Figure 2: Session Send Message
+Algorithm 3: RunPulseρ(Si)
+Input: current state Si
+Output: Pulse block b
+Operation:
+for r ←0 to 255 do
+1
+PQr ←GenPulseρ(Si, r)
+▷Alg. 4
+2
+b ←RunPulseRoundρ(PQr, Si, r)
+▷Sec. 4
+3
+UpdateLastPulse(Si.sns, PQr, i)
+▷App. C.2
+if b is a valid block then
+4
+return b
+5
+return b produced via PoW fallback
+prefix of SN determines the new Pulse quorum:
+element SN[0] is the block producer and nodes
+SN[1 : nPulse −1] are validators.
+Running Pulse quorum. Each Pulse round consists
+of multiple stages. For simplicity, we abstract it into four
+stages that are central to the vulnerabilities we uncovered:
+1) Handshake. The network has finalised the nodes
+participating in Pulse for producing the next block.
+Algorithm 4: GenPulseρ(Si, r)
+Context:
+ρ: Network parameters
+Input: Current state Si := {B, sns, txs, Q},
+Round r
+Output: PQ : PQ
+Operation:
+1
+snsa ←[sn ∈Si.sns | sn.active]
+2
+snsa.Sort(key = lastPulse)
+3
+E ←GetPulseEntropyρ(Si.B, r)
+▷Alg. 5
+4
+SI ←GetSIρ(E, |snsa|)
+▷Alg. 6
+5
+SN ←ApplySIρ(SI, snsa)
+▷Alg. 7
+6
+p ←SN[0].pk
+7
+V ←{SN[i].pk | 1 ≤i < ρ.nPulse}
+8
+PQ ←{p, V }
+9
+return PQ
+Now the validators broadcast a handshake message
+to other validators to indicate its activeness.
+2) Bitset. Next, each validator produces a bitset Vi
+to indicate which validators are active based on
+the received handshake message (e.g., 00000000010
+indicates that only the second validator is active).
+
+Algorithm 5: GetPulseEntropyρ(B, r)
+Input: B := [b0, . . . , bi], round r
+Operation:
+1
+E ←[]
+2
+start ←i −ρ.pulseLag
+3
+end ←start + ρ.nPulse
+for j ←start to end −1 do
+if bj is a Pulse block then
+4
+ej ←Hash(r∥bj.pulseRand)
+else
+5
+ej ←Hash(r∥bj.blockHash)
+6
+E.Append(ej)
+7
+return E
+Algorithm 6: GetSIρ(E, n)
+Operation:
+1
+SI ←[0]
+2
+ihalf ←⌊n
+2 ⌋−1
+for i ←1 to ρ.nPulse −1 do
+3
+imax ←Min(ihalf, n −i)
+4
+r
+$(E[i])
+←−−−−{0, . . . , imax −1}
+5
+iswap ←i + r
+6
+SI.Append(iswap)
+7
+return SI
+Validators then broadcast this bitset and sign received
+bitsets that they agree with. The quorum will agree
+on the bitset with the most validators’ signatures V ∗
+i .
+All validators included in the final bitset V ∗
+i
+must
+participate in subsequent Pulse stages, and validators
+not included cannot participate in subsequent stages.
+Once a valid V ∗
+i
+is finalised, the block producer
+populates the block template with transactions in the
+mempool, then broadcasts it to the validators.
+3) Commit-Reveal. Upon receiving the block template,
+each participating validator v ∈V ∗
+i
+generates a
+random value rv, then broadcast the commitment
+Hash(rv). Upon receiving commitments from all par-
+ticipating validators. The quorum proceeds to broad-
+cast the preimage rv. After receiving and verifying
+all revealed randomness {rv}v∈V ∗
+i . They are aggre-
+gated to form the final pulseRandi in the block
+header. This commit and reveal protocol means that
+a single honest validator serves to ensure a random
+pulseRandi, up to the bias introducible by aborts.
+4) Sign. Validators verify that the revealed randomness
+Algorithm 7: ApplySIρ(SI, SN)
+Operation:
+for i ←0 to ρ.nPulse −1 do
+1
+x ←SN[SI[i]]
+2
+SN[SI[i]] ←SN[i]
+3
+SN[i] ←x
+4
+return SN
+matches the commit. Upon verification, each valida-
+tor computes an aggregated pulseRandi, adds it to
+the block header and signs the block. This commit
+and reveal protocol ensures that the aggregated ran-
+domness pulseRandi remains random as long as one
+validator is honest.
+Upon collecting ≥kP signatures on the final block,
+it is broadcasted to the network.
+3.4.2. Obligation quorum. Obligation quorums monitor
+service node activity and propose state changes. Each
+quorum has nv validators and nw workers. Validators test
+workers (uptime proofs, storage reachability, participation
+metrics), then propose state change (if any) for the node.
+Each state change requires ≥kO validator votes.
+Quorum Generation. Immediately after each new
+block b is accepted, Oxen derives a new Obligation quo-
+rum and caches it to the state. GenOblρ(b, sns) is called
+to generate a new Obligation quorum from the block’s
+blockHash and the current service node list sns. The
+algorithm extracts the list of active nodes snsa and de-
+commissioned nodes snsd, and sorts each list by public
+key value. The lists are then shuffled and combined to
+yield a new Obligation quorum.
+Algorithm 8: GenOblρ(b, sns)
+Output: OQ : OQ
+Operation:
+1
+snsa ←[sn ∈Si.sns | sn.active]
+2
+snsd ←[sn ∈Si.sns | ¬sn.active]
+3
+snsa.Sort(key = pk)
+4
+SN ←Shuffleρ(b.blockHash, snsa, snsd)
+5
+V ←{SN[i].pk | 0 ≤i < ρ.nv}
+6
+W ←{SN[i].pk | ρ.nv ≤i < ρ.nv + ρ.nw}
+7
+OQ ←{V, W}
+8
+return OQ
+Algorithm 9 describes the shuffling process, which
+seeds a pseudorandom generator with the block hash then
+applies a two-stage Fisher–Yates shuffle [44] to produce
+a shuffle of the two lists.
+Algorithm 9: Shuffle(r, snsa, snsd)
+Context:
+πr(L): permutes list L, seeded by r
+Output: shuffled list
+Operation:
+1
+Y ←|snsa|; Z ←Y + |snsd|; N ←ρ.nv
+2
+L0 ←[0, 
+
+[…middle truncated for length…]
+
+y must control an Obli-
+gation quorum. Let the number of obligation validators
+nv be 10, and the threshold kO be 7 (as on the mainnet),
+and adversarial fraction p, the probability that the next
+Obligation quorum is adversarial is approximated by:
+P(W) = P10
+k=7
+ 10
+k
+
+pk(1 −p)10−k. Assuming indepen-
+dent trials across blocks, the probability of the adversary
+winning within n blocks is 1 −(1 −P(W))n, which is
+79.8% when p = 0.3, n = 150.
+OV2: Biasing block randomness to control Obli-
+gation quorum
+Key Idea. An adversarially controlled Pulse quo-
+rum can choose the block to control who is elected for
+the next Obligation quorum.
+Details. Let V ∗
+i denote the participating-validator
+bitset finalised in the Bitset stage, bi denote the block
+template. As described in Section 3.4.1, only validators in-
+cluded in final bitset V ∗
+i can participate in the subsequent
+Commit-Reveal, and Sign stages. For each participating
+validator v, its random share rv is aggregated to form the
+Pulse randomness value bi.pulseRand for the block, and
+block hash bi.blockHash is derived from all header fields
+
+of the block, including pulseRand. After bi is accepted,
+Oxen derives the next Obligation quorum as
+OQi+1 ←GenOblρ(bi, Si+1.sns),
+which then applies a deterministic shuffle to the sns
+seeded by bi.blockHash to produce the quorum.
+This yields the vulnerability. Suppose the adversary
+controls at least kP validators in the current Pulse quorum.
+In the handshake stage, these validators can agree on
+a bitset V ∗
+i
+that excludes all honest validators, thereby
+preventing them from contributing random shares during
+the Commit-Reveal stage. Once the block template is
+fixed, every input to GenOblρ is public and deterministic
+except the random shares. Since only attacker-controlled
+validators can participate in the subsequent stages, the
+attacker can try different values for {rv}v∈V ∗
+i , compute
+the resulting pulseRand and block hash, evaluate the
+derived Obligation quorum OQi+1 offline, and stop when
+OQi+1 contains at least kO attacker validators. The rest
+of the Pulse stages can then proceed honestly.
+OV2 is not an attack on the obligation quorum gen-
+eration algorithm, but rather, an attack on the input block
+hash. By controlling the bitset, a Pulse quorum with
+≥kP attacker validators can control the pulse randomness
+shares and hence the block hash, thereby biasing the next
+generated Obligation quorum in its favour.
+Practical exploitability. The exploitability of OV2
+can be approximated similarly as for OV1. Given
+nPulse = 12 (11 validators), kP = 7, and adversarial
+fraction p, we have P(W) = P11
+k=7
+ 11
+k
+
+pk(1 −p)11−k.
+The probability of the adversary winning within n blocks
+is 96.2% when p = 0.3, n = 150.
+OV3: Obligation state-change transaction con-
+straints not enforced
+OV3 arises from the lack of temporal binding to an
+Obligation quorum’s authority. At block height h, Oxen
+intends to execute the cached quorum at height hObl =
+h−ρ.reorgBuffer (Algorithm 10). Hence, an Obligation
+quorum produced at height i is only expected to vote once
+when the chain reaches height i + ρ.reorgBuffer. How-
+ever, the validation logic for state-change transactions, as
+shown in ValidTxρ(tx, S), is insufficient to enforce this
+intended behaviour. It accepts a state-change transaction
+as long as: the referenced quorum exists (L3), the voter
+signatures and quorum membership are valid (L4-5), the
+worker index is valid (L6), and the referenced quorum
+height is within a generic vote-lifetime window (L7).
+Crucially, it does not bind the authority of an Obliga-
+tion quorum to its designated height, nor does it restrict
+the multiplicity of transactions produced by a quorum.
+This yields two vulnerabilities.
+• OV3.1: Early voting and late voting. An Obli-
+gation quorum generated at block i is intended to
+send its state-change transactions only after a fixed
+delay (reorgBuffer), i.e., beginning at block height
+i + reorgBuffer. However, the current implemen-
+tation accepts any transaction issued by the most
+recently stored quorum, permitting an adversarial
+quorum to vote immediately upon election, creating
+an immediate effect on biasing the active node list,
+Algorithm 11: ValidTxρ(tx, S)
+Operation:
+1
+OQ ←S.Q[tx.height]
+2
+h ←|S.B|
+3
+if OQ = null then return ⊥
+4
+if |tx.votes| < ρ.kO then return ⊥
+5
+if ¬ValidateVotes(tx.votes, S)
+▷App.
+C.2
+then return ⊥
+6
+pkw ←OQ.W[tx.iw]
+7
+snw ←{sn ∈S.sns | sn.pk = pkw}[0]
+8
+if snw = null then return ⊥
+9
+if ¬(h −ρ.voteLife ≤tx.height ≤h)
+then return ⊥
+10
+if tx.sc is redundant then return ⊥
+11
+return ⊤
+which increases the impact of OV1. Symmetrically,
+state-change transactions from a stale quorum (e.g.,
+at height i−reorgBuffer) may still be accepted by
+the network at arbitrary later heights.
+• OV3.2: Repeated voting. A quorum may submit
+multiple distinct state-change transactions across dif-
+ferent blocks. Since Oxen does not enforce a “one-
+vote-per-quorum” invariant, an attacker-dominant
+quorum can exert disproportionate influence by sub-
+mitting repeated or contradictory votes.
+OV4: Skipping decommission step
+In Oxen, service node state change follows a staged
+procedure, formalised by SelectStateChangeρ. An active
+service node that passes all tests undergoes no state
+change; a decommissioned node that passes all tests is
+recommissioned; a service node that failed test(s), will
+either be decommissioned and become temporarily inac-
+tive, or be deregistered and permanently removed from the
+state, depending on its remaining credit calculated based
+on its past activity/contribution.
+Algorithm 12: SelectStateChangeρ(w, pass, Si)
+Operation:
+1
+find sn ∈Si.sns where w.pk = sn.pk
+2
+if passed then
+3
+if ¬sn.active then
+return RECOM
+4
+return NOOP
+else
+5
+credit ←Calculate credit based on past
+activity of sn
+6
+if ¬sn.active then
+7
+if credit ≥0 then
+return NOOP
+8
+return DEREG
+else
+9
+return DECOM
+
+Oxen checks the validity of a proposed state change
+when validating the corresponding state-change transac-
+tion, as described in ValidTxρ(tx, S). However, the exist-
+ing check is too weak to enforce the intended procedure:
+it effectively only checks that the proposed transition is
+not redundant or impossible with respect to the node’s
+current state. Crucially, Oxen does not enforce that each
+deregistration transaction of a node is preceded by a
+decommission transaction, or that a decommissioned node
+must not be deregistered if it still has remaining credit.
+Therefore, an adversarial Obligation quorum can pro-
+pose to deregister any worker regardless of its current
+state, and the resultant state-change will be accepted and
+applied by the network. This drastically increases the
+power of an adversarial Obligation quorum, as a deregis-
+tered node is permanently removed from the network.
+4.1. Impact
+Referring back to the implied security properties in
+Section 3.1, OV1 and OV2 undermine P4 (Quorum Se-
+lection Fairness), which is a core requirement for a
+PoS blockchain. By strategically decommissioning nodes
+(OV1) or biasing block randomness (OV2), an attacker can
+skew both Pulse and Obligation quorum formation. This
+gives the adversary-controlled nodes a disproportionate
+advantage in future elections. OV3 breaks P3 (Temporal
+Quorum Authority), and OV4 breaks P5 (State Change
+Integrity), further amplify the power of an adversary by
+granting excessive power to the Obligation quorum.
+As discussed in Section 2.1.2, Byzantine fault toler-
+ant systems can tolerate at most one-third of adversar-
+ial participants, equivalently, one-third adversarial stake
+in PoS systems such as Oxen. In the next section, we
+show via simulation that combining these vulnerabilities
+can lead to practical network takeover without exceeding
+this threshold; our simulations are somewhat conservative
+because of the greedy approach they take to exploiting the
+vulnerabilities, it is likely they underestimate the power of
+a sophisticated adversary.
+If an adversary had exploited these vulnerabilities for
+network takeover, this would have caused the honest nodes
+to be decommissioned. It seems a safe assumption that
+the honest node maintainers would then have complained
+and the attack would have been noticed. There are various
+more subtle exploitations of these vulnerabilities which do
+not result in network takeover but would advantage the
+adversary in other ways; we have not carefully examined
+the block history of Oxen for such attacks but it is clear
+from our discussion with the developers that they do not
+believe exploitation is occurring or has occurred.
+5. Session Vulnerabilities
+Because Session runs atop the same service node in-
+frastructure as Oxen, consensus–layer vulnerabilities (Sec-
+tion 4) can directly undermine Session’s anonymity. In
+this section, we focus on weaknesses specific to Session’s
+protocols, independent of Oxen. When we began our ex-
+amination of Session, it was using version one of its group
+chat protocol. It has since migrated to group protocol
+version two and discontinued version one; this change
+occurred in November 2024. We included in Appendix
+B vulnerabilities which apply only to version one.
+5.1. SV1. Service Node Discovery
+As discussed, Session relies on a network of service
+nodes to relay messages and host group data. To join the
+network, a client first needs an entry point that provides
+the current set of active service nodes. Session bootstraps
+this process using a small set (currently three) of hard-
+coded seed nodes. On first use, the client queries three
+randomly chosen seeds, each of which returns its snapshot
+of the active service node list. The client accepts the result
+if the three snapshots are consistent. After bootstrapping,
+the client refreshes its view by querying random service
+nodes from the locally stored list. In theory, this approach
+should harden the protocol against a corrupt single seed
+node allowing the network to be spoofed to the client;
+in reality, the implementation introduces additional single
+points of failure rather than distributing trust.
+A malicious seed node can supply an adversarial list,
+making all future onion routes through attacker-controlled
+nodes. While the client would query three random seed
+nodes then compare the received list to check consistency,
+Session only has a small pool of hardcoded seed nodes
+(currently three), meaning that there is a 1/27 probability
+of querying the same seed three times. Thus, control of
+a single seed suffices to subvert a client’s view of the
+network with fairly high probability.
+5.1.1. Current Group Chat Protocol (version two).
+Both version one issues (Appendix B) are addressed
+in version two: all state changes (including add) are
+admin–only, and member departure triggers an ad-
+min–initiated rekey. We nevertheless observed a weak
+binding of control messages: group actions are split into:
+1) a configuration update that the admin publishes to
+the swarm (encrypted under the group key) and that
+clients periodically poll; and
+2) a control message used for immediate UI feedback,
+e.g., the control message for add (invite) is:
+m =
+ sender, t, inner
+
+inner =
+ op,
+invitees
+z
+}|
+{
+⟨pk1, . . . , pkℓ⟩, . . . , σ
+
+For control messages, the signature (σ) covers only
+type (op) and timestamp (t) and omits the content (in-
+vitees, in this example). Consequently, an adversary can
+record and replay a valid admin-signed control message,
+substitute the target while reusing the same signature and
+timestamp. Honest members accept the forged message
+and display it as a part of the group transcript, but the
+impact is limited to a misleading UI notification (e.g.,
+“x was invited to join the group”), as the authoritative
+group state is derived from admin–published metadata
+in the configuration plane. Figure 5 shows a setName
+replay where the attacker substitutes a different name
+under the same signature/timestamp (corresponding logs
+in Appendix B.1.3).
+
+blockchain
+B0
+r0
+txs = []
+...
+B21
+r21
+txs = []
+B22
+r22
+txs = []
+quorums
+. . .
+obl22
+state
+Shuffpul
+E = [e2, e3, e4]
+2
+5
+4
+3
+validators
+worker
+obligation (H23)
+obl18 = [s2, s4, s5, s3]
+predicted sortedpul (H24):
+[s10, s2, s3, s1, s6, . . . , s11]
+pulH24: [s10, s3, s1],
+SI : [0, 2, 3]
+...
+pulse (H23)
+dereg(s3)
+B23
+r23
+txs = [dereg(s3)]
+produces
+Figure 3: OV1: Obligation quorum biasing Pulse quorum at height 23
+blockchain
+B0
+r0
+txs = []
+...
+B22
+r22
+txs = []
+B23
+r23
+txs = [dereg(s3)]
+sns
+sortedpul = [s10, s2, s1, s6, . . . , s11]
+sortedobl = . . .
+state
+Shuffpul
+Shuffobl
+E = [e2, e3, e4]
+sortedpul
+sortedobl
+1
+6
+10
+validators
+producer
+pulse (H24)
+pulH24 : [s10, s1, s6],SI : [0, 2, 3]
+B24
+r24
+txs
+produces
+Hash(B24)
+6
+7
+5
+9
+validators
+worker
+predicted obligation
+obl24 = [s6, s5, s7, s9]
+Figure 4: OV2: Pulse quorum biasing Obligation quorum at height 24
+6. Network Takeover Attack on Oxen
+Combining vulnerabilities discussed in the previ-
+ous section, we present a practically-exploitable network
+takeover attack that allows an adversary controlling ≤
+30% of the stake to gain control over the entire network
+within days. Then, we analyse its impact with simulations.
+As mentioned in Section 3.4, the selection algorithm
+of Pulse maps block entropy to an index in the active
+node list, while state-change transactions produced by
+an Obligation quorum can affect the construction of the
+active node list. Therefore, an attacker-controlled Obli-
+gation quorum can strategically decommission the test
+nodes such that more attacker-controlled nodes will fall
+into indices for a future Pulse quorum (OV1).
+Additionally, each Obligation quorum is generated
+from the hash of a single block, meaning that once
+attackers control a Pulse quorum, producing a block
+that generates an attacker-controlled Obligation quorum
+is straightforward (OV2). The reorgBuffer mechanism
+limits the immediate impact of OV2 by preventing a
+freshly generated Obligation quorum from voting imme-
+diately. However, the inadequate vote validation (OV3)
+allows this to be bypassed.
+6.1. Demonstrative Example
+To illustrate the network takeover attack with a con-
+crete example, we consider a simplified protocol model:
+nPulse = 3: the Pulse quorum consists of two validators
+and one block producer, requiring 2/2 validator sig-
+natures. nv = 3, nw = 1: the Obligation quorum
+consists of three validators and one worker, requiring
+2/3 validator signatures and reorgBuffer = 5.
+Bi each block contains a Pulse randomness value r and
+a set of transactions txs.
+Shuffpul(E, SN) combines
+Algorithm
+6
+with
+Algo-
+rithm 7, consistent with the Pulse quorum selection
+protocol described in Section 3.4.1.
+Shuffobl(r, snsa) follows Algorithm 9, except that the de-
+commissioned node list argument snsd is omitted, as
+we assume no pending decommission transactions
+and that an attacker-controlled Obligation quorum
+exploits OV4 to directly deregister nodes, leaving
+snsd empty throughout the example.
+state We assume that the network is synchronous and
+hence the state object is the same for all nodes. The
+sns stores the active node list, sortpul returns the list
+sorted by lastPulse and sortobl returns the list sorted
+
+by public key value.
+At block height 23 (Figure 3), the running Obligation
+quorum is retrieved from cache as state.quorums[23 −
+reorgBuffer] = obl18. This quorum is controlled by
+adversarial validators s4 and s5, with an honest worker
+s3. To exploit OV1 and bias the next Pulse quorum
+at height 24, the adversarial validators predict the next
+quorum formation using entropy values from blocks B2–
+B4 and the predicted active node list snsactive, sorted by
+lastPulse as it would appear at height 24 (which can be
+done by updating the lastPulse field of the current Pulse
+participants to 23, then re-sorting the list to simulate the
+view at the next height). The attackers then call Shuffpul
+to yield the predicted Pulse quorum s10, s3, s1 and swap
+indices [0, 2, 3]. Although only s1 is adversarial in the pre-
+dicted Pulse quorum, the attackers observe that removing
+the current worker s3 (at index 2 of the sorted active node
+list) would shift s1 and s6 to indices 2 and 3, respectively,
+making the next Pulse quorum attacker-controlled. They
+proceed to submit a deregistration transaction dereg(s3)
+to the mempool, such that the current Pulse quorum can
+include it to the new block B23 they are producing.
+At height 24 (Figure 4) the deregistration has taken
+effect and s3 is absent from snsactive. With the same
+swap indices the actual Pulse becomes [s10, s1, s6], and
+the attacker-controlled Pulse begins executing and exploits
+OV2 to extend control: by varying the Pulse randomness
+they influence the block hash and hence the Obligation
+quorum derived from that block. Concretely, the adversary
+repetitively calls Shuffobl(Hash(B24), sortobl) over differ-
+ent values for B24 with different randomness r24 until
+the derived Obligation quorum obl25 contains a winning
+attacker majority (e.g., s6, s5).
+While the running Obligation quorum at height 25
+should be obl20 given the cache delay value, the attacker-
+controlled quorum obl25 can exploit OV3 to immediately
+start running. Repeating this process yields a chaining
+effect in which biased Pulses and biased Obligations
+reinforce one another.
+6.2. Analysis
+6.2.1. Oxen Simulation. We used python scripts to sim-
+ulate the Oxen mainnet with the following parameters,
+matching the corresponding parameters used by the main-
+net (see Appendix C.3 for mainnet configuration):
+• network size: n = 2000, similar to the state of
+mainnet (≈1600 nodes)
+• Pulse quorum: nPulse = 12, requiring 7/11 validator
+signatures
+• Obligation quorum: nv = 10, nw = 50, requiring
+7/10 validator signatures
+We simulate an attacker controlling p·n nodes. Oxen does
+not state a formal global Byzantine threshold. However,
+one of its design documents considers adversary fractions
+0.25, 0.33, and 0.5. We therefore do not claim a precise
+adversarial fraction that Oxen should tolerate. Instead, we
+evaluate our attacks empirically across a range of adver-
+sarial fractions, and treat 0.33 as a high-end benchmark.

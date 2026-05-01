@@ -1,0 +1,1287 @@
+Secure and Updatable Single Password Authentication
+Devri¸s ˙I¸sler1[0000−0003−4895−8827], Hamidreza Saadi Dadmarzi2[0009−0000−7883−816X], and Alptekin
+K¨up¸c¨u2[0000−0003−2099−2206]
+1 IMDEA Networks Institute, Madrid, Spain
+devris.isler@gmail.com
+2 Ko¸c University, ˙Istanbul, T¨urkiye
+{hdadmarzi23,akupcu}@ku.edu.tr
+Abstract. Passwords remain the dominant authentication method despite weaknesses such as offline
+dictionary attacks and password reuse. Single Password Authentication (SPA) mitigates these risks by
+protecting high entropy secrets under one memorable password and distributing them across untrusted
+storage providers. However, existing SPA schemes cannot prevent preemption and overwrite attacks by
+storage providers, and they lack secure, efficient support for secret and password updates.
+We present UpSPA, an efficient, secure, and updatable threshold SPA that addresses both limitations
+without requiring changes on the login server. UpSPA prevents preemption through a storage provider
+specific high entropy identifier secret, supports secret updates via implicit authentication, and enables
+password updates via explicit authentication using a password protected signing key. We prove security
+in the ideal real paradigm, including resistance to offline dictionary attacks under standard static
+threshold corruption assumptions. Our evaluation shows low overhead and competitive performance
+compared to a prior SPA scheme that does not support updates.
+Keywords: Password authentication · threshold cryptography · offline dictionary attack.
+1
+Introduction
+Problem: Passwords remain the dominant method of user authentication and are employed for more ad-
+vanced techniques such as secret sharing [6] and key exchange [10]. More secure mechanisms such as hardware
+tokens and two-factor authentication exist, yet passwords persist because they are simple and familiar. This
+convenience, however, comes at a security cost: password databases are frequent attacker targets, and even
+large organizations struggle to safeguard them [1]. The risk is further amplified by password reuse across login
+servers [2]. Other alternatives such as cloud password managers do not always provide the strong security
+guarantees [30] implied by zero knowledge encryption claims, especially against a malicious server, due to
+practical attacks across the three systems, showing weaknesses in key escrow, item level vault encryption,
+sharing, and backward compatibility, many of which enable password recovery or full compromise.
+Single Password Authentication (SPA) schemes aim to provide formal security guarantees against
+attacks that undermine conventional password authentication [3]. An SPA enables a user to rely on a single
+human-memorable password across accounts, without requiring the user to store any high-entropy secret
+locally and without requiring login servers to store password-related verification information. Instead, SPA
+derives a high-entropy secret that is independent of the password, registers with each login server some
+verification information that is derived from a login-server-specific high-entropy secret, and protects this
+secret at one or more untrusted third parties, called storage providers (e.g., personal mobile devices or
+cloud storage), encrypted under the user’s password. Concretely, when a user registers with a login server,
+SPA generates a high entropy secret, secret-shares it, and stores the shares at storage providers under
+protection of the single password. The login server receives only verification information derived from its
+own login-server-specific high entropy secret and its domain; for example a hash output that binds the
+secret to the domain (domain information is included as a protection against phishing attacks trying to
+
+steal passwords). When the user later wants to authenticate, they reconstruct the secret using the password
+without revealing the password to any storage provider, and then complete authentication to the login
+server using the reconstructed secret and the login server information. In a threshold SPA, the secret is
+shared across multiple storage providers, and the user can reconstruct it by contacting any threshold many
+providers. Among prior SPA approaches [3,33,21,18,9], only TSPA [18] and DiSPP [33] adopt a threshold
+approach to storage.
+Alternatives: While SPAs resemble Single Sign-On (SSO) [4,7,29,24], a key distinction is that state-of-
+the-art SPAs can be deployed on top of traditional password authentication without requiring changes to
+login servers, and they never reveal the user’s password to any party (i.e. there are no trusted parties). On
+the other hand, SSO introduces an identity provider (IdP): the user authenticates to the IdP, often using a
+password, to obtain a token, such as a signature, that relying parties must accept for login (and therefore
+must trust the IdP). In contrast, SPA has no federation token and no authentication authority. Storage
+providers only assist the client in recovering a high-entropy per-service secret under the password, while
+authentication remains an end-to-end interaction between the user and the login server. Indeed, the login
+server is unaware that storage providers exist. Threshold SSO schemes such as [4] and its successors distribute
+the IdP role across multiple servers, yet the end result remains a token based federation flow in which relying
+parties (e.g., login servers) must verify and accept an IdP-issued token. Indeed, implementations explicitly
+target standard SSO token formats, e.g., OAuth compatible tokens.
+Limitations of existing SPAs: In a threshold SPA, each storage provider receives an account identifier
+and a share of the per-login-server high-entropy secret. The identifier is typically derived from the user
+identity and the login server domain, for example Hash(username ∥domain) which binds the verification value
+to the intended login server and reduces cross-site replay and misbinding. Storage providers cannot verify
+whether a requester actually knows the password (since this would result in a chicken-and-egg problem).
+As a result, storage providers maintain encrypted share records indexed by identifiers derived from the
+user identity and login server domain. This introduces weaknesses in how account state is created and
+updated. First, an adversary can preempt future registrations by injecting fraudulent identifier and random
+share entries into a storage provider for login servers where the user does not yet have an account, thereby
+preventing the user from later storing the correct shares. This is analogous to registering an account on
+behalf of someone else using their username or email before they do. In ordinary login systems, such abuse is
+typically prevented by ownership checks such as email verification. In SPA settings, where storage providers
+are not supposed to learn the password and may support anonymous writes for privacy reasons. Indeed,
+starting from initial SPA designs [3], privacy against storage providers were considered as a goal of SPA
+solutions. Therefore, a mechanism is needed to ensure that only the legitimate user can initialize account
+state for a given identifier. Second, if the storage provider’s update mechanism is insufficiently protected, an
+adversary may override existing account entries with forged shares by impersonating the user, compromising
+authentication integrity and potentially enabling account takeover. In prior SPA constructions, such overwrite
+style attacks can also facilitate offline dictionary attacks in case of secret or password updates. Preventing
+such attacks requires update procedures for both password changes and login-server-specific secret changes
+that cryptographically bind updates to the original account secrets and knowledge of the password, ensuring
+that only the original account owner can authorize modifications. However, secret and password update have
+received little to no attention in existing SPA solutions.
+In this work, we close these gaps by designing UpSPA, a secure and updatable threshold SPA that prevents
+preemption and unauthorized updates at storage providers while preserving compatibility with unmodified
+login servers.
+1.1
+Design Challenges and Solutions
+We now discuss the threats and design challenges in building a secure and updatable single password au-
+thentication (SPA) system consisting of users, login servers, and storage providers. Our goal is to design a
+
+secure updatable SPA protocol, called UpSPA, that remains secure under compromise of up to a threshold
+number of storage providers, supports both secret and password updates, and incurs minimal overhead, while
+addressing shortcomings of prior SPA solutions.
+To make the issues concrete, consider a user who creates an account at YouTube under an SPA design
+such as TSPA [18]. The user registers at the login server using verification information derived from a per-
+service high-entropy secret Rls, for example Hash(Rls ∥youtube.com) [18,33], and stores the corresponding
+password protected shares at storage providers (e.g., via an oblivious pseuduorandom function-derived key
+per storage provider). Storage providers typically index records using predictable identifiers derived from the
+user identity and domain, such as Hash(username ∥youtube.com) [18]. This enables preemption: an adversary
+who knows the username can inject a fake record under the predictable identifier, causing the storage provider
+to later reject the legitimate user’s record, since providers lack out of band confirmation mechanisms.
+Challenge 1: Preventing unauthorized account creation. To prevent preemption, UpSPA replaces
+username-derived identifiers with high entropy, storage-provider-specific identifiers derived from an identifier
+secret, denoted by Rsp. The user samples Rsp once during setup and stores it, protected under the user’s
+password across the storage providers. Whenever the user needs to communicate with storage providers
+(e.g., during authentication or password/secret updates), the user reconstructs Rsp by interacting with any
+threshold many storage providers and then derives a fresh identifier for each login-server and storage-provider
+pair. Because these identifiers are high-entropy, an attacker cannot guess them or reuse them on another
+storage provider or for another login server. Therefore, attackers cannot create or preempt the corresponding
+account records at storage providers. Remember that login-server side measures such as email verification
+should still be in place but this does not affect the storage-provider side discussion above.
+Challenge 2: Secret update. A secret update changes the per-login-server verification information, and
+therefore corresponds to updating the high entropy secret associated with a specific account. While a login
+server can authorize such an update after a successful login, storage providers in SPA do not store password
+verifiers and thus cannot directly check whether an update request comes from a user who knows the
+correct password pwd or not. This creates an authentication paradox: authorizing a secret update appears to
+require an additional authentication mechanism at the storage provider. UpSPA resolves this using implicit
+authentication. Since only a user who knows pwd can reconstruct the random identifier Rsp and derive the
+correct provider-specific identifier, the ability to address the correct record at a storage provider serves as an
+implicit proof of password knowledge. This allows a provider to accept share updates for that record without
+storing any additional password related information. We further employ counters to prevent replay attacks.
+Challenge 3: Password update. A password update must modify all password-protected records held
+at storage providers, and storage providers must ensure that only a legitimate user who knows the current
+password can authorize the change. While implicit authentication suffices to locate the correct records, it
+does not by itself bind an update to a unique user across providers or prevent malicious storage providers
+from attempting to substitute the user records. To obtain explicit update authorization, UpSPA uses a
+signature-based mechanism. The user generates a signing key pair during setup. The signing key is stored
+at the storage providers protected under the current password, and the verification key is made available to
+the providers. To update the password, the user reconstructs the signing key using the current password,
+signs the new update values together with freshness information (a provider challenge and a timestamp or
+counter), and sends the signed request to the providers. Each provider verifies the signature and then replaces
+its stored record. This way, the storage providers can recognize that the entity trying to update the password
+associated with a particular username is indeed the same entity that setup the storage initially, since only
+with the correct password knowledge the signing key can be decrypted back and a verifying signature can
+be created.
+Challenge 4: Efficiency. In TSPA [18] and similar threshold SPA designs, authentication requires running
+an oblivious pseudo-random function (OPRF) with the contacted storage providers and decrypting the corre-
+sponding protected state. However, naively extending such designs to support updates is costly. When a user
+has nls login-server accounts and relies on nsp storage providers, a password update requires re-encrypting
+
+the password-protected records for all nls accounts across the nsp storage providers, resulting in O(nsp · nls)
+work. By contrast, our construction removes this dependence on the number of accounts. Both secret update
+and password update modify only a constant number of logical records, independent of nls. Therefore the
+updates in UpSPA incur only O(nsp) update cost (O(1) update cost per storage provider). UpSPA achieves
+this optimized update cost by separating per-account records from password-protected credential material.
+In this two-stage system that we introduced, the user maintains a compact password-protected record con-
+taining the identifier, a signing key, and a symmetric encryption key, while per-login-server secrets are stored
+securely under the symmetric key. As a result, a password update refreshes only this compact record, inde-
+pendent of the number of user accounts (nls), and thus has constant cost in the number of accounts (login
+servers). Secret updates affect only the records for the selected login server and do not require touching other
+accounts.
+Challenge 5: Integrity and Record Consistency. UpSPA resists offline dictionary attacks as long as
+the adversary corrupts fewer than threshold-many storage providers and protects the user against malicious
+storage providers. To this end, UpSPA uses authenticated encryption to ensure the confidentiality and in-
+tegrity of the records stored by storage providers, so that a malicious storage provider cannot tamper with
+encrypted records or shares without being detected. However, integrity alone does not guarantee freshness. A
+malicious provider may replay an older but valid ciphertext from user’s previous records (e.g., records before
+an update). Due to our efficiency-oriented design, such ciphertexts may still decrypt, in which case the user
+may end up using outdated secrets; for example failing to reconstruct the signing key needed to authorize
+updates or retrieving obsolete account records for authentication. UpSPA therefore binds each stored record
+to an explicit version counter and requires the user to accept only the most recent records supported by a
+threshold number of providers. This enforces freshness and prevents fewer than threshold-many malicious
+providers from de-synchronizing or disrupting the records needed for user’s authentication.
+Challenge 6: Security and Privacy. If there are nsp storage providers in total, assuming at least nsp/2
+storage providers are honest, we guarantee both security and liveness in the sense that the user would always
+employ up to date account information. This is done via password-protected storage of identifiers and secrets,
+the use of OPRF, employing the domain and the counter/timestamps. In our ideal-real paradigm security
+proof and simulation, we show that even when the adversary controls all login servers (except one target
+login server), all users (except one target user), and less than threshold many storage providers, our solution
+provides security for the honest user and honest login server. Other users or login servers cannot impersonate
+this honest user against the honest login server, nor can they obtain the long-term single password of the
+honest user. The best attack that they can perform is an online dictionary attack, which would be rate- and
+#attempts-limited at the honest login server and honest storage providers. Phishing attacks are also useless
+in the sense that our security definition and proof already covers the case that the honest user registers with
+adversarial login servers and stores values at adversarial storage providers. In our ideal world, the long term
+password or login-server-specific secrets are never leaked to the adversarial entities. Moreover, the identifiers
+are randomly picked so that they preserve privacy of the user completely. Overall, satisfying such a secure
+and privacy-preserving ideal world, our solution guarantees security against above-mentioned adversaries,
+disabling feasibility of offline dictionary attacks, impersonation, phishing, or honeypots.
+Our contributions are summarized as follows:
+– We design UpSPA, an updatable threshold SPA protocol that protects users’ passwords against malicious
+parties and prevents offline dictionary attacks under a threshold compromise assumption while remaining
+compatible with unmodified login servers.
+– We formally prove security of UpSPA in the ideal-real simulation paradigm, showing that any PPT adver-
+sary corrupting less than threshold storage providers and the login server has only negligible advantage
+in mounting offline dictionary attacks.
+– We provide a numerical performance evaluation demonstrating deployability on commodity hardware,
+including a detailed efficiency study across multiple threshold settings and a comparison with prior work.
+
+2
+Related Work
+Password authentication has evolved from traditional two party logins toward distributed architectures
+designed to mitigate the impact of server breaches and password reuse. We revisit three lines of work most
+relevant to UpSPA: (i) single password authentication (SPA); (ii) threshold token-based Single Sign On
+(SSO); and (iii) password hardened services (PHS) and updatable key management systems (KMS). Table 1
+highlights how UpSPA differs from prior work.
+Single Password Authentication (SPA): SPA solutions [16,3] enable users to rely on a single human-memorable
+password across accounts without storing any high-entropy secret locally. They achieve this by involving one
+or more storage providers, such as a cloud service or a personal mobile device, which store password-protected
+state so that only a user who knows the correct password can reconstruct the secret needed for authentica-
+tion. Threshold SPA (TSPA) [18] extends this line by distributing the stored secret across n storage providers
+and allowing authentication using any t of them. This yields threshold availability without requiring changes
+on the login-server side, and it formalizes security via an ideal-real simulation proof. DiSPP [33] places these
+constructions in a broader distributed single-password framework and captures richer provider configura-
+tions and participation policies. Despite these advances, existing SPA protocols do not natively support
+password updates or login-server-specific secret updates. UpSPA follows the direction of TSPA [18] and ex-
+tends the SPA family by integrating subprotocols for password update and secret update. At a high level,
+DE-PAKE [21] strengthens password authentication with the help of an auxiliary device, aiming to improve
+resistance to online and offline attacks while remaining deployable with conventional password-based servers.
+Earlier browser-based password managers [9] also explored the single-password direction on the client side,
+deriving site-specific passwords from a master password without requiring changes to website authentication
+interfaces, but they did not provide threshold availability or native support for password or secret updates
+in a multi-server setting.
+Threshold Token-based Single Sign-on:
+Threshold Single Sign On (SSO) schemes resemble SPA at a high
+level because they also aim to let users access many services using a single password, often with threshold
+security. The mechanism, however, is different. In SSO, authentication is mediated by identity providers
+(IdPs): after the user proves knowledge of a password to the IdP side, the user obtains a token, often a
+signature, which is then presented to relying parties for verification. Threshold SSO distributes this token
+issuance by sharing the IdP master key (login-server-specific secret in SPAs) signing capability among n IdPs
+in a threshold manner, so that any t IdPs can jointly issue a valid token. A key design challenge in this line
+of work is preventing offline dictionary attacks when some IdPs are compromised. A naive threshold token-
+authentication design in which IdPs verify password-related material still leaves users’ passwords vulnerable
+to offline dictionary attacks when up to t −1 IdPs are compromised [4]. Recent proposals address this by
+basing the IdP side on functions designed to resist offline attacks, such as threshold oblivious pseudorandom
+functions (TOPRFs), and by carefully structuring token generation and verification [4,7,31,28]. PASTA [4]
+formalizes password-based threshold authentication for SSO. A set of n IdPs jointly evaluates a threshold
+OPRF on the user’s blinded password and then issue a login token. Security guarantees that any t IdPs
+suffice for authentication, while any coalition of at most t −1 IdPs cannot forge tokens or mount offline
+dictionary attacks. Building on PASTA, PAS-TA-U [29] adds a native password update subprotocol in which
+the client performs threshold OPRF evaluations under the old and new passwords and submits a threshold
+token generation authenticated update request that each IdP verifies before updating its local user record.
+Complementary efforts strengthen the same architecture in different directions. PESTO [7] adds proactive
+security through periodic share refresh and proactively secure threshold signatures, TSAPP [32] targets
+privacy with anonymous and unlinkable threshold token generation, DE-PbTA [25] hardens the password
+using an auxiliary device before the threshold SSO flow, and AugSSO [24] proposes an efficient password
+update mechanism within threshold SSO.
+Password-Hardening and Key Management Services: Existing SPA works focuses on recovering an authen-
+tication secret from untrusted storage providers. In contrast, password hardening services (PHS) [5] and
+
+updatable key management systems (KMS) [19] focus on deriving encryption keys from passwords and up-
+dating per-object ciphertext headers. PHS uses an OPRF or TOPRF, often in threshold form, to harden
+low entropy passwords for key derivation. They support updatable encryption by issuing update tokens that
+refresh a small per object ciphertext header, a process often called rewrapping, while leaving the bulk ci-
+phertext unchanged. Many designs also include proactive share refresh. Pythia [17] initiates this line with a
+verifiable partially oblivious PRF and compact rotation tokens. PHE [27] formalizes a two-party hardening
+service with rate limiting and key rotation, and Threshold PHE [11] distributes it across multiple servers.
+UOKMS [20] adapts these ideas to the cloud-KMS setting by attaching a per-object header that can be
+refreshed via update tokens without re-encrypting the underlying data. TPH-UOKM [23] further combines
+threshold password hardening with an updatable oblivious KMS and supports password update, but it still
+remains in the cloud-storage rewrapping setting rather than the SPA setting. In contrast, UpSPA targets
+updatable SPA authentication and avoids per-object re-wrapping. The heavy tasks of both password and
+secret updates are performed on the client, while storage providers only verify and atomically replace stored
+shares. Furthermore, UpSPA provides a static malicious security proof, unlike TPH UOKM [23].
+Table 1: Comparison of existing works. −: Not applicable.
+Property
+Solution
+Our Work Single-Password Authentication
+SSO
+PHS and KMS
+UpSPA
+SPA [3] DE-PAKE [21] [18],[33] [4],[7],[32],[25] [29],[24] TPHE [11] TPH-UOKM [23]
+Malicious security
+✔
+✗
+✔
+✗
+✗
+✗
+✗
+✗
+Threshold security (t-of-n)
+✔
+✗
+✗
+✔
+✔
+✔
+✔
+✔
+Secret update supported
+✔
+✗
+✗
+✗
+−
+−
+✔
+✔
+Password update supported
+✔
+✗
+✔
+✗
+✗
+✔
+✗
+✔
+Prevents false account creation at storage provider
+✔
+✗
+✗
+✗
+−
+−
+−
+−
+3
+Preliminaries
+Let λ ∈N be the security parameter. A probabilistic polynomial time (PPT) algorithm A is a probabilistic
+algorithm taking 1λ as an input and has running time bounded by a polynomial in λ. A function neg(λ)
+is negligible if for every positive polynomial poly(λ) there exists a constant λ′ ∈N such that ∀λ > λ′
+neg(λ)<1/poly(λ). To denote a two-party protocol between two parties P0 and P1, we use the notation of
+P0[outputP0], P1[outputP1] ←Protocol(P0[inputP0] , P1[inputP1]). We denote [n] as the set {1, . . . , n}. ||
+denotes concatenation.
+Collision-resistant hash function (CRHF) A hash function H is a deterministic function from an arbi-
+trary size input to a fixed size output, denoted H : {0, 1}∗→{0, 1}λ. H is assumed to be collision resistant
+if it is hard in PPT to find two different inputs x ̸= y that they hash to the same output H(x) = H(y).
+Digital Signature. A digital signature scheme [26] is a public-key cryptographic primitive specified by three
+PPT algorithms. The key generation algorithm takes as input the security parameter 1λ and outputs
+a signing key ssk and a corresponding verification key svk, written as (ssk, svk) ←SignKeyGen(1λ). The
+signing algorithm takes as input ssk and a message m, and outputs a signature sig as sig ←Signssk(m).
+The verification algorithm takes as input svk, a message m, and a signature sig, and outputs a bit b ←
+SignVerifysvk(sig, m) ∈{0, 1}, where b = 1 if and only if sig is a valid signature on the message m under the
+verification key svk.
+Threshold Oblivious Pseudorandom Function (TOPRF). Let F = {FK : X →Y }K be a PRF
+family. A t-out-of-n TOPRF [14] extends OPRFs [22] to a distributed key K held as shares {ki}i∈[n] so that
+any subset of size ≥t enables one evaluation while < t learn nothing useful. TOPRF is composed of two
+phases: 1) key generation as {K, {ki}i∈[n]} ←TOPRFKeyGen(1λ, n, t) and ki is sent to each sender; and 2)
+PRF evaluation among a receiver (user in our case) whose input is x and t-many senders (storage providers
+
+in our case) whose corresponding input is the key share ki as FK(x) ←TOPRF(x, {ki}i∈[t]}). As a result,
+senders learn nothing while the receiver learns only FK(x).
+Authenticated Symmetric Encryption (AE). An authenticated-encryption (AE) scheme is a symmetric-
+key primitive that simultaneously provides confidentiality of messages and integrity/authenticity of cipher-
+texts. Formally, an AE scheme over a message space M and a ciphertext space C is specified by three PPT
+algorithms. The key generation algorithm samples a secret key sk ←KeyGen(1λ). The encryption algo-
+rithm takes sk and a message m ∈M and outputs a ciphertext c ∈C, as c ←Encsk(m), where Enc uses
+internal randomness. The decryption algorithm takes sk and a ciphertext c ∈C and outputs either the
+recovered message m′ ∈M or a distinguished failure symbol ⊥, written m′ ←Decsk(c).
+Informally, AE is secure if it achieves both message privacy and ciphertext integrity, meaning that no
+PPT adversary can distinguish encryptions of chosen messages or forge a new ciphertext that decrypts to a
+non-⊥value with more than negligible probability.
+4
+Design and Overview
+4.1
+System Model
+Our secure updatable single password authentication protocol, denoted UpSPA, involves three types of enti-
+ties.
+Users U. There are nu users and each user Ul has an identifier Uidl (e.g., a username) and a single human-
+memorable password pwd. Using (Uidl, pwd), Ul registers and authenticates to as many login servers as
+desired. For simplicity in our security analysis, we assume pwd is sampled uniformly at random from a
+password dictionary Dict. We assume that the password is not easily guessable, meaning that it would resist
+online dictionary attacks (limited online attempts) or social engineering attacks. Our goal is to prevent
+adversaries from being able to mount offline dictionary attacks on pwd, or impersonating Ul against honest
+login servers. Users do not store any persistent high entropy secret locally other than memorizing their pwd,
+which is not stored by any party. Certain public parameters, such as the identifiers of storage providers (e.g.,
+their domain names), are assumed to be known to Ul, as in prior works [18,12].
+Storage Providers SP. There are nsp storage providers, denoted by SP = {SPi}i∈[nsp]. Storage providers
+store password-protected user records and participate in UpSPA to support authentication and update op-
+erations. Storage providers are not trusted a priori and may be statically corrupted by the adversary, up to
+some threshold.
+Login Servers LS. There are nls login servers, denoted by LS = {LSj}j∈[nls]. Each LSj is identified by a
+public identifier lsj (e.g., its domain name). LSj authenticates users before granting service access. Each LSj
+stores the username Uidl and verification information vInfoj associated with Uidl (essentially vInfoj is the
+login-server-specific password of the user, such that the user does not need to remember). Since we assume
+username-password based authentication, we do not discuss any privacy or anonymity of the users against
+login servers.
+4.2
+Threat Model
+A static PPT adversary A can corrupt a set of entities at the beginning of the protocol execution and does
+not adaptively change this set later. Corruption gives A full control over the corrupted parties, including
+access to their internal state. We model a threshold parameter tsp. Intuitively, UpSPA should remain secure
+even if there is only one honest user and one honest login server as long as up to tsp −1 storage providers,
+nls −1 login servers, and nu −1 users are corrupted. Naturally, we require UpSPA to satisfy the following
+security goals.
+– Resistance to offline dictionary attacks. Even if A corrupts tsp −1 storage providers and any subset
+of other parties (i.e., nls −1 login servers –all login servers except one honest login server–, all other users
+
+in the system except one honest user), A should not be able to successfully mount an offline dictionary
+attack on an honest user’s password pwd (or any intermediate high entropy secret of the user) and recover
+pwd with non-negligible advantage over simply guessing from a dictionary and testing it online (which
+would be rate- and #attempts-limited).
+– Integrity and record manipulation resistance. A should not be able to (i) create or preempt an
+honest user’s provider-specific-secret for a login server (e.g., storing records on behalf of an honest user),
+or (ii) trigger secret updates or password updates on behalf of an honest user without knowledge of pwd.
+In particular, A shall not cause storage providers to accept forged updates, nor cause a login server to
+accept updated verification information vInfoj that was not authorized by the honest user.
+We do not consider malware on the user device, such as keyloggers, nor network level attacks such as DNS
+spoofing. We assume that parties communicate over secure and server-authenticated channels (such as TLS)
+and that the storage providers required for an update are available during update operations. Furthermore,
+we assume a synchronous communication model with a known upper bound on message delay and sufficiently
+synchronized clocks. Accordingly, if threshold-many responses are not received within the prescribed time
+window, the user aborts the protocol execution. This synchronization does not affect security. It simply helps
+perform the functionality properly in a timely manner.
+4.3
+Overview
+UpSPA naturally consists of five phases: Setup, Registration, Authentication, Secret Update, and
+Password Update.
+In Setup, the user U initializes long term secrets and stores them across storage providers under the
+protection of pwd. The secrets include a high-entropy identifier secret Rsp used to derive unique storage-
+provider-specific identifiers, a signing key used to explicitly authorize password updates, and a symmetric
+encryption key used to the per-login-server authentication secret. These values are stored as a compact
+password-protected storage record, using a threshold mechanism, i.e., threshold OPRF, so that U can recover
+the secrets by contacting any tsp storage providers.
+In Registration, U wishes to register with a login server LSj with its domain name lsj. First, U together
+with SP reconstructs the long-term secret using its pwd by computing threshold OPRF evaluation and
+decryption. For a login server LSj, U derives a per-login-server high-entropy secret Rlsj and registers Uid
+together with verification information vInfoj derived from Rlsj and lsj. Then, Rlsj is encrypted under the
+symmetric key and stored at the storage providers, where each storage provider SPi receives the ciphertext
+and a specific identifier SUidl,i,j derived from the identifier secret Rsp, lsj, and SPi.
+In Authentication, U communicates with at least tsp storage providers, reconstructs the required high-
+entropy login-server-specific secret using pwd, and authenticates to LSj using vInfoj computed by the recon-
+structed per-login-server secret and lsj, without revealing pwd (or any deterministic function of it) to any
+SP or LSj.
+In Secret Update, U rotates the per-login-server secret for a chosen LSj, updates the corresponding vInfoj
+at LSj, and updates the associated ciphertexts stored at each SP.
+In Password Update, U updates its single password from pwd to pwdnew and refreshes the password-
+protected records at SP. To ensure correctness in the presence of malicious SP, UpSPA uses authenticated
+encryption for stored records and associates provider records with an epoch or version counter so that U
+accepts only the freshest record supported by a threshold number of SP. Note that a password update does
+not trigger secret updates for each LSj. This is an important feature of UpSPA regarding efficiently and
+securely updating passwords.
+Observe that Setup and Password Update protocols involve only storage providers and the user. Essen-
+tially, these are specific to our UpSPA, without the login servers being aware. On the other hand, Registration,
+Authentication, and Secret Update protocols involve login servers, as the user registers with, authenticates
+to, or updates the login information on these login servers. In those protocols, SP acts as helpers. In any
+
+case, SP never learns enough information about pwd. Moreover, since each LSj stores a different verification
+information vInfoj, they cannot impersonate the user against each other. Overall, even if there is a single
+honest U in the system who wants to authenticate against a single honest LSj, assuming the adversary
+controls fewer than threshold-many storage providers, we protect security of the user’s single pwd and the
+user’s account on the honest login server against offline dictionary attacks, impersonation, phishing, and
+honeypots (and even man-in-the-middle assuming TLS works as expected).
+4.4
+Formal Security Definition
+We define the ideal world, denoted by FUpSPA and the real world, denoted by ΠUpSPA for an updatable single
+password authentication protocol in the spirit of Canetti [13].
+Ideal World: The ideal world consists of a set of users U, a set of storage providers SP, a set of login
+servers LS, and the ideal functionality FUpSPA as shown by Figure ??. In our ideal functionality, the parties
+do not learn the password pwd or the per-login-server vInfoj of the user. Thus, any protocol achieving this
+ideal functionality must satisfy our security goals, disabling offline attacks on the password or login server
+verification information. Yet, note that any interaction with the ideal functionality in the ideal world is
+implicitly authenticated: the ideal functionality always knows who it is talking to, and when parties receive
+something from the ideal functionality, they know that it is correct, originating from a legitimate request.
+Any protocol realizing this must ensure this implicit authentication in reality as well. In our case, we employ
+TLS, random identifiers, and signature verification for this purpose.
+Real World: The real world consists of a user U, a set of storage providers SP, and a (set of) login server
+LS. There is no ideal functionality FUpSPA for a real world protocol ΠUpSPA for the updatable SPA protocol.
+Definition 1 (Secure Updatable Single Password Authentication Protocol). Let ΠUpSPA be a PPT
+protocol for an updatable single password authentication protocol. We say that ΠUpSPA is secure if for every
+PPT real world adversary A attacking ΠUpSPA, there exists a PPT ideal world simulator S such that the real
+and ideal world interactions and outputs are computationally indistinguishable:
+IDEALS(aux)
+FUpSPA(Uid, 1λ) ≡cREALA(aux)
+ΠUpSPA(Uid, 1λ)
+where aux ∈{0, 1}∗denotes the auxiliary input.
+Functionality FUpSPA
+Parameterized with a set of users U = {Ul}l∈[nu], a set of login servers LS = {LSj}j∈[nls], and a set of storage
+providers SP = {SPi}i∈[nsp], nu: total number of users, nls: total number of login servers, tsp: threshold value
+for SP, and nsp: total number of storage providers, FUpSPA works as follows:
+Setup. Upon receiving a message ⟨Setup, Uidl⟩from Ul,
+1. If Uidl exists in its database, return Fail to Ul. Otherwise, send ⟨Setup, Uidl⟩to each storage provider
+SPi ∈SP.
+2. Upon receiving OK from each SPi ∈SP, send OK to Ul and store Uidl in its database. Otherwise (i.e.,
+upon receiving Fail from some SPi), send Fail to Ul.
+
+Functionality FUpSPA
+Registration. Upon receiving a message ⟨Register, Uidl, lsj⟩from Ul,
+1. If Uidl does not exist in its database or a tuple including ⟨Uidl, lsj⟩exists, send Fail to Ul. Otherwise, send
+⟨Register, Uidl⟩to each SPi ∈SP.
+2. Upon receiving OK from each SPi ∈SP, compute a unique identifier SUidl,i,j ←{0, 1}λ for each SPi
+and send ⟨Register, SUidl,i,j⟩to each corresponding SPi ∈SP.
+3. Upon
+receiving
+OK
+from
+each
+SPi
+∈
+SP,
+send
+⟨Register, Uidl,j⟩
+to
+LSj
+and
+store
+⟨Uidl, Uidl,j, lsj, {SUidl,i,j}i∈[nsp]⟩in the database. Otherwise (i.e., upon receiving Fail from
+
+[…middle truncated for length…]
+
+ngs
+In G3, we apply the same modification as in G2 to the honest encryptions of type cj. That is, for each
+encryption call Ej
+r = (skr, mj
+r) ∈Ej, the honest party replaces the encryption of mj
+r by the encryption of a
+uniformly random string emj
+r ←{0, 1}|mj
+r| of the same length under the same key, while keeping mj
+r locally
+recorded for subsequent computations. The only difference from G2 is that we now consider the ciphertext
+family cj, whose plaintext lengths and number of encryption instances differ from those of cid.
+Lemma 3. Assuming AE is IND-CPA secure, the modification in Game G3 changes the adversary’s view
+only negligibly. Formally, if p2 and p3 denote the probabilities that A outputs 1 in Games G2 and G3,
+respectively, then ∆2 = |p2 −p3| ≤neg(λ).
+Proof. The proof is identical to that of Lemma 2, except that the ordered list of encryption calls Eid is replaced
+by Ej, the number of hybrid steps qid is replaced by qj, and each challenge pair consists of two messages of
+length |mj
+r| rather than |mid
+r |. Thus, by the same IND-CPA hybrid argument, ∆2 ≤qj · Advind-cpa
+AE
+(Bcpa) ≤
+qj · neg(λ) ≤neg(λ).
+□
+At this point, all information remaining in G3 is exactly the information already available from the
+ideal functionality together with local bookkeeping, including the number of protocol instances and the
+corresponding plaintext lengths. Therefore, no further hybrid is needed: the simulator interacting with FUpSPA
+can already reproduce the view in G3. Finally, Combining Lemmas 1 to 3 using the triangle inequality, we
+obtain:
+p0 −p3
+ ≤Σi=2
+i=0∆i ≤Advprf
+TOPRF(Bprf) + (qenc + qj) · Advind-cpa
+AE
+(Bcpa) ≤neg(λ).
+□
+
+7
+Performance Evaluation
+Setup. All of our experimental results based on our proof of concept implementation are produced on a
+standard laptop machine with 11th Gen Intel(R) Core(TM) i7-1185G7 @ 3.00 GHz, 16 GB RAM, NVIDIA
+GeForce RTX 2060, running a 64-bit Windows operating system on an x64-based processor and implemented
+in Rust. Our code is publicly available on GitHub [15]. Our implementation uses the ristretto255 group
+instantiated via Curve255193 and BLAKE34 as a collision resistant hash function.
+We evaluate the client-side performance of UpSPA and compare its core costs with TSPA.We report median
+(p50) runtimes in ms for the asymptotic (nsp, tsp) settings, with nsp ∈{20, 40, 60, 80, 100} and tsp set to 20%,
+40%, 60%, 80%, and 100% of nsp. We also report the low-threshold (nsp, tsp) settings, with nsp ∈{3, 5, 7, 10}
+and tsp set to 35%, 70%, and 100% of nsp, respectively, rounded to the nearest integer. For each parameter
+point, we collect 2000 measurements after discarding 300 warm-up runs and report the median (p50) as the
+primary statistic due to its robustness to noise. While we also compute p95, mean, and standard deviation,
+we omit them from the plots since p50 already captures the comparison clearly.
+7.1
+Client-side asymptotical settings:
+Results:
+Setup phase [1,2] remains lightweight, ranging from 0.047 ms to 0.640 ms. Registration phase
+[2,3] spans
+from 0.135 ms to 2.000 ms for UpSPA, compared to 0.463 ms to 3.067 ms for TSPA. Authentication phase
+[3,3] ranges from 0.139 ms to 2.013 ms for UpSPA and from 0.120 ms to 2.249 ms for TSPA. Secret update
+phase
+[2,4] varies from 0.141 ms to 2.193 ms. Password update phase
+[2,5] is the most expensive phase,
+ranging from 0.393 ms to 4.478 ms.
+Phase
+Setup
+Secret Update
+Password Update
+nsp
+tsp%
+20
+40
+60
+80
+100
+20
+40
+60
+80
+100
+20
+40
+60
+80
+100
+20
+0.047
+0.054
+0.061 0.068
+0.075
+0.141 0.217
+0.305 0.385
+0.468
+0.393 0.469 0.562 0.654 0.738
+40
+0.080
+0.095
+0.112 0.130
+0.151
+0.226 0.389
+0.547 0.717
+0.879
+0.724 0.922 1.111 1.319 1.515
+60
+0.115
+0.143
+0.177 0.215
+0.258
+0.346 0.613
+0.801 1.043
+1.287
+1.223 1.566 1.795 2.081 2.386
+80
+0.168
+0.217
+0.275 0.341
+0.416
+0.398 0.720
+1.066 1.374
+1.702
+1.462 1.943 2.437 2.885 3.368
+100
+0.235
+0.312
+0.405 0.514
+0.640
+0.488 0.885
+1.421 1.724
+2.193
+1.882 2.495 3.144 3.867 4.478
+Table 2: Client-side time for Setup, Secret Update, and Password Update.
+3 https://doc.dalek.rs/curve25519_dalek/ristretto/
+4 https://docs.rs/blake3/latest/blake3/
+
+Phase
+Registration
+Authentication
+Scheme
+UpSPA
+TSPA
+UpSPA
+TSPA
+nsp
+tsp%
+20
+40
+60
+80
+100
+20
+40
+60
+80
+100
+20
+40
+60
+80
+100
+20
+40
+60
+80
+100
+20
+0.135 0.214 0.286 0.364 0.452 0.463 0.468 0.474 0.498 0.492 0.139 0.210 0.287 0.368 0.448 0.120 0.202 0.286 0.378 0.465
+40
+0.214 0.371 0.521 0.685 0.841 0.942 0.982 1.004 1.016 1.062 0.214 0.368 0.520 0.676 0.852 0.201 0.375 0.556 0.737 0.991
+60
+0.309 0.589 0.788 0.990 1.223 1.624 1.569 1.640 1.609 1.665 0.320 0.580 0.782 0.991 1.219 0.323 0.567 0.831 1.093 1.359
+80
+0.377 0.748 0.994 1.305 1.786 1.969 2.071 2.151 2.239 2.595 0.371 0.705 0.993 1.304 1.779 0.386 0.740 1.096 1.540 1.993
+100
+0.485 0.841 1.321 1.613 2.000 2.473 2.646 2.769 3.050 3.067 0.460 0.833 1.339 1.630 2.013 0.468 1.022 1.358 1.808 2.249
+Table 3: TSPA/UpSPA Client-side time for Registration and Authentication.
+20
+40
+60
+80
+100
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.05
+0.08
+0.11
+0.17
+0.23
+0.05
+0.1
+0.14
+0.22
+0.31
+0.06
+0.11
+0.18
+0.27
+0.4
+0.07
+0.13
+0.22
+0.34
+0.51
+0.07
+0.15
+0.26
+0.42
+0.64
+nsp
+Time (ms)
+tsp = 20%
+tsp = 40%
+tsp = 60%
+tsp = 80%
+tsp = 100%
+Fig. 1: Client-side setup time for asymptotical settings.
+
+20
+40
+60
+80
+100
+0
+1
+2
+3
+4
+5
+nsp
+Time (ms)
+UpSPA
+TSPA
+Fig. 2: Client-side registration time comparison between UpSPA and TSPA for asymptotical settings.
+20
+40
+60
+80
+100
+0
+1
+2
+3
+4
+5
+nsp
+Time (ms)
+UpSPA
+TSPA
+Fig. 3: Client-side authentication time comparison between UpSPA and TSPA for asymptotical settings.
+
+20
+40
+60
+80
+100
+0.5
+1
+1.5
+2
+0.14
+0.23
+0.35
+0.4
+0.49
+0.22
+0.39
+0.61
+0.72
+0.88
+0.3
+0.55
+0.8
+1.07
+1.42
+0.39
+0.72
+1.04
+1.37
+1.72
+0.47
+0.88
+1.29
+1.7
+2.19
+nsp
+Time (ms)
+tsp = 20%
+tsp = 40%
+tsp = 60%
+tsp = 80%
+tsp = 100%
+Fig. 4: Client-side secret update time for asymptotical settings.
+20
+40
+60
+80
+100
+1
+2
+3
+4
+0.39
+0.72
+1.22
+1.46
+1.88
+0.47
+0.92
+1.57
+1.94
+2.5
+0.56
+1.11
+1.8
+2.44
+3.14
+0.65
+1.32
+2.08
+2.89
+3.87
+0.74
+1.51
+2.39
+3.37
+4.48
+nsp
+Time (ms)
+tsp = 20%
+tsp = 40%
+tsp = 60%
+tsp = 80%
+tsp = 100%
+Fig. 5: Client-side password update time for asymptotical settings.
+Comparison:
+UpSPA vs. TSPA.
+In registration, UpSPA consistently outperforms TSPA across all measured configu-
+rations. UpSPA ranges from 0.135 ms to 2.000 ms, whereas TSPA ranges from 0.463 ms to 3.067 ms. This is
+consistent with the protocol structures: in TSPA, each registration generates a fresh random secret, creates
+threshold shares, derives one OPRF key per storage provider, and encrypts each share separately, while in
+UpSPA these long-term materials are established in the one-time setup phase and registration only derives
+and stores the per-login-server secret under the recovered long-term state. By contrast, authentication is
+much closer in the two schemes. UpSPA ranges from 0.139 ms to 2.013 ms, while TSPA ranges from 0.120 ms
+to 2.249 ms. TSPA is slightly faster at a few low-threshold points, but the gap remains small overall. This is
+expected, since both schemes are dominated by essentially the same online task: interacting with threshold-
+
+many storage providers to recover the high-entropy secret needed to recompute the login-server verification
+information. Overall, UpSPA preserves authentication efficiency at roughly the same level as TSPA, while
+substantially improving registration performance.
+Secret update vs. password update in UpSPA.
+The main difference between secret update and pass-
+word update is their scaling behavior. The secret update is applied per login-server credential, so refreshing
+all accounts requires repeating it once for each of the nls login servers, and thus scales linearly with nls in ad-
+dition to the threshold interaction cost. The password update, in contrast, refreshes the password-protected
+state only once, independent of the number of login-server accounts. For example, when nls = 100, nsp = 20,
+and tsp = 20%, we obtain
+TΠPwdUpdate
+(nls)·(TΠSecretUpdate) = 0.393
+14.1 ≈2.8 × 10−2 which is already very negligible. Hence,
+the password update quickly becomes a more efficient operation as the number of login-server accounts
+grows, whereas the secret update remains natural when only a single login-server credential must be rotated.
+7.2
+Client-side low-threshold settings:
+Results: Setup phase [4,6] remains lightweight, ranging from 0.028 ms to 0.040 ms. Registration phase [5,7]
+spans from 0.068 ms to 0.197 ms for UpSPA, improving over TSPA in the high range (up to 0.219 ms).
+Authentication phase [5,8] ranges from 0.067 ms to 0.210 ms for UpSPA and from 0.041 ms to 0.219 ms for
+TSPA. Secret update phase [4,9] varies from 0.068 ms to 0.252 ms. Password update phase [4,10] remains the
+most expensive phase, ranging from 0.123 ms to 0.397 ms.
+3
+5
+7
+10
+0
+20
+40
+28,776
+29,056
+32,472
+32,032
+28,883
+32,536
+34,193
+36,231
+31,125
+33,349
+36,819
+40,310
+nsp
+Time (µs)
+tsp = 35%
+tsp = 70%
+tsp = 100%
+Fig. 6: Client-side setup time (low-scale settings).
+
+3
+5
+7
+10
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+nsp
+Time (ms)
+UpSPA
+TSPA
+Fig. 7: Client-side registration time comparison between UpSPA and TSPA (low-scale settings).
+3
+5
+7
+10
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+nsp
+Time (ms)
+UpSPA
+TSPA
+Fig. 8: Client-side authentication time comparison between UpSPA and TSPA (low-scale settings).
+
+3
+5
+7
+10
+0
+0.1
+0.2
+0.069
+0.071
+0.097
+0.115
+0.086
+0.107
+0.123
+0.175
+0.104
+0.14
+0.18
+0.253
+nsp
+Time (ms)
+tsp = 35%
+tsp = 70%
+tsp = 100%
+Fig. 9: Client-side secret update time (low-scale settings).
+3
+5
+7
+10
+0
+0.2
+0.4
+0.123
+0.146
+0.176
+0.246
+0.135
+0.179
+0.21
+0.308
+0.155
+0.211
+0.267
+0.398
+nsp
+Time (ms)
+tsp = 35%
+tsp = 70%
+tsp = 100%
+Fig. 10: Client-side password update time (low-scale settings).
+
+Phase
+Setup
+Secret Update
+Password Update
+nsp
+tsp%
+35
+70
+100
+35
+70
+100
+35
+70
+100
+3
+0.028776
+0.028883
+0.031125
+0.068934
+0.085653
+0.104361
+0.123088
+0.134915
+0.154630
+5
+0.029056
+0.032536
+0.033349
+0.070877
+0.106895
+0.139541
+0.145817
+0.178527
+0.211323
+7
+0.032472
+0.034193
+0.036819
+0.097248
+0.122857
+0.179939
+0.175776
+0.210485
+0.266670
+10
+0.032032
+0.036231
+0.040310
+0.115327
+0.174555
+0.252518
+0.246292
+0.307879
+0.397834
+Table 4: Client-side time for Setup, Secret Update, and Password Update (low-scale settings).
+Phase
+Registration
+Authentication
+Scheme
+UpSPA
+TSPA
+UpSPA
+TSPA
+nsp
+tsp%
+35
+70
+100
+35
+70
+100
+35
+70
+100
+35
+70
+100
+3
+0.068623
+0.082169
+0.096331
+0.059989
+0.057101
+0.058235
+0.067689
+0.080421
+0.097391
+0.041911
+0.057687
+0.076702
+5
+0.070259
+0.097534
+0.110664
+0.093611
+0.102976
+0.140310
+0.070847
+0.103695
+0.139585
+0.041742
+0.080984
+0.118366
+7
+0.086051
+0.118408
+0.137557
+0.130775
+0.132560
+0.169361
+0.085560
+0.117006
+0.157301
+0.059654
+0.098094
+0.170494
+10
+0.101095
+0.149429
+0.197797
+0.190210
+0.193245
+0.219907
+0.101685
+0.133529
+0.210451
+0.089159
+0.140407
+0.219572
+Table 5: Client-side time for Registration and Authentication (low-scale settings).
+Scheme
+UpSPA
+TSPA
+TSPA
+Ratio to UpSPA TOPRF
+Primitive
+TOPRF
+Reg. OPRF
+Auth. OPRF
+Reg. OPRF/UpSPA
+Auth. OPRF/UpSPA
+nsp
+tsp%
+35
+70
+100
+35
+70
+100
+35
+70
+100
+35
+70
+100
+35
+70
+100
+3
+0.055
+0.070
+0.086
+0.053
+0.053
+0.053
+0.018
+0.035
+0.053
+0.963
+0.749
+0.616
+0.321
+0.500
+0.616
+5
+0.056
+0.089
+0.121
+0.088
+0.088
+0.088
+0.018
+0.053
+0.088
+1.558
+0.981
+0.722
+0.312
+0.589
+0.722
+7
+0.076
+0.110
+0.159
+0.133
+0.133
+0.133
+0.038
+0.076
+0.133
+1.757
+1.216
+0.838
+0.502
+0.695
+0.838
+10
+0.088
+0.135
+0.197
+0.173
+0.173
+0.177
+0.052
+0.104
+0.177
+1.963
+1.282
+0.902
+0.589
+0.769
+0.902
+Table 6: Client-side TOPRF/OPRF costs for UpSPA and TSPA(low-scale setting).
+Comparison:
+UpSPA vs. TSPA at low scale.
+The client-side measurements in Table 5, together with the primitive
+TOPRF/OPRF ratios in Table 6, show that the asymptotic advantage of UpSPA does not necessarily translate
+into a uniform advantage at very small parameter sizes. In registration, TSPA is faster than UpSPA for
+nsp = 3: TSPA registration ranges from 0.057 ms to 0.060 ms, whereas UpSPA registration ranges from
+
+0.069 ms to 0.096 ms The ratio
+TSPA registration all-OPRF cost
+UpSPA TOPRF cost
+is below one for all three nsp = 3 threshold settings, namely 0.963, 0.749, and 0.616. Thus, at this scale,
+the total cost of the few TSPA OPRF evaluations is still smaller than, or comparable to, the single TOPRF
+reconstruction in UpSPA. As nsp increases, this effect reverses. For the low-threshold settings, the same ratio
+becomes 1.558
+(nsp = 5),
+1.757
+(nsp = 7),
+1.963
+(nsp = 10).
+This means that the TSPA registration OPRF block alone becomes more expensive than the entire TOPRF
+block of UpSPA. The client-side measurements reflect this crossover: for nsp = 5, 7, 10, UpSPA registration
+is usually faster than TSPA registration. For example, at nsp = 10, UpSPA registration costs 0.101, 0.149,
+and 0.198 ms, whereas TSPA registration costs 0.190, 0.193, and 0.220 ms. Hence, registration is the phase in
+which the advantage of replacing nsp independent OPRF evaluations by one TOPRF reconstruction becomes
+visible even at low scale.
+Authentication has a later crossover. The primitive table shows that the ratio
+TSPA authentication all-OPRF cost
+UpSPA TOPRF cost
+is below one in all reported low-scale settings, ranging from 0.312 to 0.902. This indicates that, for small
+thresholds, the OPRF component of TSPA authentication can be cheaper than the TOPRF reconstruction
+in UpSPA. Consequently, TSPA authentication is faster in several small-parameter cases. For example, at
+nsp = 5, TSPA authentication costs 0.0417, 0.0810, and 0.1184 ms, whereas UpSPA authentication costs
+0.0708, 0.1037, and 0.1396 ms. This agrees with the primitive breakdown: the TSPA authentication OPRF
+block is only a fraction of the UpSPA TOPRF cost at these parameter sizes.
+As tsp grows, however, TSPA authentication pays more repeated per-provider work, while the number of
+UpSPA state decryptions decreases. In particular, when tsp = nsp, we have ⌈nsp/tsp⌉+ 1 = 2, so UpSPA
+decrypts only two AEAD ciphertexts: one cipherid and one ciphersp. This explains why UpSPA becomes
+competitive or faster in the higher-threshold settings. For instance, at nsp = 7 and tsp = 100%, UpSPA
+authentication costs 0.1573 ms, while TSPA costs 0.1705 ms. Similarly, for nsp = 10, UpSPA is slightly faster
+at the 70% and 100% threshold settings.
+The reason for this behavior is that the two schemes have different primitive cost profiles. We use the
+following notation to separate the cost of one full TSPA OPRF evaluation from the cost of a threshold
+OPRF reconstruction: TOPRF full = TMulP + TOPRF finalize. Here, TOPRF full, denotes the cost of one point-scalar
+multiplication followed by the OPRF finalization step. This corresponds to the TSPA implementation path,
+Y ←P · ki,i ←OPRF Finalize(pwd, Y ).
+In contrast, the client-side TOPRF reconstruction used by UpSPA is closer to
+TTOPRF(tsp) ≈(tsp + 2)TMulP + tspTAddP + TInvS + TOPRF finalize.
+The term (tsp + 2)TMulP accounts for the client blinding multiplication, the tsp scalar multiplications used
+in the Lagrange combination of partial evaluations, and the final unblinding multiplication. The TOPRF
+computation therefore performs only one final OPRF finalization, but it performs a threshold reconstruction
+over tsp partial points. Thus, TTOPRF should not be interpreted as tsp independent OPRF evaluations. For
+registration, the implementation-level costs can be written as
+T TSPA
+reg
+(nsp, tsp) = nsp · TOPRF full + nsp · TEnc + 2 · THash + nsp · (tsp −1) · TFieldOp,
+whereas UpSPA has
+T UpSPA
+reg
+(nsp, tsp) = TTOPRF(tsp) + TAE-Dec + (nsp + 1)THash + TAE-Enc.
+
+The main difference is that TSPA registration performs one full OPRF evaluation per storage provider, while
+UpSPA performs one TOPRF reconstruction. Hence the dominant OPRF-related term in TSPA registration
+scales as nspTOPRF full, whereas the dominant TOPRF term in UpSPA scales mainly with tsp. Authentication
+exhibits a different scaling behavior. The TSPA authentication cost can be written as
+T TSPA
+auth (nsp, tsp) = tsp · TOPRF full + tsp · TDec + 2 · THash + TMulP + TInvS + tsp · TFieldOp.
+Here, tsp · TOPRF full accounts for the tsp contacted providers, while the additional TMulP term corresponds to
+the client blinding step. In UpSPA, authentication has the form
+T UpSPA
+auth
+(nsp, tsp) = TTOPRF(tsp) + (⌈nsp/tsp⌉+ 1) · TAE-Dec + (nsp + 1) · THash.
+Thus, TSPA authentication grows linearly with the number of contacted providers through tsp OPRF evalu-
+ations, tsp decryptions, and tsp field combination steps. In contrast, UpSPA performs one TOPRF reconstruc-
+tion and decrypts only ⌈nsp/tsp⌉+1 encrypted state records. These results do not contradict the asymptotic
+comparison. Rather, they identify the small-parameter crossover region. At very small nsp and tsp, TSPA
+can benefit from cheaper constants: it uses AES-CTR over 32-byte shares and performs only a small number
+of OPRF evaluations. By contrast, UpSPA pays the fixed cost of TOPRF reconstruction and uses authen-
+ticated encryption through XChaCha20-Poly1305, which has a larger constant cost than AES-CTR in this
+benchmark. However, as nsp and tsp increase, the repeated OPRF and per-provider costs in TSPA dominate.
+Registration scales with nsp·TOPRF full and nsp·(tsp−1)·TFieldOp, while authentication scales with tsp·TOPRF full
+and tsp · TDec. In UpSPA, the corresponding online cost is centered around one TOPRF reconstruction, to-
+gether with a linear number of hashes and only ⌈nsp/tsp⌉+ 1 AEAD decryptions in authentication. This
+explains why TSPA is faster in some very small cases, while UpSPA scales more favorably and dominates in
+the larger asymptotic experiments.
+8
+Conclusion
+We presented UpSPA, a secure and efficient updatable threshold SPA that addresses key limitations of prior
+works. UpSPA prevents preemption and unauthorized updates at storage providers while supporting both
+secret and password updates without requiring changes to login servers. We proved its security in the ideal
+real paradigm under standard threshold corruption assumptions and showed that it incurs low practical
+overhead. We demonstrate that strong security and password and secret updates can be achieved in SPA
+without sacrificing deployability or efficiency.

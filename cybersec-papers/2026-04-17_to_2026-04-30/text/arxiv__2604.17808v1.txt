@@ -1,0 +1,1244 @@
+Enabling AI ASICs for Zero Knowledge Proof
+Jianming Tong∗
+jianming.tong@gatech.edu
+Georgia Institute of Technology
+Atlanta, Georgia, USA
+Jingtian Dang∗
+dangjingtian@gatech.edu
+Georgia Institute of Technology
+Atlanta, Georgia, USA
+Simon Langowski
+slangowski@mit.edu
+Massachusetts Institute of Technology
+Cambridge, Massachusetts, USA
+Tianhao Huang
+tianhaoh@mit.edu
+Massachusetts Institute of Technology
+Cambridge, Massachusetts, USA
+Asra Ali
+asraa@google.com
+Google
+Austin, Texas, USA
+Jeremy Kun
+jkun@google.com
+Google
+Portland, Oregon, USA
+Jevin Jiang
+jevinjiang@google.com
+Google
+Sunnyvale, California, USA
+Srinivas Devadas
+devadas@mit.edu
+Massachusetts Institute of Technology
+Cambridge, Massachusetts, USA
+Tushar Krishna
+tushar@ece.gatech.edu
+Georgia Institute of Technology
+Atlanta, Georgia, USA
+Abstract
+Zero-knowledge proof (ZKP) provers remain costly because multi-
+scalar multiplication (MSM) and number-theoretic transforms (NTTs)
+dominate runtime as they need significant computation. AI ASICs
+such as TPUs provide massive matrix throughput and SotA en-
+ergy efficiency. We present MORPH, the first framework that refor-
+mulates ZKP kernels to match AI-ASIC execution. We introduce
+Big-𝑇complexity, a hardware-aware complexity model that ex-
+poses heterogeneous bottlenecks and layout-transformation costs
+ignored by Big-𝑂. Guided by this analysis, (1) at arithmetic level,
+MORPH develops an MXU-centric extended-RNS lazy reduction
+that converts high-precision modular arithmetic into dense low-
+precision GEMMs, eliminating all carry chains, and (2) at dataflow
+level, MORPH constructs a unified-sharding layout-stationary TPU
+Pippenger MSM and optimized 3/5-step NTT that avoid on-TPU
+shuffles to minimize costly memory reorganization. Implemented
+in JAX, MORPH enables TPUv6e8 to achieve up-to 10× higher
+throughput on NTT and comparable throughput on MSM than
+GZKP. Our code: https://github.com/EfficientPPML/MORPH.
+1
+Introduction
+Zero-knowledge proofs (ZKPs) have evolved from a theoretical
+construct into a core building block for practical verifiable compu-
+tation and scalable blockchains. They allow services to outsource
+computation while keeping data private and verification cheap, but
+the prover remains prohibitively expensive, e.g., generating
+a proof for ImageNet ViT requires nearly one hour [41]. Across
+widely deployed protocols [17, 18], prover runtime is dominated by
+multi-scalar multiplication (MSM) and the number-theoretic
+transform (NTT), which commonly account for ≈70% and 20–30%
+of total latency, respectively [20, 42].
+∗Both authors contributed equally to this research.
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+DAC ’26, Long Beach, CA, USA
+© 2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2254-7/2026/07
+https://doi.org/10.1145/3770743.3804402
+Multi-Scalar Multiplication
+Elliptic Curve Multiplication
+xy
+zz
+zzz
+256 bits
+Scalar
+Point
+Dataflow Optimizations: Maximize Parallelism and Minimize Layout Transformation
+Arithmetic Optimizations: MXU-Centric RNS Lazy Reduction for Prime Field Mul.
+Number Theory Transformation
+377 bits
+377 bits
++
++
+-
+-
+ω
+ω2
+Modular Multiplication over Large Prime Finite Field
+-
++
+-
++
+ω2
+ω2
+XLA Compiler
+MORPH
+AI ASICs E.g. 
+Google TPU
+AWS Trainium
+MSM
+NTT
+Figure 1: MORPH’s deployment flow with dataflow and arith-
+metic optimizations to accelerate ZKP on TPU.
+Both MSM and NTT expose abundant parallelism at practi-
+cal ZKP sizes, making parallel hardware promising for acceler-
+ation. Among these platforms, AI ASICs (Google TPU [21], AWS
+Trainium [4] etc.) offer extreme compute density and energy effi-
+ciency, significantly outperforming general-purpose accelerators
+at scale [35]. Architecturally, a TPU contains giant heterogeneous
+cores, including a matrix multiplication engine (MXU) and a vec-
+torized processing engine (VPU). Each MXU/VPU contains orders
+of magnitude (1024/16×) more multiply-accumulates (MACs) than
+one corresponding core in a GPU [8]. All MACs in a MXU/VPU
+execute instruction in the lock-step (SIMD) to substantially reduce
+per-operation control overhead and improve energy efficiency. This
+paper studies how to systematically repurpose AI ASICs, par-
+ticularly Google’s TPUs [21], for ZKP kernels (MSM/NTT)
+and achieve higher energy efficiency and SoTA throughput at scale.
+Existing ZKP acceleration spans GPUs [14, 20, 27, 28], FPGAs [7,
+26, 29–32] and ASICs [33, 38, 42]. While these systems hand-craft
+MSM/NTT algorithms for their respective platforms, they provide
+no principled way to quantify how far an MSM/NTT algorithm is
+from the platform’s performance limits with detailed reasoning. Some
+works provide Big-O complexity [22], yet we find a surprising
+phenomenon: the fastest GPU/TPU algorithms intentionally use
+the algorithm with higher Big-O to expose massive parallelism and
+thus achieve higher throughput [35]. Big-O alone is insufficient for
+modern heterogeneous parallel hardware.
+Furthermore, Big-O cannot capture layout transformation cost,
+which becomes the dominant bottleneck on AI ASICs. When we
+1
+arXiv:2604.17808v1 [cs.AR] 20 Apr 2026
+
+port the SotA MSM and NTT algorithms for GPU/FPGA/ZKP-ASIC
+to TPUs with similar overall throughput, they slow down by 30× in
+our evaluation. This is because a TPU only operates on coarser-
+grained contiguous data (a 4KB vector register, VReg), and
+fine-grained data gathering in SotA MSM/NTT algorithms requires
+expensive shuffles and transposes to move data into contiguous
+VRegs. These layout-induced stalls are invisible under the tradi-
+tional Big-O model. To address this gap, we introduce Big-𝑇no-
+tation, a platform-aware complexity model that measures the se-
+quential bottleneck across heterogeneous pipelined compute units
+and the latency of layout transformation, providing an asymptotic
+lower bound for parallel execution on AI ASICs. Big-𝑇exposes two
+structural inefficiencies in SotA MSM/NTT algorithms on TPUs.
+Arithmetic-level Challenge: ZKP requires modular arithmetic
+over large prime fields (e.g., 256/377/753 bits), but hardware natively
+supports much lower precision (e.g., 8/32-bit). Because prime fields
+lack a natural RNS factorization, the SotA algorithm [6, 27] performs
+high-precision arithmetic via digit decomposition and a chain of
+carry propagation, achieving <1% compute utilization on TPUs.
+Dataflow-level Challenge: The SotA dataflows incur prohibi-
+tive communication and storage overheads. In presorted Pippenger
+MSM [20, 27], sorting is distributed across many GPU CUDA cores.
+Directly porting this strategy to TPU introduces prohibitive inter-
+TPU communication. Layout-invariant 3-step NTT [35] requires
+parameters that scale linearly with problem size, resulting in out-
+of-memory (OOM) failures at large scale.
+In resolving these inefficiencies, we propose MORPH1, the first
+framework enabling TPU as ZKP accelerator with arithmetic and
+dataflow level optimizations, as shown in Fig. 1.
+Arithmetic-level Solution: Since a prime field cannot be repre-
+sented in a Residue Number System (RNS), MORPH adopts [19, 24]
+to encapsulate modular multiplication in a prime field in a larger
+non-prime finite field that has a RNS representation. This enables
+high-precision multiplication to be expressed as independent 32-bit
+vector multiplications with no carry propagation. Then, MORPH
+reforms the modular reduction (RNS reconstruction →modular
+reduction →RNS decomposition) as low-precision matrix multi-
+plication and parallel vectorized operations to be accelerated by
+TPU’s MXU and VPU, achieving up-to 90× speedup.
+Dataflow-level Solution: To tackle communication and layout
+reorganization, MORPH proposed LS-PPG to schedule communication-
+free workload dimensions across devices to avoid inter-TPU com-
+munication, ensures layout invariant within individual TPU. To
+mitigate parameters storage overflow, MORPH’s 5-step NTT re-
+cursively partitions workloads to reduce parameter size while pre-
+serving the same computational complexity.
+Together, MORPH enables TPUv6e-8 to achieve up-to 10× NTT
+throughput and 1.2× MSM throughput than GZKP [27] (NVIDIA
+V100). MORPH makes TPU the SotA throughput machine for
+high-precision NTT, a promising platform for ZKP acceleration.
+Our contributions are:
+• BIG-𝑇Complexity: A hardware-aware complexity metric that
+captures heterogeneous compute spans and layout transforma-
+tion, enabling principled analysis of MSM/NTT designs on AI
+1MORPH: Matrix-Oriented Reformulation of ZKP for Parallel Heterogeneous AI ASICs
+"SIMD"
+Coarse-Grained
+Control
+VPU
+SIMD
+1~10 TOPS
+HBM
+10~100 GB
+Lane 0
+0.125~1 MB
+Lane 127
+Lane 1
+VMEM
+~0.1 GB
+~1000 GB/s
+~10 TB/s
+VReg
+4 KB
+MXU
+Systolic Array (MatMul)
+100~1000 TOPS
+Compute
+XLU
+Layout Transform
+Scalar Unit
+SReg, SMEM
+For control
+CPU
+1~10 TOPS
+10~200 GB/s
+TPU
+8
+32
+PCI-E
+128
+32-bit
+regs
+Shuffle
+Transpose
+MXU
+VPU
+Max Parallelism
+𝑃𝐴𝑅S = 4096
+𝑃𝐴𝑅T = 4096
+𝑃𝐴𝑅MXU = 131072
+𝑃𝐴𝑅VPU = 2048
+Datatype
+u32
+u32
+bf16/i8
+u32
+Requirement
+(8, 128)
+(8, 128)
+(8×128×128 MatMul)
+2048
+Figure 2: TPU programming model. All compute units oper-
+ate on VRegs with (8×128) 32-bit registers each. Performance
+hinges on data being laid out such that tiles needed for com-
+putation can be loaded directly from VRegs. Values from [21].
+ASICs and guiding the construction of layout-stationary pip-
+penger for MSM and 5-step NTT, giving 5.8× and 1.6× speedup.
+• MXU-centric RNS Lazy Reduction: A matrix-oriented modu-
+lar reduction for big integer multiplication in prime fields, which
+replaces sequential carry-propagation arithmetic with MXU-
+accelerated RNS-lazy reduction, achieving up-to 90× speedup
+over the SotA radix decomposed Montgomery reduction.
+• LS-PPG and 5-step Layout Invariant NTT: Both avoid inter-
+TPU communication and minimize intra-TPU layout reorga-
+nization, delivering up-to 5.8× speedup over the SoTA MSM
+algorithm[20] on TPU, and reduce parameters storage at scale.
+2
+Background and Related Work
+2.1
+Tensor Processing Unit (TPU)
+The TPU [21] is Google’s AI ASIC designed to accelerate machine
+learning training and inference with high energy efficiency. All
+on-chip computation is organized around the Vector Register
+(VReg) abstraction. Each VReg consists of 8×128 of 32-bit values
+executed in lock-step SIMD. All compute units on a TPU, including
+the VPU, MXU, and XLU, consume and produce data strictly at
+VReg granularity, as shown in Fig. 2. This uniform but coarse layout
+enables high efficiency but restricts flexibility: workloads whose
+shapes do not align with the fixed (8, 128) structure incur layout
+transformation because only full VRegs can be processed each cycle.
+• Vector Processing Unit (VPU). The VPU performs 32-bit SIMD
+arithmetic on VRegs. E.g., TPUv4 contains a dual-issue ALU to
+operate two VRegs concurrently, yielding a peak parallelism of
+𝑃VPU = 2048 32-bit operations per cycle. Vectors with length not a
+multiple of (8, 128) cannot fully utilize VPU’s available parallelism.
+• Matrix Multiplication Unit (MXU). The MXU in TPUv4 is a
+large systolic array (128×128) for int8 and bf16 matrix multiplica-
+tion. It preloads weight tiles from VRegs and streams activation
+tiles from VRegs. When normalized to the same datatype, the MXU
+achieves roughly 16× higher peak throughput than the VPU. Full
+efficiency requires workloads to conform to the MXU’s minimum
+effective tile of 8×128×128. Larger gives more weights reuse while
+smaller or non-aligned matrix shapes leave MXU under-utilized.
+• Layout Transformation Unit (XLU). XLU performs shuffles,
+transposes, broadcasts, and reductions of VRegs. XLU is efficient for
+transformations at VRegs granularity, but costly for element-wise
+2
+
+permutations. Shuffling 𝑁individual elements may cost 𝑁cycles.
+• HBM and the host CPU serve as the off-chip data sources, but
+their bandwidth is typically an order of magnitude lower than
+on-chip VReg bandwidth. Consequently, high-performance TPU
+kernels favor on-chip data reuse and layout transformation.
+2.2
+Performance Metric and Analysis
+TPU’s heterogeneous compute units, each with different parallelism
+and tiling constraints, make classical models such as Big 𝑂and
+the work–span model inadequate. These models measure total
+computational work or critical-path latency under the assumption
+of a homogeneous sequential machine like a CPU, and therefore
+cannot capture VReg granularity, systolic-array tiling, or the cost of
+on-chip layout transformations. Further, Roofline analysis[39] and
+trace-based profiling quantify how far execution is from hardware
+limits, but they still do not explain why performance is low.
+2.3
+Zero-knowledge Proof (ZKP) Acceleration
+2.3.1
+Background on Kernel and Arithmetic in ZKP.
+Multi-Scalar Multiplication. MSM [18] computes Í𝑁−1
+𝑛=0 𝑆𝑛⊛
+𝑃𝑛where each scalar 𝑆𝑛is 𝑆𝐵𝐿bits and each point 𝑃𝑛lies on an el-
+liptic curve that supports point addition (PADD, ⊕). A scalar–point
+multiplication (⊛) is realized as repeated PADDs for 𝑆𝑛times.
+Number Theory Transformation. NTT [18] converts a polyno-
+mial of degree 𝑁into its frequency-domain representation by eval-
+uating it at 𝑁distinct roots of unity in a finite field. Given an input
+vector x of degree 𝑁, NTT computes X𝑘= Í𝑁−1
+𝑛=0 𝑥𝑛× 𝜔𝑘𝑛
+𝑁mod 𝑀,
+𝑘∈[0, 𝑁), where 𝜔𝑁is a primitive 𝑁-th root of unity.
+Large prime field. Modern ZKP systems [18] rely on arithmetic
+over a finite field F𝑀with a large prime modulus 𝑀(256/377/753
+bits). In both elliptic-curve MSM and polynomial-commitment NTT,
+all additions, multiplications are executed modulo large prime 𝑀.
+2.3.2
+Related Work: Arithmetic Implementations.
+ZKPs operate over large prime fields F𝑀with log2(𝑀) ≥256,
+exceeding native 32-bit word size on GPUs and TPUs. SotA GPU
+implementations [20, 27] therefore represent each field element as
+a vector of 𝐷32-bit “digits”. A single field multiplication requires
+two stages: (1) High-precision multiplication, which performs 𝑂(𝐷2)
+32-bit multiplications followed by a 𝑂(𝐷) sequential carry propaga-
+tion of length 𝐷; and (2) Montgomery reduction, which reduces the
+2𝐷-digit intermediate product back to 𝐷digits, incurring another
+𝑂(𝐷2) 32-bit multiplications. We use this SotA radix Montgomery
+reduction as our arithmetic baseline, termed as radix Mont.
+RNS represents an integer 𝑥by residues (𝑥mod 𝑞𝑖) over co-
+prime moduli {𝑞𝑖}, where modulus 𝑄= Î
+𝑖𝑞𝑖. RNS could lower
+𝑂(𝐷2) down to 𝑂(𝐷) when performing modular multiplication
+with respect to 𝑄. But the prime modulus 𝑀cannot be factored
+into multiple residues, making such reduction inapplicable to ZKP.
+2.3.3
+Related Work: Dataflow Optimizations.
+Presorting Pippenger (PPG) - MSM In prior work of MSM
+acceleration on GPU [20, 28], FPGA [7, 26, 29–31] and ASICs [13, 25,
+38, 40, 42], Presorting PPG is the SotA MSM algorithm. Its key idea is
+to reduce the total number of point additions by first grouping points
+whose scalars share the same value, summing those points once,
+and then multiplying the accumulated result by that scalar value.
+To increase the likelihood of such sharing (“collisions”), each scalar
+is split into 𝐾=
+
+𝑆𝐵𝐿/𝑐
+
+windows of 𝑐bits. We adopt presorting
+PPG as our dataflow baseline, termed as “Presort-PPG”.
+Butterfly NTT and layout invariant 3-step NTT. SotA NTT
+acceleration on CPUs [11, 23], GPUs [14, 27], FPGAs [32] and ASICs
+[? ] implements recursive Cooley-Tukey NTT with minimal compu-
+tation complexity 𝑂(𝑁𝑙𝑜𝑔𝑁), commonly called as “butterfly NTT"
+in Fig. 5a. However, each stage performs fine-grained shuffles that
+are smaller than vector-register width, leading to costly layout
+transformations, making TPUs inefficient. Recent TPU work [35]
+proposes a layout-invariant 3-step NTT achieving 𝑂(𝑁3/2) arith-
+metic with zero layout transformation, breaking the NTT through-
+put record of the butterfly NTT on GPUs [12, 16] on lower-precision
+𝑀< 32 bits and lower degree (𝑁≤217). It reforms an 𝑁-input NTT
+into an (𝑅,𝐶) matrix (𝑁= 𝑅× 𝐶) such that an NTT is reformed
+into matrix and vectorized multiplication for TPU acceleration, as
+shown in Fig. 5b. We adopt 3-step NTT as dataflow baseline.
+3
+Method
+This section first defines the Big 𝑇notation, then uses it to ana-
+lyze arithmetic and dataflow inefficiencies of the SotA MSM/NTT
+algorithm on TPUs, finally showing how MORPH resolves them.
+3.1
+Big-𝑇Complexity and TPU’s Parallelism
+Today’s parallel computing devices, including GPUs and TPUs,
+often consist a heterogeneous set of pipelined compute units U =
+{𝑈1,𝑈2, . . . ,𝑈𝐾}, where each 𝑈𝑘denotes a class of units. Let 𝑃𝑘be
+the number of parallel instances of unit type 𝑈𝑘. We decompose
+the total work of size 𝑁into per-unit contributions 𝑊𝑘(𝑁),𝑘∈
+[1, . . . , 𝐾], where 𝑊𝑘(𝑁) counts the operations mapped to unit 𝑈𝑘.
+All these on-chip compute units are deeply pipelined, the exe-
+cution time is bounded by the slowest (bottleneck) pipeline stage.
+We define the BIG-𝑇complexity (termed as Big-𝑇notation) of an
+algorithm on a parallel computing device as
+𝑇(𝑁) = 𝑂
+
+max
+
+max
+𝑘
+𝑊𝑘
+𝑃𝑘, 𝑀𝑒𝑚
+ 
+if there exists a constant 𝑐> 0 and 𝑁0 such that for all 𝑁≥𝑁0,
+𝑇(𝑁) ≤𝑐· max
+n
+max𝑘
+𝑊𝑘
+𝑃𝑘, 𝑀𝑒𝑚
+o
+. Here, the term “max𝑘
+𝑊𝑘
+𝑃𝑘” cap-
+tures the bottleneck among heterogeneous pipelined compute units.
+“𝑀𝑒𝑚” captures the overall latency of off-chip data access. Together,
+they provide an asymptotic lower latency bound of a pro-
+posed algorithm on parallel computing devices. Under suffi-
+ciently large workload, the ideal parallelism of compute units in a
+TPU used for Big-𝑇analysis is listed in Fig. 2.
+3.2
+Arithmetic Optimizations
+Table 1: Big-𝑇Complexity of Arithmetic (Bottleneck in Red)
+Kernel
+VPU Span
+MXU Span
+XLU Span
+Memory Span
+Radix Mont.
+𝐷2
+𝑃𝐴𝑅VPU
+𝐷2
+𝑃𝐴𝑅MXU
+𝐷2 log 𝐷
+𝑃𝐴𝑅S
+𝐷
+𝐵𝑊HBM
+MXU RNS Lazy
+4𝐷
+𝑃𝐴𝑅VPU
+𝐷2
+𝑃𝐴𝑅MXU
+∼0
+2𝐷
+𝐵𝑊HBM
+3.2.1
+Challenge: Radix Montgomery Reduction is Dominated by
+Memory Reorganization. For a value with 𝐷32-bit digits, radix-232
+Montgomery multiplication requires (1) a 𝑂(𝐷2) big-integer multi-
+plication and (2) a 𝑂(𝐷2) Montgomery reduction, each containing
+a sequential 𝐷-step carry-propagation chain. Carry propagation
+demands fine-grained shuffling and index permutation on a TPU,
+3
+
+xy
+x
+y
+xy
+MXU-centric RNS ModMul
+result < 
+result
+Final Full Modular Reduction
+Actual range of Value
+32-bit VecModMul
+MXU-centric Lazy Reduction 
+8-bit
+MatMul
+32D-bit
+32D-bit
+x
+y
+RNS representation of value
+2D 32-bit moduli
+value
+Actual Value Range Changes In 
+Computation Illustration
++
+32-bit
+VecOp
+our contribution
+Finite Field in ZKP 
+Extended Finite Field 
+ 
+Partially Reduced 
+Final Reduction
+Overall Result
+MXU-centric
+ModMul
+Execution Order
+ 
+in 
+ in 
+ in 
+in 
+ Mul. Result
+Figure 3: Illustration of actual value change and computa-
+tional flow of MXU-centric RNS Lazy Modular Multiplication.
+which appears as the XLU span bottleneck in Tab. 1. Thus, the lim-
+iting factor is not compute throughput, but the repeated memory
+reorganization inherent in Radix Montgomery Reduction.
+3.2.2
+Solution: Reducing 𝑂(𝐷2) →𝑂(2𝐷) for Big-Integer Multipli-
+cation via RNS. To eliminate quadratic-cost digit multiplications,
+we encode each high-precision prime-field element in an extended
+non-prime field F𝑄following [19]. We select 𝑄> 𝑀2 to guarantee
+that for any 𝑥,𝑦∈F𝑄, the product of their RNS vectors never over-
+flows 𝑄, avoiding a true reduction by 𝑄. Hence, the multiplication is
+fully decomposed into independent 32-bit limb multiplications. This
+transformation converts the compute pattern from quadratic all-to-all
+digit multiplications into linear digit-independent multiplications.
+3.2.3
+Solution: Reducing 𝑂(𝐷2) Reduction via MXU-Centric RNS
+Lazy Reduction. Although multiplication is linearized in F𝑄, mod-
+ular reduction by 𝑀must still be performed over the prime field
+F𝑀. A naïve approach would require RNS reconstruction from F𝑄
+→prime-field reduction (mod 𝑀) →RNS decomposition into F𝑄.
+We reduce this overhead by applying Basis Aligned Transfor-
+mation [35] to Simon’s reduction [24], collapsing this multi-stage
+pipeline into one 8-bit matrix multiplication (Lines 15 and 18 in
+Alg.1) plus four 32-bit vector operations (Lines 16,17,19,20 in Alg.1).
+This shifts the dominant 𝑂(𝐷2) term to a low-precision matrix mul-
+tiplication, with its cost amortized by MXU, yielding 𝑂(𝐷) latency
+overhead. It also removes all carry-propagation from the critical
+path, making it throughput-bound rather than shuffle-bound.
+3.2.4
+Walk-Through Example. Given 𝑥,𝑦∈F𝑀, we convert them
+into extended-field RNS form 𝑥𝑄,𝑦𝑄, each containing 2𝐷32-bit
+digits. The modular multiplication proceeds as:
+• RNS-level 32-bit VecMul with Montgomery reduction, 𝑂(2𝐷).
+• MXU-centric RNS Lazy Reduction (Lines 14–20 of Alg.1, 𝑂(𝐷2)).
+All sequential carry propagation are removed. Computation be-
+comes dominated by vectorized operations, as highlighted in Tab. 1.
+In summary, MORPH encapsulates computation over F𝑀
+inside a larger field F𝑄, paying (1) a 2× memory footprint for the
+extended RNS representation, and (2) additional RNS reconstruc-
+tion/decomposition. These costs are amortized among sea-of-MACs
+in MXU, such that the bottleneck shifts from sequential shuffle-
+bound carry propagation to VPU-bounded vectorized operations,
+enabling better throughput/latency than Radix Mont.
+3.3
+Dataflow Optimizations
+3.3.1
+Multi-Scalar Multiplication (MSM).
+Challenge. porting SotA MSM to TPU leads to three inefficiencies:
+(1) inter-TPU communication, (2) intra-TPU layout reorganization,
+Algorithm 1 MXU-Centric RNS Lazy Reduction (MXU RNS Lazy)
+1:
+ByteDecompose(𝑥)→[𝑥]𝑏,𝑏∈[0, 𝐵).
+2: for 𝑏= 0 to 𝐵−1:
+3:
+𝑥𝑏←𝑥[8𝑏: 8(𝑏+ 1)]
+⊲Select b-th byte of 𝑥, full parallel
+4: Return [𝑥]𝑏, 0 ≤𝑏< 𝐵
+ByteMerge([𝑥]ℎ,ℎ∈[0, 𝐻)) →𝑥
+5: for ℎ= 0 to 𝐻−1:
+6:
+𝑥[8ℎ: 8(ℎ+ 1)] = [𝑥]ℎ
+⊲Parallel among H bytes
+7: Return 𝑥
+Precomputation(𝑄, 𝑃,𝑤)
+Require: 𝑄; 𝑃; 𝑤: the Montgomery factor used in element wise
+reduction; 𝑦= (2𝑤)−1, 𝑧= 2𝑤, 𝑦and 𝑧are co-prime.
+8: Initialize 𝐼𝑖, 𝐼𝑖,𝑏, [𝐸]𝑖,𝑏,𝑗,ℎ, [𝑓]𝑖.
+9:
+𝐼𝑖=   ( 𝑄
+𝑞𝑖)−1 mod 𝑝𝑖
+( 𝑄
+𝑞𝑖𝑦) mod 𝑄
+10: 𝐼𝑖,𝑏=   ( 𝑄
+𝑞𝑖)−1 mod 𝑝𝑖
+( 𝑄
+𝑞𝑖𝑦) << 8𝑏mod 𝑄
+⊲BAT[35]
+11: [𝐸]𝑖,𝑏,𝑗,ℎ= ByteDecompose  𝑧(𝐼𝑖,𝑏mod 𝑀) mod 𝑝𝑗
+
+ℎ
+12: [𝑓]𝑖=
+l
+𝐼𝑖2𝑢
+𝑄
+m
+13: [𝑔] 𝑗= (−𝑧(𝑄mod 𝑀)) mod 𝑝𝑗
+14: Return [𝐸]𝑖,𝑘, [𝑓]𝑖, [𝑔] 𝑗
+Main(𝑥𝑄, 𝑄, 𝑃, w)
+⊲MXU-centric RNS Lazy Reduction
+Require: 𝑄= Î
+𝑖𝑞𝑖; 𝑃= Î
+𝑗𝑝𝑗,𝑖∈[0, 𝐼), 𝑗∈[0, 𝐽); w; pick
+𝑢≥⌈𝑙𝑜𝑔2(Í
+𝑖𝑞𝑖)⌉. 𝑥𝑄= CRT𝑄(𝑥) is RNS representation of 𝑥
+in F𝑄, containing 𝐼residues with 𝐵Bytes each. When being
+written as
+
+𝑥𝑄
+
+𝑖, each iteration specifies entire 32-bit residue
+value of 𝑥𝑄. When being written as
+
+𝑥𝑄
+
+𝑖,𝑏, 𝑏∈[0, 𝐵), each
+iteration specify 𝑏-th byte of 𝑖-th residue. [𝑥𝑃] 𝑗,ℎhas 𝐽residues
+with 𝐻bytes each. Note: we refer to [24] for details of CRT𝑄.
+Ensure: 𝑥𝑃= ((((𝑥× 𝑦) mod 𝑀) mod 𝑄) × 𝑧) mod 𝑃in F𝑃
+15: [𝐸]𝑖,𝑏,𝑗,ℎ, [𝑓]𝑖, [𝑔] 𝑗←Precomputation(𝑄, 𝑃,𝑤)
+16: 𝑣←
+
+𝑥𝑄
+
+𝑖· [𝑓]𝑖⊲Dot Product, fused into L18 as one MatMul
+17: 𝑘←
+ 𝑣
+2𝑢
+
+⊲32-bit Vectorized Shift
+18:
+
+𝑥𝑄
+
+𝑖,𝑏= ByteDecompose(
+
+𝑥𝑄
+
+𝑖)
+19: [𝑥𝑃] 𝑗,ℎ= Í 
+𝑥𝑄
+
+𝑖,𝑏× [𝐸]𝑖,𝑏,𝑗,ℎ
+⊲(Einsum) uint8 MatMul
+20: [𝑥𝑃] 𝑗= ByteMerge([𝑥𝑃] 𝑗,ℎ)
+21: Return [𝑥𝑃] 𝑗+ 𝑘· [𝑔] 𝑗
+⊲32-bit ScalarVecMul + VecAdd
+and (3) memory overhead from loading duplicated points of different
+windows from off-chip memory.
+MORPH introduces Layout-Stationary Pippenger (LS-PPG), which
+enforces a common sharding and layout across presorting and
+Bucket Accumulation (BA), the latency-dominant phase of MSM. LS-
+PPG shards reduction-free dimensions across tensor cores, allowing
+each core to process an independent partition. This makes presort-
+ing a direct producer of BA-ready points, eliminating cross-TPU
+communication, intra-TPU layout reorganization. By fusing presort-
+ing with BA, post-sorted points are consumed immediately upon
+generation rather than being written back to and later reloaded from
+off-chip HBM. Beyond BA, MORPH performs Bucket Reduction in
+a tree form to expose more parallelism and improve VPU compute
+utilization. Alg. 2 and Fig. 4 illustrate LS-PPG. Consequently, the
+ideal memory span is reduced from
+𝐾𝑁
+𝐵𝑊𝐻𝐵𝑀to a single pass over
+scalars and points, i.e.,
+2𝑁
+𝐵𝑊𝐻𝐵𝑀in Tab. 2.
+4
+
+S1
+S0
+SN-1
+P0
+P1
+PN-1
+11
+01
+10
+256-bit
+The 2nd Window 
+(One window)
+P0
+P1
+PN-1
+2 bits out of 256 bits
+Buckets(Value)
+P9,P7,PN-1
+Points in bucket
+Pre sorting
+P1,P4,P5
+P3,P8,P11
+P0,P7,P10
+Bucket Accumulation (BA)
+P3    P8   P11
+P1    P4   P5
+P9    P7    PN-1
+P0    P7   P10
+Batch Point Add
+B0,2
+B1,2
+B2,2
+B3,2
+Bucket Reduction (BR)
+Accumulated 
+Result Per Window
+S1
+S0
+SN-1
+P0
+P1
+PN-1
+2c
+2c
+2c
+Window Merge (WM)
+MSM
+Result
+Parallelism:
+Layout Transformation:
+Scatter  
+ Points
+1 (    )
+None
+Reshape (TPU)
+Windows
+ K 
+ (   )
+None
+S   -th Scalar;              P   -th Point;              B ,
+-th Bucket in -th window;              W
+ Accumulated Result of  -th Window
+(00)
+(01)
+(10)
+(11)
+0
+1
+3
+2
+K(2c-1)/c
+drop zero bucket
+0
+1
+2
+3
+c=2
+Figure 4: Illustration of LS-PPG’s (Alg. 2). Takeaway: MORPH minimizes data re-sharding and layout reorganization.
+ω2
+ω4
+ω8
+ω6
+ω8
+ω4
+ω8
+ω4
+ω8
+ω8
+ω8
+ω8
+N=RC
+P:
+N/2
+N/2
+N/2
+LT: Shuffle Shuffle Shuffle
+(a) Butterfly NTT
+R
+C
+R
+TF
+R
+×
+R
+×C
+C
+TF
+C
+Vector ModMul
+Matrix ModMul
+R
+TF
+C
+(R,R,C)
+(R,C)
+(R,C,C)
+Parallelism: R*N
+N
+N*C
+Layout: Reshape -> 2D
+None
+Flatten -> 1D
+Matrix ModMul
+(b) 3-step NTT
+TF ×
+×
+TF
+R2
+batch C - (R1,R1,R2) batch C - (R1,R2)
+batch C - (R1,R2,R2)
+Parallelism: R1*N
+N
+R2*N
+R1
+R2
+C
+R1
+R1
+R1 TF
+R2
+R1
+R2
+C
+R2
+R
+C
+R
+×C
+C
+TF
+C
+R
+TF
+C
+(R,C)
+(R,C,C)
+Layout: Reshape -> 3D
+None
+None
+ N
+N*C
+Reshape -> 2D
+Flatten -> 1D
+Matrix ModMul
+Vector ModMul
+Matrix ModMul
+Vector ModMul
+Matrix ModMul
+R=R1 R2
+(c) 5-step NTT (Proposed by This Work)
+Figure 5: Performance Analysis of Different NTT. (𝑁= 𝑅× 𝐶, 𝑅= 𝑅1 × 𝑅2), TF refers to twiddle factors, which are generated
+offline. Takeaway: MORPH further recursively reduces the row-wise NTT in (b) into an 3-step NTT to reduce overall computation.
+Algorithm 2 Layout Stationary Pippenger (LS-PPG)
+Require: Initialize 𝑀𝑆𝑀,𝑆𝑛, 𝑃𝑛,𝑊𝑘, 𝐵𝑘,𝑗,𝑊𝑘as 0, 𝑗∈[0, 2𝑐−1],𝑘∈
+[0, 𝐾], 𝑁′(max point count per 𝐵𝑘,𝑗), definition in Fig. 4.
+Bucketize
+1: sharding for 𝑘∈𝐾
+⊲Distributed across multi-TPUs
+2:
+Initialize 𝑃′
+𝑘←O of shape [2𝑐, 𝑁′]
+⊲2𝑐buckets.
+3:
+Π𝑘←argsort(𝐼𝑘)
+⊲𝐼𝑘: 𝑘-th slice of all scalars 𝑆𝑛
+4:
+Gather 𝑃𝑛based on Π𝑘, and scatter them into 𝐼𝑘[𝑛]-th bucket
+in 𝑘-th window (𝑊𝑘).
+Bucket Accumulation (BA)
+5: Initialize bucket 𝐵𝑘,𝑗with zero points.
+6: sharding for 𝑘∈𝐾⊲Distribute windows across multi-TPUs
+7:
+parallel for 𝑗∈[1, 2𝑐−1]
+8:
+for 𝑛′ ∈𝑁′
+9:
+𝐵𝑘,𝑗+= 𝑃′
+𝑘,𝑛′,𝑗
+Bucket Reduction (BR)
+⊲Tree-based Accumulation
+10: Initialize 𝑊𝑘,𝑗←O for all 𝑘∈[0, 𝐾−1] and 𝑗∈[0, 2𝑐−1]
+11: for 𝑠= 𝑐−1 down to 0
+⊲level of tree
+12:
+Let 𝐵(𝐿)
+𝑘,𝑏←𝐵𝑘,2𝑏and 𝐵(𝑅)
+𝑘,𝑏←𝐵𝑘,2𝑏+1 for 𝑏∈[0, 2𝑠−1]
+13:
+Let 𝑊(𝐿)
+𝑘,𝑏←𝑊𝑘,2𝑏and 𝑊(𝑅)
+𝑘,𝑏←𝑊𝑘,2𝑏+1 for 𝑏∈[0, 2𝑠−1]
+14:
+sharding for 𝑏= 0 to 2𝑠−1
+15:
+parallel for 𝑘= 0 to 𝐾−1
+16:
+𝑊𝑘,𝑏←𝑊(𝐿)
+𝑘,𝑏+𝑊(𝑅)
+𝑘,𝑏+ 𝐵(𝑅)
+𝑘,𝑏
+17:
+𝐵𝑘,𝑏←2 ·
+
+𝐵(𝐿)
+𝑘,𝑏+ 𝐵(𝑅)
+𝑘,𝑏
+
+18: 𝑊𝑘←𝑊𝑘,0
+⊲root of the tree
+Window Merging (WM)
+19: for 𝑘in (𝐾, 0, -1):
+⊲Reverse Window Index 𝑘
+20:
+𝑀𝑆𝑀×= 2𝑐
+21:
+𝑀𝑆𝑀+=𝑊𝑘
+22: Return 𝑀𝑆𝑀.
+Note 1: Coordinate and bytes dimensions are hidden for simplicity.
+Note 2: O is the zero point (0, 1, 1, 0) in Twisted Edward curves.
+Note 3: 𝐵(𝐿)
+𝑘,𝑏, 𝐵(𝑅)
+𝑘,𝑏,𝑊(𝐿)
+𝑘,𝑏,𝑊(𝑅)
+𝑘,𝑏are introduced for tree reduction.
+Note 4: N’ is the maximal number of points among all buckets.
+Table 2: Big-𝑇Complexity of Dataflows (Bottleneck in Red)
+MSM
+VPU Span and MXU Span
+XLU Span
+Memory Span
+Presort-PPG
+𝐾𝑁
+𝑃𝐴𝑅𝐵𝐴+ 2𝐾(2𝑐−1)
+𝑃𝐴𝑅𝐵𝑅
++ (𝐾−1)(1 + 𝐶) + 1
+𝑃𝐴𝑅𝑊𝑀
+2𝑐· 𝑁log 𝑁
+𝑃𝐴𝑅S
+𝐾· 𝑁
+𝐵𝑊HBM
+LS-PPG
+𝐾𝑁
+𝑃𝐴𝑅𝐵𝐴+ 4𝐾(2𝑐−1)
+𝑃𝐴𝑅𝐵𝑅_𝑛𝑒𝑤+ (𝐾−1)(1 + 𝐶) + 1
+𝑃𝐴𝑅𝑊𝑀
+2𝑐· 𝑁log 𝑁
+𝑃𝐴𝑅S
+2𝑁
+𝐵𝑊HBM
+NTT
+VPU Span
+MXU Span
+XLU Span
+Memory Span
+Butterfly
+𝑁log 𝑁
+𝑃𝐴𝑅VPU
+0
+𝑁log 𝑁
+𝑃𝐴𝑅S
+(𝑁+ 𝑁)
+𝐵𝑊HBM
+3-step NTT
+𝑁
+𝑃𝐴𝑅VPU
+𝑁(𝑅+ 𝐶)
+𝑃𝐴𝑅MXU
+2𝑁
+𝑃𝐴𝑅T
+(2𝑁+ 𝑅2 + 𝐶2)
+𝐵𝑊HBM
+5-step NTT
+2𝑁
+𝑃𝐴𝑅VPU
+𝑁(𝑅1 + 𝑅2 + 𝐶)
+𝑃𝐴𝑅MXU
+3𝑁
+𝑃𝐴𝑅T
+(2𝑁+ 𝑅2
+1 + 𝑅2
+2 + 𝑅+ 𝐶2)
+𝐵𝑊HBM
+Note: 𝑃𝐴𝑅𝐵𝐴/𝑃𝐴𝑅𝐵𝑅/𝑃𝐴𝑅𝑊𝑀refers to 𝑃𝐴𝑅𝑉𝑃𝑈or 𝑃𝐴𝑅𝑀𝑋𝑈in BA,BR,WM
+phase. 𝑃𝐴𝑅𝐵𝑅_𝑛𝑒𝑤=𝑐. 𝑃𝐴𝑅𝐵𝑅=2. VPU / MXU runs the same number of PADD.
+3.3.2
+Number-Theoretic Transformation (NTT).
+Challenge of Butterfly NTT and 3-step NTT. Tab. 2 shows the
+Big-𝑇complexity of NTT variants. Running Butterfly NTT on a
+TPU shows 𝑃𝐴𝑅VPU
+𝑃𝐴𝑅S
+≈𝑂(103), making XLU the critical bottleneck
+slowing down butterfly NTT by 𝑂(103). This is slow even though it
+offers minimal compute complexity. The 3-step NTT [35] removes
+shuffles by reforming a 𝑁-degree NTT into two (𝑅, 𝑅,𝐶) matrix mul-
+tiplications and 𝑁-length vector operations, where 𝑁= 𝑅·𝐶. How-
+ever, its Big-𝑇is dominated by the MXU span 𝑁(𝑅+ 𝐶)/𝑃𝐴𝑅MXU,
+which grows with 𝑁by a factor of (𝑅+𝐶). Even with balanced fac-
+tors (𝑅= 𝐶=
+√
+𝑁), it incurs a memory span of at least 4𝑁/𝐵𝑊HBM.
+Solution: 5-step NTT to reduce MXU span while preserving MXU
+utilization. To further reduce the MXU and memory span, MORPH
+introduces a 5-step NTT that replaces the row-wise 𝑅-degree
+NTT (step 1 in the 3-step NTT of Fig. 5b) with a 3-step NTT over
+(𝑅1, 𝑅2,𝐶), as shown in Fig. 5c, where 𝑅= 𝑅1 · 𝑅2. This decomposes
+the large GEMM into multiple smaller GEMMs, reducing the effec-
+tive MXU span by a factor of 𝑁1/4 while being sufficiently large to
+fully utilize the MXU. The 5-step NTT is detailed in Eq. 1.
+𝑇𝐹𝑅
+𝑅×𝑅@
+h
+𝑇𝐹𝐶×𝑅2
+𝑅2×𝑅2@
+h 𝑎𝑅1×𝐶×𝑅2@𝑇𝐹𝐶·𝑅1
+𝑅1×𝑅1
+ ·𝑇𝐹𝐶
+𝑅1×𝑅2
+i
+·𝑇𝐹𝐶×𝐶
+i
+(1)
+Here, @ denotes matrix multiplication and · represents element-
+wise multiplication. 𝑇𝐹𝑘
+𝑅×𝐶is a matrix [((𝜔𝑛)𝑘)𝑖𝑗],𝑖∈[0, 𝑅), 𝑗∈
+[0,𝐶). 𝜔𝑛: primitive 𝑁-th root of unity. 𝑎is the input tensor.
+5
+
+218
+219
+220
+MSM Degree (TPUv6e8)
+100
+102
+104
+106
+Runtime (ms, log scale)
+Baseline
+ +Arithmetic
++Ari.+DataFlow Opt
+BA
+BR
+WM
+Speedup
+100
+101
+102
+103
+Speedup (x)
+214
+216
+218
+220
+222
+NTT Degree (TPUv6e)
+103
+105
+107
+Runtime (ms, log scale)
+ Baseline
++Arithmetic Opt
++Ari.+DataFlow Opt
+NTT
+Speedup
+100
+101
+102
+Speedup (x)
+Figure 6: MORPH Ablation Study under different degrees.
+4
+Experiments
+4.1
+Experiment Setup
+Workload: We take the most popular primitives from zk-SNARKs
+(degree usually ranges from 214 ∼226) [3, 9, 15, 34]. We adopt the
+same evaluation setup as GZKP for MSM and NTT [1, 27], where we
+assume data comes in affine representation [2] and offline converted
+into Twisted Edwards form to minimize compute overhead.
+TPU Baseline: We adopt SotA GPU algorithms as our baseline,
+including (1) radix Montgomery Reduction [20, 27], (2) Presorting
+Pippenger [20], and (3) 3-step NTT [35], detailed in §2.3.3.
+MORPH TPU Setup: MORPH uses (1) MXU-centric RNS Lazy
+Reduction, (2) LS-PPG, and (3) 3-step and 5-step NTT. MORPH is
+implemented in JAX [10] and captures wall-clock latencies using
+the JAX Profiler (XProf) [5]. We use Google TPUv6e as platforms,
+and scale the number of chips to match V100’s power consumption.
+4.2
+MORPH Evaluation
+We conduct three-stage ablation for MSM and NTT (Baseline, +Arith-
+metic, +Ari. + Dataflow, ) with latency and speedup plotted in Fig. 6.
+4.2.1
+Arithmetic Optimization Evaluation. Arithmetic optimiza-
+tions yield 50 ∼90× latency reduction for MSM, collapsing BR/WM
+to near-constant cost. These gains come from MXU-centric RNS
+Lazy Reduction, which removes sequential carry propagation and
+reformulating modular reduction of big integer arithmetic into low-
+precision dense matrix multiplication, allowing the MXU to amor-
+tize native 𝑂(𝐷2) computations into 𝑂(𝐷) latency. Although this
+increases memory footprint by up to 2×, MSM remains compute-
+bound on VPU operations, so off-chip latency is effectively hidden.
+Overall, MXU-accelerated RNS-lazy arithmetic is the primary con-
+tributor to performance improvement for both MSM and NTT.
+4.2.2
+MSM – Dataflow Optimization Evaluation. MORPH enables
+up-to 3.1× speedup. Across all degrees, BA (Bucketized included)
+dominates the runtime, because of random scatter and gather. Dataflow
+optimizations reduce BR by ∼6× from parallelism increase.
+4.2.3
+NTT – Dataflow Optimization Evaluation. 3-step NTT is
+faster at lower degrees, while 5-step becomes faster at higher
+degrees with up-to 1.07× speedup. 5-step NTT forces the overall
+degree 𝑁to be decomposed into three factors. At small degree,
+these factors are typically ≤26 = 64, leading to poor utilization
+of the (8, 128) VReg shape and reducing utilization for the MXU
+and VPU. As the degree grows (> 222), these factors become large
+enough to fully utilize VRegs, and 5-step benefits from reduced
+storage overhead of twiddle parameters.
+4.3
+MORPH vs. SotAs
+4.3.1
+NTT. Tab. 3 highlights two core advantages of TPUs for large-
+precision NTTs. First, TPUv6e8 achieves SoTA throughput in
+NTT: Its leading energy efficiency transfers to 10× higher through-
+put than GZKP (V100) for 753-bit NTTs. Second, TPUs scale more
+gracefully with precision. Increasing the modulus from 256- to
+753-bits raises GPU latency by 6× ∼7× due to long Montgomery
+Table 3: Latency Comparison (MORPH -tpuv6e8 v.s. GZKP-
+V100). Unit: 𝜇s/ms for NTT/MSM. Improvement in red.
+Workload
+Scale
+753-bit
+256-bit
+GZKP
+MORPH
+GZKP
+MORPH
+NTT (𝜇s)
+214
+150
+15.1
+50
+11.6
+216
+490
+52.8
+90
+24.8
+218
+910
+337
+280
+109
+220
+7,460
+2,195
+1,070
+716
+222
+33,670
+13,107
+4,960
+4,694
+224
+141,400
+OOM
+20,990
+21,382
+Throughput ↑
+2.6–10×
+0.98–4.3×
+MSM (ms)
+𝑁= 222
+2.66
+2.24
+0.24
+1.61
+𝑁= 224
+11.30
+8.91
+1.10
+6.42
+𝑁= 226
+40.70
+35.64
+4.00
+25.64
+Throughput ↑
+1.14–1.2×
+0.15–0.16
+20
+22
+24
+26
+28
+210 212 214 216
+Batch Size (ModMul)
+0
+0
+1
+10
+100
+Latency (ms, log scale)
+Algorithm
+Radix Mont.
+MXU RNS Lazy
+Precision
+256-bit
+377-bit
+753-bit
+Precision
+256-bit
+377-bit
+753-bit
+2
+4
+8
+16
+32
+64 128 256 512
+Batch Size (NTT)
+100
+1k
+Latency (ms)
+V5p (753 bits)
+V6e (753 bits)
+V5p (256 bits)
+V6e (256 bits)
+Figure 7: ModMul and NTT under different batch sizes.
+carry chains, whereas TPU latency grows only 1.3×∼3× because
+RNS arithmetic maps efficiently onto the MXU. TPUs also avoid
+butterfly shuffling entirely. Their cost is determined by the compute
+spans in Tab. 2, including MatMul (𝑁(𝑅+𝐶))/𝑃𝐴𝑅MXU, XLU twid-
+dle steps (2𝑁∼3𝑁), and (2𝑁+ 𝑅2 + 𝐶2)/𝐵𝑊HBM memory span,
+all of which are small for lower-degree NTTs.
+4.3.2
+MSM. Tab. 3 reports estimated latency relative to GZKP.
+MORPH ’s LS-PPG allows TPUv6e8 to achieve competitive through-
+put for 753-bit MSM. The latency is dominated by Bucketize, whose
+per-point scatter exhibits poor memory-bandwidth utilization. This
+overhead becomes more severe with finer-grained point scatter,
+leading to lower performance than GZKP at 256-bit. A dedicated
+hardware reordering unit that hides fine-grained scatters behind
+computation could mitigate this bandwidth bottleneck [36, 37].
+4.4
+Ablation Study - Batch Size
+MXU-centric RNS-Lazy sustains 4∼157× lower latency than Radix
+Montgomery across all batch sizes and precisions, and the perfor-
+mance gap widens as precision increases (256→377→753 bits) and
+as batch size increases, it further amplifies MXU utilization (Fig. 7).
+Increasing batch size from 1 to 128 gives 3.8/3.2× and 5.4/3.9×
+speedup on NTT (753 and 256 bit) for TPUv5p/v6e (Fig. 7). NTT fa-
+vors≥128 batches to fully utilize VRegs. Latency plateaus beyond
+128 batch size as MXU/VPU achieves its peak compute utilization.
+5
+Conclusion
+This paper presents MORPH, the first framework to accelerate
+ZKP kernels on AI ASICs, deployed on Google TPU. Using a Big-
+T formulation, we identify the two core bottlenecks and show
+how to overcome them: bridging high-precision modular arith-
+metic (>256-bit) to low-precision matrix/vector engines via an ex-
+tended non-prime RNS field, and eliminating or hiding layout-
+reorganization and inter-device communication overhead through
+dataflow with layout-invariant sharding over non-reduction
+dimensions. MORPH makes TPU the SotA commodity platform
+for high-precision NTT throughput and position AI ASICs as a
+practical foundation for full ZKP protocol acceleration.
+6
+
+5.1

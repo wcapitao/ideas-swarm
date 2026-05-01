@@ -1,0 +1,501 @@
+IEEE INTERNET OF THINGS JOURNAL, VOL. XX, NO. XX, MONTH 2026
+1
+EvoPatch-IoT: Evolution-Aware Cross-Architecture Vulnerability
+Retrieval and Patch-State Profiling for BusyBox-Based IoT Firmware
+Yinhao Xiao, Huixi Li, and Yongluo Shen
+Abstract—BusyBox is one of the most widely reused userland
+components in Linux-based Internet-of-Things (IoT) firmware,
+yet its security assessment remains difficult because firmware
+images are frequently stripped, vendor patch practices are incon-
+sistent, and the same source component is compiled for hetero-
+geneous architectures. We propose EvoPatch-IoT, an evolution-
+aware cross-architecture retrieval framework for stripped Busy-
+Box firmware binaries. EvoPatch-IoT combines anonymous in-
+struction/context features, graph-level statistics, per-binary ge-
+ometric priors, and historical function prototypes to localize
+homologous and potentially vulnerable functions without relying
+on symbols, source paths, or version strings at test time. We
+further construct a large-scale BusyBox benchmark from 57
+historical versions, 270 unstripped binaries, 285 stripped binaries,
+and 130 source releases, yielding 1,550,752 function-symbol rows,
+1,290,369 analysis-function rows, and 155,845 high-confidence
+stripped-to-unstripped matches. On 57 fully covered versions
+and 1,020 directed architecture pairs, EvoPatch-IoT achieves a
+weighted Hit@1 of 34.56% and Hit@10 of 56.24%, outperform-
+ing the strongest baseline by 16.04% and 26.85%, respectively,
+and reducing the expected manual inspection space by 98.98%.
+The method is best on 56 of 57 versions and maintains consistent
+advantages on difficult architecture pairs. In addition, a version-
+change transfer study reaches a mean ROC-AUC of 0.9887,
+and a CVE-2021-42386 patch-state proxy obtains 82.44% mean
+accuracy and 88.47% mean F1 across held-out architectures.
+These results show that evolution-aware binary retrieval is a
+practical foundation for scalable IoT firmware vulnerability
+auditing.
+Index Terms—IoT firmware security, BusyBox, stripped binary
+analysis, cross-architecture retrieval, binary code similarity, vul-
+nerability localization, patch-state profiling.
+I. INTRODUCTION
+I
+NTERNET-OF-THINGS (IoT) devices such as routers,
+cameras, gateways, and industrial edge nodes commonly
+embed Linux-based firmware that reuses open-source compo-
+nents for years after release. BusyBox is particularly important
+because it packages hundreds of shell and utility functionalities
+into a compact binary and is therefore routinely bundled
+into firmware images that must operate under tight resource
+budgets. As a result, a single BusyBox flaw can propagate
+across heterogeneous vendors, architectures, and deployment
+scenarios.
+The security auditing workflow, however, is far from
+straightforward. Real-world firmware images are usually dis-
+tributed as stripped binaries, not source releases. Vendor
+firmware often omits trustworthy version identifiers, backports
+Yinhao Xiao, Huixi Li, and Yongluo Shen are with the School of Big Data
+and Artificial Intelligence, Guangdong University of Finance and Economics,
+Guangzhou, China (e-mail: 20191081@gdufe.edu.cn; lihuixi@gdufe.edu.cn;
+sylkyo@gdufe.edu.cn).
+Huixi Li and Yongluo Shen are the corresponding authors.
+only part of an upstream patch, or combines a vulnerable
+BusyBox core with vendor-specific customization. In large-
+scale audits, analysts are therefore asked to answer three
+binary-centric questions at once: (i) which stripped func-
+tion corresponds to a known upstream BusyBox routine,
+(ii) whether the target binary is closer to the vulnerable or
+patched lineage, and (iii) how much manual inspection can be
+eliminated before reverse engineering becomes necessary.
+Prior work has substantially advanced binary code similarity
+and firmware analysis, from self-attentive and transformer-
+based function embedding to semantics-oriented graphs,
+prompt-based supervision, and recurring-vulnerability mining
+[1]–[14]. Nevertheless, two gaps remain pronounced for IoT
+firmware. First, many techniques are optimized for cross-
+architecture similarity but not for version-evolution-aware vul-
+nerability retrieval. Second, firmware-oriented methods often
+reason at the binary or service level, whereas auditors still
+need function-level evidence inside stripped components.
+This paper addresses the gap with EvoPatch-IoT, an
+evolution-aware retrieval framework centered on BusyBox-
+based IoT firmware. Rather than treating stripped firmware as
+an opaque whole, EvoPatch-IoT constructs anonymous multi-
+view function representations, aligns stripped functions to
+unstripped labels through a bidirectional geometric matching
+layer, and injects historical function prototypes to stabilize
+retrieval across versions. The resulting framework remains
+stripped-compatible at evaluation time while still exploiting
+the long-term evolution signal available in historical BusyBox
+releases.
+The paper is grounded in the project artifacts available in
+our workspace. We built a reproducible benchmark with 57
+BusyBox versions, 270 unstripped binaries, and 285 stripped
+binaries across AArch64, ARM, MIPS, MIPSEL, and x86 64.
+Ghidra-based feature extraction recovers 1,879 to 3,614 anony-
+mous functions per stripped binary, while our mutual match-
+ing layer establishes 155,845 high-confidence stripped-to-
+unstripped anchors. On top of this benchmark we evaluate 13
+unified stripped-compatible methods under a shared protocol,
+including token, graph, multi-view, prototype, and IR-inspired
+families.
+The main contributions are as follows.
+• We compile and organize a cross-version BusyBox corpus
+spanning 57 releases and both stripped and unstripped
+binary views across five architectures. To the best of
+our knowledge, this is the only current BusyBox binary
+dataset that jointly exposes cross-version evolution and
+stripped/unstripped correspondence at this scale, and we
+arXiv:2604.19496v1 [cs.CR] 21 Apr 2026
+
+IEEE INTERNET OF THINGS JOURNAL, VOL. XX, NO. XX, MONTH 2026
+2
+release all the data and codes to support future research 1.
+• We construct a BusyBox-based IoT firmware benchmark
+that jointly covers multi-version unstripped labels, multi-
+architecture stripped binaries, function-level statistics,
+historical source releases, and CVE-oriented case-study
+artifacts.
+• We design EvoPatch-IoT, a stripped-compatible re-
+trieval framework that fuses per-binary geometric pri-
+ors, architecture-normalized graph/context features, and
+historical evolution prototypes into a unified scoring
+function.
+• We provide explicit algorithms and mathematical formu-
+lations for anonymous alignment, multi-view feature fu-
+sion, and evolution-aware retrieval, making the workflow
+reproducible from raw binaries to ranked functions.
+• We report extensive experiments on 57 versions, 1,020
+directed architecture pairs, and 128,084 evaluated query
+functions, showing consistent gains over 12 baseline
+families and useful behavior on a patch-state proxy and
+a CVE-2021-42386 AWK case study.
+II. RELATED WORK
+A. Binary Function Representation and Similarity
+Binary similarity has evolved from structure-driven match-
+ing toward increasingly semantic representations. SAFE in-
+troduced self-attentive function embeddings for binary sim-
+ilarity [1], PalmTree transferred masked language modeling
+ideas to assembly code [2], and jTrans incorporated jump-
+aware positional modeling for binary functions [3]. These
+approaches established strong foundations, but they largely
+preceded the latest wave of stripped-compatible, architecture-
+robust retrieval work.
+Recent studies have pushed the state of the art toward richer
+supervision and more explicit cross-architecture reasoning.
+CLAP combines natural-language supervision with parameter-
+efficient prompts [4]. RCFG2Vec captures long-distance de-
+pendencies inside binary control flow [5]. Code Is Not Natural
+Language emphasizes semantics-oriented graph representa-
+tion [6], while StrTune couples data-dependence slicing and
+contrastive learning [7]. Binary2vec, Ex2Vec, and UniASM
+further explore global-attention graph embeddings, execution-
+aware representations, and fine-tuning-free similarity detection
+[8]–[10]. VEXIR2Vec is also notable for bringing intermediate
+representations into cross-ISA matching [15].
+Our work differs in two ways. First, EvoPatch-IoT explicitly
+targets the BusyBox evolution setting instead of generic pair-
+wise similarity. Second, our scoring function retains a strong
+stripped-binary geometric prior because our anonymous align-
+ment stage must bridge Ghidra-recovered stripped functions
+with unstripped labels before any higher-level reasoning can
+be trusted.
+B. Binary Vulnerability Search and Retrieval
+Binary vulnerability analysis increasingly benefits from
+retrieval and query-oriented formulations. BinQuery recently
+1https://github.com/xxxyyyzzz3984/EvoPatch-IoT
+showed that natural language can be used to search binary
+vulnerabilities [16]. However, practical IoT auditors frequently
+start from upstream patches, vulnerable functions, or com-
+ponent histories rather than complete textual descriptions.
+EvoPatch-IoT therefore focuses on function-centric binary
+retrieval, historical prototypes, and patch-state evidence that
+remain available even when source-level context is weak or
+absent.
+C. IoT Firmware Security Analysis
+Firmware-oriented research has recently moved toward
+scalable recurring-vulnerability detection and service-level
+analysis. FirmRec detects recurring vulnerabilities in binary
+firmware at scale [11]. Operation Mango discovers taint-
+style vulnerabilities in binary firmware services [12]. LuaTaint
+studies web-configuration vulnerabilities in IoT devices and is
+particularly relevant because it appeared in the same appli-
+cation domain as our target venue [13]. NPFTaint focuses on
+highly exploitable vulnerabilities in Linux-based IoT firmware
+[14], while AutoFirm addresses large-scale library reuse inside
+IoT firmware [17].
+These studies powerfully motivate firmware-scale audit-
+ing, yet they typically do not provide a stripped-compatible,
+evolution-aware function retrieval layer specialized for Busy-
+Box. EvoPatch-IoT is complementary: it offers an evidence-
+producing component analysis stage that can feed into broader
+firmware triage, recurring-vulnerability tracking, and patch
+auditing workflows.
+III. BENCHMARK CONSTRUCTION AND PROBLEM
+DEFINITION
+A. BusyBox-Centered IoT Firmware Benchmark
+Table I summarizes the benchmark used throughout the
+paper. We inventory 57 BusyBox versions from 1.11.0 to
+1.37.0, 270 unstripped binaries across five architectures, and
+285 stripped binaries aligned to the same version range.
+The stripped corpus contains 15 AArch64 binaries without
+unstripped anchors in the earliest versions, which are still
+useful for deployment-style analysis but are excluded from
+symbol-supervised matching. The project also includes 130
+BusyBox source releases to support version verification and
+case-study inspection.
+This paired collection is, to the best of our knowledge,
+the only currently available BusyBox dataset that spans such
+a long historical range while exposing both stripped and
+unstripped binary views under one unified processing pipeline.
+Unstripped binaries are processed with readelf to ex-
+tract function symbols and binary metadata. This yields
+1,550,752 function-symbol rows, including 1,290,369 rows
+marked as analysis functions after removing obvious runtime
+and compiler-generated routines. Binary sizes range from 3.84
+MB to 6.31 MB with a mean of 5.25 MB, reflecting realistic
+firmware component scales rather than toy binaries.
+The stripped branch is processed with a headless Ghidra
+exporter that emits anonymous instruction tokens, CFG edges,
+call references, string categories, and constant buckets without
+exposing names, DWARF paths, or version strings. Over 285
+
+IEEE INTERNET OF THINGS JOURNAL, VOL. XX, NO. XX, MONTH 2026
+3
+TABLE I
+BUSYBOX-BASED IOT FIRMWARE BENCHMARK USED IN THIS PAPER
+Item
+Value
+Historical BusyBox versions
+57
+Architectures
+5
+(AArch64,
+ARM,
+MIPS,
+MIPSEL,
+x86 64)
+Unstripped binaries
+270
+Stripped binaries
+285
+Paired stripped/unstripped bina-
+ries
+270
+Stripped-only binaries
+15 (early AArch64 re-
+leases)
+Source releases
+130
+Function-symbol rows
+1,550,752
+Analysis-function rows
+1,290,369
+Matched stripped functions
+155,845
+Recovered functions per stripped
+binary
+1,879–3,614
+(avg.
+2,770.95)
+Binary size range
+3.84–6.31 MB (avg. 5.25
+MB)
+stripped binaries, Ghidra recovers 1,879 to 3,614 functions per
+binary, with an average of 2,770.95 functions.
+B. Threat Model and Deployment Assumptions
+EvoPatch-IoT targets the N-day firmware auditing setting
+common in operational IoT security. The analyst is assumed
+to possess a target firmware image or an extracted BusyBox
+binary, but not trustworthy symbols, DWARF information,
+source code, or reliable vendor version strings. Historical up-
+stream binaries and source releases may be available offline to
+build supervision and historical prototypes, yet these artifacts
+are never exposed to the model during stripped-binary testing.
+The goal is not zero-day exploit synthesis. Instead, the ana-
+lyst wants to answer three practical questions: which stripped
+functions correspond to known upstream routines, whether the
+target binary is closer to a vulnerable or patched lineage,
+and how many candidate functions must still be inspected
+manually. This threat model matches real IoT deployment
+practice, where large firmware inventories are triaged under
+heterogeneous architectures and limited reverse-engineering
+budgets.
+C. Tasks
+We formalize three progressively richer tasks.
+Task 1: Cross-architecture function retrieval. Given a
+stripped query function q from architecture ai and a candidate
+set Caj from a different architecture aj under the same Busy-
+Box version, rank homologous functions as high as possible.
+Task 2: Evolution-aware vulnerability retrieval. Given
+a historical vulnerable or reference function and a stripped
+candidate pool from another version or architecture, rank
+functions that preserve the same upstream semantics while
+remaining robust to version drift.
+Task 3: Binary-level patch-state profiling. Given a target
+binary and a CVE-related reference pattern, infer whether the
+target behaves more like the vulnerable or patched lineage,
+and expose a compact set of evidence functions.
+D. Evaluation Metrics
+For retrieval tasks we report Hit@1, Hit@5, Hit@10,
+MRR@10, and Mean Inspected@10. Let r(q) denote the rank
+of the first correct candidate for query q, clipped at 11 if no
+correct result appears in the top 10. Then
+MRR@10 =
+1
+|Q|
+X
+q∈Q
+I[r(q) ≤10]
+r(q)
+.
+(1)
+Here Q is the query set, |Q| is the number of evaluated queries,
+I[·] is the indicator function that equals 1 when its condition
+is true and 0 otherwise, and r(q) is the first-hit rank of query
+q after top-10 clipping. We also use the inspection-reduction
+view that is natural for firmware auditing:
+InspectionReduction = 1 −E[r(q)]
+E[|C|] .
+(2)
+In this expression, E[·] denotes expectation over the evaluated
+queries, r(q) is again the inspected rank of the first correct
+answer, C is the candidate pool for the corresponding retrieval
+task, and |C| is the candidate-pool size. For patch-state profil-
+ing we report accuracy, precision, recall, and F1.
+IV. EVOPATCH-IOT METHOD
+A. Overview
+EvoPatch-IoT is deliberately split into four layers: stripped-
+compatible feature extraction, anonymous alignment, multi-
+view representation construction, and evolution-aware re-
+trieval. Figure 1 illustrates the complete architecture. The left
+side begins with a realistic IoT firmware ecosystem, where
+routers, cameras, industrial gateways, embedded controllers,
+and network appliances reuse BusyBox over long release time-
+lines. From these artifacts, the benchmark branch organizes
+BusyBox source releases, firmware packages, and both un-
+stripped and stripped binaries across AArch64, ARM, MIPS,
+MIPSEL, and x86 64. This stage provides the longitudinal
+version coverage required for evolution-aware analysis while
+preserving the stripped-binary setting encountered in deployed
+firmware.
+The middle of Fig. 1 corresponds to the executable analysis
+pipeline. The binary analysis engine recovers anonymous
+functions without relying on symbols and extracts normalized
+instruction tokens, control-flow graphs, call-context features,
+and string/constant categories. These views are converted into
+shape, graph, token, and context representations. The sophis-
+ticated alignment zone then performs bidirectional nearest-
+neighbor matching between stripped functions and labeled
+historical functions, producing high-confidence anchors and
+same-function chains across versions. The right side imple-
+ments the final fusion and ranking stage: geometric shape
+
+IEEE INTERNET OF THINGS JOURNAL, VOL. XX, NO. XX, MONTH 2026
+4
+Fig. 1. Overview of EvoPatch-IoT. The pipeline starts from heterogeneous IoT firmware ecosystems and long-term BusyBox source releases, compiles paired
+stripped and unstripped binaries across multiple ISAs, recovers anonymous binary evidence through a symbol-free analysis engine, establishes bidirectional
+stripped-to-labeled anchors across versions, and finally fuses geometric shape priors, anonymous multi-view embeddings, and historical evolution prototypes
+to rank vulnerable function candidates and support patch-state evidence reporting.
+similarity provides the local backbone, anonymous multi-
+view embedding similarity resolves semantic ambiguity, and
+historical prototype similarity injects version-evolution mem-
+ory. The weighted ranking engine outputs ranked vulnerable-
+function candidates, patch-state decisions, supporting evidence
+functions, firmware risk summaries, and CVE-oriented change
+regions for analyst inspection.
+B. Stripped-Compatible Anonymous Features
+For each recovered stripped function f, we build a geomet-
+ric shape descriptor from its location inside the current binary:
+s(f) =
+
+ℓ(f), ηaddr(f), ηrank(f), ¯ℓN2(f), ∆ℓ(f)
+⊤,
+(3)
+where ℓ(f) = log(1 + size(f)), ηaddr(f) =
+addr(f)−amin
+amax−amin ,
+ηrank(f) =
+rank(f)
+N−1 , and ∆ℓ(f) = ℓ(f) −¯ℓN2(f). Here
+size(f) is the recovered function size in bytes, addr(f) is
+the start address of f, amin and amax are the minimum and
+maximum recovered function addresses in the current binary,
+rank(f) is the address-sorted position of f, N is the number
+of recovered functions in that binary, N2(f) is the two-sided
+local neighborhood around f, and ¯ℓN2(f) is the mean log-
+size inside that neighborhood. This five-dimensional vector
+is crucial because stripped-to-unstripped correspondence is
+otherwise ill-posed in the absence of names.
+The Ghidra exporter additionally generates anonymous in-
+struction tokens, graph statistics, call contexts, string cate-
+gories, and constant buckets. Let T (f) be the token multiset
+and X(f) be the context multiset. We convert both into TF-
+IDF weighted sparse vectors and then hash them into fixed-
+length dense embeddings:
+t(f) = H256(TFIDF(T (f))),
+c(f) = H64(TFIDF(X(f))).
+(4)
+Here T (f) is the multiset of anonymous instruction-like tokens
+extracted from function f, X(f) is the multiset of anonymous
+context events such as calls, strings, and constants, TFIDF(·)
+converts a multiset into a sparse term-weight vector, H256(·)
+and H64(·) are fixed-dimensional hashing projections, and
+t(f) and c(f) are the resulting token and context embeddings.
+Graph and structural statistics are summarized in two parts.
+First,
+gbase(f) =
+
+ℓ(f)∥ρ(f)∥¯ibb
+
+,
+(5)
+where
+ℓ(f) =
+
+log(1 + sf), log(1 + if), log(1 + bf), log(1 + ef)
+
+and
+ρ(f) =
+
+ρcall, ρbranch, ρret, ρstr, ρconst, ρedge
+
+.
+We then concatenate these summary terms with histogram
+views:
+g(f) =gbase(f)∥hop(f)
+∥hedge(f).
+(6)
+In these expressions, ∥denotes vector concatenation, sf is the
+byte size of function f, if is its instruction count, bf is its
+number of basic blocks, ef is its number of CFG edges, ρcall,
+ρbranch, ρret, ρstr, ρconst, and ρedge are normalized densities
+of call sites, branches, returns, string references, constant
+
+IEEE INTERNET OF THINGS JOURNAL, VOL. XX, NO. XX, MONTH 2026
+5
+AArch64
+ARM
+MIPS
+MIPSEL
+x86_64
+0
+10
+20
+30
+40
+50
+60
+70
+Binary Count
+(a) Binary Coverage by Architecture
+Unstripped
+Stripped
+AArch64
+ARM
+MIPS
+MIPSEL
+x86_64
+0
+50
+100
+150
+200
+250
+Analysis Functions (K)
+(b) Labeled Analysis Functions
+2000
+2250
+2500
+2750
+3000
+3250
+3500
+Recovered Functions per Stripped Binary
+0
+5
+10
+15
+20
+25
+30
+35
+40
+Frequency
+(c) Ghidra-Recovered Function Distribution
+Mean=2771
+AArch64
+ARM
+MIPS
+MIPSEL
+x86_64
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+Average Ratio
+(d) Anonymous Mutual-Match Ratios
+Match/Labels
+Match/Stripped
+Fig. 2. Benchmark overview. Our dataset jointly exposes architecture coverage, large-scale analysis-function labels, stripped-function recovery statistics, and
+anonymous mutual-match ratios required by the alignment layer.

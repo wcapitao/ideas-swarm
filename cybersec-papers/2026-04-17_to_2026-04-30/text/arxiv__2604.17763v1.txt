@@ -1,0 +1,961 @@
+A Quasi-Experimental Developer Study of Security Training in
+LLM-Assisted Web Application Development
+Mohammed Kharma♡, Ahmed Sabbah♡, Radi Jarrar♡, Samer Zain♡, Mohammad Alkhanafseh♡, David Mohaisen♦
+♡Birzeit University
+♦University of Central Florida
+Abstract—This paper presents a controlled quasi-experimental
+developer study examining whether a layer-based security train-
+ing package is associated with improved security quality in LLM-
+assisted implementation of an identity-centric Java Spring Boot
+backend. The study uses a mixed design with a within-subject
+pre-training versus post-training comparison and an exploratory
+between-subject expertise factor. Twelve developers completed
+matched runs under a common interface, fixed model configu-
+ration, counterbalanced task sets, and a shared starter project.
+Security outcomes were assessed via independent manual vali-
+dation of submitted repositories by the first and second authors.
+The primary participant-level endpoint was a severity-weighted
+validated-weakness score. The post-training condition showed a
+significant paired reduction under an exact Wilcoxon signed-rank
+test (p = 0.0059). In aggregate, validated weaknesses decreased
+from 162 to 111 (31.5%), the severity-weighted burden decreased
+from 432 to 267 (38.2%), and critical findings decreased from 24
+to 5 (79.2%). The largest reductions were in authorization and
+object access (53.3%) and in authentication, credential policy,
+and recovery weaknesses (44.7%). Session and browser trust-
+boundary issues showed minimal change, while sensitive-data and
+cryptographic weaknesses showed only marginal improvement.
+These results suggest that, under the tested conditions, post-
+training runs reduce validated security burden in LLM-assisted
+backend development without modifying the model. They do not
+support replacing secure defaults, static analysis, expert review,
+or operational hardening.
+Index Terms—large language models, secure code generation,
+developer study, developer training, secure prompting, web
+application security, security review.
+I. INTRODUCTION
+Large language models (LLMs) are increasingly used as
+coding assistants in software development [1]–[3]. They help
+developers draft code, complete implementations, and explore
+alternatives. At the same time, recent evidence shows that
+security quality remains inconsistent, especially when security-
+relevant constraints are not explicitly specified and develop-
+ers rely on default model behavior without structured guid-
+ance [4]–[7]. This is particularly critical in web development,
+where weaknesses in authentication, authorization, credential
+management, file handling, and external system integration can
+have direct security impact [8], [9].
+A practical challenge is that secure code generation depends
+not only on the model, but also on how developers interact
+with it. Prompts often emphasize functional behavior while
+leaving assumptions and boundary conditions implicit [10],
+[11]. In such settings, the generated code may pass basic
+functionality tests and appear reasonable, yet still contain
+suboptimal implementation choices [12]. Prior studies also
+show that developers do not consistently calibrate their trust in
+LLM-generated code and may rely on the assistant to varying
+degrees depending on task difficulty and context [5], [13],
+[14]. Consequently, ensuring secure LLM-assisted develop-
+ment is not only a matter of improving models, but also of
+shaping developer interaction with them. This paper studies
+a developer-centered bundled training package and examines
+whether developers produce more secure LLM-assisted code
+in the post-training condition. The training is grounded in the
+Mitigation-Aware Chain-of-Thought (MA-CoT) architectural-
+layer model [15], which organizes security constraints by the
+layer where the primary mitigation operates. In this study, the
+model is used as a component of the training package and,
+secondarily, as a descriptive lens to interpret where validated
+vulnerabilities persist or decline across conditions.
+To evaluate this question, we instantiate the study in a Java
+Spring Boot user-management backend, including security-
+sensitive functionality such as registration, login, password
+reset, multi-factor authentication, role-based administration,
+Active Directory integration, and document handling. We
+conduct a quasi-experimental controlled developer study with
+a within-subject pre-training versus post-training comparison
+and a between-subject expertise factor. All participants use the
+same blank Spring Boot starter project and interact with a fixed
+LLM configuration through a unified web interface. Security
+quality is evaluated via manual review by the authors using a
+predefined review guide aligned with the study scope [16].
+Research Questions. We evaluate the bundled training pack-
+age through the following research questions:
+RQ1. To what extent is the post-training condition associated
+with a lower number and severity of validated security weak-
+nesses in LLM-assisted code generation?
+Rationale. The primary objective is to assess whether struc-
+tured, security-oriented prompting guidance is associated with
+improved security outcomes. Evaluating both counts and sever-
+ity is necessary, as reductions in low-impact findings alone do
+not constitute meaningful improvement.
+RQ2. How does developer expertise relate to the observed pre-
+training versus post-training difference in the security quality
+of LLM-generated code?
+Rationale. The benefit of structured prompting support may
+vary with prior development experience and security knowl-
+edge. Given the limited sample, expertise is examined ex-
+ploratorily to assess whether broad differences in improvement
+are observable across participant backgrounds.
+These questions assess both the overall pre/post difference
+and its variation across levels of developer experience. This
+paper makes the following contributions: (1) Bundled training
+package. We show that structured developer-side training
+reduces severity-weighted security weaknesses by 38.2% and
+critical vulnerabilities by 79.2% without modifying the under-
+lying model. (2) Controlled developer study with empirical
+arXiv:2604.17763v1 [cs.CR] 20 Apr 2026
+
+results. We design and conduct a quasi-experimental study
+with 12 developers and report paired pre-training versus post-
+training differences in validated security weaknesses, with
+expertise-stratified analyses treated as exploratory. (3) Theory-
+guided descriptive layer analysis. We map each validated
+finding to a primary MA-CoT architectural layer and show
+that the pre/post difference is not uniform across layers, with
+the strongest reduction at the ecosystem library/framework
+layer. (4) Security-relevant task sets. We construct two func-
+tional requirement sets grounded in realistic user-management
+workflows to elicit security-relevant implementation decisions
+without explicitly prescribing mitigation.
+Organization. Section II reviews the related work followed
+by our methodology in Section III, the results and discussion
+in Section IV, threats to validity in Section V, and concluding
+remarks and future work in Section VI.
+II. RELATED WORK
+Security of LLM-Generated Code. A growing body of
+empirical work shows that LLMs can generate insecure code in
+security-relevant tasks [4], [6], [7], [17]–[21]. Recent surveys
+synthesize this evidence base [22], [23]. Pearce et al. evaluated
+GitHub Copilot on 89 vulnerability-oriented scenarios derived
+from the MITRE CWE Top 25 and found that about 40%
+of 1,689 generated programs were vulnerable [4]. Khoury
+et al. evaluated ChatGPT-generated code on security-relevant
+programming problems and found that it often produced
+insecure programs, despite being able to recognize and explain
+vulnerabilities when explicitly prompted [6]. Sandoval et al.
+conducted a randomized user study with 58 participants on a C
+programming task and found that AI-assisted users produced
+critical security bugs at a rate no greater than 10% above the
+control group [10]. Extending beyond controlled prompts, Fu
+et al. analyzed 733 code snippets generated by GitHub Copilot,
+CodeWhisperer, and Codeium in GitHub projects and reported
+a high prevalence of security weaknesses [17].
+Tihanyi et al. compared nine LLMs on C code generation
+and found that at least 62.07% of the 331,000 programs
+in FormAI-v2 were vulnerable, indicating consistently high
+vulnerability rates across models [7]. Mousavi et al. examined
+Java security API usage by ChatGPT and found that around
+70% of generated code across 48 tasks contained API misuse,
+spanning 20 distinct types [19], which is directly relevant to
+our Java-based setting. Mou et al. proposed CoV-Eval, a multi-
+task benchmark covering code completion, vulnerability repair,
+detection, and classification, and showed that LLMs continue
+to generate insecure code and struggle with repair and fine-
+grained vulnerability discrimination [18]. Gong et al. studied
+secure code generation and repair in Python and reported that
+more than 75% of generated programs were vulnerable, while
+repair success ranged from 33.2% to 59.6%, with models
+performing worst on self-repair [20]. These studies motivate
+empirical work that examines both models and developer
+interaction patterns that shape the generated code.
+Human Factors in LLM-Assisted Secure Coding. Model-
+centric evaluations do not fully explain security outcomes
+in practice. Perry et al. conducted a randomized study with
+47 participants and found that AI-assisted users produced
+less secure code and were more likely to overestimate its
+security [5]. In contrast, Asare et al. found that GitHub
+Copilot was associated with more secure solutions on harder
+tasks, with no effect on easier ones [13]. A Comparative
+evaluation of vulnerability-detection tasks also shows that
+LLM performance related to security remains uneven between
+model families, even when the task is explicitly framed around
+vulnerability reasoning [24]. Klemmer et al., through inter-
+views and online discussions, showed that practitioners already
+use AI assistants for security-critical tasks and tend to verify
+outputs due to quality concerns [14]. Elgedawy et al. further
+showed that security outcomes vary across models and usage
+contexts [11]. Braz and Bacchelli showed that security is rarely
+the primary focus during code review [16]. Overall, these
+findings indicate that security outcomes depend not only on
+model capability, but also on task design, developer expertise,
+and interaction patterns.
+Prompting and Intervention-Oriented Work. Recent work
+shows that prompting strategy can influence the security of
+generated code. Tony et al. evaluate multiple prompting tech-
+niques across GPT-3, GPT-3.5, and GPT-4 and show reduced
+security weaknesses relative to baseline prompting [25]. Bruni
+et al. similarly find that certain prompt-engineering strategies
+substantially reduce vulnerabilities, though effectiveness varies
+by model and task [26]. Nazzal et al. propose PromSec,
+an automated prompt-optimization framework that improves
+security while preserving functionality [27], and Zhao et
+al. report over 65% vulnerability mitigation using a CWE-
+informed generation framework [28].
+Other approaches incorporate external knowledge. Lin et
+al. use retrieval-augmented generation to inject vulnerabil-
+ity knowledge [29], while Nong et al. show that chain-of-
+thought prompting improves vulnerability analysis and re-
+pair [30]. Le et al. demonstrate that effective vulnerability
+repair in JavaScript requires sufficient contextual information
+in prompts [31]. Cotroneo et al. introduce DeVAIC, a tool for
+evaluating vulnerabilities in AI-generated code [32].
+Most prior work focuses on prompt design or evaluation
+tools, rather than whether developers can be trained to express
+security constraints during development. This distinction mat-
+ters, as improvements under researcher-designed prompts may
+not transfer to typical developer behavior.
+Security Benchmarks and Evaluation Frameworks. Re-
+cent work has advanced evaluation methodologies for secure
+code generation. Siddiq and Santos introduced SecurityEval,
+a dataset of 130 Python samples spanning 75 CWE-mapped
+vulnerability types [33]. SALLM later proposed a systematic
+evaluation pipeline combining security-centric prompts with
+automated analysis [34]. Tony et al. presented LLMSecEval,
+a dataset of 150 natural-language prompts for assessing code
+security [35]. CWEval evaluates both functional correctness
+and security, showing that models can pass tests while still
+producing vulnerable code [36]. BaxBench uses exploit-based
+testing for backend code and shows that current models
+struggle to achieve both correctness and security [37]. While
+these benchmarks provide useful context, they remain model-
+centric and do not address how developer behavior can be
+shaped to improve outcomes.
+Gap. Existing work demonstrates that prompting strategies
+and external knowledge can improve the security of generated
+
+code. However, these approaches assume that prompts are
+either engineered by researchers or optimized automatically.
+They do not address whether developers themselves can be
+trained to produce such prompts consistently in realistic devel-
+opment settings. This distinction is critical, as improvements
+observed under controlled conditions may not transfer to
+everyday practice. Our work addresses this gap by evaluating
+a structured training intervention that enables developers to
+express security constraints during LLM-assisted development.
+Our Work. Prior work largely treats secure code genera-
+tion as a model or prompt-design problem, often relying on
+researcher-crafted prompts or automated prompt optimization.
+In contrast, this work focuses on the developer as the locus of
+control. We study whether developers can be trained to sys-
+tematically express security constraints in a way that improves
+LLM outputs under realistic conditions. This represents a shift
+from model-centric alignment to developer-side alignment,
+where improvements arise from structured interaction rather
+than model modification.
+III. METHODOLOGY
+The purpose of this study is to assess whether training
+developers in a layer-based security model improves the se-
+curity and quality of code produced with LLM assistance.
+The core hypothesis is that developers generate safer code
+after receiving such training, which teaches them to include
+security constraints in prompts and reason about appropriate
+controls across software layers. We ground the study in a
+Java-based backend user management system to ensure realism
+and testable tasks, while focusing on generalizable interaction
+effects rather than framework-specific behavior.
+A. Study Design
+The study uses a controlled quasi-experimental mixed de-
+sign with a within-subject factor and a between-subject factor,
+as shown in Fig. 1. The figure illustrates participant grouping,
+counterbalanced task assignment, the structure of pre- and
+post-training runs, and the evaluation procedure. The within-
+subject design increases statistical sensitivity by allowing each
+participant to serve as their own control, reducing variance
+due to individual differences in coding ability and security
+knowledge. This is particularly important given the modest
+sample size and strengthens the reliability of observed effects.
+1) Training-package condition: Each participant completed
+two development runs. In the pre-training (baseline) condition,
+participants used free-form prompting without study-specific
+guidance. In the post-training condition, participants first
+received a standardized training package and then completed
+the tasks using the structured prompting method.
+2) Developer expertise: To examine whether the pre/post
+difference varies by experience, participants were grouped into
+two levels: junior developers (up to five years of professional
+experience) and senior developers (six or more years).
+B. Layer-Based Training Content
+The post-training condition uses a bundled package with
+three components: (i) security-oriented instructional content,
+(ii) a layer-based mental model for reasoning about where
+mitigations operate, and (iii) a structured prompting scaffold.
+Participant Recruitment (N = 12 developers) - Between-Subject Factor: Expertise Level
+Junior Developers (≤5 years experience; n = 6)
+Senior Developers (≥6 years experience; n = 6)
+Consent & Background Survey + Environment Setup
+Counterbalanced Task Assignment (within expertise group)
+Schedule 1: Set A →Set B — Schedule 2: Set B →Set A
+Schedule 1 (n=6: 3 Jr + 3 Sr)
+Run 1: Pre-Training
+Task Set A
+Start: S0 snapshot
+Schedule 2 (n=6: 3 Jr + 3 Sr)
+Run 1: Pre-Training
+Task Set B
+Start: S0 snapshot
+Training Intervention
+Run 2: Post-Training
+Task Set A
+Start: S0 snapshot
+Run 2: Post-Training
+Task Set A
+Start: S0 snapshot
+Evaluation
+Metric
+1) Security
+review
+2) Pre
+vs Post
+Fig. 1: Mixed-design developer study with a within-subject
+training factor and a between-subject expertise factor. Each
+participant completed pre- and post-training runs on counter-
+balanced task sets, both starting from the same clean snapshot
+and evaluated with the same security review workflow.
+The model distinguishes: (1) Language-core (strict): weak-
+nesses from language semantics, e.g., integer overflow in Java
+arithmetic without bounds checks; (2) Standard runtime or
+library: weaknesses from built-in APIs or defaults, e.g., unsafe
+XML parsing when DocumentBuilderFactory does not
+disable external entity resolution; (3) Ecosystem library or
+framework: weaknesses from third-party frameworks, e.g.,
+overly permissive Spring Security rules exposing protected
+endpoints; (4) Platform or OS API: weaknesses from OS
+primitives, e.g., time-of-check to time-of-use races in file
+handling; (5) Toolchain or optimization: weaknesses from
+compiler or runtime behavior, e.g., relying on assert for
+security checks when assertions are disabled in production;
+(6) Application security logic or policy: weaknesses from app-
+level decisions, e.g., missing checks or weak policies.
+Participants are trained to incorporate this model into struc-
+tured prompts that specify: (i) functional intent, (ii) envi-
+ronment constraints (language and framework versions), (iii)
+boundary expectations (authentication, authorization, input
+validation, error handling), and (iv) explicit security assump-
+tions aligned with the layer checklist.
+The training package is evaluated as an integrated in-
+tervention rather than as isolated components. This reflects
+realistic deployment scenarios, where instructional material,
+mental models, and prompting scaffolds are used jointly. While
+this design does not isolate the contribution of individual
+components, it provides a more ecologically valid assessment
+of developer-side interventions.
+C. Counterbalancing and Use of Task Sets A and B
+Because the training package is not reversible, the study
+uses a fixed order with pre-training preceding post-training. To
+mitigate order effects, task-set assignment is counterbalanced.
+Under Schedule 1, Run 1 (pre-training) uses task set A and
+Run 2 (post-training) uses task set B; under Schedule 2, the
+order is reversed. To limit carry-over from implementation
+artifacts, each run starts from the same clean project snapshot
+(S0) and is evaluated as an independent repository state.
+
+D. Participants and Sample Size
+We target 12 participants (6 junior, 6 senior), balancing
+resource constraints with sensitivity from the within-subject
+design, where each participant serves as their own control.
+We report effect sizes for paired outcomes and interpret
+results conservatively. All participants follow a standardized
+procedure, including a brief background questionnaire (de-
+velopment experience, Java/backend experience, LLM usage,
+prior security training) and a training-duration log capturing
+start and end times. This reduces procedural variation and
+ensures consistent metadata collection.
+Ethics and Consent. All participants provide informed written
+consent. The consent form explains the study purpose, data
+collection scope, anonymization procedures, and the right to
+withdraw at any time without consequence. No personally
+identifiable information is included in the analysis or reported
+results. All data is stored in an access-controlled environment
+and referenced only through anonymous participant IDs.
+E. Controlled Setup and Unified LLM Environment
+All sessions are conducted in person using pre-configured
+laptops. To reduce configuration variance, participants do
+not use personal tools or accounts. Instead, we provide a
+unified web interface that connects all participants to the same
+fixed model version, gpt-5.2-2025-12-11 [38], under a
+common system configuration. This standardizes interaction
+and avoids differences due to model selection, prompt settings,
+or client-side features.
+F. Task-Sets
+The study uses two task sets, task-set A and task-set B, alter-
+nated across runs according to the counterbalancing schedule.
+In both conditions, participants implement features for an
+identity-centric user-management backend using a controlled
+Spring Boot starter project. The starter provides a common
+structure, configuration baseline, and package layout, but no
+feature implementation code, ensuring a shared starting point
+while preserving participant control over security-relevant de-
+cisions. Each run starts from a clean project snapshot and
+is evaluated independently. Participants receive requirements
+in software-engineering style using functional statements of
+the form “The system shall ...” to reflect realistic feature
+requests. Although framed functionally, tasks are designed
+to elicit security-relevant decisions suitable for expert review.
+Acceptance tests are available during development for progress
+checking and consistency, but serve only as a completion aid.
+Task-Set Calibration. Task-sets A and B were designed to
+be comparable in implementation effort and security rele-
+vance while covering distinct, realistic classes of backend
+weaknesses. Calibration considered the number of externally
+reachable endpoints, architectural layers exercised, amount of
+stateful logic, presence of security-sensitive operations (e.g.,
+cryptography, parsing, query handling), and expected code
+volume and integration overhead. Both sets were implemented
+from the same clean snapshot (S0) under identical toolchain,
+dependency, interface, and LLM settings. The sets were piloted
+and iteratively refined until completion effort and coverage
+were broadly comparable; pilot submissions were excluded
+from the analysis.
+G. Evaluation Methodology
+The first two authors conducted the final security evaluation.
+Both have prior experience in application and backend security
+and are familiar with Spring Boot. They used a predefined
+review guide and performed independent assessments. Each
+participant’s final snapshot was manually reviewed. All 24
+submissions were evaluated using a guide covering authentica-
+tion and session management, authorization, input validation
+and sanitization, error handling and information exposure,
+credential and secret management, file and document handling,
+and external-system integration. For each confirmed weakness,
+reviewers recorded the CWE ID, severity, affected location, a
+brief description, and a mitigation rationale.
+Disagreements were resolved through structured adjudica-
+tion. Findings raised by only one reviewer were re-examined
+and confirmed or rejected using the guide. For agreed find-
+ings with differing severity, reviewers discussed exploitability,
+impact, and context until assigning a single severity; if unre-
+solved, the more conservative rating was used.
+Analysis Plan. The primary analysis is at the participant
+level, with each participant contributing one submission per
+condition. Inferential claims are based on within-participant
+change. For participant i in condition c ∈{pre, post}, let
+C
+(c)
+i
+, H
+(c)
+i
+, M
+(c)
+i
+, and L
+(c)
+i
+denote counts of Critical, High,
+Medium, and Low weaknesses. The main endpoint is the
+severity-weighted score
+S
+(c)
+i
+= 4C
+(c)
+i
++ 3H
+(c)
+i
++ 2M
+(c)
+i
++ L
+(c)
+i ,
+(1)
+and the corroborative outcome is the total count
+T
+(c)
+i
+= C
+(c)
+i
++ H
+(c)
+i
++ M
+(c)
+i
++ L
+(c)
+i .
+(2)
+Paired change scores are
+∆Si = S
+(pre)
+i
+−S
+(post)
+i
+,
+(3)
+and
+∆Ti = T
+(pre)
+i
+−T
+(post)
+i
+,
+(4)
+so positive values indicate improvement. Secondary outcomes
+include severity-stratified counts and descriptive weakness-
+family distributions. Given the paired design and modest
+sample, within-participant comparisons use exact Wilcoxon
+signed-rank tests, with Holm adjustment across confirma-
+tory tests. Expertise- and severity-stratified analyses are ex-
+ploratory; between-group comparisons use descriptive sum-
+maries and Mann–Whitney tests on change scores. Acceptance
+tests and build checks are used only to confirm evaluable
+submissions and are not endpoints. As a design check, we
+also compare baseline burden and improvement across coun-
+terbalancing schedules descriptively.
+To reduce subjective bias, reviewers conducted independent
+assessments using a predefined guide, followed by structured
+adjudication with conservative resolution rules.
+Severity Weight Justification. The 4/3/2/1 weighting scheme
+was selected as the primary aggregation rule because it pre-
+serves severity ordering while remaining interpretable and not
+sensitive to extreme cases. To assess robustness, we performed
+a sensitivity analysis using an exponential scheme (10/5/2/1),
+which emphasizes critical findings, and compared results with
+
+the unweighted total-count outcome in Eq. (2). The paired
+Wilcoxon signed-rank test remained significant for the pri-
+mary weighted score (p = 0.0059), the exponential scheme
+(p = 0.0034), and the unweighted outcome (p = 0.0371),
+indicating robustness to the aggregation rule.
+Weakness-Family Aggregation. Each CWE was mapped to
+a single researcher-defined weakness family. Families cap-
+ture recurring security concerns in identity-centric backends
+while reducing fragmentation across low-frequency CWEs.
+This aggregation is used only for descriptive interpretation;
+all primary inference is based on participant-level validated
+counts and the severity-weighted endpoint. The full CWE-to-
+family mapping is provided in the appendix.
+MA-CoT Layer Attribution. As a secondary descriptive
+analysis, each confirmed finding was assigned to a primary
+MA-CoT layer based on the location of the main mitigation.
+Framework defaults and configuration issues were coded as
+Ecosystem library/framework; application-specific authoriza-
+tion, logging, secret management, and policy decisions as
+Application security logic/policy; transport or OS interface
+issues as Platform/OS API; and misuse of built-in Java APIs
+as Standard runtime/library.
+IV. RESULTS AND DISCUSSION
+Results are derived from the consolidated validated review
+report covering all 24 repositories (12 pre-training, 12 post-
+training). Repositories were mapped to participants and ex-
+pertise groups to preserve the paired design. Unless noted, the
+severity-weighted score (Section III) is the primary outcome,
+capturing both count and severity of validated weaknesses.
+Counterbalancing Validation. As a design check, baseline
+burden and weighted improvement were compared descrip-
+tively across the two counterbalancing schedules; no substan-
+tial imbalance was observed.
+Takeaway 1: Counterbalancing checks provide no evidence
+that the observed improvement is attributable to task-set order
+rather than to the training package.
+RQ1: Confirmatory Analysis of the Post-Training Asso-
+ciation. Table I reports aggregate totals. Validated findings
+decreased from 162 (pre) to 111 (post), a 31.5% reduction. The
+severity-weighted score decreased from 432 to 267 (38.2%).
+Critical findings declined from 24 to 5, and high-severity
+findings from 80 to 54. These trends favor the post-training
+condition; the inferential question is whether the improvement
+holds at the participant level. Table II reports paired outcomes.
+The principal endpoint shows a significant reduction post-
+training, with a median improvement of 11.5 weighted points
+(exact Wilcoxon p = 0.0059, Holm-adjusted p = 0.0117) and
+a large effect size (rrb = 0.93). The mean weighted score
+decreased from 36.00 to 22.25. Fig. 2 shows reductions across
+participants rather than a single outlier. Nine participants
+improved, one worsened, and two were unchanged.
+The observed effect size (rrb = 0.93) indicates a near-
+uniform direction of improvement across participants, suggest-
+ing that the effect is not driven by a small number of outliers
+but reflects a consistent pattern.
+The unweighted result shows the same direction as the prin-
+cipal weighted endpoint. The median paired reduction in total
+findings was 4.0 (exact Wilcoxon p = 0.0371, Holm-adjusted
+TABLE I: Overall validated weakness outcomes.
+Condition
+Total
+Weighted
+Critical
+High
+Med.
+Low
+Pre-training
+162
+432
+24
+80
+38
+20
+Post-training
+111
+267
+5
+54
+33
+19
+Change
+-31.5%
+-38.2%
+-79.2%
+-32.5%
+-13.2%
+-5.0%
+TABLE II: Participant-level paired security outcomes before
+and after training. The table reports pre-training and post-
+training means, median paired change (∆= pre −post),
+Wilcoxon signed-rank p-values, Holm-adjusted p-values for
+confirmatory outcomes, and matched-pairs rank-biserial effect
+sizes. Positive ∆indicates improvement.
+Outcome
+Pre mean
+Post mean
+Median ∆
+p
+Holm p
+rrb
+Weighted score
+36.00
+22.25
+11.5
+0.0059
+0.0117
+0.93
+Total findings
+13.50
+9.25
+4.0
+0.0371
+0.0371
+0.76
+Critical
+2.00
+0.42
+1.5
+0.0117
+—
+0.91
+High
+6.67
+4.50
+2.5
+0.0522
+—
+0.65
+Medium
+3.17
+2.75
+0.0
+0.6523
+—
+0.22
+Low
+1.67
+1.58
+1.0
+0.4961
+—
+0.29
+p = 0.0371), with a large effect size (rrb = 0.76). We treat the
+total-count result as supporting evidence, not a replacement
+for the weighted analysis. Severity-stratified counts follow a
+similar pattern: critical findings decline with a large effect,
+and high-severity findings trend downward, while medium-
+and low-severity findings change little. This indicates that the
+post-training condition reduces both overall weaknesses and
+the burden of severe failures. The appendix reports participant-
+level severity composition and provides a full audit trail for
+the paired analysis, showing that improvement is distributed
+across participants rather than driven by a single outlier.
+While practice effects cannot be fully excluded due to the
+fixed pre-to-post sequence, several factors suggest they are
+unlikely to fully explain the observed improvements: (i) coun-
+terbalanced task sets, (ii) independent resets to a clean project
+state, and (iii) the magnitude and consistency of participant-
+level improvements across severity-weighted outcomes.
+Takeaway 2: The post-training condition is associated with
+a substantial reduction in validated security burden, with
+strongest evidence at the participant level on the severity-
+weighted endpoint (p = 0.0059, rrb = 0.93).
+RQ2: Exploratory Analysis of Developer Expertise. Ta-
+ble III provides a descriptive view by experience level. Junior
+participants show a larger median weighted improvement,
+while senior participants also improve and reduce aggregate
+critical findings. These patterns are descriptive and do not
+establish an expertise-by-package effect.
+Between-group differences should be interpreted cautiously.
+All exact Mann–Whitney tests on participant-level change
+scores are non-significant (p ≥0.1797). The appropriate
+conclusion is limited: both groups improve, but the sample
+is too small to support an expertise-by-package interaction.
+Takeaway 3: Both groups improve descriptively, but the
+sample is too small to support an expertise-by-package claim.
+Participant-Level Exception (P03). Participant P03 was the
+only case with an increased severity-weighted score after train-
+ing (36 to 45). This reflects a shift in weakness composition
+rather than a uniform decline: findings increased from 15 to
+18, with a broader mix of access-control, logging-exposure,
+and configuration issues. P03 is retained to preserve the paired
+
+P01
+P02
+P03
+P04
+P05
+P06
+P07
+P08
+P09
+P10
+P11
+P12
+0
+20
+40
+60
+80
+Participant
+Severity score
+Pre-training
+Post-training
+Fig. 2: Participant-level severity-weighted scores before and
+after training. Nine of twelve participants show a reduction;
+one (P03) increases, and two (P08, P10) are unchanged. Bar
+heights correspond to Eq. (1).
+TABLE III: Descriptive results by expertise. Columns report
+the mean number of validated findings (pre to post), the
+median participant-level weighted improvement ∆Si (Eq. (3)),
+and the aggregate number of critical findings (pre to post).
+Group
+Mean findings (Pre →Post)
+Median ∆weighted
+Critical total (Pre →Post)
+Junior
+14.33 →8.17
+20.0
+13 →4
+Senior
+12.67 →10.33
+5.0
+11 →1
+design and reflect the full participant-level distribution.
+Domain-Specific Weakness Patterns. For domain-level in-
+terpretation, each CWE was mapped to a single researcher-
+defined weakness family and analyzed descriptively. Fig. 3
+highlights the largest pre/post differences. The largest propor-
+tional reduction appears in authorization and object access (30
+to 14, 53.3%), followed by authentication, credential policy,
+and recovery (47 to 26, 44.7%). These core failure modes in
+identity-centric systems were emphasized in training (bound-
+ary assumptions, ownership checks, route protection, creden-
+tial handling, recovery flows). Logging, error, and information-
+exposure weaknesses decreased (28 to 20, 28.6%), as did
+configuration and debug-surface issues (12 to 8, 33.3%).
+In contrast, session, request, and browser trust-boundary
+weaknesses show no change (8 to 8), while sensitive-data,
+secret-handling, and cryptography issues improve marginally
+(16 to 15, 6.2%). Availability and abuse-resistance do not
+improve (13 to 15, −15.4%). Overall, improvements are larger
+for access control, boundary control, and credential policy
+than for operational controls, session boundaries, and areas
+dependent on secure defaults or framework hardening.
+We notice that improvements are concentrated in ar-
+eas where security constraints can be explicitly expressed
+through prompting (e.g., authorization and credential han-
+dling), whereas limited gains in cryptographic and operational
+controls suggest reliance on framework defaults and deeper
+expertise beyond prompt-level guidance.
+Takeaway 4: Largest gains occur in authorization and au-
+thentication/recovery, while operational hardening and browser
+trust-boundary weaknesses remain persistent.
+MA-CoT Layer Attribution. Each of the 273 confirmed
+findings is assigned to a primary MA-CoT layer based on
+the location of the main mitigation. This mapping is used to
+interpret where pre/post differences concentrate.
+Table IV shows the largest reduction at the Ecosystem
+library/framework layer (48 to 23, −52.1%), followed by
+Application security logic/policy (111 to 85, −23.4%). This
+0
+20
+40
+60
+Auth. credential policy & recovery
+Authorization & object access
+Logging errors & exposure
+Sensitive datasecrets & crypto
+Availability & abuse resistance
+Configuration & debug surface
+Session
+request & browser trust
+Input validation & unsafe integration
+44.7%
+53.3%
+28.6%
+6.2%
+-15.4%
+33.3%
+0.0%
+33.3%
+50.0%
+Change
+47
+30
+28
+16
+13
+12
+8
+6
+2
+26
+14
+20
+15
+15
+8
+8
+4
+1
+Number of weakness
+Pre-training
+Post-training
+Fig. 3: Changes in researcher-defined weakness families from
+pre- to post-training. For each family, the figure shows total
+counts before and after training, with percentage change
+relative to the pre-training count.
+TABLE IV: Weaknesses mapped to the MA-CoT taxonomy.
+Architectural layer
+Pre
+Post
+Change
+Application security logic/policy
+111
+85
+−23.4%
+Ecosystem library/framework
+48
+23
+−52.1%
+Platform/OS API
+2
+1
+−50.0%
+Standard runtime/library
+1
+2
++100.0%
+Total
+162
+111
+−31.5%
+indicates that the strongest differences occur where miti-
+gations are expressed through framework configuration and
+application-level decisions.
+Other layers are small. Platform/OS API decreases from 2
+to 1, while Standard runtime/library increases from 1 to 2
+and should be interpreted cautiously. In this Java Spring Boot
+setting, runtime misuse is rare and may be more prominent in
+lower-level ecosystems (e.g., C/C++). No findings are assigned
+to Language-core or Toolchain/optimization.
+Takeaway 5: The MA-CoT shows that pre/post differences
+concentrate at the framework and application-logic layers.
+Discussion. Results indicate that post-training runs are asso-
+ciated with lower validated security burden in LLM-assisted
+backend development, with strongest evidence at the partic-
+ipant level on the severity-weighted endpoint. The largest
+descriptive differences occur in authorization and object ac-
+cess, and in authentication, credential policy, and recovery,
+which are central failure modes in identity-centric systems
+and emphasized in training. Smaller differences appear in
+session, request, and browser trust-boundary issues, as well
+as in abuse-resistance and implementation-level hardening that
+often depend on framework defaults, rate limiting, or configu-
+ration rather than prompt structure. Given the fixed pre-to-post
+sequence, findings should be interpreted as quasi-experimental
+associations, not causal proof. The expertise comparison is
+exploratory. Both groups show reduced burden post-training,
+but the sample is too small to support an expertise-by-package
+interaction. Practically, structured developer-side guidance
+may help express security constraints more effectively, but it
+
+complements rather than replaces static analysis, expert review,
+secure defaults, and deployment hardening.
+From a machine learning perspective, these results highlight
+the importance of interaction-level alignment in generative
+systems. Rather than modifying models, improvements can
+be achieved by shaping how users communicate constraints.
+This suggests that human-centered interventions may play a
+complementary role alongside model-centric approaches in
+improving the reliability and security of LLM outputs.
+V. THREATS TO VALIDITY
+Construct Threats. The primary outcome is the security bur-
+den of submitted code, assessed via a consolidated review by
+the first and second authors using a predefined guide. Manual
+review is not a perfect proxy for real-world exploitability:
+some weaknesses may be missed and severity may vary by
+context. To mitigate this, we required independent review
+followed by structured adjudication. Because reviewers are
+authors, residual bias may remain.
+Internal Threats. The fixed pre-to-post sequence may in-
+troduce practice or familiarity effects. We mitigate this via
+counterbalanced task sets, calibrated tasks, and resetting to
+the same clean snapshot for each run. The training package
+is standardized in content, delivery, and duration logging. All
+participants use the same project skeleton, interface, and LLM
+configuration, reducing extraneous variation. The post-training
+condition is a bundled intervention (instructional content, MA-
+CoT model, structured prompting). We cannot isolate the
+contribution of each component. Results should be interpreted
+as evidence on the combined package under these conditions.
+We also note that the design does not support causal identi-
+fication due to the fixed ordering of conditions. Results should
+therefore be interpreted as quasi-experimental associations
+rather than definitive causal effects.
+External Threats. The study is conducted in a specific setting:
+a Java Spring Boot backend with a fixed LLM configuration.
+This improves control but limits generalizability to other lan-
+guages, frameworks, domains, models, or environments. Prior
+work shows that security-related LLM performance varies
+with contextual factors such as context-window conditions,
+motivating replication under additional model configurations
+and prompt settings [39]. The sample is modest and grouped
+by broad experience levels. Findings should be interpreted
+within these constraints.
+We note that while the study focuses on a Java Spring Boot
+backend, the underlying mechanism of structured expression
+of security constraints during LLM interaction is not tied to a
+specific language or framework and is expected to generalize
+conceptually, though empirical validation is required.
+Conclusion. The sample size limits power for subgroup and
+interaction effects. We emphasize paired participant-level com-
+parisons and treat expertise analyses as exploratory. Validity
+is strengthened through independent dual review with struc-
+tured adjudication. Acceptance tests and build checks ensure
+evaluable submissions only and are not security endpoints.
+VI. CONCLUSION AND FUTURE WORK
+This paper presents a quasi-experimental developer study on
+post-training effects in LLM-assisted Java backend implemen-
+tation. Post-training runs show fewer validated weaknesses and
+lower severity-weighted burden (162 to 111; 432 to 267), with
+the strongest evidence at the participant level. Gains center
+on authorization and authentication-related weaknesses, with
+limited change in session and abuse-resistance controls. Exper-
+tise effects remain exploratory. The contribution is practical:
+structured developer-side training can improve how security
+constraints are expressed to an LLM without modifying the
+model. It complements, not replaces, secure defaults, code
+review, static analysis, and operational hardening. MA-CoT
+analysis further shows that improvements center on frame-
+work and application-logic layers. The key implication is
+that improving the security of LLM-generated code does not
+necessarily require better models, but better interactions.
+Future Work. Future work includes analyzing interaction logs
+for effective prompting patterns [25], larger replications for
+expertise and order effects, and extensions to other languages,
+frameworks, and models [12], [40]. Training should also target
+persistent weaknesses, including operational hardening, rate
+limiting, secure configuration, and log hygiene.

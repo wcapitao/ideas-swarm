@@ -1,0 +1,2054 @@
+Integral Resistance and Degree Bounds for
+Complex Linear Layers: Application to PRINCE
+and Lower-Latency Alternatives
+Simon Gerhalter
+and Maria Eichlseder
+Graz University of Technology, Graz, Austria
+simon.gerhalter@tugraz.at, maria.eichlseder@tugraz.at
+Abstract. The integral-resistance property provides strong arguments
+against integral distinguishers. Recently, Zeng and Tian proposed a new
+method to show this property for AES. In this paper, we provide a gener-
+alized framework and tool called intres to extend and apply this method
+to other ciphers with complex linear layers. We derive properties that a
+cipher must fulfill in order for the method to be applicable. Furthermore,
+we introduce a degree propagation model which helps us determine the
+valid key masks for the integral-resistance matrix. The degree model can
+also be used to upper-bound the algebraic degree of cipher constructions.
+This allows us to provide tighter upper bounds for the degree of Rijndael-
+256. We propose algorithmic improvements to substantially decrease the
+runtime of the offline phase with the intres framework. As a result, we
+are able to show the integral-resistance property for 7 rounds of PRINCE
+and 6 rounds of Beanie. Finally, we develop a heuristic MILP-based ap-
+proach to search for lower-latency alternatives to the MixColumns ma-
+trices of PRINCE while maintaining integral resistance. After showing
+that using this new matrix we still achieve 7-round integral resistance,
+we validate our method with SAT-based trail counting. While using a
+MixColumns matrix only optimized for integral resistance might affect
+security against other types of attacks, we believe these lower-latency
+matrices have their place in constructions similar to ZIP-ciphers, where
+integral resistance is particularly critical.
+Keywords: Integral cryptanalysis · Integral resistance property · De-
+gree bound · Rijndael-256 · PRINCE · MDS · MILP
+1
+Introduction
+Symmetric primitives are an important part of many cryptographic protocols
+that ensure secure communication over the internet and elsewhere. In recent
+years, there has been a big push towards more low-latency symmetric primitives
+like PRINCEv2 [11] and QARMAv2 [2]. New constructions like ZIP-ciphers [18]
+aim to reduce the latency even further. However, careful cryptanalysis is nec-
+essary to provide confidence in their resistance to attacks. Among the most
+Published at SAC 2026
+
+common techniques used for cryptanalysis are differential [8] and linear crypt-
+analysis [29]. These techniques have been thoroughly studied for many years
+and it is possible to use tool-assistance to provide bounds on their effectiveness.
+While these bounds often do not take the key schedule into account and disre-
+gard clustering, they are good indicators for the security of the primitive against
+these types of attacks.
+Integral cryptanalysis is another important technique to evaluate the secu-
+rity of ciphers. Knudsen and Wagner [26] first coined the term integral crypt-
+analysis. The authors use structural properties of the cipher to find integral
+distinguishers. However, the first practical attack of this type was conducted
+on the AES-like cipher Square [12]. Before this, the theoretical foundation of
+integral attacks had been laid by Lai [27] and Knudsen [25]. Lai establishes a
+link between the algebraic properties of a cipher and its susceptibility to inte-
+gral attacks. Using this, the division property [34], and equivalently monomial
+prediction [23], accurately model the propagation of monomials through the
+operations of a cipher. It is common to implement this technique as Boolean
+satisfiability problems (SAT) [32,17,24,35] or via mixed integer linear programs
+(MILP) [36,31,28,16,15,20]. However, for ciphers with large linear layers, like
+MDS matrices, using these constraint programs quickly becomes computation-
+ally infeasible when aiming for accurate models.
+Hebborn et al. [21] show how to use monomial prediction to prove lower
+bounds on the algebraic degree of a cipher. Furthermore, they also establish
+how many rounds it takes until all maximum-degree monomials are present in
+the algebraic normal form (ANF) of the ciphers SKINNY [6], PRESENT [9], and
+GIFT [4]. This property ensures the absence of integral distinguishers that form
+a cube over the input space. However, as demonstrated in previous work, it is
+possible to conduct integral attacks where the used plaintext set is not a linear
+subspace [28] or is linear, but not of cube structure [15]. To also ensure the
+absence of these types of integral distinguishers and under the assumption of
+independent round keys, Hebborn et al. [22] introduced the integral-resistance
+property. They were able to show this property for SKINNY, CRAFT, PRESENT,
+GIFT, but were not able to show this property for ciphers with complex linear
+layers like AES [13]. Beierle et al. [5] show how to apply the integral-resistance
+property to primitives that add the key via modular addition. Furthermore,
+Zeng and Tian [37] demonstrate how to prove the integral-resistance property
+when no whitening key is added. Recently, Zeng and Tian [38] introduced a new
+approach that makes it possible to show the integral-resistance property for AES.
+They achieve this by imposing additional constraints on the key variables present
+in the monomial prediction. This drastically reduces the number of monomial
+transitions possible and therefore the complexity of the monomial prediction.
+Contributions. In this paper, we improve various aspects of the technique pre-
+sented by Zeng and Tian [38] and introduce an easy-to-use way of estimating
+the degree of substitution–permutation network (SPN) ciphers. This makes it
+possible to efficiently show the integral-resistance property for a broader range
+of strongly aligned SPN ciphers. In more detail, we contribute the following.
+2
+
+– We expand the theoretical basis needed to apply the method from Zeng and
+Tian (minimal-transitions method). First, we revisit and update the neces-
+sary properties of the S-Box for a successful application of this method. Next,
+we argue that maximizing the degree of the key monomials is equivalent to
+minimizing the degree of the state monomials. This helps us to precisely
+define the required properties of the key monomials for the valid application
+of the minimal-transitions method. Furthermore, we demonstrate what hap-
+pens when different input/output configurations lead to different Hamming
+weights of the key monomials.
+– We use a new cell-based degree-propagation MILP model to more efficiently
+find the constraints on the key monomials needed for the minimal-transitions
+method to be applicable. This model can also be used to find upper bounds
+on the degree of various SPN ciphers. For example, we find improved upper
+bounds for Rijndael-256 (see Table 2).
+– We introduce the intres framework, a dedicated tool written in rust that
+implements the minimal-transitions method for strongly aligned SPN ci-
+phers with suitable S-Boxes. This framework implements algorithmic im-
+provements for calculating the MixColumns transitions in the offline phase.
+Instead of days, the offline phase now takes minutes. Furthermore, our frame-
+work is easily extendable. Using different S-Boxes or MixColumns matrices
+can be done by a change of parameters. Changing the cipher size requires
+only slight code changes. We use intres to show the integral-resistance
+property of 7-round PRINCE and 6-round Beanie.
+– Lastly, we use a heuristic approach to find a lower-latency alternative to the
+PRINCE MixColumns matrices. To this end, we show that the invertibility
+approach first described by Zhang and Rijmen [39] can be used in MILP,
+contrary to the claims of Hu et al. [24]. Next, we demonstrate that a PRINCE-
+like cipher using the improved matrices still fulfills the 7-round integral-
+resistance property. Due to the sparse matrix, we are able to validate the
+correctness of the minimal-transitions method with SAT-based monomial-
+trail counting for the first time.
+We provide the source code of intres and our degree bounding model.
+Furthermore, we supply the MILP model needed for the minimization of the
+MixColumns matrix Hamming weight. Finally, we deliver the integral-resistance
+matrices and a tool to check the validity with monomial trail counting. The
+accompanying code can be found at:
+https://extgit.isec.tugraz.at/castle/tool/intres
+Outline. After some background information in Section 2, we revisit the re-
+quirements needed for the S-Box in Section 3 and explain our degree bounding
+model in Section 4. Next, we introduce our intres framework in Section 5 and
+end with Section 6, where we optimize the latency of the linear layer without
+sacrificing security against integral attacks.
+3
+
+2
+Background
+Integral cryptanalysis is closely linked to the algebraic representation of a cipher.
+We can represent a cipher as a vectorial Boolean function E : Fm
+2 × Fn
+2 →
+Fn
+2; (k, x) 7→E(k, x). Often, it is beneficial to represent the cipher as a keyed
+permutation Ek : Fn
+2 →Fn
+2; x 7→Ek(x). Given Ek(x) = (E(1)
+k (x), · · · , E(n)
+k
+(x)),
+we can describe the ANF of each coordinate function by
+E(i)
+k (x) =
+X
+u∈Fn
+2 ,v∈Fm
+2
+a(i)
+u,v·kvxu =
+X
+u∈Fn
+2
+
+X
+v∈Fm
+2
+a(i)
+u,v · kv
+
+·xu =
+X
+u∈Fn
+2
+a(i)
+u (k)·xu,
+where the coefficients a ∈F2 and the monomial xu = Qn
+i=1 xui
+i , with
+xui
+i
+=
+(
+xi
+if ui = 1,
+1
+if ui = 0.
+We refer to u as a monomial mask. Analogous to xu, given y = Ek(x), we can
+calculate the output monomials with yw = Qn
+i E(i)
+k (x)wi. In the following, we
+also refer to this product of coordinate functions as a component function. A
+monomial xu is contained in yw if the corresponding coefficient au is nonzero,
+denoted by xu →yw. The degree d of a monomial xu can be calculated by the
+Hamming weight d = hw(u). Furthermore, the degree of a Boolean function is
+determined by the highest-degree monomial it contains. In case of a vectorial
+Boolean function, the minimum degree is equal to the degree of the coordinate
+functions with the lowest degree.
+2.1
+Integral Resistance
+Integral cryptanalysis uses distinguishers that take a set of plaintext inputs. The
+corresponding ciphertext set then sums to a constant value, regardless of the
+used key. Given the degree d of the plaintext variables, it is possible to construct
+an integral distinguisher with data complexity 2d+1 [27]. However, this alone is
+not enough to prove the absence of integral distinguishers with data complexity
+lower than 2d+1 [21]. There may be plaintext monomials of lower degree not
+contained in the ANF of a component function of the output. In case of a keyed
+permutation, this means ∃u∀v : hw(u) < d + 1, xukv ̸→yw. For a cipher to
+be resistant to integral cryptanalysis, it is therefore desirable to show that all
+plaintext monomials xu are key dependent. Since ciphers are balanced Boolean
+functions, this means all plaintext monomials up to the maximum degree n −1.
+Hebborn et al. [22] formalize this with the integral-resistance property to provide
+strong arguments against integral distinguisher. We indicate the mask of the max
+degree monomials by ¯ei, where all coordinates except i are nonzero. The integral-
+resistance property enforces that no plaintext set under any linear combination
+of coordinate functions leads to an integral attack. Thus, for s ≥n2 key masks
+v ∈Fm
+2 , we need to find the coefficients of all max-degree monomials x¯ei for
+4
+
+each coordinate function and show their linear independence. This is done by
+using these coefficients to construct the integral resistance matrix, defined by
+I(E) =
+
+
+
+
+
+
+a(1)
+¯e1,v1 a(2)
+¯e1,v1 · · · a(n)
+¯e1,v1 a(1)
+¯e2,v1 · · · a(j)
+¯ei,v1 · · · a(n)
+¯en,v1
+a(1)
+¯e1,v2 a(2)
+¯e1,v2 · · · a(n)
+¯e1,v2 a(1)
+¯e2,v2 · · · a(j)
+¯ei,v2 · · · a(n)
+¯en,v2
+...
+...
+...
+...
+...
+...
+...
+...
+...
+a(1)
+¯e1,vs a(2)
+¯e1,vs · · · a(n)
+¯e1,vs a(1)
+¯e2,vs · · · a(j)
+¯ei,vs · · · a(n)
+¯en,vs
+
+
+
+
+
+
+.
+Definition 1 (Integral-Resistance Property [22]). Let E : Fn
+2 × Fm
+2 →Fn
+2
+be a block cipher with independent round keys and I(E) be a corresponding
+integral-resistance matrix. If I(E) has full rank and k0 is an independent whiten-
+ing key, Ek(x + k0) fulfills the integral-resistance property, i.e., for every proper
+subset M ⊂Fn
+2 and output mask β ∈Fn
+2, the sum
+X
+x∈M
+⟨β, Ek(x ⊕k0)⟩
+is key-dependent.
+2.2
+Monomial Prediction
+To be able to determine the presence of a monomial in a vectorial Boolean
+function of high dimension, Todo [34] introduced the division property. A more
+intuitive way of modeling the propagation of monomials through a cipher is called
+monomial prediction [23]. This technique is equivalent to the most accurate
+version of the division property and allows us to find the coefficients a(i)
+¯e,v needed
+for the integral-resistance property.
+The general idea is that a cipher E : Fn
+2 →Fn
+2 is composed of various func-
+tions fi. Ciphers typically sequentially apply linear and non-linear functions.
+However, these linear and non-linear functions usually consist of the parallel ap-
+plication of various smaller functions like S-Boxes and MixColumns operations.
+Due to this smaller size, it is feasible to calculate the ANF of these functions.
+Given yi = fi(xi) for one of these functions fi, in the context of monomial pre-
+diction we call xui
+i
+→ywi
+i
+a valid monomial transition from xui
+i
+to ywi
+i
+and can
+visualize all valid monomial transitions in the monomial transition table (MPT,
+see Table 1). We chain together these valid monomial transitions through the
+various functions fi of f in order to get a monomial trail connecting x and y,
+denoted by xu ⇝yw. This gives rise to Lemma 1.
+Lemma 1 ([23]). If xu →yw then xu ⇝yw and therefore xu ̸⇝yw implies
+xu ̸→yw.
+However, this is not enough to show the presence of a monomial in the ANF
+of a cipher. The reason for this is that there could be multiple monomial trails
+connecting xu and yw via different intermediate monomials. This leads to the
+same monomial being present in the ANF multiple times.
+5
+
+Definition 2 (Monomial hull [23]). We indicate by xu ▷◁yw the monomial
+hull of a specific composite function f. The monomial hull is the set of all mono-
+mial trails connecting xu and yw. The number of trails corresponds to the size
+of the set, written as |xu ▷◁yw|.
+Since we are in F2, an even number of identical monomials cancels out.
+Theorem 1 (Existence of a monomial [23]). xu →yw if and only if |xu ▷◁
+yw| is odd.
+The round keys of a cipher act as an additional input, which we can incorporate
+into our monomial prediction model. Thus, in order to determine a(i)
+¯ej,v required
+for the integral resistance matrix, we need to count the number of trails |x¯ejkv ▷◁
+yei| for a given v.
+Multiple works model the division property or monomial prediction in MILP
+[36,31,28,16,15,20] and SAT [32,17,24,35] to find integral distinguisher by proving
+the absence of monomials in the ANF. This is also the common way to show the
+presence/absence of the coefficients in the integral resistance matrix [22,5,37].
+In the original division property paper [34], Todo uses a dedicated algorithm.
+Furthermore, Derbez and Fouque [14] precompute valid monomial transitions of
+Super S-Boxes to discard invalid monomial trails preemptively.
+Monomial transitions of large linear functions. Calculating up to 2n monomials
+contained in the ANF of f: Fn
+2 →F2 becomes infeasible once n gets large. We get
+a similar exponential growth in the number of constraints needed to express valid
+monomial transitions. To still be able to construct constraint-programs for find-
+ing monomial trails in ciphers with big linear layers, the S [33] and ZR [39,24]
+methods have been proposed. The S method decomposes the linear layer into
+2-bit functions by introducing additional variables for each nonzero entry in
+the primitive (=binary matrix representation) matrix of the linear transforma-
+tion. We can then use the basic operations copy and xor to model the relation
+between the input, output, and intermediate variables. However, this method in-
+troduces invalid monomial transitions. To overcome this, Zhang and Rijmen [39]
+link the invertibility of a matrix to valid monomial transitions with the ZR
+method. Hu et al. [24] provide a generalized version in Theorem 2. Note that in
+the remainder of the paper we refer to this refined version as ZR method.
+Theorem 2 (ZR method [24]). Let M be the p × q primitive matrix of a
+linear transformation. For u ∈Fq
+2 and v ∈Fp
+2, u
+M
+−→v is a valid monomial
+transition of the linear layer M if and only if Mv,u is invertible.
+This method perfectly models the monomial transitions. By building a SAT
+model that dynamically checks the invertibility of a submatrix of M [24], it
+is possible to check all valid monomial trails. The downside of this method is
+that checking the invertibility with a SAT solver is a computationally complex
+task. This makes counting the monomial trails, needed to show the presence of
+monomials in the ANF of a cipher, infeasible. Due to this limitation, as far as we
+know, this method has not been used to prove the integral resistance property
+of ciphers.
+6
+
+2.3
+Restricting Possible Monomial Transitions
+To restrict the number of monomial transitions for ciphers with large linear
+functions, Zeng and Tian [38] take advantage of carefully selecting specific key
+masks. Given these key masks, they proceed with a dedicated program that
+propagates the monomials through a cipher in order to determine the coefficients
+needed for the integral-resistance matrix. In this section we explain the details of
+the minimal-transitions method based on the method used by Zeng and Tian [38].
+Restricting possible state degrees. It is possible to model the round-key addition
+to the state by a bitwise application of the xor rule (see Definition 7). This
+rule states that either the key or the state variable is present in the monomial,
+but never both. Thus, by choosing these key variables cleverly, we can limit the
+degree that the monomial of each state can take. While this fact has been used
+by Hebborn et al. [22], they do not systematically select the key mask in such a
+way that at each state the monomials can only have a single degree. By using this
+method we limit the used key masks to a fraction of all possible key masks. Since
+we can freely select the key masks used for each row of the integral-resistance
+matrix, this does not invalidate the integral-resistance property.
+In the following we describe the minimal transition method that is closely
+tied to the approach that Zeng and Tian [38] use to show the integral-resistance
+of AES. To obtain the restrained degree of each state we use MILP. For 5 rounds
+of AES we restrict the degree of the output to 1 and the input to the max
+degree 127. Next, we maximize the degree of the key variables present in the
+monomial. Note that Zeng and Tian [38] equivalently minimize the state de-
+gree. The equivalence can be derived from the xor rule, i.e., when adding a
+variable to the key monomial, the corresponding variable gets removed from the
+state monomial. The key maximization affects the possible degree propagation
+through non-linear and linear cipher components. Intuitively, we start with a
+valid monomial trail from the input to the output without adding key variables.
+The linear operation can reduce the degree from the output to the input, while
+the non-linear layer can increase and decrease the degree. By adding key vari-
+ables to the trail, we decrease the state degree and therefore gradually restrict
+the possible transitions of the operations. In linear layers, the degree reduction
+from the output to the input decreases. To compensate, in the non-linear layers
+the degree must increase more from output to input. We add as many keys as
+possible while still obtaining valid monomial trails. This leads us to the following
+properties. From Proposition 2 and 3 by Zeng and Tian [38] we derive Property 1
+and from Proposition 5 and 6 by Zeng and Tian [38] we derive Property 2.
+Property 1 (Restricted S-Box transitions). When maximizing the key variables
+present in the monomial, the valid monomial transitions xu →yw of a balanced
+k-bit S-Box are constrained by
+
+
+
+
+
+hw(w) = k
+iff hw(u) = k,
+hw(w) = 0
+iff hw(u) = 0,
+hw(w) = 1
+iff hw(u) = k −1.
+7
+
+Property 2 (Restricted MixColumns transitions). When maximizing the key vari-
+ables present in the monomial, the valid monomial transitions xu →yw for
+linear functions are constrained by hw(u) = hw(w).
+Applying the key maximization restricts each state of the cipher to a specific
+degree. The degree of each cell in a column is stored as weight patterns (see Sec-
+tion 4.4 for more details). An example weight pattern is visualized in Figure 1b.
+7 8 8 8
+7 8 8 8
+7 8 8 8
+7 8 8 8
+4 8 8 8
+3 8 8 8
+2 8 8 8
+2 8 8 8
+SC
+4 8 8 8
+8 3 8 8
+8 8 2 8
+8 8 8 2
+≪1
+≪2
+≪3
+7 6 6 5
+7 7 7 7
+7 7 7 7
+7 7 7 7
+MC
+0 1 1 2
+7 7 7 7
+7 7 7 7
+7 7 7 7
+7 7 7 7
+(a) Degree propagation of one round AES without maximized degree of the key.
+7 8 8 8
+7 8 8 8
+7 8 8 8
+7 8 8 8
+1 8 8 8
+1 8 8 8
+1 8 8 8
+1 8 8 8
+SC
+1 8 8 8
+8 1 8 8
+8 8 1 8
+8 8 8 1
+≪1
+≪2
+≪3
+4 4 4 4
+7 7 7 7
+7 7 7 7
+7 7 7 7
+MC
+3 3 3 3
+7 7 7 7
+7 7 7 7
+7 7 7 7
+7 7 7 7
+(b) Constrained degree propagation of one round AES.
+Fig. 1: With a fixed input and output mask u, w of the specified weights (de-
+grees) hw(u), hw(w) per cell, the intermediate states can contain monomials
+with various degrees. An example is shown in Figure 1a. However, when maxi-
+mizing the degree of the key variables, there is only a unique degree assignment
+possible at each state (Figure 1b.)
+Offline phase. Given the weight patterns at the input and output of each Mix-
+Columns operation, we drastically reduce the number of possible monomial
+transitions at the MixColumns operation. Zeng and Tian [38] use a branch-and-
+bound method implemented in CUDA to calculate all valid monomial transitions
+through the MixColumns operation that follow the given weight patterns. They
+store the valid transitions in a table, which is then used in the online phase.
+Online phase. To determine the presence of monomials in the ANF of AES, Zeng
+and Tian [38] use a dedicated tool, similar to the one proposed by Derbez and
+Fouque [14]. The idea is to iteratively propagate a set of monomials backward
+through the rounds of the cipher using key masks that follow the weight pat-
+terns. In contrast to monomial-trail counting, we can remove parasitic monomi-
+als immediately. For each degree 1 monomial at the output, we then determine
+the max-degree monomials that are reachable at the input. These monomials
+correspond to the monomials contained in the ANF of the coordinate function
+represented by the degree 1 monomial.
+As sketched in Figure 1, starting from the back, we first apply the key addi-
+tion. Due to the previously mentioned xor rule, for each key variable present in
+8
+
+the monomial, we remove the corresponding state variable from the monomial.
+In case the monomial does not contain all key variables that get added to the
+state, we remove this monomial from our set. Next, we use the table computed
+in the offline phase to propagate the monomials through the MixColumns op-
+eration. The ShiftRows operation simply shuffles the indices of the variables of
+the monomials. Lastly, we again use a look-up table to propagate the monomial
+through the S-Box according to Property 1. After each round it is possible to
+filter out all monomials that do not match the weight patterns.
+In contrast to previous works, this limits the transitions at the MixColumns
+and S-Box operations and filters monomials that are not in accordance with the
+weight patterns. Furthermore, Zeng and Tian [38] choose the key variables in
+such a way that a minimal number of transitions are possible at the S-Box. This
+makes it possible to determine the coefficients needed to construct a full-rank
+integral-resistance matrix for AES.
+3
+Revisiting the Requirements for the S-Box
+Until now, we did not consider the properties of the S-Box. However, in order
+to use the minimal-transitions method, the S-Box must have certain properties.
+For this, Zeng and Tian [38] introduce the notion of a complete S-Box.
+Definition 3 (Complete S-Box [38]). Let S be a k-bit S-Box such that y =
+S(x), where y = (y1, y2, . . . , yk), x = (x1, x2, . . . , xk) ∈Fk
+2. If the monomial xu
+appears in the ANF of some output bit yi for every vector u with hw(u) = k −1,
+then S is called a complete S-Box.
+This notion is necessary because, due to our key selection, we only allow S-Box
+transitions from monomials of degree k −1 to 1 (besides the 0 and k degree
+transitions). Especially in the first round (see Figure 2), it is necessary that each
+k −1 degree monomial at the S-Box input can propagate to a degree 1 output.
+3 4 4 4
+4 4 4 4
+4 4 4 4
+4 4 4 4
+1 4 4 4
+4 4 4 4
+4 4 4 4
+4 4 4 4
+SC
+xu →yw
+1 4 4 4
+4 4 4 4
+4 4 4 4
+4 4 4 4
+≪1
+≪2
+≪3
+3 4 4 4
+3 4 4 4
+3 4 4 4
+4 4 4 4
+MC
+3 4 4 4
+3 4 4 4
+3 4 4 4
+4 4 4 4
+. . .
+Fig. 2: Example degree propagation for a SPN cipher with 4-bit S-Boxes.
+However, this is not a sufficient criterion. Even when we use a complete S-
+Box, it might not be possible to construct a full-rank integral-resistance matrix.
+Consider a 64-bit SPN cipher with the ORTHROS S-Box. Using the minimal-
+transitions method of Section 2.3, we potentially can reach all 63-degree mono-
+mials after 7 rounds from any output coordinate i. We focus on the values pos-
+9
+
+Table 1: Monomial Prediction Table of the ORTHROS S-Box. This table shows
+the valid transitions from the input monomial xu to the output monomial yw.
+u
+w 0 1 2 4 8 3 5 6 9 a c 7 b d e f
+0
+. . . . . . . . . . . . . .
+1
+.
+. . . . . . . . . . . . . .
+2
+.
+. . . . . . . . . . . . .
+4
+. .
+. .
+. . . . . . . . . .
+8
+. . . .
+. . .
+. . . . . . .
+3
+.
+. . . . . . . . . . . .
+5
+. .
+.
+. . . . . . . . . .
+6
+. .
+.
+.
+. . . . . . . .
+9
+. .
+. . . . .
+. . . . . .
+a
+.
+. . .
+. . .
+. .
+. . .
+c
+. . .
+. .
+.
+7
+.
+.
+.
+. .
+. .
+b
+.
+. . .
+.
+.
+.
+.
+.
+d
+. .
+.
+.
+. . .
+e
+. . .
+. .
+.
+. .
+f
+. . . . . . . . . . . . . . .
+sible for the coefficients a(i)
+¯e1,vj, a(i)
+¯e2,vj, a(i)
+¯e3,vj, a(i)
+¯e4,vj in 4 columns of the integral-
+resistance matrix. Due to Property 1 and as shown in Figure 2, the input mono-
+mials x¯e1, x¯e2, x¯e3, x¯e4 can only be reached when in the first round the output
+monomials of the first S-Box have degree 1 and the output of the rest of the
+S-Boxes has degree 4. Assume that for a disjoint set of key monomials vj (cor-
+responding to a row in the integral-resistance matrix), we are able to reach all
+possible degree 1 monomials yw contained in the output of the first S-Box, where
+w ∈{1, 2, 4, 8}. For each key monomial, we therefore get one or more of these
+degree 1 monomials at the output of the first S-Box. Using the MPT shown
+in Table 1, we can now propagate these monomials backward through the S-
+Box. Each degree 3 input monomial can be reached from the degree 1 output
+monomials for the ORTHROS S-Box. Definition 3 is therefore satisfied, and all
+coefficients in the 4 columns of our integral-resistance matrix can be 1. However,
+the values of our coefficients are determined by a linear combination of the de-
+gree 3 to degree 1 transitions in the MPT. Since in the case of the ORTHROS
+S-Box these transitions are not full rank, it is also not possible to reach full rank
+in the integral-resistance matrix. This leads to the following S-Box requirement.
+Definition 4 (Max-degree full-rank S-Box). A k-bit S-Box is max-degree
+full-rank iff the submatrix of the MPT encompassing all transitions xu to yw,
+with hw(u) = k −1 and hw(w) = 1, is full rank.
+We have to ensure the S-Box is max-degree full-rank when showing the
+integral-resistance of ciphers using the minimal-transitions method. Since the
+AES S-Box has this property, the results provided by Zeng and Tian [38] are
+still valid. Due to the structure of a cipher, it can happen that the only way to
+show the integral-resistance is via degree k −1 to 1 transitions (besides degree
+10
+
+0 and k transitions) in the first S-Box layer. In this case, we can make a general
+statement about the integral resistance of a cipher (see Property 3).
+4
+Upper-Bounding the Degree by a Monomial Prediction
+Abstraction
+Zeng and Tian [38] use the MILP model described in Section 2.3 strictly to
+derive the weight pattern of the keys and the states. While this bit-based model
+is able to find the weight pattern for AES, we argue that using a faster cell-based
+model is sufficient for this task. Furthermore, we believe that this abstraction
+of the monomial prediction technique has some further application in upper
+bounding the degree. While for 64-bit ciphers with sparse linear layers we can
+use monomial prediction to provide an upper bound of the degree [21], this
+becomes infeasible for ciphers like Rijndael-256. Furthermore, we can gauge the
+degree-propagation potential of certain cipher constructions without taking into
+account the internals of the S-Box and linear layer. For designing a cipher, this
+is a valuable tool to settle on the overall structure of the cipher. In this section,
+we introduce the cell-based degree propagation MILP model. Next, we refine
+the degree propagation for bit-sliced applied MixColumns operations and bit
+permutations. At the end we present the upper bounds on the minimal degree
+for various ciphers and compare these bounds with the bounds from other works.
+4.1
+Degree Propagation Abstraction
+We provide a cell-based abstraction of the bit-based MILP model used by Zeng
+and Tian [38] to find the weight patterns of SPN ciphers like AES. For easy
+generalizability, we define a round of an SPN cipher in terms of AES opera-
+tions by R = AddRoundKey ◦MixColumns ◦SubBytes ◦ShiftRows. Due to the
+commutative property of the SubBytes and ShiftRows as well as the ShiftRows
+and AddRoundKey most SPN ciphers can be represented this way. This is not
+the case when the SubBytes and MixColumns steps are swapped (e.g., QAR-
+MAv2 [2]). Although it is still possible to apply the techniques presented in this
+paper, it would require more tweaking. In the rest of the paper, we use the AES
+ShiftRows operation (see Figure 3), since it is also used in PRINCE. However, for
+all the methods presented in this paper, any cell permutation can be used. To
+group different SPN ciphers into classes, we use a (m, l, k)-SPN notion, similar
+to the one introduced by Todo [34]. For such an SPN, the SubBytes operation
+consists of m l-bit S-Boxes applied in parallel. Furthermore, the MixColumns
+operation consists of a k-bit linear function.
+The main idea is to assign to each cell a variable representing the degree dc
+that it contains. For the bits b contained in a cell, we can calculate dc from the
+state mask u with hw(u[b]). Thus, each variable can take a number between
+0 and the size of the cell l. Next, we model the degree propagation through
+each operation of the cipher. The non-linear S-Box operation is applied to each
+cell. Since the S-Box is a balanced Boolean function, each l-degree monomial
+11
+
+propagates to an l-degree monomial. Furthermore, a cell without a monomial
+retains this property after the S-Box application. Given a complete S-Box, the
+third case encompasses a degree between 1 and l −1, and due to the non-linear
+function, can lead to a degree between 1 and l−1. Using a Minizinc-like syntax,
+we can model this with the SBox constraint
+SBox(in, out) :=
+
+
+
+
+
+if in = l then out = l
+elseif in = 0 then out = 0
+else 0 < out < l endif.
+The ShiftRows permutes the indices of the cells. Furthermore, the MixColumns
+operation also preserves the degree but can mix it between cells. For AES, we
+apply the MixColumns to each column containing 4 cells as
+MixColumns(in, out) := sum(in) = sum(out).
+(1)
+The key addition consists of l parallel xor applications (see Definition 7). Thus,
+we count how many key variables get added to each cell and subtract that number
+from the output cell with
+KeyAddition(in, out, key) := in = out −key.
+With these few constraints, we can model the degree propagation of AES, as
+illustrated in Figure 3. By maximizing the degree at the input for each degree
+1 output, we get an upper bound on the possible degree for each coordinate
+function of the cipher. To show the integral-resistance property, we need at least
+as many rounds as it takes to reach a full degree for all coordinate functions.
+In a second step, we maximize the number of key monomials present in the
+ANF. This has the effect that each output of the S-Box always gets assigned the
+minimum degree possible (1 in the third case of SBox, see Property 1). Thus,
+when propagating the monomials through the cipher, we restrict each state to a
+certain degree. For a k-bit linear function, this drastically reduces the number
+of monomial transitions from 2k to
+ k
+i
+
+.
+7 8 8 8
+7 8 8 8
+7 8 8 8
+7 8 8 8
+1 8 8 8
+1 8 8 8
+1 8 8 8
+1 8 8 8
+SC
+SBox
+1 8 8 8
+8 1 8 8
+8 8 1 8
+8 8 8 1
+≪1
+≪2
+≪3
+4 4 4 4
+7 7 7 7
+7 7 7 7
+7 7 7 7
+MC
+MixColumns
+3 3 3 3
+7 7 7 7
+7 7 7 7
+7 7 7 7
+7 7 7 7
+KeyAddition
+Fig. 3: Possible degree propagation of AES. We first maximize the input degree
+given a fixed output degree. In a second step, we maximize the degree of the key
+monomials added to the state. This has the effect that before the MixColumns
+operation, each cell can only contain monomials of degree 0, 1, or 8.
+12
+
+4.2
+Improved Modeling
+For ciphers with a complex linear layer like AES, PRINCE, and LED we assume
+that the total degree at the input and at the output of the MixColumns op-
+eration are the same and do not impose any further constraints. However, for
+ciphers like SKINNY or PRESENT, which either feature bit-sliced applications of
+a MixColumns matrix or a bit-permutation over the whole state, we can further
+refine our degree bounding model.
+To do this, we first need to adapt the basic bitwise operations [33] and extend
+them to cell-based operations. Since this means that for an l-bit cell we apply l
+bit-based operations in parallel, we can simply extend the domain of the involved
+variables from binary to 0 to l. This leads us to the adapted, cell-based definitions
+of the copy, xor, and and operations.
+Definition 5 (Copy, cell-based). The degree propagation through Copy : Fl →
+F2l; (a) 7→(b0, b1) can be modeled by the equality
+Copy(a, b0, b1) := a −b0 −b1 = 0.
+Definition 6 (AND, cell-based). The degree propagation through AND : F2l →
+Fl; (a0, a1) 7→(b) can be modeled by the inequalities
+AND(a0, a1, b) :=
+
+
+
+
+
+b −a0 ≥0,
+b −a1 ≥0,
+b −a0 −a1 ≤0.
+Definition 7 (XOR, cell-based). The degree propagation through XOR : F2l →
+Fl; (a0, a1) 7→(b) can be modeled by the equality
+XOR(a0, a1, b) := a0 + a1 −b = 0.
+Bit-Sliced Linear Layers With these operations, it is possible to model linear
+layers applied in a bit-sliced fashion. For example, we model the application of
+the MixColumns matrix M of SKINNY by using intermediate variables t ∈F2
+M =
+
+
+
+
+1 0 1 1
+1 0 0 0
+0 1 1 0
+1 0 1 0
+
+
+
+,
+MCSKINNY(a, b) :=
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Copy3(a0, t0, b1, t30),
+Copy3(a2, t02, t22, t32),
+XOR3(t00, t02, a3, b0),
+XOR(a1, t22, b2),
+XOR(t30, t32, b3).
+Since the number corresponding to the degree contained in each cell does not
+encode the actual bit mask of the monomial, we allow degree propagations that
+are invalid when doing bit-based monomial prediction.
+13
+
+Example 1 (Invalid degree propagation) Consider two input cells that we
+bitwise xor. The monomial in each cell can be represented by xu, u = 1100.
+At each coordinate, only one input can be active when applying the bitwise xor
+rule. Thus, this is an invalid monomial transition. However, when using our
+degree propagation model, we lose the information on which coordinates of u the
+1s are located. Each input cell gets assigned the degree a = hw(u) = 2. If we
+apply Definition 7, we get a valid output assignment b = 0 + 2 + 2 = 4.
+Nevertheless, given a valid monomial propagation, the corresponding degree
+propagation is always correct. Thus, our model can be used to upper-bound the
+degree of a cipher.
+Bit Permutations Ciphers like PRESENT or GIFT use a bit permutation as the
+linear layer. Thus, we cannot apply the cell-based copy, and, or xor operations.
+However, as can be seen in Figure 4, each of the 4 input bits of an S-Box comes
+from 4 different S-Boxes in the previous round. Thus, for each input S-Box that
+has a degree of 0, the maximal degree of the output S-Box decreases by one.
+Given the output degrees a[0], . . . , a[3] of the four S-Boxes of the first layer, we
+can impose the following constraint on each degree b of one of the S-Boxes of
+the second layer:
+BitPermutation(a, b) := b ≤4 −#{i = 0..3 | a[i] = 0}.
+Since the above property also holds for the inverse round function, we can
+also apply these constraints in the inverse direction.
+S
+S
+S
+S
+· · ·
+· · ·
+S
+S
+S
+S
+· · ·
+· · ·
+· · ·
+Fig. 4: Part of the GIFT round function.
+4.3
+Results
+Using the abstraction model, we implemented various SPN ciphers and bound
+their minimal degree. We choose a selection of ciphers to demonstrate the dif-
+ferent modeling approaches of the linear layer described in Section 4.1. For ci-
+phers with strong mixing layers (AES [13], Beanie [19], and PRINCE [11]) we use
+the general MixColumns (see Equation 1) model. Furthermore, QARMAv2 [2],
+SKINNY [6], and CRAFT [7] can be represented using bit-sliced mixing and are
+thus implemented using the respective bit-sliced mixing operations as described
+14
+
+in Section 4.2. Lastly, we use the technique described in Section 4.2 to imple-
+ment the bit-permutation linear layer of PRESENT [9] and GIFT [4]. We present
+our results in Table 2 and compare them with results from other works [10,21].
+The method of Boura and Canteaut [10] is quite general and does not take into
+account the full internals of the S-Box and the linear layer. Hebborn et al. [21]
+on the other hand, use bit-based monomial prediction models to exactly model
+each part of the cipher. Our approach makes some assumptions about the linear
+layer and can therefore be seen as a middle ground. This is also reflected in the
+tightness of our bounds compared to the other methods, as shown in Table 2.
+Table 2: Upper bounds on the minimal degree d of various ciphers. This entails
+the existence of an integral distinguisher with data complexity 2d+1. Bit-based
+monomial prediction is indicated by Exact. Cell-based, Bit-Sliced and Bit Perm.
+use the degree abstraction models from Equation 1, Section 4.2, and Section 4.2,
+respectively. The degree bound of Boura and Canteaut [10] is also shown.
+Cipher (Type)
+Model
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+(8, 4, 16)
+Cell-Based
+3
+9
+21
+27
+30
+31
+Beanie
+Exact
+6-round integral resistance
+(16, 4, 16)
+Cell-Based
+3
+9
+27
+49
+57
+61
+63
+PRINCE
+Exact
+7-round integral resistance
+(16, 4, 64)
+Cell-Based
+3
+9
+27
+51
+59
+62
+63
+(16,8,32)
+Cell-Based
+7
+28
+112
+124
+127
+AES
+Exact [38]
+5-round integral resistance
+(32, 8, 32)
+Bound [10]
+7
+28
+113
+235
+250
+254
+255
+Rijndael-256
+Cell-Based
+7
+28
+112
+232
+249
+254
+255
+QARMA-MC
+Bit-Sliced
+3
+9
+27
+49
+57
+61
+63
+SKINNY-64-MC
+Bit-Sliced
+3
+6
+9
+21
+34
+50
+58
+61
+62
+6
+
+[…middle truncated for length…]
+
+hase,
+we calculate the super S-Box transitions according to these state patterns.
+In the online phase we recursively propagate a set of monomials Υ backward
+through each round of the cipher, as outlined in Algorithm 3. For each coordinate
+function Ei, we initialize Υ = {ei}. Then we obtain the degree n −1 monomials
+contained in this coordinate function with PropagateMonomials(Υ, [ ], 0).
+Afterward, we call the function again with the same round keys (obtained as a
+return value) for all other coordinate functions Ej, i ̸= j. We do this by calling
+PropagateMonomials({ej}, key, 0). In the end, we have calculated the values
+of all coefficients needed for one row of the integral-resistance matrix. After
+adding this row to our matrix, we check if the matrix has full rank. We repeat
+this procedure until this condition is met.
+Depending on the cipher, some additional optimizations might be beneficial.
+For ciphers with k columns, PropagateMonomials has k nested loops. With
+larger k, it is advisable to employ an early abort technique in order to avoid
+running unnecessary inner loops. We can implement this by checking if the new
+monomial conforms to the weight pattern at each level of the loop. When using
+this technique, it is favorable to omit the S-Box in the precomputation of the
+valid transitions (Algorithm 1 instead of Algorithm 2). This reduces the number
+of possible transitions at each loop and makes the early abort strategy more
+effective. Furthermore, depending on the cipher, the key masks may lead to
+parts of the integral-resistance matrix defaulting to 0 coefficients. If we identify
+these in advance, we can omit calculating these coefficients.
+Integral-Resistance Property of PRINCE. We show the integral resistance of 7
+round PRINCE with intres. This closely matches the longest known 6-round
+integral distinguisher with a data complexity of 262 [11] (can also be derived
+from Table 2). For PRINCE, no key variables are added to the state in the last
+two rounds (see Figure 5). As a result, 3 coordinate functions lead to the same
+set of monomials when propagating two rounds backward. Furthermore, one out
+21
+
+4 4 4 3
+4 4 4 4
+4 4 4 4
+4 4 4 4
+4 4 4 3
+4 4 4 4
+4 4 4 4
+4 4 4 4
+≪1
+≪2
+≪3
+4 4 4 1
+4 4 4 4
+4 4 4 4
+4 4 4 4
+SC
+4 4 4 3
+4 4 4 3
+4 4 4 3
+4 4 4 4
+MC
+4 4 4 3
+4 4 4 3
+4 4 4 3
+4 4 4 4
+(16, 16, 16, 13)
+(13, 16, 16, 16),
+(16, 13, 16, 16),
+(16, 16, 13, 16),
+(16, 16, 16, 13)
+∈
+4 4 4 3
+4 4 4 3
+4 4 4 3
+4 4 4 4
+4 4 4 3
+4 4 3 4
+4 3 4 4
+4 4 4 4
+≪1
+≪2
+≪3
+4 4 4 1
+4 4 1 4
+4 1 4 4
+4 4 4 4
+SC
+4 3 4 3
+4 3 3 3
+4 4 3 4
+4 3 3 3
+MC
+4 3 4 3
+4 3 3 3
+4 4 3 4
+4 3 3 3
+(16, 13, 13, 13)
+(13, 13, 13, 16),
+(13, 13, 16, 13),
+(13, 16, 13, 13),
+(16, 13, 13, 13)
+∈
+4 3 4 3
+4 3 3 3
+4 4 3 4
+4 3 3 3
+4 3 4 3
+3 3 3 4
+3 4 4 4
+3 4 3 3
+≪1
+≪2
+≪3
+4 1 4 1
+1 1 1 4
+1 4 4 4
+1 4 1 1
+SC
+1 1 1 1
+3 3 3
+3 3 3 3
+3 3 3 3
+MC
+2 2 2 2
+3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+(12, 12, 12, 12)
+(12, 12, 12, 12)
+∈
+3 3 3 3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+3 3 3 3
+≪1
+≪2
+≪3
+1 1 1 1
+1 1 1 1
+1 1 1 1
+1 1 1 1
+SC
+1 1 1
+3
+1
+3
+3 3
+MC
+2 2 2
+3 2
+3 3 3
+3 3 3
+3
+3 3
+(6, 6, 9, 6)
+(9, 6, 6, 6)
+(6, 9, 6, 6)
+(6, 6, 9, 6)
+(6, 6, 6, 9)
+∈
+3 3 3
+3 3 3
+3
+3 3
+3 3 3
+3 3 3
+3 3 3
+≪1
+≪2
+≪3
+1 1 1
+1 1 1
+1 1 1
+SC
+3
+3
+3
+MC
+3
+3
+3
+(3, 3, 3, 0)
+(3, 3, 3, 0),
+(3, 3, 0, 3),
+(3, 0, 3, 3),
+(0, 3, 3, 3)
+∈
+3
+3
+3
+3
+3
+3
+≪1
+≪2
+≪3
+1
+1
+1
+SC
+3
+MC
+3
+(3, 0, 0, 0)
+(3, 0, 0, 0),
+(0, 3, 0, 0),
+(0, 0, 3, 0),
+(0, 0, 0, 3)
+∈
+3
+3
+≪1
+≪2
+≪3
+1
+SC
+1
+MC
+1
+(1, 0, 0, 0)
+(1, 0, 0, 0),
+(0, 1, 0, 0),
+(0, 0, 1, 0),
+(0, 0, 0, 1)
+∈
+Fig. 5: Degree propagation of PRINCE when specific key variables are added to
+the state. We include all other possible weight patterns the state can take.
+of four coordinate functions leads to no monomials being left in the set. This
+reduces the runtime of intres by a factor of 4. Finding 4096 coefficients of a
+single row of the integral-resistance matrix takes on average 8 minutes. Obtaining
+all 4096 rows therefore takes roughly 8 hours using 64 cores. However, with a
+high probability, this does not yield a full-rank matrix. It took roughly a day to
+find the right set of key masks for a full-rank integral-resistance matrix.
+Integral-Resistance Property of Beanie. Using the intres framework, we show
+the integral-resistance of 6 full rounds of the 32-bit cipher Beanie. Beanie is a
+low-latency cipher recently published at ToSC [19]. The cipher has 4-bit S-Boxes
+and applies a 16-bit MDS matrix to both columns. Adapting the framework to
+Beanie is straightforward. The S-Box and MixColumns matrix can be modified by
+a simple parameter change. For calculating the valid transitions in the offline-
+phase this is sufficient. To obtain the state and key WP, slight tweaks to the
+minizinc MILP model are needed. In the online-phase we need to change the
+22
+
+Algorithm 3 Online phase: Recursively propagating a set of monomials
+Require: rounds, state pattern, valid transitions
+function PropagateMonomials(Υ, key, round)
+Υnew = {}
+▷Set of monomials
+if key[round] is empty then
+key[round] = GetKey(round)
+for all monomial ∈Υ do
+if monomial = monomial & key then
+▷Key variables in monomial
+monomial = monomial & ¬key ▷Remove key variables from monomial
+for all col1 ∈valid transitions[monomial.getColumn(1)] do
+...
+▷For loop for all columns
+monomial = (col1∥col2∥col3∥col4)
+monomial = Shift(monomial)
+if monomial.state pattern ∈state pattern[round] then
+if monomial ∈Υnew then
+Υnew.remove(monomial)
+else
+Υnew.add(monomial)
+if Υnew = {} or round + 1 == rounds then
+return (Υnew, key)
+else
+return PropagateMonomials(Υnew, key, round + 1)
+data type storing the monomials to a 32-bit integer. The cipher has two columns,
+so we only need two for loops in Algorithm 3 and adapt the Shift operation.
+Finding the 1024 coefficients of a single row of the integral-resistance matrix
+takes on average less than 10 seconds. When using 16 cores, obtaining all 1024
+rows therefore takes roughly 10 minutes. Due to the strong mixing of the MDS
+matrix and many degree 3 to degree 1 transitions in the S-Box, this matrix is
+already almost full-rank, and only a few additional rows are required.
+6
+Towards Ciphers with Minimal Latency and Integral
+Resistance
+The PRINCE MixColumns layer is sparse and only requires two sequentially ap-
+plied xor gates per output bit. However, using an even sparser linear layer that
+only needs one sequential xor application per output would further decrease the
+latency of the cipher. In this section, we optimize the linear layer of a PRINCE-
+like cipher in such a way that it retains the 7-round integral resistance property
+with a more lightweight linear layer. Obviously, only optimizing the integral re-
+sistance can easily lead to a cipher vulnerable to other types of attacks. With the
+push towards low-latency pseudorandom functions (PRFs) like ZIP-ciphers [18],
+Orthros [3] and Gleeok [1], we still believe such a linear layer is useful. All these
+PRFs have multiple branches that get xored at the output. Cryptographically,
+this has the effect that differential and linear attacks get weaker proportional
+23
+
+to the number of branches. However, integral attacks only needs to attack the
+strongest of the branches. Thus, having the lowest latency possible in a branch
+that retains high resistance against integral attacks is important.
+Motivation. The reason we optimize the MixColumns layer of PRINCE are the
+following:
+– 4-bit Sbox. In general, a multiple of 4-bit and 8-bit S-Boxes fit a 64-bit
+state. Due to the lower latency, 4-bit S-Boxes are generally preferred for this
+setting. Even the 128-bit ciphers Orthros [3] and Gleeok [1] use 4-bit S-Boxes.
+Since PRINCE is a low-latency cipher, its S-Box is chosen accordingly.
+– 16-bit MixColumns. As can be seen in Table 2 ((16, 4, 64)-SPN), even
+when using a 64-bit matrix multiplication as a linear layer, it still takes 7
+rounds to reach the 63-degree monomials. Since it is easier to optimize a
+16-bit matrix than a 64-bit matrix, we kept the overall structure of PRINCE.
+The latency of multiplying a binary matrix M in hardware depends on the
+number x of 1s in each column. We need at least ⌈log2(x)⌉xor gates in series,
+when using xor gates with a fan-in number of 2. Thus, we aim to minimize the
+number of 1s in each column of M. Furthermore, reducing the overall number
+of 1s in M reduces the area and energy used by the hardware implementation.
+ZR method in MILP. In order to use Theorem 2 in an SAT program, Hu et
+al. [24] use the following proposition.
+Proposition 2 ([24]). For a primitive matrix M ∈Fn×n
+2
+, a division trail (u, v)
+is valid if and only if (u, v) meets the following constraints:
+E(i, j) · vi =
+n−1
+X
+k=0
+M(i, k) · vi · uk · M expand
+v,u
+(k, j) = 0,
+for 0 ≤i, j ≤n −1,
+with E an n × n identity matrix and M expand
+v,u
+∈Fn×n
+2
+an auxiliary matrix with
+n2 elements.
+Hu et al. state that it is not possible to implement this in MILP due to
+degree-4 constraints. However, since all variables are in F2, the multiplication is
+realized as a logical and. We can easily model and with 4 inputs ai and output
+b via the following constraints to minimize the matrix M in MILP:
+b ≤a0,
+b ≤a1,
+b ≤a2,
+b ≤a3,
+a0 + a1 + a2 + a3 −3 ≤b.
+Global optimization. Ideally, we want to find a binary matrix M with minimal
+latency and a minimal number of xors for which the corresponding cipher still
+exhibits the integral-resistance property after 7 rounds. For this, we would need
+a MILP program modeling the monomial trails from all n −1 degree inputs to
+all degree 1 outputs in parallel. Afterward, we could minimize the Hamming
+weight of M. However, such a model is computationally too expensive to run.
+Furthermore, there might be additional monomial trails canceling out some max-
+degree monomials. Due to these obstacles, we opt for a heuristic approach to find
+a matrix M with a close to optimal Hamming weight.
+24
+
+Heuristic approach. We first determine a set of WPcell before and after the Mix-
+Columns operations. These weight patterns are obtained by reusing the degree
+propagation model described in Section 4.4. For each possible degree n−1 input
+and degree 1 output, we generate a valid degree allocation of the intermediate
+states. From this, we then extract the WPcell before and after the MixColumns
+operations. This leads to the weight patterns of the input and output of Mix-
+Columns displayed in Figure 6.
+4
+4
+4
+4
+4
+4
+4
+4
+4
+1
+4
+4
+3
+3
+4
+3
+4
+1
+4
+4
+3
+3
+3
+4
+4
+4
+1
+4
+3
+4
+3
+3
+4
+4
+1
+4
+3
+3
+4
+3
+4
+4
+1
+4
+3
+3
+3
+4
+4
+4
+4
+1
+3
+4
+3
+3
+4
+4
+4
+1
+3
+3
+4
+3
+4
+4
+4
+1
+3
+3
+3
+4
+4
+4
+1
+1
+1
+3
+3
+3
+4
+1
+4
+1
+1
+3
+3
+3
+4
+1
+1
+4
+1
+3
+3
+3
+1
+4
+4
+1
+1
+3
+3
+3
+1
+4
+1
+4
+1
+3
+3
+3
+1
+1
+4
+4
+1
+3
+3
+3
+1
+1
+1
+4
+0
+1
+3
+3
+1
+1
+4
+1
+0
+1
+3
+3
+4
+1
+1
+1
+0
+1
+3
+3
+1
+4
+1
+1
+0
+1
+3
+3
+1
+1
+1
+1
+3
+0
+1
+0
+1
+1
+1
+1
+0
+1
+0
+3
+1
+1
+1
+1
+0
+0
+1
+3
+0
+1
+1
+1
+3
+0
+0
+0
+0
+1
+1
+1
+0
+3
+0
+0
+0
+1
+1
+1
+0
+0
+3
+0
+0
+1
+1
+1
+0
+0
+0
+3
+1
+0
+1
+1
+3
+0
+0
+0
+1
+0
+1
+1
+0
+3
+0
+0
+1
+0
+1
+1
+0
+0
+3
+0
+1
+0
+1
+1
+0
+0
+0
+3
+1
+1
+0
+1
+3
+0
+0
+0
+1
+1
+1
+0
+3
+0
+0
+0
+1
+0
+0
+0
+1
+0
+0
+0
+1
+0
+0
+0
+0
+1
+0
+0
+1
+0
+0
+0
+0
+0
+1
+0
+1
+0
+0
+0
+0
+0
+0
+1
+Fig. 6: A set of WP of the MixColumns operation. Using these potentially leads
+to each degree n −1 input being able to propagate to each degree 1 output.
+We then construct a MILP model that ensures each weight pattern transition
+is possible with a MixColumns matrix M. For this, we enforce the enforce WP
+constraint for all the input and output weights shown in Figure 6, defined by
+enforce WP(M, in, out) := ∃u, w ∈F16
+2
+
+
+
+
+
+∀3
+i=0hw(u[4i, 4i + 3]) = in[i],
+∀3
+i=0hw(w[4i, 4i + 3]) = out[i],
+sub matrix invertable(M, u, v).
+We now consider vectors corresponding to a column with three cells of weight
+4 and one cell of weight 1. We denote by si ∈F16
+2 , 1 ≤i ≤16, a vector where the
+i-th bit is 1, the other 3 bits corresponding to the same cell are 0, and all other
+12 bits are 1. As pointed out in Section 3, in order to be able to construct a
+full-rank integral-resistance matrix with the maximize-key method, we add the
+constraints to obtain the MILP model in Algorithm 4:
+enforce out WP(M, out) :=∀u ∈{s1, . . . , s16},
+∃w ∈F16
+2
+(
+∀3
+i=0hw(w[4i, 4i + 3]) = out[i],
+sub matrix invertable(M, u, v).
+Our implementation uses Minizinc with the MILP solver or-tools to find
+intermediate solutions within a few hours. While we did not find the optimal so-
+lution in reasonable time, the best solution found has a Hamming weight of 25.
+Since the actual monomial propagation depends heavily on the interplay between
+the S-Box and MixColumns monomial transitions, the MixColumns matrix M
+found by this MILP model does not necessarily lead to a cipher having the
+25
+
+Algorithm 4 Minimize Hamming weight of MixColumns matrix
+Require: WP
+▷input/output WP from Figure 6
+enforce out WP(M, {4,3,3,3})
+for all (in, out) ∈WP do
+enforce WP(M, int, out)
+∀n−1
+i=0 sum(M[i, 0..15]) < 2
+∀n−1
+i=0 sum(M[0..15, i]) < 2
+minimize sum(M[0..15, 0..15])
+integral-resistance property after 7 rounds. When using intres with this Ham-
+ming weight of 25, we did not find a full-rank integral-resistance matrix. However,
+after testing a few other optimized matrices with our integral-resistance frame-
+work, we find the following MixColumns matrix for which the corresponding
+integral-resistance matrix is full rank after 7 rounds:
+Mmin =
+
+
+
+
+
+
+
+
+
+
+
+
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+1
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+1
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+1
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+1
+0
+0
+0
+1
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+
+
+
+
+
+
+
+
+
+
+
+
+.
+Mmin has a Hamming weight of 28 and needs 12 parallel xors to be realized
+in hardware. In comparison, the PRINCE MixColumns matrices require 32 xors
+in hardware and for each output bit, 2 sequential xor applications are needed.
+Validation. Verifying the correctness of the intres tool via monomial trail
+counting is not feasible for the original PRINCE. However, due to the sparse
+Mmin matrix, there exist considerably fewer monomial trails. Indeed, checking
+the coefficients obtained from intres with a monomial trail counting model is
+possible. After verifying over 1000 coefficients with a value of 1 from the integral-
+resistance matrix, the maximum number of monomial trails is 1.8 million when
+using the ZR method to model the linear transitions. Most coefficients can be
+verified by far fewer trails, as indicated by the median of 1964. These verifications
+provide confidence in the correctness of our approach and implementation.
+Latency estimation. In order to give an estimate about the reduction in latency
+when using our new MixColumns matrix compared to PRINCE MixColumns ma-
+trices, we use the NanGate 15nm latency numbers provided by Rasoolzadeh [30].
+Although the PRINCE S-Box is not listed in this paper, it is reasonable to assume
+that the hardware implementation needs 4 sequential gates G = {inv, nand, nor}.
+According to their latency measurements, at NanGate 15nm technology, the nor
+gate has the highest latency of roughly 2.5 ps. Thus, we estimate the latency of
+26
+
+the S-Box to be 4 · 2.5 = 10 ps. While the ShiftRows operation can be realized
+with wires, the AddRoundKey operation is realized with an xor, which takes
+about 5 ps. In the case of PRINCE, the total latency, including the 2 sequential
+xor applications in the MixColumns step, is therefore about 10+5+2·5 = 25 ps.
+When using Mmin at the MixColumns operation, we reduce the latency by 20%
+to 10 + 5 + 5 = 20 ps. Although this estimation can only be seen as a rough
+approximation, we can compare the latency numbers to a full PRINCE [2] imple-
+mentation. For 12 rounds of PRINCE, the latency is 372 ps. Each round therefore
+takes 372/12 = 31 ps. While this is more than our estimation, it also includes
+the reflector structure. Overall, it is hard to estimate the exact latency improve-
+ments, since we could, for example, fuse the xor of the key addition with our
+MixColumns matrix. Still, using the MixColumns matrix Mmin can significantly
+reduce the latency of PRF designs.
+7
+Conclusion
+In this paper, we revisited the minimal-transitions method from Zeng and Tian [38].
+We established further requirements on the S-Box and key masks needed for the
+method to work. Furthermore, by conceiving a degree abstraction model, we
+speed up the search for key masks. As a side effect, we used this model to search
+for upper bounds on ciphers. For Rijndael-256, this allows us to provide tighter
+upper bounds compared to previous works. We also highlight the potential to
+use such a degree propagation model to settle on a cipher structure when design-
+ing a new cipher. Next, we introduced the intres framework that implements
+the generalized minimal-transitions method. By adapting the ZR method, this
+tool has a drastically reduced runtime in the offline phase compared the pro-
+gram of Zeng and Tian [38]. Using intres, we showed the integral-resistance of
+7-round PRINCE and 6-round Beanie. Furthermore, intres is designed in such
+a way that it is easy to change the S-Box and MixColumns operation for more
+applications. We used a heuristic approach to find new MixColumns matrices
+having minimal latency while still leading to integral-resistance when used in a
+PRINCE-like cipher. Due to the sparse nature of this new MixColumns matrix,
+it is possible to confirm the correctness of the minimal-transitions method via
+monomial-trail counting for the first time.
+In future work it might be interesting to extend the degree abstraction model
+to the tweakey schedule. For ciphers with large states, this might enable us to
+find new integral distinguishers that incorporate the tweak. Moreover, it may
+be worth exploring whether the minimal-transitions method can be applied to
+ciphers without max-degree full-rank S-Boxes. However, in practice, most ciphers
+with such S-Boxes also have a lighter linear layer which enables us to find the
+integral-resistance via monomial-trail counting.

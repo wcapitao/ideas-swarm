@@ -1,0 +1,964 @@
+Threshold Signatures as-a-Service: Achieving
+Threshold ML-DSA in One Online Round
+Matthieu Rambaud1, Sascha Roth1, and Antoine Urban2
+1 T´el´ecom Paris
+2 Dfns
+Abstract. We formally define Threshold Signatures as-a-Service (TSaaS),
+in which the honest parties performing the threshold signature respond
+only to the signing requests of a designated client. This model captures
+the mainstream industrial use case of threshold signatures which is to
+implement Wallets as-a-Service.
+This new model allows for optimizations of existing threshold signa-
+ture schemes, in particular in the lattice setting. As a particularly rele-
+vant case study, we describe a TSaaS variant of the Threshold ML-DSA
+scheme from [Celi et al., USENIX’26], called ML-DSaaS, which combines
+the first two rounds into a single message-independent round that can
+be pre-processed before the message is known. We first describe a sim-
+ple version of ML-DSaaS in a model where the client is semi-honest. We
+then upgrade the construction to withstand a possibly corrupt client,
+by leveraging existence of a coordinating machine which is present in
+all real-life deployments of TSaaS. This machine, dubbed the Relayer,
+filters the requests of the client to the parties and centralizes the commu-
+nications between them. We provide an implementation of our scheme
+together with experimental benchmarks. The online phase of our scheme
+is two to three times faster than the one of [Celi et al., USENIX’26].
+Our modification carries over unchanged to many similar threshold sig-
+nature schemes, provided they are used in the TSaaS setting.
+1
+Introduction
+Threshold signatures. Threshold signatures are protocols allowing a group
+of parties to collectively generate a valid signature, such that a threshold num-
+ber of them (say, T out of N) are required to cooperate for signing, while the
+signature remains unforgeable if an adversary controls up to T −1 parties. Re-
+cently, there has been significant research interest in constructing lattice-based
+threshold signature schemes, motivated by the need for post-quantum security.
+See Table 1 for a comparison of such schemes. To the best of our knowledge,
+no existing lattice-based threshold signature scheme simultaneously achieves all
+Cette publication est sous la licence creative commons CC BY ND. Les formules et
+algorithmes sont sous la licence APACHE 2.0.
+
+three of the following desirable properties: (1) reasonable efficiency, (2) a single
+online round, and (3) compatibility with a standard signature format. By online
+round we refer to a round which can only be processed after the Client decides
+the message to be signed.
+Definitional contribution: TSaaS. Wallet-as-a-Service is a widely deployed
+commercial concept [13, 31, 25, 17] — part of the digital-asset custody market,
+which was worth over 600 billion dollars in 2024 and is expected to grow rapidly
+in the coming years [20] — that has not so far been given a precise cryptographic
+meaning. We take a first step by formalizing Threshold Signatures as-a-Service
+(TSaaS) in Section 2.
+In this model, a designated Client needs to quickly produce signatures but
+does not store any secret material, even in cold memory. Instead, the Client
+acts as the sole authorized initiator, sending authenticated requests to a sign-
+ing service of N remote parties. The signing key is secret-shared among these
+parties and never reconstructed in a single location. The service guarantees sig-
+nature delivery if T of the N parties are honest. In the simplified model TSaaSsh
+(Section 2), the Client is assumed to be semi-honest: the signature remains un-
+forgeable even if the adversary controls up to T −1 parties and sees the entire
+internal state of the Client. As described in below we then relax this assumption
+in the full deployment model, in Section 4.
+Beyond its definitional interest, the TSaaS setting enables concrete optimiza-
+tions of lattice-based threshold signatures. In particular, it allows us to construct
+practical lattice-based threshold signatures with a single online round: once the
+message to be signed is known, no interaction between the parties is needed —
+they just compute their partial signatures and output them. This efficiency goal
+mirrors the pre-signature paradigm widely adopted in classical threshold schemes
+(e.g., FROST [24] or threshold ECDSA [9, 23]), but replicating this performance
+in the post-quantum setting without significant penalties has proven difficult.
+Our one-round ML-DSA TSaaSsh scheme: ML-DSaaSsh. We adapt the Thresh-
+old ML-DSA scheme from [10] (submitted to the NIST Threshold Call [26] un-
+der the name Mithril) to the TSaaSsh setting. This scheme outputs standard,
+NIST-compliant ML-DSA signatures (standardized by NIST in 2024) for N ≤6,
+perfectly fitting industrial requirements. The original protocol has three rounds,
+including two online rounds; our TSaaS architecture safely compresses these
+into a single offline pre-processing round and one online signing round. This
+transformation preserves all original parameters while reducing the final round’s
+computational cost.
+The crucial difference compared to existing schemes is that the Client includes
+a fresh 256-bit random salt in each signing request. Since the adversary cannot
+predict this salt, many consistency checks become unnecessary, and the first two
+rounds of [10] collapse into a single message-independent preprocessing round.
+The TSaaS setting is essential: in the usual threshold signature model, there is
+no designated Client which can choose a common unpredictable salt for all the
+parties. The resulting signatures are standard, unmodified ML-DSA signatures
+2
+
+Threshold
+scheme
+Online
+rounds
+Signature output
+is a NIST standard
+notes
+[1, 6]
+1
+✓(supports any signature in theory)
+a
+[15, 33]
+1
+✗(Raccoon)
+[11, 33]
+1
+✗(other)
+[8] (Ringtail)
+1
+✗(Raccoon)
+[5] (Quorus)
+⩾10
+✓(ML-DSA)
+[21] (Olingo)
+1
+✗(Raccoon)
+b
+[10] (Mithril)
+2
+✓(ML-DSA)
+[7] (Hermine)
+1
+✗(Raccoon)
+c
+[27] (THED)
+2
+✓(ML-DSA)
+This work (TSaaS setting only)
+1
+✓(ML-DSA)
+d
+a No concrete instantiation; costs would be prohibitive when applied to ML-DSA.
+b Only in the sequential setting and under a weaker security model, otherwise there are
+3 online rounds.
+c Provides identifiable aborts and proactive security.
+d Most efficient scheme in the table in terms of communication and computation costs.
+Table 1: Comparison of different lattice-based threshold signatures. For concise-
+ness, we only include threshold signatures that either have a single online round,
+or output standard signatures.
+(see Section 3.4). We sketch our ML-DSaaSsh (ML-DSA-as-a-Service) below (the
+full description can be found in Section 3):
+• Key generation. Identical to [10]: N partial secret keys are created using
+replicated secret sharing, either by a trusted dealer or by a DKG protocol.
+• Pre-processing round. This single round replaces the first two rounds in
+[10], and can be executed before the message is known. As in [10], parties
+compute their nonces wi =
+A I
+· ri, but then they immediately reveal them
+instead of first publishing commitments to them.
+• Client request. This is where our TSaaS setting comes into play: the Client
+creates a client request which contains a message to be signed, a set of nonces
+obtained during the pre-processing round, and a set of T active parties, and a
+256-bit random salt. In the basic presentation (Section 3.1), the Client gener-
+ates the salt alone. Whereas in the full real-life deployment (Section 4) with
+a coordinator called the Relayer R, then the Client’s salt is rerandomized by
+a randomness committed by R in the preprocessing-then-revealed by R upon
+forwarding the Client’s request.
+• Online signing round. Upon receiving an authenticated client request, each
+active party computes the challenge c by hashing the aggregated nonce w :=
+P
+j wj, the message and the salt, and outputs its response zi. As in ML-DSA,
+parties perform rejection sampling, meaning that they can abort if their re-
+sponse zi does not pass certain checks. Contrary to [10], parties do not verify
+the other parties’ nonces, which significantly reduces computation.
+• Signature aggregation. Once all active parties have computed their re-
+sponses, they are aggregated into a standard ML-DSA signature (c, z = P
+i zi, h).
+The salt is not part of the signature; it is passed to the verifier as the FIPS 204
+3
+
+[16] context string ctx. Verification uses the unmodified FIPS 204 algorithm:
+ML-DSA.Verify(vk, msg, σ, ctx). See Section 3.4 for details.
+We prove unforgeability under the same assumptions and with the same
+bound as [10, Theorem 2]; benchmarks in Section 5 show a 2 −3× speedup in
+online latency. Our approach carries unchanged over similar threshold signature
+schemes, e.g., [29] or [30], and could also be used to adapt discrete-log-based
+Fiat-Shamir threshold signatures, though this is less compelling given existing
+single-online-round solutions like FROST [24].
+Remark 1 (Salting in digital signatures). Random salts appear in several non-
+threshold signature schemes, e.g. RSA-PSS [2, 12], Picnic [28], SPHINCS+ [4]
+(where it is called a randomizer), and Falcon [19]. Broadly speaking, the role of
+the salt in such non-threshold schemes is either to allow for a tight security proof,
+or to prevent various re-signing attacks. In contrast, in our threshold Fiat-Shamir
+setting, the salt serves a structurally distinct role: it lets parties reveal nonces
+before the message is known, which is what enables the round collapse. Without
+it, known attacks against Fiat-Shamir signatures with pre-processing [14, 3, 22]
+could be possible. At a very high level, these attacks consist in obtaining several
+sets of pre-processing tokens (ppi)i, and then making several signing queries with
+these sets of tokens and with well-chosen messages. The adversary can then forge
+a signature on a new message by computing an appropriate linear combination
+of the obtained signatures. In our construction, the salt prevents these attacks
+(intuitively, this is because it randomizes the input of the random oracle in an
+unpredictable way), and allows for a rigorous security proof.
+Remark 2 (What happens if the Client is actively corrupt). By definition, a
+threshold signing protocol cannot prevent a corrupt Client from requesting sig-
+natures on messages of its choice; this is handled by orthogonal (typically non-
+cryptographic) security layers such as access control and policy enforcement. It
+can, however, ensure unforgeability on messages never queried by the Client.
+Our ML-DSaaSsh scheme does not achieve this if the Client is actively corrupt:
+it could choose the salt adaptively and potentially mount ROS-style attacks
+[14, 3, 22] to forge signatures on unqueried messages. Next, we address this issue
+by upgrading ML-DSaaSsh to ML-DSaaSr.
+Full real-life deployment tolerating a corrupt Client: ML-DSaaSr. We
+upgrade ML-DSaaSsh to tolerate the degraded scenario where the Client is cor-
+rupt. To preserve the single online round, we leverage a structural feature of
+real-world Wallet-as-a-Service deployments [13, 17]: the Client, C, and the sign-
+ing parties do not communicate directly with each other, but through a Relayer
+denoted R (also known as ”coordinator”) that serves as the system’s API gate-
+way. This is the case in most deployments [25, 13], since signing parties typi-
+cally run in isolated environments (HSMs, TEEs, or private networks) that are
+not directly reachable by the Client (a mobile app, browser extension, or back-
+end service) nor from each other. As is the standard practice in existing WaaS
+deployments, the channels between the Client and the parties are end-to-end
+4
+
+authenticated through the Relayer: in practice, each signing request carries an
+authentication signature σC that the parties verify, so that a corrupt Relayer can
+drop or delay requests but cannot alter them.
+We exploit this architecture to ensure salt unpredictability also in the de-
+graded scenario where the Client C is corrupt. We call the resulting protocol
+ML-DSaaSr; the full construction is given in Section 4. The two modifications
+compared to ML-DSaaSsh are:
+(i) The Relayer R commits to a random salt saltR during pre-processing. As
+before, the Client provides a fresh salt in its signing request, which we now
+denote saltC. Along with the forwarding of the signing request to the parties,
+R reveals saltR. The salt used by the parties is then defined as the XOR sum
+salt := saltC ⊕saltR.
+(ii) R forwards at most one Client request cr = (sid, m, saltC) per (pre-processed)
+session identifier sid.
+Hence, the online signing phase protocol can be summarized by the following
+diagram, where R is committed to saltR before seeing the saltC:
+C
+R
+P1, . . . , PN
+cr = (sid, saltC, msg)
+cr & reveals saltR
+As a result we obtain unforgeability as long as the Client C and the Relayer
+R are not both actively corrupt, essentially because salt := saltC ⊕saltR remains
+unpredictable to the adversary.
+Table 2: Unforgeability under different corruption scenarios. We consider at most
+T −1 party corruptions. We write ✓C (resp. ✗C) for an honest (resp. corrupt)
+Client and ✓R (resp. ✗R) for an honest (resp. corrupt) Relayer. In the 2PC
+row, R corresponds to the remote server.
+Unforgeability
+Scheme
+Online
+rounds
+Client stores
+secret
+✓C ✓R ✓C ✗R ✗C ✓R ✗C ✗R
+Delegated Mithril [10]
+2
+No
+✓
+✓
+✓
+✓
+2PC from [10]
+2
+Yes
+✓
+✓
+✓
+✗
+ML-DSaaSr
+1
+No
+✓
+✓
+✓
+✗
+Discussion and comparison. Our TSaaS model captures the Network Hosted
+Key (NHK) paradigm, where all key shares are held by remote servers (e.g.,
+Dfns [13]); this contrasts with the User Hosted Key (UHK) model (e.g., Fire-
+blocks [17], Coinbase App [25], Zengo [32], Fordefi [18]), where the Client holds
+an MPC key share. Table 2 compares three paradigms for threshold ML-DSA,
+assuming at most T −1 party corruptions and a Relayer R: (a) Mithril [10]
+used as a delegated signing service; (b) Mithril [10] in a 2-of-2 UHK deployment
+between a Client and a single server, denoted ”2PC”; and (c) our ML-DSaaSr
+5
+
+scheme. Even when the Client is corrupt, ML-DSaaSr retains unforgeability as
+long as the Relayer is honest, matching the guarantees of 2PC. See Table 2 for
+a comparison of the guarantees provided by these three paradigms.
+2
+Formal definitions
+In this section, we provide a new syntax and new correctness and unforgeability
+definitions in order to model Threshold Signatures as-a-Service. We first formal-
+ize a simplified model, denoted TSaaSsh, which assumes a semi-honest Client.
+2.1
+Syntax
+We adapt the syntax of a threshold signature from [10, Section 2.2]. For con-
+creteness, we focus on schemes with one pre-processing round and one online
+round; the syntax generalizes to more rounds. The significant change compared
+to usual definitions is the explicit role of the Client.
+Definition 1. A simplified Threshold Signature as-a-Service (TSaaSsh) is com-
+prised of algorithms whose syntax is described below. We denote by act ⊆[N] a
+set of T parties that take part in signing. Each party i maintains a local state
+sti.
+• Keygen(κ, N, T) →(vk, (ski)i∈[N]). Takes as input a security parameter κ, the
+total number of parties N and the reconstruction threshold T ⩽N. Outputs a
+verification key vk, and partial secret keys (ski)i∈[N].
+• PP(i, sti) →(ppi, sti). The local pre-processing algorithm takes as input the
+state sti of party i, and outputs a pre-processing token ppi and an updated
+state sti.
+• Client(msg, act, (ppi)i∈act) →cr. The Client creates a signing request cr based
+on a message msg to be signed, a set of T active parties act, and the prepro-
+cessing tokens (ppi)i∈act.
+• PSign(vk, cr, i, ski, sti) →(sigi, sti). The partial signing algorithm takes as in-
+put the verification key vk, a client request cr, and the secret key ski and the
+state sti of user i. It outputs a partial signature sigi, and an updated state sti.
+• Combine(vk, cr, (sigi)i∈act) →(sig, ctx). Takes as input the verification key
+vk, the client request cr and the partial signatures output by active parties
+(sigi)i∈act. Outputs a final signature sig alongside a context string ctx.
+• Verify(vk, msg, sig, ctx) →1(accept)/0(reject). Takes as input a verification key
+vk, a message msg, a signature sig and a context string ctx.
+Remark 3. We instantiate Definition 1 for ML-DSA in Section 3, where Verify
+is exactly the standard FIPS 204 [16] verification algorithm. Importantly, FIPS
+204 also allows for a context string ctx which is signed together with the message.
+We explicitly include ctx in our syntax because our construction makes essential
+use of it.
+6
+
+2.2
+Correctness
+We adapt the correctness definition from [10, Definition A.4] to incorporate the
+Client; as in [10], correctness (that any produced output is a valid signature)
+is subsumed into p-termination, where p accounts for aborts due to rejection
+sampling.
+GameTS−corr
+TS
+(κ, N, T, msg, act)
+1: (vk, (ski)i∈[N]) ←Keygen(κ, N, T)
+2: for i ∈[N]
+3:
+sti := ∅
+4: for i ∈act
+5:
+(ppi, sti) ←PP(i, sti)
+6: cr ←Client(msg, act, (ppi)i∈act)
+7: for i ∈act
+8:
+(sigi, sti) ←PSign(vk, cr, i, ski, sti)
+9: if ∃i ∈act, sigi = ⊥
+10:
+return ⊥
+11: (sig, ctx) := Combine(vk, cr, (sigi)i∈act)
+12: return Verify(vk, msg, sig, ctx)
+Fig. 1: Correctness game for the 1-online round TSaaS scheme TS (with aborts).
+Definition 2. Let TS be a TSaaSsh scheme. For any supported number of parties
+N, threshold T, active set act ⊆[N] of size at least T, and message msg ∈{0, 1}∗,
+we say that TS p-terminates (where p accounts for aborts during signing) if:
+Pr[GameTS−corr
+TS
+(κ, N, T, msg, act) ̸= ⊥] ≥p (liveness)
+Pr[GameTS−corr
+TS
+(κ, N, T, msg, act) = 0] = negl(κ) (correctness)
+where GameTS−corr
+TS
+is defined in Figure 1.
+Remark 4. Prop. 1 discusses p-termination for our ML-DSaaSsh instantiation. In
+the full real-life deployment model with a Relayer (Section 4), liveness is not
+guaranteed if the Relayer is corrupt because it could simply block all the traffic.
+2.3
+Unforgeability
+In this simplified TSaaSsh model, and contrary to usual threshold signature defi-
+nitions, the adversary does not interact with individual honest parties: all queries
+go through oracles OPP and OClient, which enforce that all honest parties re-
+ceive the same inputs. In more detail, we adapt the unforgeability definition
+from [10, Definition A.3] as follows. The adversary corrupts up to T −1 parties
+and receives their secret keys. The adversary can call the OClient oracle with
+arbitrary message, set of active parties, and set of pre-processed nonces; the re-
+sulting client request is forwarded to the honest parties, but the Client’s internal
+7
+
+workings remain outside the adversary’s control. The adversary wins if it forges
+a valid signature on a message not previously queried to OClient. Note that in
+the full real-life deployment model of Section 4 we will allow again the adversary
+to interact with honest parties in the unforgeability definition. Specifically, the
+parties will receive the Client’s requests forwarded by a possibly corrupt Relayer.
+GameTS−UF
+TS,A (κ, N, T)
+1: Qmsg := ∅; Sessions := ∅
+2: corrupt, stA ←A(κ, N, T)
+3: assert corrupt ⊆[N] ∧|corrupt| < T
+4: honest := [N]\corrupt
+5: (vk, (ski)i∈[N]) ←Keygen(κ, N, T)
+6: for i ∈honest
+7:
+sti := ∅
+8: (msg, sig, ctx)
+←
+AH,OPP,OClient(stA, vk, (ski)i∈corrupt)
+9: return (msg /∈Qmsg) ∧
+Verify(vk, msg, sig, ctx)
+OPP(act)
+1: assert |act| = T
+2: for i ∈act ∩honest
+3:
+(ppi, sti) ←PP(i, sti)
+4: Sessions := Sessions ∪
+{(ppi)i∈act∩honest}
+5: return (ppi)i∈act∩honest
+OClient(act, msg, (ppi)i∈act)
+1: Qmsg := Qmsg ∪{msg}
+2: assert |act| = T
+3: assert (ppi)i∈act∩honest ∈Sessions
+4: Update Sessions := Sessions \ {(ppi)i∈act∩honest}
+5: cr ←Client(msg, act, (ppi)i∈act)
+6: for i ∈act ∩honest
+7:
+(sigi, sti) ←PSign(vk, cr, i, ski, sti)
+8: return (cr, (sigi)i∈act∩honest)
+Fig. 2: Unforgeability game for the TSaaS scheme TS. H denotes oracle access to
+all the random oracles. If a call to PP or PSign fails (e.g. when rejection sampling
+aborts), it returns ⊥; the oracle still returns the responses from the other honest
+parties.
+Definition 3. Let TS be a TSaaSsh scheme. The advantage of an adversary A
+against the unforgeability of TS is defined as
+AdvTS−UF
+TS,A
+:= Pr
+h
+GameTS−UF
+TS,A (κ, N, T) = 1
+i
+(1)
+where GameTS−UF
+TS,A (κ, N, T) is defined in Figure 2. We say that TS is unforgeable
+(in the random oracle model) if for all PPT adversaries A, AdvTS−UF
+TS,A
+⩽negl(κ).
+OPP generates honest preprocessing tokens and stores them in Sessions. Each
+OClient query must reference valid, unconsumed preprocessing tokens previously
+8
+
+established during an OPP query; sessions are consumed upon use, preventing
+the adversary from reusing honest preprocessing states across different signing
+attempts. One can observe that our definition guarantees unforgeability even if
+the Client is passively corrupt, i.e., even if the adversary can observe its entire
+internal state, since the Client does not have any secret material.
+Use of Sessions. In practice, the Client collects (ppi)i∈act from all parties and
+later uses them for a signing request. In the unforgeability game, Sessions stores
+only the honest parties’ tokens, as the adversary can choose its own tokens adap-
+tively, after seeing the honest ones. Equivalently, a more verbose but perhaps
+more intuitive way to model this would have been to ask the adversary to send
+its pre-processing tokens after having seen the honest ones, and then add all the
+tokens in Sessions.
+3
+Threshold ML-DSA as-a-Service
+In this section, we construct an ML-DSA TSaaS scheme, in the following sense:
+Definition 4. A TSaaS scheme is an ML-DSA TSaaS scheme (ML-DSaaS) if
+its verification algorithm is identical to the ML-DSA verification algorithm (i.e.
+Algorithm 3 of FIPS 204 [16]).
+3.1
+Description of our simplified scheme ML-DSaaSsh
+We first present our simplified scheme, ML-DSaaSsh, assuming a semi-honest
+client and no relayer. It adapts [10] by combining the first two rounds into
+a single message-independent round without nonce commitments. We use the
+same notations as [10], and refer to it for the definitions of parameters (recalled
+in Table 4) and helper algorithms.
+Key generation. The key generation is identical to the one from [10]. It assumes a
+trusted dealer to sample and distribute the shares using replicated secret sharing.
+Pre-processing. This algorithm combines the first two rounds from [10]. Each
+party samples randomness ri, computes its nonce wi and reveals it, without
+committing to it and independently of the message.
+Client request. The Client collects the nonces (wj)j∈act from the parties and
+builds a request cr with a 256-bit random salt.
+Signing. Each party retrieves ri from its state, and reads (wj)j∈act from the
+request. Without verifying the other parties’ nonces (unlike [10]), it computes
+the challenge c by hashing the aggregated nonce w, the message, and the salt.
+Combining and verifying. Combine uses the salt to compute the challenge c and
+outputs both the standard ML-DSA signature sig and the FIPS 204 context
+string ctx. Verify uses the unmodified FIPS 204 algorithm taking ctx as input.
+9
+
+PP(i, sti)
+1:
+ri ←χr
+2:
+wi := 
+A I
+· ri
+3:
+sti := sti ∪{(wi, ri)}
+4:
+return (ppi := wi, sti)
+Client(msg, act, (ppi)i∈act)
+1: salt ←{0, 1}256
+2: cr := (msg, act, (ppi)i∈act, salt)
+3: return cr
+PSign(vk, cr, i, ski, sti)
+1: Parse (msg, act, (wj)j∈act, salt) := cr
+2: assert i ∈act and ∃ri, (wi, ri) ∈sti
+3: sti := sti\{(wi, ri)}
+4: µ ∈{0, 1}512 := H tr||0x00||IntegerToBytes(|salt|, 1)||salt||msg
+5: w := P
+j∈cr.act wj
+6: w⊤:= HighBits(w, 2γ2)
+7: ˜c ∈{0, 1}256 = H(µ||w⊤); c := SampleInBall(˜c)
+8: m := RSSRecover(cr.act)
+9: spart
+i
+:= P
+I∈mi sI
+10: zi ←HRej(c · spart
+i
+, r, r′, ν, M; ri)
+11: if zi = ⊥then abort
+12: z(1)
+i
+, z(2)
+i
+:= z ∈Rl
+q × Rk
+q
+13: return (sigi := z(1)
+i
+, sti)
+Combine(vk = (ρ, t⊤), cr, (sigi)i∈cr.act) →(sig, ctx)
+1: Parse cr.pp = (wi)i and (sigi)i = (z(1)
+i
+)i
+2: ctx ←cr.salt
+3: µ ∈{0, 1}512 := H tr||0x00||IntegerToBytes(|ctx|, 1)||ctx||cr.msg
+4: w := P
+i∈cr.act wi; w⊤:= HighBits(w, 2γ2)
+5: ˜c := H(µ||w⊤)
+6: c := SampleInBall(˜c)
+7: z(1) := P
+i∈cr.act z(1)
+i
+8: δ := w −(Az(1) −2dct⊤)
+9: h := MakeHintq(δ, Az(1) −2dct⊤, 2γ2)
+10: if
+||z(1)||∞⩾γ1 −β or ||δ||∞> γ2 or ||h||1 > ω
+11:
+abort
+12: return (sig := (˜c, z(1), h), ctx)
+Verify(vk, msg, sig, ctx) = ML-DSA.Verify(vk, msg, sig, ctx)
+1: A := ExpandA(ρ)
+2: Parse sig := (˜c, z(1), h)
+3: µ ∈{0, 1}512 := H tr||0x00||IntegerToBytes(|ctx|, 1)||ctx||msg
+4: c := SampleInBall(˜c)
+5: w′
+⊤:= UseHintq(h, Az(1) −2dct⊤, 2γ2)
+6: return ||z(1)||∞< γ1 −β and ˜c = H(µ||w′
+⊤) and ||h||1 ⩽ω
+Fig. 3: Description of ML-DSaaSsh. Gray lines are identical to [10], of which the
+notation and parameters are recalled in Section B. Helper algorithms ExpandA,
+Power2Round, HighBits, SampleInBall, RSSRecover, HRej, MakeHint and UseHint
+are defined in [10].
+10
+
+3.2
+Correctness
+Proposition 1. ML-DSaaSsh p-terminates (in the sense of Definition 2) with
+the same probability p as the threshold ML-DSA scheme from [10].
+Proof sketch. When all parties are honest and no rejection sampling abort occurs,
+the secret shares reconstruct the full signing key, so the aggregated response
+satisfies the same algebraic verification equation as ML-DSA.Sign(sk, msg, ctx =
+salt) and passes the same norm checks. Hence ML-DSA.Verify(vk, msg, sig, ctx =
+salt) accepts. Neither of our two modifications affects correctness: the salt is
+simply the FIPS 204 context string, which is hashed with the message both
+during signing and verification; and the removed nonce commitments and cross-
+verifications are only relevant when some parties misbehave, which does not
+occur in the correctness game. The p-termination probability is therefore the
+same as in [10]; the precise bound, together with the required assumptions on
+the parameters, is stated in Section D.
+3.3
+Unforgeability
+Theorem 1. Let A be an adversary against the unforgeability (Definition 3) of
+the ML-DSaaSsh scheme making at most Qs calls to honest parties (we consider
+that each call to OClient counts as |act ∩honest| calls to honest parties) and
+QH calls to the random oracles H and SampleInBall. There exist adversaries Bs
+against MLWEq,k,l,χs, Br against MLWEq,k,l,χr, Bz against MLWEq,k,l,χz, and
+BUF against the unforgeability of ML-DSA running in time TBs ≈TBr ≈TBz ≈
+TBUF ≈TA such that
+AdvA ⩽2QHQs2−256 + Q2
+H2−512 + Qs
+M
+M −1(AdvBr + AdvBz)+
+Qs
+M
+M −1 ·
+2ϵ
+1 −ϵ +
+
+1 +
+ϵ
+M −1
+Qs
+(2AdvBs + AdvBUF) + negl(κ)
+Note that the advantage of the adversary is slightly smaller than in [10],
+which allows us to safely use the same parameters as them.
+The proof is very similar to the one from [10]. Hence, we only give an overview
+of the proof, and we refer to Section E for the complete proof. As usual, we define
+a series of hybrids in order to progressively simulate the honest parties without
+their signing keys.
+Game1.
+This is the unforgeability game.
+Game2.
+Here, our TSaaS setting comes into play. At each pre-processing query,
+the challenger samples a challenge c and its seed ˜c. Then, when the adversary
+makes a signing query for the corresponding session, the challenger programs
+H(µ||w⊤) := ˜c and SampleInBall(˜c) := c. Recall that w⊤denotes the high bits
+of the aggregated nonce w, and µ is obtained by hashing the message with
+the public key and the salt. The random salt ensures that with overwhelming
+probability, the adversary will not already have queried the random oracle H on
+11
+
+the same input (µ||w⊤), making this game indistinguishable from the previous
+one.
+Game3 and Game4.
+When the adversary makes a pre-processing query, the chal-
+lenger still samples ˜c and c at random, and also samples the response zi for each
+honest player i using the rejection sampling algorithm (as would normally be
+done in the signing round). When the corresponding signing query arrives, the
+challenger replays these cached values.
+Game5 to Game7.
+As in [10, Game 7-9]. During pre-processing queries, the
+challenger computes the honest wi’s using the zi’s it has sampled. In case of a
+rejected zi (i.e. zi = ⊥because of rejection sampling), wi is sampled uniformly.
+Game8 to Game11.
+As in [10, Game 10-13]. The challenger obtains an ML-DSA
+public key, and uses it to run the unforgeability game without the secret keys.
+In particular, the honest zi’s are sampled from an ideal distribution which is
+independent from the secret keys.
+Conclusion.
+As in [10], we use a successful adversary against Game11 to forge
+an ML-DSA signature.
+3.4
+FIPS 204 Compliance
+The protocol outputs signatures strictly compliant with the NIST standard.
+FIPS 204 defines the message representative as:
+µ = H(tr ∥0x00 ∥IntegerToBytes(|ctx|, 1) ∥ctx ∥msg)
+where ctx is an application-supplied context string of at most 255 bytes. Our
+256-bit (32-byte) salt fits within this limit. Hence, the Client simply passes the
+salt as the context string. The Combine algorithm (Figure 3) explicitly outputs
+ctx ←salt. To verify, one calls the unmodified FIPS 204 verification algorithm:
+ML-DSA.Verify(vk, msg, σ, ctx = salt)
+The verifier must know the salt value, but this is not different from any FIPS
+204 deployment with non-empty context string. In practice, the salt is transmit-
+ted alongside the message as application-level metadata (e.g., in a transaction
+header), exactly as any other context string would be.
+Remark 5 (Embedding the salt in the message). If the application-level context
+string ctx together with the 32-byte salt would exceed the 255-byte FIPS 204
+limit, the Client can instead embed the salt into the message: parties sign msg′ =
+salt∥msg, and the verifier calls the standard ML-DSA.Verify(vk, msg′, sig, ctx).
+Correctness now holds with respect to msg′ rather than msg. Security is unaf-
+fected, since the salt adds the same 256 bits of entropy to µ regardless of its
+position in the hash input. A detailed discussion is given in Section C.
+4
+Full real-life deployment tolerating a corrupt Client
+In this section we specify and analyze the ML-DSaaSr protocol, which is an
+extension of ML-DSaaSsh, which now tolerates a corrupt Client C. It preserves the
+12
+
+targeted properties of ML-DSaaSsh: it has a single online round, outputs standard
+ML-DSA signatures, and remains highly efficient. In order to preserve the single
+online round, we leverage a feature of existing Wallet-as-a-Service deployments
+[13, 17]: the communication network is star-shaped, centered around a machine
+called the Relayer, denoted R. All end-to-end channels between parties remain
+authenticated, e.g., via signatures, but go through R. Hence, when an honest
+party Pi sends a message m to all parties via R, dubbed a multicast, then a
+corrupt R can possibly refuse to deliver m to some or all parties, but not alter
+the content of the message delivered. Note that a corrupt sender Pi could send
+conflicting messages to different parties.
+Note that it would be straightforward to further generalize the specifications
+of ML-DSaaSr into an upgrade, TSaaSr, of the model TSaaSsh (essentially by
+abstracting-out the commitment and salt of the Relayer). We refrained to, for
+conciseness and clarity.
+4.1
+Protocol ML-DSaaSr
+The protocol has an offline phase called ΠPreSign, and an online phase called
+ΠSign, both described in Figure 4. They are bound by a session identifier, sid,
+chosen by the Relayer R. We first give a high-level description.
+1. Pre-signatures generation (ΠPreSign). R samples a salt saltR, stores (sid, saltR)
+in its table of pending salts, SaltsR, generates the commitment comR =
+HR(saltR) via a random oracle HR, and then multicasts it. Upon receiv-
+ing the commitment, each party Pi runs the pre-processing algorithm PP
+to generate its nonce wi and multicasts it. Parties then run the Unanimous-
+or-Abort sub-protocol (UoA, Figure 5) to check unanimity of the transcript
+(sid, act, comR, (wj)j). On acceptance, each party binds the transcript to its
+local state; otherwise it aborts.
+2. Signing (ΠSign). The Client C samples saltC, signs σC ←SignC(sid∥saltC∥H(msg)),
+and sends cr = (sid, msg, saltC, σC) to the Relayer R. The Relayer checks that
+no prior request was done for this sid, then multicasts (cr, saltR), opening its
+commitment. Each party checks the opening, i.e., that HR(saltR) = comR,
+and checks the signature of C on cr. Then it re-randomizes the salt provided
+by C by XORing it with saltR, i.e., salt ←cr.saltC ⊕saltR, and produces its
+partial signature using salt with the same PSign as before.
+The check by R, of freshness of the sid, is formalized by AcceptClientRequest
+below. It is the rampart against the adversary which would observe R releasing
+its saltR, then would make the corrupt C send many other signing requests to R
+for the same sid. Indeed, since the adversary would then know the corresponding
+saltR, it could potentially mount a ROS [3]-like attack –at least our unforgeability
+proof would not go through. The detailed description of ML-DSaaSr makes use
+of helper algorithms, of which Combine and Verify which remain unchanged. We
+now describe the new or modified helper algorithms:
+• Keygen(κ, N, T) →(vk, (ski)i∈[N]). Identical to the simplified model, with the
+addition that the Client generates an authentication key pair (pkC, skC) ←
+SigGen(1κ) and registers pkC with all parties before the first session.
+13
+
+• Client(msg, sid) →cr. The Client samples saltC ←{0, 1}256, computes σC ←
+SignC(sid∥saltC∥H(msg)), and returns cr := (sid, msg, saltC, σC).
+• VerifyClientSignature(cr) →1(accept)/0(reject). Verifies the Client’s authenti-
+cation signature on cr, i.e., outputs Verify(pkC, (cr.sid∥cr.saltC∥H(cr.msg)), cr.σC).
+• AcceptClientRequest(cr, SaltsR) →1(accept)/0(reject). Run by the Relayer R,
+it asserts that there exists an entry of the form (cr.sid, act, saltR) ∈SaltsR, i.e.,
+that the session exists and has not been consumed. On acceptance, removes
+the entry (cr.sid, act, saltR) from SaltsR.
+• UoA(act) (Unanimous-or-Abort). It is the only interactive sub-protocol of this
+list, and is analogous to the ”weak broadcast” of [9, §3.5.1]. Each party com-
+putes a digest of the full session transcript which it observed and multicasts
+it (through the authenticated channels via R). A party accepts a transcript
+only if it received it (its digest) from all parties, else, it aborts. Hence a cor-
+rupt R can cause aborts but not acceptance of conflicting transcripts. UoA
+is further formalized in Appendix A.
+ΠPreSign
+Relayer R:
+1: Choose a 256-bit sid not used before and a T-sized
+subset act ⊂[n]
+2: sample saltR ←{0, 1}256 ▷future salt randomizer
+3: set comR := HR(saltR) ▷commit to randomizer
+4: store (sid, act, saltR) in SaltsR
+5: Multicast (sid, act, comR) to parties in act and to C
+Each Party Pi:
+6: upon receiving (sid, act, comR) from R:
+7:
+assert: i ∈act.
+8:
+assert: (sid, , , , ) /∈sti.
+9:
+Run (wi, ri) ←PP(†)(i, sti)
+10:
+Multicast (sid, wi) to parties in act
+11: upon receiving (sid, (wj)j∈act\{i}):
+12:
+Run UoA(act) on  sid, act, comR, (wj)j∈act
+
+13:
+if UoA returns accept:
+14:
+sti ←sti ∪{(sid, act, (wj)j∈act, ri, comR)}
+15:
+else discard session sid and abort
+(†) obvious adaptation of Figure 3 where sti is not up-
+dated and ri is explicitly returned
+ΠSign(sid, msg)
+Client C:
+1: cr = (sid, saltC, msg, σC) ←Client(msg, sid)
+2: Send cr to the Relayer R.
+Relayer R:
+3: assert AcceptClientRequest(cr, SaltsR) = 1
+4: Retrieve and remove (sid, saltR) from SaltsR
+5: Multicast (cr, saltR) to the parties in act
+Each Party Pi:
+6: upon receiving (cr, saltR) from R:
+7:
+assert ∃(cr.sid, act, (wj)j∈act, ri, comR) ∈sti
+then remove it from sti
+8:
+assert i ∈act
+9:
+assert VerifyClientSignature(cr) = 1
+10:
+assert HR(saltR) = comR
+11:
+Computes salt ←cr.saltC ⊕saltR
+12:
+ecr (‡) ←(msg, act, (wj)j∈act, salt)
+13:
+Run (sigi, sti) ←PSign(†)(vk, ecr, i, ski, ri)
+14:
+return sigi to R
+(‡) recomputes to itself a client request in the
+ML-DSaaSsh format
+(†) obvious adaptation of Figure 3 where ri is an
+explicit input instead of being in the state
+Fig. 4: The ML-DSaaSr protocol with a Relayer R.
+4.2
+Analysis
+Remark 6 (Liveness). A corrupt Relayer can block messages, causing the pro-
+tocol to abort. Liveness therefore requires an honest Relayer, but this is the case
+in all existing deployments using a Relayer.
+14
+
+We now show that ML-DSaaSr is unforgeable if either the Client or the
+Relayer is honest (see Table 2 for a comparison of this guarantee with existing
+constructions). To avoid formally redefining the security definition, we choose to
+keep this section slightly informal. We define unforgeability of ML-DSaaSr
+as follows. At the start of the game, the adversary A additionally chooses to
+corrupt either the Client, C, or the Relayer, R. Throughout the game, A can
+make corrupt parties act arbitrarily, while the game simulates the remaining
+honest machines (including C and/or R) acting honestly.
+• If R is honest, A has oracle access to R initiating pre-processings via ΠPreSign(act).
+• If C is honest, A has oracle access to C initiating signing queries via ΠSign(sid, msg).
+Definition of a valid forgery: The adversary wins the unforgeability game if
+it outputs a valid signature σ over a message msg such that no honest party
+ever issued a partial signature on msg for any salt. Namely, no honest party
+ever does the action of running line 13 of Figure 4 (ΠSign), i.e., of running
+PSign(vk, ecr, i, ski, ri) with ecr.msg = msg. Note that protocol ΠSign could be
+straightforwardly enriched with parties further asserting possible external poli-
+cies, before accepting to issue a partial signature on a cr.msg. Hence, our defi-
+nition of unforgeability would capture such policies. Defining them is left out of
+the scope of this paper.
+Theorem 2. Let A be an adversary against the unforgeability of ML-DSaaSr,
+making at most Qs calls to honest parties and QH calls to the random ora-
+cles (including HR). There exists an adversary B against the unforgeability of
+ML-DSaaSsh (thus AdvML-DSaaSsh
+B
+is bounded in Theorem 1), which runs in ap-
+proximately the same time as A (TB ≈TA), such that
+AdvML-DSaaSr
+A
+≤AdvML-DSaaSsh
+B
++ Qs · QH/2256
+Proof. We start by analyzing the unforgeability game of ML-DSaaSr, denoted
+Game 1. Then we modify it into Game 1′ in a way that the view of A, hence its
+advantage, is (almost) preserved. Then we conclude by building a reduction B,
+i.e., an attacker of the unforgeability of ML-DSaaSsh, which uses an adversary
+A of Game 1′ as a sub-routine.
+Claim (Consistency).
+By construction of UoA, any two honest parties that
+accept a session hold the same transcript (sid, act, comR, (wj)j∈act). A corrupt R
+can prevent some parties from accepting, but cannot break consistency among
+those that do. In particular, this lets us refer unambiguously to the aggregated
+nonce w = P
+j∈act wj and the commitment comR per session.
+Game 1′ (Deferred saltR).
+If R is corrupt, then this game is identical to
+Game 1. Else, if R is honest, we replace comR = HR(saltR) with a uniform value
+and defer the sampling of saltR until R reveals it, at which point we program
+HR(saltR) on comR (unless saltR was queried before, in which case it crashes).
+Indistinguishability from Game 1 follows from the fact that HR is a random
+oracle, so comR is independent of saltR; the adversary hits the given saltR with
+probability at most QH/2256, hence it hits one of the saltR’s with probability at
+most Qs · QH/2256.
+15
+
+Constructing the adversary B. We describe an adversary B against the
+ML-DSaaSsh unforgeability game, in particular having access to OPP and OClient,
+and using as a subroutine an adversary against Game 1′, denoted A.
+• During ΠPreSign. B calls OPP to obtain (wi)i∈act∩honest. If R is corrupt, the ad-
+versary provides comR directly. If R is honest, then B samples comR uniformly
+at random. Once B obtains the nonces (wi)i∈act∩corrupt from A, it simulates
+the UoA sub-protocol from the transcript (sid, act, comR, (wj)j∈act).
+• During ΠSign. Upon R (corrupt or honest simulated) relaying a valid request
+from the Client C, cr = (sid, saltC, msg, σC) 3 along with a saltR which opens
+its commitment, then B calls OClient(msg, (wj)j∈act), where the (wj)j∈act are
+the common output of the preprocessing of sid. OClient internally generates
+a client request ecr, which contains a salt sampled uniformly at random. Then
+it runs PSign for each honest party and returns to B the partial signatures
+of the parties i ∈act ∩honest generated as (sigi, ) ←PSign(vk, ecr, i, ski, sti),
+together with the ecr.
+– If R is honest, B sets saltR := saltC ⊕salt. It varies uniformly independently
+from the view of A so far, since salt also does. Hence the saltR is consistent
+with Game 1′.
+– Else if C is honest, upon obtaining saltR from R, then B sets saltC :=
+saltR ⊕salt. It varies uniformly independently from the view of A so far, as
+in Game 1′, since salt also does.
+Finally, B simulates the honest parties returning their partial signatures
+(sigi)act∩honest. Since they are computed from ecr, which matches what parties
+recompute in PSign(sid, msg), it follows that the (sigi)act∩honest are distributed
+as in Game 1′.
+• When A outputs a forgery (msg, sig, ctx), B outputs the same forgery. If A
+wins, then by definition no party ever accepted to apply PSign to a signing
+request for msg from the Client (corrupt or honest simulated). Hence, msg
+was never queried by B to its OClient. As a result, (msg, sig, ctx) is also a
+winning forgery for B.
+5
+Implementation and evaluation
+We evaluate the semi-honest variant ML-DSaaSsh against the state-of-the-art
+Threshold ML-DSA scheme from [10]; the upgrade to ML-DSaaSr adds only a
+single XOR and one hash verification per party in the online phase, so its impact
+on the benchmarks is negligible. Both schemes use the same parameters, corre-
+sponding to ML-DSA-44 (NIST category 2). We focus on the online phase, since
+it is the critical path latency experienced by a client. Our Golang prototype4
+extends the reference implementation of [10] with a libp2p-pubsub (GossipSub)
+3 “Valid” means which passes AcceptClientRequest, i.e., with a sid not consumed yet,
+and which passes VerifyClientSignature.
+4 Our implementation is available at https://github.com/Antoineurban/threshol
+d-ml-dsa
+16
+
+networking stack in place of direct TCP streams (since it requires each party to
+maintain a dedicated connection to every other party). This introduces serializa-
+tion overhead compared to direct TCP channels; consequently, our bandwidth
+figures are a conservative upper bound on communication costs.
+Experimental Setup. We deployed the protocol on Amazon AWS using t3.small
+instances (2 vCPUs, 2 GiB RAM). To rigorously test the protocol under realistic
+wide-area network (WAN) conditions, we distributed T active instances across
+three geographically distant regions: ap-southeast-2 (Sydney), eu-central-1
+(Frankfurt), and eu-west-3 (Paris), enforcing a ≥290 ms RTT floor by requiring
+at least one active party in Sydney and one in Europe.
+(T, N)
+Online
+running time
+[10]
+Online
+running time
+(our work)
+Online
+bandwidth
+[10]
+Online
+bandwidth
+(our work)
+(2, 3)
+771.48
+315.38
+33.114
+12.989
+(2, 4)
+818.09
+362.41
+38.138
+16.237
+(3, 4)
+1298.00
+534.11
+90.852
+39.898
+(3, 5)
+1584.37
+548.52
+195.101
+85.064
+(4, 5)
+2293.14
+936.85
+448.522
+195.204
+(3, 6)
+1829.88
+801.26
+266.154
+116.861
+(4, 6)
+2365.03
+796.96
+673.306
+295.607
+(5, 6)
+3014.45
+1080.00
+1189.762
+522.345
+Table 3: Average running times (in ms) and bandwidths (in kilobytes) of the
+online parts of the Threshold ML-DSA scheme from [10] and our ML-DSaaSsh
+version, for different values of N and T.
+Methodology and Metrics. We measure the latency and bandwidth of the Online
+Phase, defined as the operations that must block until the message is available:
+the two last signing rounds and the combining round for [10], versus the sin-
+gle signing round and the combining round for our scheme. Running times of
+key generation, preprocessing, and verification are essentially the same in both
+schemes and are omitted. Our metrics are averages that include potential aborts
+from rejection sampling, unlike [10] which reports averages over successful runs
+only. This captures the true amortized cost of generating a valid signature.
+Results. Table 3 compares the online performance. Our scheme completes in
+300–1100 ms, achieving a 2–3× speedup and a comparable reduction in band-
+width over [10]. For the common (N = 3, T = 2) configuration, we achieve an
+online latency of 315 ms against a 290 ms RTT floor, implying a minimal soft-
+ware overhead. The sharp increase for higher thresholds is driven by the parallel
+repetition parameter K, which scales superlinearly.

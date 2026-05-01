@@ -1,0 +1,782 @@
+And TLS lived happily ever after
+Michael Scott, Gora Adj and Francisco Rodr´ıguez-Henr´ıquez
+Cryptography Research Centre
+Technology Innovation Institute
+{michael.scott,gora.adj,francisco.rodriguez}@tii.ae
+Abstract
+The plausible threat of a Cryptographically Relevant Quantum
+Computer (CRQC) has rightly stimulated a move away from tradi-
+tional methods of asymmetric cryptography to new post-quantum se-
+cure equivalents. Digital signature is the cryptographic primitive that
+authenticates an Internet server’s identity by signing each certificate in
+an X.509 certificate chain. A suggested response to the CRQC threat is
+to deploy a hybrid classical/post-quantum digital signature, combining
+a traditional tried-and-tested scheme with a post-quantum alternative,
+where certificates are signed using both methods. Here we propose a
+fused signature scheme that adopts the same approach, but introduces
+minimal friction into existing TLS architectures.
+1
+Introduction
+A Cryptographically Relevant Quantum Computer (CRQC) represents a
+plausible threat to classic methods of asymmetric cryptography. That is
+plausible, not imminent, not even inevitable. Nevertheless, it is a threat
+which deserves a response. The cryptographic community has responded
+quickly with new methods for key exchange and digital signature which
+are immune to a CRQC, and have already advanced to a stage where such
+methods are standardised.
+TLS is the most important cryptographic protocol in use today. It is
+activated everytime a website is accessed. It protects and hence makes pos-
+sible e-commerce on the Internet. You will have activated it in the process of
+viewing this preprint. Ideally our response to the threat of a CRQC would
+merely require the replacement of older primitives with newer and improved
+alternatives, something which indeed has happened in the past as TLS has
+evolved. However, there are 3 additional problems that can arise in a move
+to a post-quantum world. (1) The new primitives will have different com-
+putational requirements. (2) The new primitives will impact the bandwidth
+requirements of the protocol, that is the amount of data that needs to be
+exchanged between server and client during a protocol handshake. (3) The
+1
+
+new primitives will not have yet survived the all-important “test of time”,
+that is their true security in the face of a CRQC, or indeed classical methods
+of cryptanalysis, is still uncertain.
+In the interests of making a TLS implementation as “agile” as possible,
+adapting to a post-quantum world should simply require the replacement of
+certain cryptographic primitives, without further deeper structural changes.
+This would be desirable, but is it possible?
+2
+Preliminaries
+2.1
+TLS
+TLS version 1.3 is a three-pass protocol that uses a Key Exchange Mecha-
+nism (KEM) to establish a mutual secret key, from which are derived keys
+to encrypt the client-server communication. Until now the X25519 Diffie-
+Hellman key exchange has been popular, and requires the exchange of only
+32 bytes of data. However, already the threat of harvest-now-decrypt-later
+attacks has motivated a move to a hybrid method. Post-quantum KEMs
+have been proposed and standardised, the most popular being the lattice-
+based scheme known as ML-KEM, and the X25519MLKEM768 hybrid is
+already on its way to becoming a de-facto standard in TLS.
+Let us briefly recap how the TLS protocol works in its most common
+configuration.
+We consider only the most recent version of TLS, that is
+version 1.3 [38].
+A client sends a bunch of stuff to the server, including an ephemeral KEM
+public share. The server sends a bunch of stuff back, including its ephemeral
+KEM public share. This exchange of public shares is used to derive a mutual
+(but unauthenticated) secret key. The client sends some final stuff before
+dropping down to an encrypted and one-way authenticated communication
+between client and server. As early as possible the protocol data flow is
+encrypted using the secret key, which is possible partway through the server’s
+response (or even earlier if Encrypted Client Hello [39] is enabled).
+Typically the client-to-server protocol messages tend to be small. How-
+ever the server-to-client communication can be quite large, as it may include
+a PKI (Public Key Infrastructure) certificate chain. This certificate chain
+performs a vital function – it authenticates the server to the client by se-
+curely providing a public key to the client, which allows it to verify the
+server’s signature on the protocol transcript.
+It is important to note here that once the server has authenticated itself,
+it may send the client a resumption ticket, to be stored typically as a browser
+cookie. This allows the client to resume at a later time (maybe as long as
+a week later) without the requirement for the certificate chain to be sent
+again. This greatly reduces the amount of communication required in the
+handshake (the KEM share values typically remain, but resumption removes
+2
+
+digital signature/verification completely from the handshake). However we
+will consider here only the case where a certificate chain will be transmitted.
+2.2
+PKI
+All X.509 digital certificates contain details of the entity that owns it and an
+associated Public Key. Appended is the digital signature of another entity
+which attests to the certificate’s validity. Each certificate entity owns and
+protects the private key associated with that embedded Public Key.
+A TLS certificate chain typically consists of three digital certificates.
+At the root lies a self-signed Certificate Authority (CA) certificate. The
+recognised certificate authorities in the world number in the low hundreds.
+Next is an intermediate authority certificate, signed by the root owner’s pri-
+vate key. Finally comes the leaf (or server) certificate, which represents the
+“business end” of the chain. Its owning entity is typically the identity/URL
+of the website being visited by the client. The leaf certificate is signed by
+the intermediate’s private key. The public key of the leaf certificate and its
+associated private key are used as described above by the TLS protocol.
+Root certificates, since there are a finite number of them, are commonly
+stored by the client, and hence do not need to be transmitted during the
+protocol handshake.
+Each certificate has a lifetime. Typically a root certificate might have a
+lifetime of 5 years, an intermediate certificate of 2 years, and a leaf certificate
+of 1 year. However there are moves afoot to reduce leaf certificate lifetimes
+down to as low as 47 days, or even shorter. This has benefits, as it means that
+(a) the leaf certificate may be justified in supporting a lower security level
+as an attacker would need to break it within its lifetime, and (b) certificate
+revocation, a major bugbear of PKI, becomes less of an issue.
+2.3
+Post-Quantum signatures
+Post-quantum signature schemes have already been proposed and standard-
+ised after intense scrutiny by the cryptographic community. The effort is
+ongoing and new schemes can expect to be recommended in the near future.
+In time they may expect to completely replace the classical RSA and ECC
+methods. See Table 1
+A problem is already evident. Each certificate contains a public key and
+a digital signature. Using the currently standardised PQ algorithms this
+means that the certificate chain will increase dramatically in size and the
+bandwidth requirement of the protocol may start to become an issue. But
+note our inclusion of the not-currently-standardised isogeny-based scheme
+SQIsign. Using isogenies we have the potential for much smaller public
+keys and signatures.
+3
+
+Table 1: Public-key/signature sizes in bytes
+Algorithm
+Level 1
+Level 3
+Level 5
+NIST-ECCa[28, 30, 29, 43]
+65/64
+97/96
+133/132
+RSAb[28, 29, 25]
+384/384
+960/960
+1920/1920
+ML-DSA [33] (PQ)
+1312/2420
+1952/3309
+2592/4627
+FN-DSA [31] (PQ)
+897/666
+–
+1793/1280
+SLH-DSA [32] (PQ)
+32/7856
+48/16224
+64/29792
+SQIsign (PQ)
+65/148
+97/224
+129/292
+a Uncompressed EC public keys and fixed-width raw ECDSA signatures.
+b RSA row reports modulus bytes / signature bytes.
+A fully encoded RSA
+public key in X.509/SPKI is slightly larger.
+We shall refer to each byte of cryptographic material as a crypto-
+byte.
+Assume a PQ implementation of TLS version 1.3 which uses
+X25519MLKEM768 for key exchange. This requires the server to send a
+1120 cryptobyte public share to the client.
+Consider a certificate chain that used ML-DSA at security level 1 for
+the leaf certificate, and ML-DSA level 3 for the intermediate and root cer-
+tificates. The leaf certificate would contain 1312+3309 cryptobytes. The
+intermediate certificate would require 1952+3309 cryptobytes.
+The TLS
+server transcript signature would require 2420 cryptobytes. Adding in the
+KEM key share that is a total of 13422 cryptobytes to be transmitted from
+server to client.
+And that is before we even consider X.509 and other protocol overheads.
+Some experimental evidence suggests that a transmission of anything over
+10000 bytes would start causing performance problems for TLS [44], [45].
+A solution being pushed by Google is to use so-called Merkle Tree Certifi-
+cates. See [21] for an unbiased review of the advantages and disadvantages
+of this approach. However some concern has been expressed that Merkle
+Tree Certificates as proposed may represent an undesirable concentration of
+control over the Internet in the hands of browser vendors. And is it strictly
+necessary?
+Consider next a chain that used ML-DSA at security level 1 for the leaf
+certificate, and SQIsign level 3 for the intermediate and root certificates.
+The leaf certificate would contain 1312+224 cryptobytes. The intermediate
+certificate would require 97+224 cryptobytes. The TLS server transcript
+signature would again require 2420 cryptobytes. Adding in the KEM key
+share yields a total of 5397 cryptobytes to be transmitted from server to
+client.
+The above analysis excludes the cost of signatures associated with the
+optional Certificate Transparency mechanism, which would add two more
+signatures per handshake [44]. This would further significantly impact the
+4
+
+bandwidth requirement for the ML-DSA based solution, but would have
+much less effect on a SQIsign-based solution.
+3
+Isogeny-based cryptography
+The idea of using isogenies on elliptic curves as a basis for post-quantum
+cryptography has been around for a long time. But unfortunately it got off
+to a very bad start. The key exchange algorithm based on isogenies known
+as SIDH [22] had a surprisingly long history before it was comprehensively
+broken [10]. Sadly by the time it was broken considerable investments in
+time and effort had been expended in order to make it practical, which made
+its fall particularly devastating.
+However the isogeny community has picked itself up, and is again quite
+bullish about the prospects for isogeny-based cryptography [14], [4].
+We
+suspect that it is only a matter of time before a scheme is developed which
+is competitive with those already standardised. But even now the proposal
+SQIsign [14] is on the verge of practicality.
+One negative characteristic of SQIsign is that signature generation is
+slow, and hard to make constant time. However, in the scenario considered
+above SQIsign signing is never required during the execution of TLS, by
+either client or server.
+It is only required for the offline construction of
+the certificate chain.
+On the other hand SQIsign verification, which is
+required by the client, is relatively fast (compared with signing) and is easy
+to implement in constant time.
+Many currently proposed schemes like SQIsign use finite field arithmetic
+based on the primes 5.2248−1, 65.2376−1 and 27.2500−1. Fields of these sizes
+would be familiar to implementors of standard elliptic curve cryptography,
+and schemes based on such primes would be expected to hit levels 1,3, and
+5 of security in both classic and isogeny-based contexts. These primes p are
+chosen such that p + 1 is divisible by a large power of 2, which is important
+for isogeny-based proposals. However such primes are also Montgomery-
+friendly [3], and in the past primes of this form were suggested for use in
+standard classical Elliptic-Curve Cryptography [9].
+3.1
+SQIsign
+The Short Quaternion and Isogeny Signature scheme (SQIsign) currently
+stands as the leading isogeny-based signature proposal and remains as the
+only isogeny-based candidate in NIST’s call for additional post-quantum
+signature schemes. NIST launched Round 1 in June 2023 and accepted 40
+proposals spanning a broad range of hard problems [34]; in October 2024,
+it advanced 14 of these schemes to the second round.
+Among all round
+2 candidates, SQIsign distinguishes itself by offering by far the smallest
+combined signature and public-key size. Its principal drawback, however,
+5
+
+10−1
+100
+101
+102
+103
+103
+104
+105
+106
+Verification cost (million cycles)
+2 · pk + 5 · sig (bytes)
+Other candidates
+CROSS
+MQOM
+QR-UOV
+SQIsign
+MAYO
+UOV
+ML-DSA
+FN-DSA / Falcon
+SPHINCS+
+Figure 1: Performance/size trade-off for selected post-quantum signature
+schemes in a TLS setting. The x-axis reports verification cost (million cy-
+cles), and the y-axis reports the metric 2 · pk + 5 · sig in bytes. SQIsign
+is shown together with selected comparison families; other candidates are
+shown in the background (figure adapted from [2]).
+is performance: signing remains substantially slower than in lattice-based
+schemes, verification achieves a decent but moderate efficiency, and current
+implementations do not operate in constant time [11, 1]. These features
+make SQIsign especially attractive in applications that prioritize compact
+signatures and predominantly perform verification, such as certificate infras-
+tructures, software authentication, and resource-constrained devices. Using
+the PQ-SORT tool [2] we can see in Figure 1 that SQIsign is especially
+well suited for TLS applications compared to the other NIST additional sig-
+nature candidates and also to the standardised signature options such as
+ML-DSA [33], FN-DSA [31] and SLH-DSA [32].
+Originally introduced at Asiacrypt 2020 [5], SQIsign has developed
+rapidly.
+The first improvements preserved the original framework [15],
+whereas subsequent work introduced more substantial algorithmic changes.
+Ironically, a major turning point followed the devastating attacks on
+SIDH/SIKE [10, 24, 40], which brought higher-dimensional abelian varieties
+to the forefront of isogeny-based cryptography.
+Their key tool is Kani’s
+lemma [23], which combines isogenies of degrees a and b into an isogeny of
+degree a+b between abelian varieties of dimension two or higher. Although
+this approach increases the dimension of the original isogenies, it can be
+implemented efficiently by setting a + b = 2n, with n fixed.
+6
+
+This constructive usage of Kani’s lemma was first exploited in
+SQIsignHD [12], which replaced parts of the original protocol with higher-
+dimensional constructions and reported roughly 40× faster signing together
+with similarly faster key generation.
+These gains, however, came at the
+cost of expensive 4- or 8-dimensional verification. More recently, the algo-
+rithmic advances of [26, 37] enabled two-dimensional variants of SQIsign,
+developed independently in [27, 5, 16]. These schemes use 2D isogenies for
+both signing and verification, achieving substantial improvements over the
+original 1D version. Their security analyses also provide a more rigorous
+foundation and largely remove the heuristic assumptions that appear in the
+1D SQIsign presented in [11].
+Table 2 highlights the remarkable performance gains of 2D SQIsign [1]
+over its 1D counterpart [11]. For the former, signature generation and veri-
+fication now require only 101.6 million and 5.1 million Ice Lake clock cycles,
+respectively. More recently, the authors of [17] presented a vectorized im-
+plementation of SQIsign for several high-performance Arm microarchitec-
+tures. Their implementation achieves speedups of 2.24× in key generation
+and 2.49× in signing relative to the reference implementation of [1]. When
+combined with the Qlapoti procedure [8] (see [17, Table 6]), SQIsign key
+generation and signing require only 28.98 million and 73.04 million Cortex-
+A76 clock cycles, respectively.
+Table 2: SQIsign assembly-optimised implementation
+performance in millions of clock cycles
+Security level
+KeyGen
+Sign
+Verify
+Round 1∗
+NIST-Level 1
+1,661.0
+2,370.0
+37.0
+Round 2∗∗
+NIST-Level 1
+43.3
+101.6
+5.1
+NIST-Level 3
+134.0
+309.2
+18.6
+NIST-Level 5
+212.0
+507.5
+35.7
+∗Intel Xeon Gold 6338 (Ice Lake).
+∗∗Intel Core i7-13700K CPU (Raptor Lake).
+We also gain greater flexibility in prime selection in the 2D SQIsign
+setting, since we can use primes of the form p = c · 2f −1, where c is a
+small odd integer. Such primes provide abundant two-torsion and enable
+faster arithmetic, which in turn can further accelerate verification. We also
+note that recent optimised implementations show that fast 2D verification
+is competitive in practice, with timings as low as 5.1 million Raptor Lake
+clock cycles. Moreover, we find that the 2D signing procedure is naturally
+more amenable to parallelisation [17]. The main computational bottleneck
+in these 2D schemes, however, remains the evaluation of a 2D isogeny of de-
+7
+
+gree approximately (2λ, 2λ), where λ denotes the security parameter; see [5,
+Algorithm 8].
+3.2
+The SQIsign identification scheme
+The original SQIsign protocol [11] combines elliptic curves, quaternion al-
+gebras, and the Deuring correspondence to build an identification scheme
+with exponential challenge space, which the Fiat–Shamir transform [18] then
+turns into a signature scheme with extremely compact signatures and public
+keys. At its core lies a Σ-protocol that proves knowledge of the endomor-
+phism ring of the public-key curve. Since verification is the relevant SQIsign
+primitive for this work, we give an informal overview of the protocol, accord-
+ing to its Round 2 NIST specification [1].
+Referring to Figure 2, let E0 be a fixed starting elliptic curve with public
+endomorphism ring O0 = End(E0). Alice’s secret key consists of a randomly
+chosen ideal Iφ, which the Deuring correspondence translates into an isogeny
+φ : E0 →EA, where the codomain EA serves as her public key. The function
+IdealToIsogeny, which plays a central role in key generation, computes this
+isogeny efficiently.
+In the Σ-protocol shown in Figure 2, Alice proves knowledge of End(EA)
+as follows. She first generates a random commitment curve E1 using the
+same approach as in key generation. Bob, acting as the verifier, then samples
+a random cyclic 2-isogeny φchall : E1 →E2 and sends a description of φchall
+to Alice. Since only Alice knows End(E1), only she can efficiently compute
+End(E2). At that point, she has the crucial ingredients, namely, End(EA)
+and End(E2), needed to compute a cyclic isogeny φresp : EA →E2.
+In the round-two version of SQIsign [1], the central routine Ideal-
+ToIsogeny relies on Kani’s lemma and 2-dimensional abelian varieties, closely
+following the approach of [5].
+More recent work has further accelerated
+this step through the Qlapoti procedure [8], which also uses 2-dimensional
+abelian varieties.
+The response sent to the verifier is represented as a 2-dimensional isogeny
+that embeds the 1-dimensional isogeny from the public key to the commit-
+ment.
+Concretely, the response consists of a single 2D isogeny of length
+approximately 2
+λ
+2 together with a challenge isogeny of length 22λ. One can
+compute the 2D isogeny using optimal strategies together with the so-called
+gluing and splitting isogenies [13].
+This structure makes SQIsign implementations inherently asymmetric.
+Key generation and signing depend both on Fp-arithmetic for isogeny com-
+putations and on multi-precision integer arithmetic for quaternion algebra
+operations, whereas verification uses no quaternion arithmetic at all. Con-
+sequently, verification has substantially smaller code coverage.
+8
+
+E0
+E1
+EA
+E2
+φsecret
+φcom
+φchall
+φresp
+Figure 2: Diagram of the SQIsign protocol.
+4
+A new elliptic curve
+Using standard point-counting software, we find the twist-secure Edwards
+curve Ed376 defined over the isogeny-friendly field associated with the prime
+modulus p = 65.2376 −1
+x2 + y2 = 1 −66524x2y2
+There is a generator point corresponding to x = 2, which generates the
+group of prime order q
+q = 104000000000000000000000000000000000000000000000303A69B3514879CD109A98F 29F 0D04F 09F 855D4F 3C6A703716
+where the number of points on the curve is 4q. Since p = 3 mod 4 the
+number of points on the twisted curve is also four times a prime.
+An Edwards signature based on this curve requires 48 bytes for the public
+key and 96 bytes for a signature. The implementation basically follows that
+of the EdDSA method based on the Ed448 curve as specified in the NIST
+standard document [35]. Observe that since the prime p is less than 384
+bits in length, the top bit can be used to encode the sign of the compressed
+public key, without requiring an additional byte.
+If required, there is also the associated twist-secure Montgomery curve
+y2 = x3 + 266098.x2 + x
+5
+Hybrid Signatures
+Just as with KEMs it makes a lot of sense in the near-term to use hybrid
+signatures. That is to sign everything twice, once with a tried and tested
+classical scheme, and again with a CRQC-immune post-quantum scheme.
+Both signatures would need to verify for the overall signature to be accepted.
+The problem is to decide which methods to pair, and a concern is that given
+the number of possible combinations TLS could end up having to support
+multiple proposals. Working out the exact security parity between possible
+pairings could also be an issue. See [7] for consideration of some possible
+9
+
+combinations. In this recent draft, no less than 18 combinations involving
+ML-DSA as the post-quantum component are suggested [36].
+5.1
+Hybrid Signature Requirements in TLS Depend on the
+Role
+One important aspect to take into account in post-quantum authentication
+in TLS is that there are several TLS signature problems. Typically, a first
+connection in the Web PKI involves several signatures with different perfor-
+mance and deployment constraints. In the case of a unique or single visit
+to a website, the client-server interaction may involve not only the certifi-
+cate chain and the TLS handshake signature, but also additional so-called
+certificate transparency signatures [45].
+We note that there exist two scenarios that are especially relevant. First,
+some signatures are accompanied by their public keys during the handshake,
+whereas others are not. On the other hand, for the signature of the root on
+the intermediate certificate, and for signed certificate timestamps (SCTs),
+the public key is typically not transmitted during the handshake. In these
+cases, signature size is the dominant metric. By contrast, the leaf certificate
+and the TLS transcript signature do involve transmitted public-key material,
+so for those roles the main design factor to be taken into account is the
+combined size of the public key and signature.
+Second, some signatures are produced offline while others are produced
+online. Certificate signatures are generated ahead of time and then verified
+many times by clients. However, the TLS transcript signature must be com-
+puted during the handshake protocol and is therefore critical for the overall
+latency of the protocol. For that reason, the online handshake signature
+requires a better balance between signing and verification time, whereas the
+offline certificate signatures can tolerate a slower signing, and even non-
+constant time signing, if in exchange they offer compact sizes and efficient
+verification.
+Hence, in this paper we suggest that it is better to view TLS authen-
+tication as a combination of signatures, where different signatures in the
+handshake have different constraints on bandwidth, latency and verifica-
+tion cost.
+Today, the certificate material is a substantial fraction of the
+data transferred on non-resumed connections, and a naive blunt migration
+to large post-quantum signatures risks producing certificate chains that are
+prone to compatibility and performance degradation issues.
+5.2
+A hybrid authentication design for TLS
+Taking into account the observations from the previous subsection, we pro-
+pose a hybrid authentication strategy rather than a pure post-quantum re-
+placement. Our main idea is to use a fused signature built from SQIsign-3
+10
+
+Table 3: Design approaches for post-quantum TLS authentication.
+Approach
+Advantages
+Size
+Online
+signing
+Main concern
+All-ML-DSA
+Uniform
+replacement across
+chain and
+handshake
+High
+≈+15 kB
+Simple
+Certificate and
+handshake bloat
+FN-DSA split
+Offline certificates;
+classical/PQ mix
+for the handshake
+Medium
+≈+7 kB
+Delicate
+Constant-time
+floating-point
+signing
+Merkle Tree Cer-
+tificates
+Large-scale
+WebPKI redesign
+Low online
+bytes
+N/A
+Significant
+ecosystem and
+standards changes
+Proposed
+fused
+SQIsign-
+3/Ed376
+Compact offline
+certification
+material
+Low–
+medium
+Avoided
+SQIsign
+verification cost
+and an Edwards signature using the companion curve presented in section 4.
+We motivate this choice as follows. The 192-bit security level is appro-
+priate for intermediate and root certificates, SQIsign-3 offers remarkably
+compact post-quantum public keys and signatures, and the Edwards com-
+panion curve provides a classical cryptographic hedge over the same base
+field. By working over the same field, we allow both components to share
+the underlying field arithmetic. Our resulting fused public key has size
+97 + 48 = 145 bytes,
+and our fused signature has size
+224 + 96 = 320 bytes.
+These sizes are small enough to make our approach attractive in the parts
+of TLS where authentication bytes are most expensive.
+In our prototype implementation, we deliberately do not use SQIsign
+for the online TLS transcript signature. Instead, as described below, we
+keep a level-1 hybrid ML-DSA/Ed25519 public key in the leaf certificate,
+while key exchange uses the de-facto standard X25519MLKEM768 hybrid
+KEM.
+We present this proposal as a proof-of-concept experiment rather than
+as a fully standardised X.509 implementation. In the current prototype, we
+represent fused public keys and fused signatures by direct concatenation. A
+full standardisation effort is still needed to specify the exact semantics of
+the certificate encoding and the remaining formal design aspects.
+Table 3 compares our proposal with other potential TLS design solutions.
+11
+
+5.3
+Security semantics of the fused construction
+In this work, we intend the fused approach to achieve a same-message, all-
+components-must-verify composition of two signature schemes. We make
+this semantics explicit, while deliberately keeping the discussion high-level.
+We focus only on the signature-composition semantics of the proposed hy-
+brid design, and we do not attempt to model revocation, CA compromise,
+side-channel leakage, or the broader standardisation questions related to
+X.509 encoding. These issues are clearly important, but they are orthogo-
+nal to our central claim: under a conjunctive same-message verification rule,
+the proposed fused construction has the expected hybrid-authentication se-
+mantics.
+The notion of existential unforgeability under chosen-message attack
+(EUF-CMA) goes back to the seminal work of Goldwasser, Micali, and
+Rivest [20], and later it was formalized by Bellare and Rogaway [6].
+Intuitively, EUF-CMA security means that given the public key and ora-
+cle access to signatures on adaptively chosen messages, an efficient adversary
+still cannot output a valid signature on a fresh message outside its signing
+queries.
+5.3.1
+Security framework
+Let
+Σ1 = (Kg1, Sign1, Vrfy1)
+and
+Σ2 = (Kg2, Sign2, Vrfy2)
+be two digital signature schemes. In our setting, Σ1 will be a post-quantum
+scheme (for example SQIsign or ML-DSA, depending on the TLS role) and
+Σ2 will be a classical scheme (for example Ed376 or Ed25519).
+Definition 1 (Fused signature scheme). The fused signature scheme
+Σ⊗= (Kg⊗, Sign⊗, Vrfy⊗)
+is defined as follows.
+1. Key generation. Execute,
+(pk1, sk1) ←Kg1,
+(pk2, sk2) ←Kg2,
+and output
+pk⊗= (pk1, pk2),
+sk⊗= (sk1, sk2).
+2. Signing. Let enc(ρ, m) be a canonical encoding of the role tag ρ and
+message m. On input (sk⊗, ρ, m), compute
+σ1 ←Sign1(sk1, enc(ρ, m)),
+σ2 ←Sign2(sk2, enc(ρ, m)),
+and output
+σ⊗= (σ1, σ2).
+12
+
+3. Verification. On input (pk⊗, ρ, m, σ⊗), where σ⊗= (σ1, σ2), accept
+if and only if
+Vrfy1(pk1, enc(ρ, m), σ1) = 1
+and
+Vrfy2(pk2, enc(ρ, m), σ2) = 1.
+The role tag ρ provides domain separation. In our TLS setting, it dis-
+tinguishes at least the following cases:
+ρ ∈{root-cert, intermediate-cert, leaf-cert, tls-transcript}.
+For certificates, m is the exact TBSCertificate byte string. For the TLS
+1.3 handshake, m is the standard TLS transcript input signed by the server.
+Thus both components sign exactly the same canonical byte string, under
+an explicit role tag.
+Proposition 1 (Unforgeability of the fused construction). Suppose Σ1 and
+Σ2 are EUF-CMA secure. Then Σ⊗is EUF-CMA secure. More precisely,
+for every probabilistic polynomial-time adversary A against Σ⊗, there exist
+probabilistic polynomial-time adversaries B1 and B2 such that
+Adveuf-cma
+Σ⊗
+(A) ≤Adveuf-cma
+Σ1
+(B1)
+and
+Adveuf-cma
+Σ⊗
+(A) ≤Adveuf-cma
+Σ2
+(B2).
+Furthermore, a successful forgery against the fused construction yields a
+successful forgery against each component scheme on the same fresh encoded
+message.
+Proof sketch. We describe the reduction to Σ1; the reduction to Σ2 is anal-
+ogous.
+Adversary B1 receives the public key pk1 and oracle access to
+Sign1(sk1, ·). It generates (pk2, sk2) ←Kg2 on its own and gives (pk1, pk2)
+to A as the fused public key.
+Whenever A requests a fused signature on (ρ, m), B1 queries its signing
+oracle on enc(ρ, m) to obtain σ1, computes σ2 ←Sign2(sk2, enc(ρ, m)) itself,
+and returns (σ1, σ2).
+Suppose A outputs a valid forgery
+(ρ⋆, m⋆, (σ⋆
+1, σ⋆
+2))
+for a fresh message such that
+(ρ⋆, m⋆) was never submitted to the fused
+signing oracle and
+Vrfy⊗
+ (pk1, pk2), ρ⋆, m⋆, (σ⋆
+1, σ⋆
+2)
+
+= 1.
+Then in particular
+Vrfy1(pk1, enc(ρ⋆, m⋆), σ⋆
+1) = 1,
+and freshness of (ρ⋆, m⋆) implies that σ⋆
+1 is a valid EUF-CMA forgery for
+Σ1.
+13
+
+Proposition 1 captures the basic security intuition behind the fused con-
+struction: because verification requires both components to verify on the
+same message, an attacker who breaks only one component does not au-
+tomatically obtain a forgery against the fused scheme. In this sense, the
+fused construction inherits the security of each of its components, provided
+verifiers enforce the conjunctive verification rule of Definition 1.
+Remark 1 (What happens if one component fails?). Suppose one compo-
+nent scheme becomes insecure, while the other remains EUF-CMA secure.
+Under the all-components-must-verify rule, the fused construction still can-
+not be forged unless the remaining secure component is also forged. Thus
+the fused construction provides the usual hybrid “security hedge” sought in
+certificate applications.
+Role-specific interpretation in our TLS design.
+The proposed TLS
+instantiation uses different signature mechanisms for different authentication
+roles.
+• For root and intermediate certificate signatures, we use the fused con-
+struction based on SQIsign-3 and Ed376. A certificate is accepted
+only if both component signatures verify on the same TBSCertificate
+encoding.
+• For the leaf certificate and the online TLS transcript signature, we use
+a level-1 hybrid ML-DSA/Ed25519 public key and the corresponding
+conjunctive verification rule.
+• Therefore, every mandatory authentication step in the non resumed
+handshake is interpreted under an explicit all-components-must-verify
+semantics.
+Proposition 2. Consider a non resumed TLS 1.3 handshake in our setting,
+and assume:
+1. the client performs standard certificate-path validation;
+2. each mandatory signature check in the chain and transcript uses the
+conjunctive verification rule described above;
+3. the relevant private signing keys have not been compromised; and
+4. the underlying signature schemes used in each role are EUF-CMA se-
+cure.
+Then any successful server-impersonation attack on a fresh handshake im-
+plies at least one of the following events:
+14
+
+1. a successful forgery of a mandatory certificate signature in the accepted
+chain; or
+2. a successful forgery of the mandatory transcript signature under the
+accepted leaf public key.
+Proof sketch. Under standard TLS 1.3 authentication semantics, acceptance
+of the server identity requires both an accepted certificate chain and a valid
+transcript signature under the authenticated leaf key. Therefore an imper-
+sonating adversary must either cause the client to accept a certificate chain
+that was not legitimately issued, or else produce a valid transcript signature
+for the authenticated leaf key without access to the corresponding private
+key. These are exactly the two events stated above.
+6
+A proposal
+A fairly obvious idea would be to implement a fused hybrid scheme based
+on a level 3 SQIsign implementation combined with an Edwards signa-
+ture based on Ed376. Note that this implementation could share highly
+optimised finite field arithmetic code for the prime p = 65.2376 −1. The
+combination would hit the 192-bit security level suitable for intermediate
+and root certificates. The combined public key size would be 97+48=145
+bytes, and the combined signature size would be 224+96=320 bytes.
+6.1
+TiigerTLS
+TiigerTLS [41] is a small footprint implementation of TLS1.3 [38] which
+provides a TLS client written in C++ and Rust, and a TLS server written
+in Rust.
+It does not support versions of TLS earlier than 1.3.
+Session
+resumption is fully supported. It is primarily aimed at Internet of Things
+applications, and so does not allocate any heap memory. It was designed
+from the ground up with agility in mind, and hence easily adapts to novel
+cryptographic primitives via its Security Abstraction Layer (SAL), a feature
+that proved invaluable for this exercise. The distribution includes some tools
+for certificate chain construction.
+6.2
+An implementation
+We have implemented this proposal using TiigerTLS. We use the tools
+provided there 1 to create a typical X.509 certificate chain which uses
+SQIsign-3/Ed376 fused signatures as described above.
+The signatures
+and public keys are concatenated following the simple method used by the
+Open Quantum Safe (OQS) project [42]. The leaf certificate uses a hybrid
+1https://github.com/Crypto-TII/TLS1.3
+15
+
+level 1 ML-DSA/Ed25519 public key. The test implementation uses the
+X25519MLKEM768 hybrid KEM.
+We use this implementation to measure the actual traffic for a full hand-
+shake between client and server, see Table 4. The server-to-client flow is the
+most relevant protocol exchange, since it involves the transmission of the
+certificate chain, authentication material, and the server contribution to key
+exchange. In our prototype, this material requires only 6643 bytes, which
+keeps the handshake comfortably below the rough 10kB region at which
+larger certificate chains begin to become an issue. In a modern browser the
+compute time is imperceptible to the client (although we acknowledge that
+SQIsign verification is still slow compared with competing schemes [46] and
+renders the Ed376 verification time negligible in comparison).
+Table 4: TLS 1.3 handshake bandwidth
+Phase
+Bytes transmitted
+Client to Server Hello
+1450
+Server to Client
+6643
+Client to Server Finish
+64
+In Table 5 we compare four configurations: classical TLS, a pure ML-
+DSA authentication, an FN-DSA-based split design, and the fused SQIsign-
+based design proposed here. One can see that a selective fused hybrid design
+can reduce the bandwidth cost of post-quantum TLS authentication while
+preserving the typical structure of TLS 1.3.
+7
+Conclusion
+TLS supports multiple configurations, and many of these would affect our
+findings. For example, optional client side PKI authentication would greatly
+increase the client to server traffic. And other choices of PQ signature algo-
+rithm for the leaf certificate (like FN-DSA) would further reduce server-to-
+client traffic. Another contributing factor could be the adoption of certificate
+compression [19].
+Nevertheless, we conclude that an open mind should be kept regarding
+the future of TLS in the context of the possible emergence of a CRQC. TLS
+will need to change, but premature and ultimately unnecessary changes,
+which impact agility, could do more harm than good.

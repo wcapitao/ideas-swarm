@@ -1,0 +1,1295 @@
+Improved Garbled RAM via Garbled Merge
+Can Liu†∗
+Tsinghua University
+liucan22@mails.tsinghua.edu.cn
+Lenny Liu†
+UIUC
+hengyu2@illinois.edu
+Ning Luo
+UIUC
+nl27@illinois.edu
+David Heath
+UIUC
+daheath@illinois.edu
+Abstract
+Consider the problem of merging inside a garbled circuit (GC) two arrays of w-bit elements, yielding
+a single length-n array. This garbled merge problem is core to garbled random access memory (GRAM),
+a technique that enables efficient garbling of general-purpose programs. We present a novel symmetric-
+key-based garbled merge that achieves a garbling size of (w+1)·n·λ bits, providing both asymptotic and
+concrete improvements over the state of the art. By applying our garbled merge, we obtain a symmetric-
+key GRAM of size O(n lg3 n · λ) · ω(1) for a word RAM program that manipulates words of size Θ(lg n)
+bits and halts within n steps, improving over the previous best result (Heath et al., CRYPTO’23) by an
+O(lg lg n) factor. This communication cost was previously only achieved under the public-key-style DDH
+assumption (Gu et al., CRYPTO’25). We implement our construction, and our evaluation shows that
+our garbled merge reduces the communication cost over the DDH-based merge by about 3×.
+Keywords: Garbled Circuits, Garbled RAM, Secure Multiparty Computation
+†Authors contributed equally to this work.
+∗This work was done while this author was at UIUC.
+
+Contents
+1
+Introduction
+1.1
+Contribution
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2
+Technical Overview
+2.1
+Switch System Review . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2.2
+Garbled Merge as a Finite State Automaton . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3
+Preliminaries
+3.1
+Basic Notation
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3.2
+Garbling Schemes . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3.3
+Cryptographic Assumption
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3.4
+Tri-State GRAM; How Our Merge Plugs In . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4
+Garbled Switch System Review
+5
+Garbled Merge
+5.1
+Merge as a Switch System . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.2
+Randomized Merge . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.3
+Improved Garbled RAM . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6
+Evaluation
+6.1
+Garbled Merging Evaluation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6.2
+End-to-end Evaluation.
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+A Garbling Scheme Definition
+B Circular Correlation Robustness
+C Improving Computation Cost for Randomized Merge
+D Garbled Merge Sort
+E A Switch System Garbling Scheme
+
+1
+Introduction
+Secure two-party and multi-party computation (2PC and MPC) allow mutually untrusting parties to jointly
+compute a function over their private inputs, while revealing nothing beyond the function’s output. Yao’s
+Garbled Circuit (GC) is a fundamental primitive in cryptography, central to 2PC/MPC [Yao86]. In GC,
+one party, called the garbler (G), constructs a garbling of a program P, denoted ˜P. Traditionally, P is a
+Boolean circuit. The garbler G conveys to the evaluator E the garbled program ˜P, along with encryptions
+of the parties’ inputs. E then executes the garbled program ˜P gate-by-gate: at each gate, E uses encodings
+of wire values to decrypt subsequent encodings of wire values, ultimately leading to E holding an encoding
+of program output. G and E then jointly decrypt that output and recover P(x). GC enables 2PC/MPC
+protocols that use only a constant number of communication rounds, making the technique a good choice
+when network latency is high.
+Improving the asymptotic and concrete cost of GC is critical for making constant-round 2PC/MPC
+more practical. The primary goal is reducing communication complexity, dictated by the size of the garbled
+program ˜P. This is because communication is often the bottleneck in secure computation, particularly in
+bandwidth-constrained settings. Trading increased local computation for reduced communication is gener-
+ally favorable, as modern processors can perform millions of cryptographic operations per second. Space
+complexity, though often overlooked, is equally important: parties may face prohibitive memory overhead
+from large garbled circuits and wire encodings. Notably, reducing the garbled program size does not nec-
+essarily reduce overall space, as advanced GC techniques (including ours) can produce wire encodings that
+asymptotically exceed the garbled program itself.
+Garbled RAM
+While much of the GC literature focuses on secure evaluation of Boolean circuits, it is also
+possible to garble other computational primitives. One of the most important special-case garbling problems
+is that of garbled random access memory (GRAM) [LO13]. GRAM is essential for garbling general-purpose
+programs. Without efficient RAM access, off-the-shelf programs would incur prohibitive overhead when stor-
+ing or manipulating large amounts of data in non-trivial data structures. Because of its importance, GRAM
+has been studied extensively, see e.g. [LO13, GHL+14, GLOS15, GLO15, HKO22, PLS23, HKO23, GTRS25].
+Roughly speaking, GRAM is achieved by implementing Oblivious RAM inside the garbled program [GO96].
+Its efficiency is typically measured by the size of the garbling of an n-step RAM program manipulating w-bit
+words.
+Construction
+Assumption
+Communication
+TSC [HKO23]
+OWF
+O(n(w + lg2 n) lg n · lg lg n · λ)
+PicoGRAM [GTRS25]
+DDH+RO
+O(n(w + lg2 n) lg n · λ) · ω(1)
+Ours
+CCRH
+O(n(w + lg2 n) lg n · λ) · ω(1)
+Table 1: Comparing our GRAM with existing constructions.
+Prior to this work, there were two incomparable state-of-the-art GRAM schemes: The GRAM of [HKO23]
+achieves size O(n·(w+lg2 n)·lg n·lg lg n·λ) bits [HKO23], which simplifies to O(n·lg3 n·lg lg n·λ) when w =
+Θ(lg n). The [HKO23] scheme is secure assuming only one-way functions (OWFs). More recently, [GTRS25]
+used the DDH assumption to replace particular gates internal to the [HKO23] scheme, shaving a lg lg n
+factor and achieving a GRAM of size O(n · lg3 n · λ) · ω(1) bits. However, this comes at the cost of taking a
+public-key-style assumption, which can degrade runtime performance.
+Thus, there was a trade-off in the literature: either use symmetric-key-based GC and accept a larger
+garbled program, or pay the cost of public-key-based GC (and its corresponding computation costs) in
+exchange for a smaller garbled program. Our work resolves this trade-off by achieving a symmetric-key
+GRAM with asymptotic size matching that of
+[GTRS25].
+Our scheme is secure assuming a circular-
+correlation robust hash function (CCRH, see Definition 6), an assumption almost ubiquitous in the GC
+literature due to its importance to the celebrated Free XOR optimization [KS08].
+
+The challenge of GRAM
+The crucial technical challenge1 of GRAM is one of routing. To achieve random
+access memory, array elements must be routed from one part of the garbled program (where the memory
+element is stored) to another (where the element is used). Routing in GC is difficult even when the evaluator
+E is told in cleartext how all data should move. The source of this difficulty is that the garbler G cannot
+learn these routing details without breaking GC’s central constant-round property. Indeed, routing decisions
+might not be computable until runtime, when the garbler G is not available.
+In standard GC techniques (including ours), each wire value is encoded by a particular ciphertext.
+Therefore, if we consider an array x, we can encode each of its bits xi by a distinct ciphertext, which we
+denote by [xi]. Now, suppose G would like to prepare a garbled gate that takes as input some particular
+wire xi where the array index i is decided at runtime.
+To correctly garble a particular gate, G must know the relevant ciphertexts in advance. Since array
+index i is revealed only at runtime, G cannot anticipate which ciphertext [xi] will be needed. As a result,
+G cannot directly garble the gate ahead of time, despite the fact that E can easily access the correct
+ciphertext [xi] once i is revealed. Indeed, known techniques for GRAM include additional structure that
+routes memory elements to their eventual destinations. Such routing structures can be achieved by simple
+Boolean gates. However, this incurs additional garbled gates, and hence additional cost. Known Boolean-
+circuit-based sorting networks incur polylogarithmic blow-up in total cost that we would like to avoid. Our
+main contribution is a routing structure that requires asymptotically less communication.
+In the GRAM literature, the routing challenge is called the language translation problem. Each wire has
+a specific language – the possible ciphertexts that can appear on that wire at runtime. To place a garbled
+value onto a particular wire, E must translate her encoding to the language of that wire.
+Garbled Merge
+We study garbled merge as a canonical and central instance of the language problem.
+Garbled merge enables a partially-private online stable merge, in which two garbled arrays are merged into
+a single array according to a sequence of control bits. As an example of garbled merge, suppose x0 is a
+length-2 array, x1 is a length-3 array, and consider a string of control bits s = 10110. Then the output array
+y should be x1
+0x0
+0x1
+1x1
+2x0
+1. Notice that the control bits appear as superscripts, and elements of each respective
+array appear in their original relative order (the merge is stable). The merge is partially-private because
+we require that the control bits s be revealed to the GC evaluator E. The array elements x0, x1 are not
+revealed. In GRAM, the revealed control bits can be simulated, due to the GRAM’s use of an underlying
+oblivious RAM.
+Garbled merge is crucial to state-of-the-art garbled RAM. Indeed, the problem is implicitly solved
+in [HKO22, HKO23]. Specifically, they use two Boolean-circuit-based stacks, as formalized by [ZE13], to
+achieve a merge. The recent PicoGRAM construction [GTRS25] improved over [HKO23]’s GRAM by re-
+placing its handling of garbled merge with a DDH-based solution. Similarly, we obtain improved GRAM by
+replacing [HKO23]’s handling of garbled merge with our own.
+A baseline Boolean-circuit-based garbled merge uses O(w·n lg n) gates, where w is the bit-length of array
+elements, leading to a garbling of size O(w · n lg n · λ) bits. The recent PicoGRAM construction [GTRS25]
+improves this to O((w + lg n) · n · λDDH ) bits, but theirs relies on a public-key assumption (DDH). Here
+λDDH is the size of a DDH group element.
+1.1
+Contribution
+• State-of-the-art garbled merge. We present a novel online algorithm (i.e., a data structure) for
+garbled merge. Our construction remains in Minicrypt and achieves a garbling size of (w + 1) · n · λ
+bits, an asymptotic and concrete improvement over the state of the art. We also show the applications
+of garbled merge beyond GRAM in Appendix D.
+• State-of-the-art GRAM under weak assumption.
+By integrating our technique into exist-
+ing GRAM [HKO23], we achieve a symmetric-key GRAM with communication cost matching that
+of [GTRS25]. Our scheme is secure under the assumption of a circular-correlation-robust hash func-
+tion (CCRH), a common and widely adopted assumption in the GC literature [KS08].
+1Another challenge in GRAM is obfuscating the memory’s logical access pattern.
+GRAMs tend to leak memory access
+patterns to E, yet they must achieve privacy. This challenge is typically addressed by carefully integrating ORAM.
+
+• Space improvement. Our G (resp. E) can garble (resp. evaluate) a merge within asymptotically
+less space (O(w · n · λ) bits) than the Boolean-circuit-based baseline (requiring Ω(w · n lg n · λ) bits
+of space). Low space usage is not trivially implied by the fact that the resulting garbled program is
+smaller. Indeed, in our merge, E will compute encodings of wire values whose joint length exceeds size
+of the garbled program, but E can nevertheless run in low space.
+• Modest computational cost. The computational cost incurred in exchange for reduced communica-
+tion remains modest. We show that garbled merge requires only O(w·n·
+√
+n · λ) calls to a cryptographic
+hash function when the control string s is random. When applied to GRAM, the instantiated merge
+outputs a relatively small array of size O(λ), resulting in a small additional computation cost while
+still achieving an asymptotic improvement in communication over the Boolean circuit baseline.
+• Implementation and evaluation. We implement and evaluate our protocols.2 Our evaluation shows
+that garbled merge outperforms PicoGRAM’s compaction-network-based solution by approximately 3×
+in communication.
+2
+Technical Overview
+Our technical observations are two-fold:
+• The stable merge of two arrays can be encoded in the execution of a particular finite state automaton
+(FSA).
+• The transition behavior of our FSA can be encoded as a particularly garbling-friendly system of con-
+straints.
+In particular, prior work [Hea24] showed that certain systems of constraints—namely, those formalized in a
+model of computation called the switch system model—can be efficiently garbled. We encode our FSA as a
+garbled switch system. This switch system incurs particularly low communication cost, leading to our main
+result.
+This section describes our techniques at a high level. We start by reviewing the switch system model
+and highlighting its advantages, in particular its ability to efficiently compute on one-hot vectors. Then, we
+describe our merge FSA and explain how we encode its behavior as a switch system.
+2.1
+Switch System Review
+Since our approach is based on switch systems [Hea24], we begin by reviewing the computational model
+to establish common background knowledge. We focus on the model’s main two gates: switches and joins.
+Section 4 provides further details on the switch system model.
+We note that the switch system model
+was proposed in the context of garbled arithmetic operations; our work shows it is also highly relevant to
+non-trivial problems in garbled data structures.
+In general, any computation can be understood as solving a system of constraints (the program) over
+program variables, including inputs, outputs, and intermediate variables. From this perspective, Boolean
+circuits can be understood as a method for writing restricted forms of constraint systems. The switch system
+model offers a more flexible collection of primitives for expressing constraints. While Boolean circuits express
+constraints that must be solved from left to right (i.e., from inputs to outputs), switch systems allow greater
+flexibility in that their gates can express constraints in the true sense, where an evaluator may solve for
+variables in whichever order is convenient to the current execution. We leverage this additional expressivity
+in our handling of garbled merge.
+More precisely, a switch system is defined over a set of variables or wires; its gates specify logical con-
+straints on those variables. The central gate in the switch system model is called a switch: A switch (
+)
+takes as input a data wire x ∈{0, 1} and a control bit ctrl ∈{0, 1}. It outputs a second data wire y. When
+ctrl = 0, the switch “closes” and imposes the constraint that values on the two data wires must be equal,
+i.e., x := y ⇐ctrl
+?= 0. From an execution perspective, if only one data wire carries a defined value while
+2An anonymized version of our repository is available at: https://anonymous.4open.science/r/non_ob_stack-722E/
+
+x
+y
+ctrl
+Figure 1: A switch gate.
+the other is undefined, a switch with ctrl = 0 propagates the defined value to the undefined wire. From the
+broader viewpoint of the constraint system, this enforces that the value of one wire can be inferred from the
+other whenever the control bit is 0.
+Looking ahead, garbled evaluation of a switch requires the evaluator E to know the control bit ctrl in
+cleartext. This is because E will act conditionally depending on ctrl. If ctrl holds zero, then E uses a hash
+function to “translate” between the two data wires; else, E does nothing. This introduces two points: (1)
+all cleartext switch controls must be computable by E, and (2) the cleartext controls must reveal no useful
+information about private inputs. Our garbled merge incorporates many switches, but all control values can
+be inferred from the merge’s input control string s, and s can be simulated due to the garbled RAM’s use
+of ORAM techniques.
+A join gate (x ▷◁y) unconditionally enforces the equivalence of its two inputs x and y. From an execution
+perspective, if one wire is defined while the other is undefined, the join gate sets the undefined wire to the
+defined value. From the perspective of the constraint system, this ensures that the value of either wire can
+always be inferred from the other as soon as one becomes defined.
+Crucially, join gates are the only gates that incur significant communication when garbled. Switches, for
+instance, require no communication. For the unfamiliar reader, it may be unclear why joins are needed, since
+they simply express an equality constraint. Join gates are necessary due to the syntactic rules enforced by
+the switch system model. Suppose, for instance, we would like to instantiate two switches whose output data
+wires are, in fact, the same wire. Such an arrangement could be used to implement the following conditional
+assignment:
+if ctrl = 0 then z := x else z := y
+The switch system model explicitly disallows expressing this conditional as two lone switches. Indeed, each
+switch outputs a distinct, fresh wire. That is, there is a difference in how wires are treated when the switch
+system is specified (wires are created by specifying gates from left to right) from how they are evaluated
+(gates specify multidirectional constraints). Looking ahead, this duality reflects the fact that the garbler
+handles switch systems in one way (he garbles, left to right), and the evaluator handles them in another (she
+evaluates, in whichever order computes the output).
+If we wish to state that two wires are “the same”, we can do so by means of a join. The insistence on
+using joins may seem superfluous, but it is motivated by the cost of GC techniques. For instance, known
+symmetric-key GC schemes require at least one ciphertext (i.e., λ bits) of communication to implement the
+above conditional assignment. The switch system captures this in the sense that expressing the conditional
+assignment requires a single join. Each garbled join gate incurs λ bits of communication.
+Switch systems also support XOR gates. These are standard fan-in-two gates, except that they act as
+constraints, so once any two connected wires become solved, the evaluator can solve for the third. Garbled
+XOR gates are communication free [KS08].
+Finally, since switch systems require that the evaluator learn switch controls, we need a mechanism by
+which to reveal values. We consider a simple reveal gate which achieves this task. Again, for security one
+must prove a particular switch system has the property that all revealed values provide no useful information
+about the input – the switch system should be oblivious [Hea24].
+We note that our handling of revealing bits is slightly different from that of [Hea24]. While we consider
+reveal gates, [Hea24] instead explicitly reveals the control bit of each switch. This is a small change, but
+it allows us to more precisely account for communication cost, since each revealed bit incurs one bit of
+communication. As it turns out, our merge construction requires no reveal gates, since all switch controls
+can be inferred from the merge’s control string s. Hence the only communication in our merge comes from
+its join gates.
+
+Scaling one-hot vectors via switch systems.
+One of the main known switch system tricks leverages
+one-hot vectors. A one-hot vector is a bit vector that contains exactly one entry equal to 1; other entries
+are 0.
+For example, (q0, q1, q2, q3) = (0, 1, 0, 0) is a one-hot vector.
+In the context of a switch system,
+certain operations on one-hot vectors require very few join gates, and hence very little communication once
+garbled [HK21, Hea24]. In particular, an entire length-n one-hot vector can be scaled by a bit x at the cost
+of only a single join. This operation requires that the evaluator E learn the value of the one-hot vector in
+cleartext. When this can be safely achieved, garbling this operation requires only λ bits of communication,
+a huge improvement over the O(nλ) bits that would be more typically consumed. Our merge construction
+extensively leverages the ability to efficiently multiply one-hot vectors with scalars.
+We review [Hea24]’s switch system construction for scaling a one-hot vector. We consider the example
+problem of scaling vector (q0, q1, q2, q3) = (0, 1, 0, 0) by x, yielding a scaled vector r: Each qi is used to
+q0
+x
+⊕
+0 q1
+q2
+q3
+0
+0
+0
+r0
+r1
+r2
+r3
+x
+⊕
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+x
+Figure 2: Scaling.
+control a switch. Recall that switches (
+) propagate their input if and only if their control is 0, depicted by
+the switch “snapping closed”. Because q0, q2, q3 are each zero, their respective switches close, which sets r0,
+r2, and r3 to 0. The system then includes XORs that compute the sum of bits ri. Finally, a single join gate
+insists that this sum is equal to x. Recall join gates (▷◁) enforce that their two inputs carry the same value.
+Since r0, r2, and r3 each hold 0, it follows that r1 must be equal to x, yielding (r0, r1, r2, r3) = (0, x, 0, 0) –
+the scaled one-hot vector.
+Formally, the one-hot scaling can be expressed by the following switch system:
+ri := 0 ⇐qi
+?= 0
+and
+M
+i
+ri = x
+Since this system includes a single join, its garbling has size λ bits; again, this is a large improvement over
+a corresponding Boolean circuit which would incur cost O(nλ) bits.
+Garbled switch systems.
+We sketch how switch systems are garbled, using the above one-hot scaling
+operation as a motivating example. For rigorous discussion see Section 4 and Appendix E.
+To garble a switch system, the garbler assigns to each wire two ciphertexts, according to the standard
+free-XOR technique [KS08]. For example, in the one-hot scaling system, G assigns wire q0 the ciphertexts
+{Kq0, Kq0 ⊕∆}. Here, Kq0 ∈{0, 1}λ is a wire-specific key, and ∆∈{0, 1}λ is a global correlation. Recall
+that in the scaling system, wire r0 is the output of a switch controlled by q0. To garble this switch, G derives
+a key Kr0 from Kq0:
+0λ ⊕H(Kq0) = Kr0
+H can be understood as a random oracle. The same idea is applied for other wires qi and ri. Therefore,
+once the evaluator E obtains Kq0, and once she learns that q0 = 0, she can derive the corresponding key
+Kr0, simply by computing H(Kq0) herself. In general, consider a switch gate with inputs x, y and a control
+wire ctrl, whose ciphertexts are (Kx, Kx ⊕∆), (Ky, Ky ⊕∆), and (Kctrl, Kctrl ⊕∆). The garbler G prepares
+the garbled switch by enforcing the following:
+Ky = H(Kctrl) ⊕Kx
+When the encoding of x, i.e., Kx ⊕x∆, is available, the evaluator E can derive the encoding of y under
+the condition ctrl = 0 and x = y as follows:
+Ky ⊕y∆= Kx ⊕x∆⊕H(Kctrl).
+
+To garble a join gate, the garbler G sends the difference Kx ⊕Ky between the ciphertexts of the two
+wires x and y. Thus, when the evaluator E holds Kx ⊕x∆, it can obtain Ky ⊕y∆by simply adding the
+difference to Kx ⊕x∆.
+The garbled one-hot scaling switch system (showing the zero-valued keys) is as follows: Suppose q0, q2, q3
+Kx
+⊕
+0
+0
+0
+0
+Kq1
+H(Kq1 )
+Kq0
+Kq2
+Kq3
+H(Kq0 )
+H(Kq2 )
+H(Kq3 )
+Figure 3: Scaling, showing the zero-keys of each wire.
+are all 0, so that the evaluator E obtains H(Kq0), H(Kq2), H(Kq3). Through the join gate, we then have
+H(Kq0) ⊕H(Kq2) ⊕H(Kq3) ⊕??? = D ⊕Kx ⊕x∆,
+where D is the difference of the ciphertexts of the join gate wires in the switch system D = Kx⊕L3
+i=0 H(Kqi).
+The solution is exactly H(Kq1) ⊕x∆! Therefore E can obtain the scaled one-hot vector using only a single
+join gate by solving the constraint.
+2.2
+Garbled Merge as a Finite State Automaton
+Recall that our main technical observation is to encode the partially-private merge of two arrays in the
+execution of a finite state automaton (FSA). As we will see in detail soon, state transitions in this FSA
+correspond to reading particular elements from either x0 or x1. From here, we observe that the execution
+of this FSA can be encoded by a particular switch system C, made efficient by carefully leveraging one-hot
+scaling operations. Because of this care, most gates in C are “free”, in the sense that, when garbled, their
+garbling requires no communication. Indeed, C has only O(nw) join gates, and these are C’s only gates that
+incur communication.
+We first demonstrate how to encode a merge in the execution of an FSA, and then how to encode the
+execution of that FSA as switch-system-based constraints.
+Our FSA
+The stable merge of x0 and x1 can be described by a language accepted by a loop-free finite-state
+automaton (FSA). Let m = |x0| and n = |x1|. Suppose that x0, x1 are strings over an alphabet Σ. We define
+an FSA A = (S, Σ, δ, Sinit, Sfinal) with state set S = {qi,j | 0 ≤i ≤m, 0 ≤j ≤n}, initial state Sinit = q0,0,
+and accepting state set Sfinal = {qm,n}. Transitions advance along a (m+1) × (n+1) grid:
+δ(qi,j, x0
+i ) = qi+1,j
+for i < m,
+δ(qi,j, x1
+j) = qi,j+1
+for j < n.
+Intuitively, state qi,j denotes that i symbols have so far been taken from x0, and j from x1.
+A string
+y ∈Σm+n is accepted iff there is a path, or execution trace, from q0,0 to qm,n whose edge labels, read in
+order, equal y. In the running example, the accepted trace y = x1
+0x0
+0x1
+1x1
+2x0
+1 corresponds to the following
+moves:
+q0,0
+x1
+0
+−→q0,1
+x0
+0
+−→q1,1
+x1
+1
+−→q1,2
+x1
+2
+−→q1,3
+x0
+1
+−→q2,3
+See also Figure 4a.
+Notice that each of A’s feasible transitions is uniquely identified by a triple (b, i, j), where b ∈{0, 1}
+indicates which array is being read, and (i, j) indicates the current state. We assign to each such transition a
+binary indicator value qb
+i,j; see Figure 4b. These binary indicators specify which edges of A are active (resp.
+inactive), and they will be crucial to encoding A as a switch system.
+With indicators qb
+i,j defined, an accepting trace can now be uniquely characterized by computing products
+of the grid configuration {qb
+i,j} with corresponding edge labels, which determines the sequence of outputs.
+
+q1,0
+q2,0
+q0,1
+q1,1
+q2,1
+q0,2
+q1,2
+q2,2
+q0,3
+q1,3
+q2,3
+x1
+0
+q0,0
+x1
+0
+x1
+0
+x1
+1
+x1
+1
+x1
+1
+x1
+2
+x1
+2
+x1
+2
+x0
+0
+x0
+0
+x0
+0
+x0
+0
+x0
+1
+x0
+1
+x0
+1
+x0
+1
+(a)
+q1,0
+q2,0
+q0,1
+q1,1
+q2,1
+q0,2
+q1,2
+q2,2
+q0,3
+q1,3
+q2,3
+q0,0
+q1
+1,0
+q1
+2,0
+q1
+0,1
+q1
+1,1
+q1
+2,1
+q1
+0,2
+q1
+1,2
+q1
+2,2
+q1
+0,0
+q0
+1,0
+q0
+0,1
+q0
+1,1
+q0
+0,2
+q0
+1,2
+q0
+0,3
+q0
+1,3
+q0
+0,0
+(b)
+x1
+0
+x1
+0
+x1
+1
+x1
+1
+x1
+1
+x1
+2
+x1
+2
+x1
+2
+x0
+0
+x0
+0
+x0
+0
+x0
+1
+x0
+1
+x0
+1
+x0
+1
+x1
+0
+x0
+0
+Step 0
+Step 1
+Step 2
+Step 3
+Step 4
+(c)
+Figure 4: Three views of the merge process.
+For example, the first character of the accepted string y can be determined:
+y0 = q0
+0,0 · x0
+0 ⊕q1
+0,0 · x1
+0 =
+
+M
+i+j=0
+q0
+i,j · x0
+j
+
+⊕
+
+M
+i+j=0
+q1
+i,j · x1
+i
+
+
+This holds because, after the first step, the only reachable states are q0,1 and q1,0, reached via x1
+0 and x0
+0,
+respectively. The inclusion of a particular transition at this step is determined by the binary indicators q1
+0,0
+and q0
+0,0.
+More generally, each output symbol yk can be determined by computing a sum of products along diagonals
+of the FSA’s grid:
+yk =
+
+M
+i+j=k
+q0
+i,j · x0
+j
+
+⊕
+
+M
+i+j=k
+q1
+i,j · x1
+i
+
+
+(1)
+See also Figure 4c. Thus, to encode the FSA’s execution, it suffices to perform the follow computations:
+• From the control bitstring s, compute indicators for each state qi,j and each transition qb
+i,j.
+• From the transition indicators and edge labels (i.e., data elements in x0, x1), compute each value yk.
+These computations can be efficiently expressed as a switch system.
+Merge as a switch system.
+As a first attempt, suppose we somehow compute all indicators qi,j, qb
+i,j, and
+now we would like to compute each output yi. To do so, we can na¨ıvely encode Equation (1) with Boolean
+gates, but the cost will be too high.
+Indeed, these equations involve O(nmw) Boolean multiplications
+(ANDs), which would ultimately require O(nmwλ) bits of communication once garbled. Our goal is to
+instead consume only O((n + m)wλ) bits of communication.
+The key to achieving this lower communication is to (1) recall that one-hot vectors support an efficient
+garbled scaling vector and (2) observe that any accepting execution of the FSA A is laden with one-hot
+vectors. Indeed, by examining Figure 4 we can observe numerous one-hot vectors:
+• Along each k-th diagonal, the state indicator variables {qi,j | i + j = k} form a one-hot vector.
+• Similarly, along each k-th diagonal, the transition indicator variables {qb
+i,j | i + j = k} form a one-hot
+vector.
+• Each i-th horizontal collection (row) of transition indicators {q0
+i,j} forms a one-hot vector. Each such
+i-th row specifies when the i-th element x0
+i should be read (i.e., for which j should yj be equal to x0
+i ).
+• Similarly, each i-th vertical collection (column) of transition indicators form a one-hot vector, each
+corresponding to when element x1
+i should be read.
+
+These one-hot vectors emerge because A’s accepting executions proceed monotonically down and to the right
+through its grid.
+We leverage these one-hot vectors to express desired constraints over the FSA far more communication-
+efficiently:
+Transition indicators. The k-th diagonal of transition indicators can be efficiently computed from the
+k-th diagonal of state indicators. Indeed, these two diagonals are related by a one-hot scaling operation, and
+some XORs. For instance, we can examine relationships on diagonal k = 1:
+[q1
+0,1, q1
+1,0] := s1 · [q0,1, q1,0]
+[q0
+0,1, q0
+1,0] := [q0,1, q1,0] ⊕[q1
+0,1, q1
+1,0]
+This works because, when s1 = 1, exactly one of the edges q1
+0,1 or q1
+1,0 is taken in the transition, so the vector
+[q1
+0,1, q1
+1,0] contains exactly one non-zero entry. When s1 = 0, neither of these edges is used in the transition,
+so [q0
+0,1, q0
+1,0] becomes the all-zero vector, and the constraint remains valid. In this latter case, one downward
+transition q0
+0,1 or q0
+1,0 must be taken, and the above XOR constraints ensure this holds. In Section 5, we
+extend this to every k = 1, . . . , n + m, where each case requires only one join gate. Thus, this part of the
+switch system uses only n + m join gates.
+State indicators. The k-th diagonal of state indicators can be straightforwardly computed from the
+(k −1)-th diagonal of transition indicators. Indeed, we simply define each state as the XOR of its incoming
+transitions. These constraints require no join gates.
+Read values. Values read from x0 and x1 can be constrained by transition indicators. For example,
+element x0
+0 is read at exactly out of four possible points in time, each corresponding to a distinct transition
+q0
+0,j. Since only one such transition can hold one, these transitions form a one-hot vector, which we scale
+by the element x0
+0 at cost w join gates (one join for each of x0
+0’s bits). We define read0
+0,j as a variable that
+stores x0
+0 if and only if x0
+0 is read on transition q0
+0,j. These variables are constrained as follows:
+[read0
+0,0, read0
+0,1, read0
+0,2, read0
+0,3] := x0
+0 · [q0
+0,0, q0
+0,1, q0
+0,2, q0
+0,3],
+where [q0
+0,0, q0
+0,1, q0
+0,2, q0
+0,3] is a one-hot vector. In Section 5, we extend this constraint to every x0
+i for i =
+1, . . . , m and x1
+j for j = 1, . . . , n. With these readb
+i,j variables, we can then simply define each merge output
+yk as follows:
+yk :=
+
+M
+i+j=k
+read0
+i,j
+
+⊕
+
+M
+i+j=k
+read1
+i,j
+
+
+This constraint uses only free XOR operations. Altogether, this construction requires only w(n + m) join
+gates, w for each element in x0 and x1.
+Putting everything together, the entire switch system consists of only (w + 1)(n + m) joins, and
+hence its garbling has size (w + 1)(n + m)λ bits. This is possible because our approach bridges efficient
+switch-system-based garbling techniques and the garbled merge problem by means of a carefully chosen
+FSA.
+Some important technical details remain. For instance, while we have constrained all variables in the
+FSA, we have not carefully shown here that an evaluator can indeed solve that system. We present such
+explanations, along with formal presentation of all constraints, in Section 5.
+3
+Preliminaries
+3.1
+Basic Notation
+• λ denotes a security parameter, which can be understood as the bit-length of encryption keys (e.g.
+128).
+• X
+c= Y denotes ensembles X and Y are computationally indistinguishable (in λ).
+• [n] denotes the natural number {0, ..., n −1}.
+
+parent
+child0
+child1
+merge
+Figure 5: Structure of [HKO23]’s GRAM, which we upgrade by installing our new merge. The GRAM
+implements the binary tree structure of Circuit ORAM [WCS15].
+Circuit ORAM stores each memory
+element along the path towards a particular leaf; accessing an element requires traversing its path, as well
+as obliviously rearranging elements on paths. Merge components allow for runtime routing between parent
+nodes and child nodes, allowing them to send to one another. Our improved merge asymptotically reduces
+the size of the GRAM.
+• x := y denotes that x is equal to y by definition. This form of equality is crucial in the switch system
+model, since in a switch system the constraint x := y is communication free, whereas the constraint
+x = y requires a join gate, which incurs λ bits of communication once garbled.
+• H is a circular-correlation robust hash function; see Section 3.3.
+• Generally speaking, we consider the merge of two arrays: x0, which has length n, and x1, which has
+length m. Array elements are of length w.
+3.2
+Garbling Schemes
+Our technique can be formalized by means of a garbling scheme [BHR12].
+Roughly, a garbling scheme
+is a tuple of procedures that specify ow to garble a program and how to evaluate that garbled program.
+The crucial properties are correctness, which states that the garbled program outputs the same value as
+the cleartext program (with overwhelming probability) and privacy, which states that the garbled program
+can be simulated, given only the program and its output (and not the input). Appendix A provides a full
+definition.
+3.3
+Cryptographic Assumption
+Our garbling techniques are secure assuming the existence of a hash function satisfying a concrete property
+called circular correlation robustness (CCR) [CKKZ12, ZRE15]. It is typical to instantiate a CCR hash via
+fixed-key AES, and this instantiation is relatively well studied; see e.g. [BHKR13, GKWY20]. Appendix B
+provides a formal definition.
+3.4
+Tri-State GRAM; How Our Merge Plugs In
+Our main contribution is an improved GRAM construction, based on our garbled merge primitive. Specifi-
+cally, we build upon the Tri-State GRAM of [HKO23]. We replace one of its core components—circuit-based
+stacks—with our more efficient garbled merge.
+While the [HKO23] GRAM is formalized as a so-called tri-state circuit (TSC), not as a switch system,
+the switch system model is formally more expressive that the TSC model; [Hea24] provides a proof. Every
+(total) TSC is automatically and directly implementable as a switch system. Indeed, switch systems are a
+natural generalization of TSCs. Hence, the [HKO23] GRAM can be understood as a switch system, allowing
+clean interoperability of our techniques.
+This section reviews the Tri-State GRAM, with a focus on its stacks and their cost. We then explain
+why the circuit-based stacks can be correctly replaced by our garbled merge. Finally, we analyze the cost of
+our garbled merge in the new GRAM construction.
+
+Stacks in Tri-State GRAM
+As shown in Figure 5, Tri-State GRAM [HKO23] is structured as a binary
+tree. Each internal node maintains two circuit-based stacks [ZE13], one for each child. These stacks are used
+to solve the runtime routing problem, allowing parent nodes and child nodes to dynamically communicate.
+Each stack supports a conditional pop (cpop) operation: given a control bit p, the stack returns its top
+element if p = 1, or an all-zero string if p = 0. For each access, the parent uses the data’s traversal path
+in the tree to determine which stack receives a control bit of 1, while the other receives 0. The children
+manage the stack contents and return values accordingly. For a stack of size t with word size w, the [ZE13]
+implementation incurs O(w · t lg t) joins.
+Replacing Stacks with Garbled Merge
+Each pair of stacks in Tri-State GRAM can be replaced by one
+instance of our garbled merge primitive. Consider two stacks of size t that each supports 2t cpop operations
+(of which t have control bit 0 and t have control bit 1). Let x0 be the t w-bit elements of one stack, let
+x1 be the t w-bit elements of the other stack, and let s ∈{0, 1}2t with Hamming weight n be the sequence
+of control bits. Suppose we call cpop 2t times on each stack (the x0 stack using negated control string ¬s,
+the x1 stack using s). If we element wise XOR the two resulting arrays of length 2t, we obtain precisely
+the merge of x0 and x1 as prescribed by control bits s. By Theorem 2, to replace two stacks of size t, our
+garbled merge approach incurs (w + 1) · (2t) (or O(w · t)) joins. This is a factor-lg t improvement over the
+stack construction in Tri-State GRAM.
+While our garbled merge requires that the evaluator learn the control string s, revealing this value does not
+compromise obliviousness of GRAM. Indeed, garbled merge only leaks the control string s, which corresponds
+precisely to the leakage of cpop operations in the original Tri-State GRAM. Each bit in s indicates which
+child node is active and thus reveals the traversal path down the tree. However, this path information is
+permitted to leak in the underlying Circuit ORAM construction [WCS15]. Even with the path revealed,
+Circuit ORAM ensures that the actual memory access pattern remains hidden. Therefore, the obliviousness
+of the GRAM construction is preserved.
+Stacks support online behavior by outputting one element at a time during cpop operations. We empha-
+size that our garbled merge primitive preserves this property. As previously discussed, our switch-system-
+based FSA is online: it allows merging to proceed as control bits arrive, and partial outputs can be read
+immediately. Thus, garbled merge supports online output in a manner similar to that of stacks.
+Cost of Garbled Merge
+In the Tri-State GRAM [HKO23], the RAM program is represented as a binary
+tree. Consider a word-RAM program with word size w that halts in n steps. At level i of the tree, there
+are 2i nodes. A naive approach would allocate a stack of size O(n/2i) for each node to support O(n/2i)
+accesses.
+However, Tri-State GRAM adopts a technique from NanoGRAM [PLS23] to reduc
+
+[…middle truncated for length…]
+
+ghtward transition from the active state to sk, and by Equation (3), the corresponding
+downward transition to 1 −sk. This ensures that the single active transition on the diagonal is constrained
+to 1.
+Correctness – How Indicators are Propagated.
+We explain how the above constraints correctly
+implement FSA execution. We use our running example to demonstrate a single step of FSA execution, and
+explain how it generalizes. Suppose that we have so far taken one step in the FSA, moving from state q0,0
+to state q0,1. We illustrate how E uses control wire s1 = 0 to next move from q0,1 to q1,1.
+Consider those FSA states above and/or left of active state q0,1. Recall that our merge system must
+implement an online algorithm, where the control bits sk arrive one by one. Thus, we need to demonstrate
+that as those bits arrive, the solution for switch system indicators will correctly evolve. Formally, correctness
+of our switch system proceeds by the following inductive invariant:
+
+q2,0
+q1,1
+q0,2
+q0
+0,2
+q1
+0,2
+q0
+1,1
+q1
+1,1
+q1
+2,0
+read x1
+read x0
+Figure 7: One of our FSA’s diagonals.
+q0,0
+q1,0
+q2,0
+q0,1
+q1,1
+q2,1
+q0,2
+q1,2
+q2,2
+q0,3
+q1,3
+q2,3
+q3,0
+q3,1
+q3,2
+q3,3
+q1
+3,1
+q0,0
+q1,0
+q2,0
+q0,1
+q1,1
+q2,1
+q0,2
+q1,2
+q2,2
+q0,3
+q1,3
+q2,3
+q1
+2,1
+q1
+1,1
+q0
+1,1
+q3,0
+q3,1
+q3,2
+q3,3
+q1
+3,1
+q0
+2,1
+Figure 8: A step of our FSA’s execution.
+Invariant 1. We define step k of FSA evaluation to mean that k control bits s0, ..., sk−1 have been input
+to the online algorithm so far. Let qi,j where i + j = k denote step k’s active state indicator (i.e., qi,j = 1).
+All indicators above and/or to the left of qi,j can be solved. Namely, the bits s0, ..., sk−1 combined with
+Equations (2) to (4) determine all following indicators, where i′ < i and j′ < j:
+qi,j
+qi′,j′
+q0
+i′,j′
+q1
+i′,j′
+By induction, suppose Invariant 1 holds at step k = i + j. We must show that the arrival of bit sk is
+sufficient to show Invariant 1 holds at step k + 1.
+For example, Figure 8 shows a particular case where i = 1, j = 1. Encodings of states/transitions depicted
+in black in the left-hand diagram are solved. Elements depicted in gray are not yet solved.
+For simplicity, our formal discussion assumes that i, j is somewhere in the middle of the FSA grid. That
+is, 0 < i < n and 0 < j < m. The special cases are trivial simplifications of the following discussion.
+Assume that the next control bit sk arrives. First, we can solve for the two outgoing transitions q0
+i,j, q1
+i,j.
+Equation (4) enforces that all rightward transitions on each k-th diagonal must sum to sk. Notice that
+Invariant 1 implies that all rightward transitions q1
+i′,j′ where i′ +j′ = k and (i′, j′) ̸= (i, j) are already solved:
+these must occur above or to the left of our active state qi,j. Moreover, they must all be zero, since they
+come from inactive states qi′,j′. Thus, Equation (4) forces q1
+i,j = sk. Next, we can apply Equation (3) to
+solve for the downward transition: q0
+i,j := qi,j ⊕q1
+i,j. Notice that because qi,j = 1, it must be that qsk
+i,j = 1.
+We can now apply Equation (2) to solve for the two successor states of qi,j. Namely, we can solve for
+qi+1,j and qi,j+1 by XORing their respective incoming transitions.
+From here, behavior branches, depending on the value of sk. If sk = 1, the FSA transitions rightwards.
+To restore Invariant 1, we must compute all indicators left of the new active state qi,j+1. This is possible
+because we have already deduced that the downward state qi+1,j holds zero, so we use Equation (3) to solve
+for its outgoing transitions. Then, we use Equation (2) to solve for qi+2,j, which must also be inactive,
+allowing us to use Equation (3) to solve for its outgoing transitions, and so on. Symmetrically, if sk = 0, the
+FSA transitions downward, and we repeatedly use Equations (2) and (3) to solve for all indicators above the
+new active state.
+We have now restored Invariant 1: all indicators above and to the left of the new active state are
+determined. Notice that the above discussion clearly demonstrates the online nature of the merge.
+Using the FSA to read.
+Now that we have specified constraints on the FSA’s indicator variables, we
+can formalize constraints that read elements from the input arrays x0, x1.
+We begin by recalling the semantics of an active transition: if q0
+i,j = 1, then x0
+i is the element read at
+step k = i + j. Since x0
+i is read only once, this implies q0
+i,k = 0 for all k ̸= j. The same holds symmetrically
+for q1
+i,j.
+We define variables read0
+i,j and read1
+i,j as follows:
+read0
+i,j := 0w ⇐q0
+i,j
+?= 0
+read1
+i,j := 0w ⇐q1
+i,j
+?= 0
+(5)
+M
+j
+read0
+i,j = x0
+i
+M
+i
+read1
+i,j = x1
+j
+(6)
+
+Equations (5) and (6) scale the one-hot vector (q0
+i,0, . . . , q0
+i,m) by x0
+i to produce (read0
+i,0, . . . , read0
+i,m); sym-
+metrically, we constrain read1
+i,j.
+We can now constrain the k-th output element yk of the merged array. At step k, exactly one transition
+on the k-th diagonal is active: there exists a unique i such that qsk
+i,k−i = 1. And all other transitions are
+inactive; see Figure 7
+If sk = 0, then x0
+i is being read, and thus yk = x0
+i . We have:
+read0
+i,k−i = x0
+i ,
+read0
+j,k−j = 0 for j ̸= i,
+read1
+t,k−t = 0 for all t.
+The case sk = 1 is symmetric. Therefore, yk can be computed using the following equation:
+yk :=
+M
+i
+read0
+i,k−i ⊕read1
+i,k−i
+(7)
+Note that these constraints support merge’s online nature. Indeed, Invariant 1 and Equation (5) together
+imply that all values readb
+i′,j′ corresponding to inactive transition indicators qb
+i′,j′ above and to the left of
+the active state qi,j must be equal to zero. This implies that as soon sk arrives, one can (1) solve for qsk
+i,j,
+then (2) use Equation (6) to solve readsk
+i,j, and (3) use Equation (7) to obtain yk.
+Space Complexity.
+Recall that one of our main goals is to improve space complexity. The space com-
+plexity of the garbler (resp. evaluator) can be upper bounded by summing two quantities:
+• The size of the garbled program.
+• The number of wires that must be kept in memory to garble (resp. evaluate) the remaining wires,
+multiplied into λ. We wish to minimize this quantity without recomputing the encoding of any wire.
+In Boolean GC, these two quantities are typically related by a constant factor, as the number of wires is
+proportional to the number of gates, and AND gates typically incur O(λ) bits of communication. However,
+in our construction this is not the case. Our switch system has O(nmw) wires, but its garbling has size only
+O((n + m)wλ) bits.
+Despite the fact that our construction has a large number of wires, it can be garbled (resp. evaluated)
+in only O((n + m)wλ) bits of space. To show this, and since the garbling of our program fits within this
+asymptotic budget, it suffices to show that the garbler (resp. evaluator) needs only store O((n + m)w) wire
+encodings.
+Let us first discuss the evaluator’s space. We can first examine the space needed to propagate indicator
+variables. Invariant 1 clearly implies that it suffices to keep track of the encodings of at most O(n + m)
+indicators. Indeed, because the FSA has a grid structure, it suffices to keep the encoding of the single active
+state qi,j as well as those indicators exactly one step above and/or exactly one step to the left of qi,j. There
+are only O(n + m) such indicators.
+The evaluator must also track values readb
+i,j (Equations (5) to (7)). These are easy to handle in O((n +
+m)wλ) bits of space.
+In particular, notice that Equations (6) and (7) involve XOR sums of variables
+readb
+i,j, and these are the only ways that these variables are used. Thus, rather than storing an encoding
+of each variable readb
+i,j in local memory, the evaluator instead keeps track of O(nm) accumulators (each
+corresponding to a w-bit word) corresponding to partial sums in those equations. As soon as the evaluator
+computes a new encoding readb
+i,j, she eagerly XORs into the appropriate accumulators, then discards the
+encoding.
+The garbler’s handling is easier than the evaluator’s.
+In short, the garbler can proceed row by row
+through the FSA, using indicator encodings on row i to derive indicator encodings and read values on row
+i+1, as described by the switch system constraints. Once he has garbled row i+1, he discards the encoding
+of row i. To handle encodings of variables readb
+i,j, the garbler follows the evaluator’s strategy and maintains
+accumulators rather than keeping all such variables in memory. Thus, he also runs in O((n + m)wλ) space.
+
+5.2
+Randomized Merge
+One problem of our merge construction is that it imposes high computational cost. Suppose that our two
+merged arrays x0, x1 are each of length n. Our construction presented so far requires that G and E each
+invoke a CCR hash function O(w · n2) times, which is expensive. However, for particular use-cases – namely
+those where the control bits are randomly distributed – we can do far better, invoking the hash function
+only O(w · n ·
+√
+n · λ) times.
+Suppose that the control bit string s is sampled uniformly, subject to the constraint that it has Hamming
+weight n. Note that the Tri-State GRAM’s usage of merge has this property. By a simple observation about
+random walks, we can see that it is only neglibly likely that a random s will cause an FSA execution to
+deviate significantly from the main FSA’s main diagonal. That is, it is unlikely the FSA will enter a state
+qi,j where |i −j| is a large value.
+In particular, an active path through the FSA is likely to deviate only a small distance O(
+√
+n · λ) from the
+FSA’s main diagonal. Because of this, we can greatly improve G’s and E’s compute by simply ignoring those
+states that are too far from the main diagonal, and our construction will still correctly implement merge with
+overwhelming probability. Appendix C expands this discussion and proves correctness of ignoring states far
+from the main diagonal.
+5.3
+Improved Garbled RAM
+By replacing stack-based merging with our garbled merge data structure, we obtain the following key theorem.
+Theorem 3 (Switch System RAM). Let P be a RAM program halting in n steps and manipulating w-bit
+words. There exists an oblivious switch system C such that for any input x, C(x) = P(x). The system C
+has O((w + lg2 n) · n lg n) · ω(1) joins.
+Proof. Recall that our GRAM is the Tri-State Circuit GRAM where we replace stacks by our merge compo-
+nent. Recall also (from Section 3.4) that every tri-state circuit join gate can be replaced by a switch system
+join. The total number of join gates in our Switch System GRAM can be attributed to three sources:
+Merge joins. As discussed in Section 3.4, our merge gates contribute a total of O(wn lg n) join gates.
+Joins from non-merge gates.
+The non-stack joins in Tri-State GRAM arise from the read/write
+circuitry needed to obliviously read/rearrange the contents of nodes on root-to-leaf paths of the ORAM
+tree. Each RAM operation requires a constant number of such traversals. In the underlying Circuit ORAM
+construction, each internal tree node holds O(1) data items, each of size O(w). Since paths are of length
+O(lg n), traversing a path consumes O(w lg n) join gates. An additional ω(1) term is incurred from the root
+node and leaf nodes, each of which hold a larger number of O(lg n) · ω(1) elements; this is needed to achieve
+negligible probability of failure Thus, touching any such node incurs O(wn lg n) · ω(1) joins, which is the
+asymptotic bottleneck.
+Joins for recursive position maps. As in many ORAM constructions, Tri-State GRAM requires a
+recursion step. In particular, it uses a recursively instantiated position map. This position map tracks where
+in the ORAM binary tree structure each logical element resides. The number of required levels of recursion
+is O(lg n). Note that regardless of the top-level ORAM’s word size, the position map uses a word size of
+Θ(lg n) bits. Hence, the total cost of the recursive position map is O(n lg3 n) · ω(1) joins.
+Adding the contributions from merge gates, non-merge gates, and recursive position maps gives a total
+of O((w + lg2 n) · n lg n) · ω(1) join gates, as claimed.
+The following holds by combining Theorems 1 and 3:
+Corollary 1 (Garbled RAM). There exists a garbling scheme for RAM programs such that for any program
+P halting in n steps and manipulating w-bit words, the encoding ˜P has the following size:
+O((w + lg2 n) · n lg n · λ) · ω(1) bits
+
+2
+4
+6
+8
+10
+12
+log(N)
+10
+2
+10
+3
+10
+4
+10
+5
+10
+6
+10
+7
+10
+8
+10
+9
+Number of hash function calls
+Merge in [8]
+Ours
+(a) Computation cost
+2
+4
+6
+8
+10
+log(N)
+10
+2
+10
+1
+10
+0
+10
+1
+10
+2
+10
+3
+Communication cost (MB)
+Merge in PicoGRAM (wordwidth 32)
+Merge in PicoGRAM (wordwidth 128)
+Merge in [8] (wordwidth 32)
+Merge in [8] (wordwidth 128)
+Ours (wordwidth 32)
+Ours (wordwidth 128)
+(b) Communication cost
+Figure 9: Cost comparison for garbled merging vs. result array size N. (a) Computation cost measured
+in hash function calls. (b) Communication cost (KB) under different bandwidth settings. Our approach
+outperforms both prior work in communication cost, at the trade-off of a moderate increase in computation.
+6
+Evaluation
+We implement a prototype of our garbled merge technique and an end-to-end Garbled RAM using our
+garbled stack in C++, and use the EMP Toolkit to instantiate the underlying hash function, which is based
+on fixed-key AES [WMK16]. All experiments are run on AWS c5ad.8xlarge machine with 64GB RAM. The
+security parameter of our scheme is fixed as λ = 128.
+We evaluate performance along two dimensions: communication and computation. Communication cost
+is measured by the size of garbled programs, while computation cost is measured by the number of AES
+invocations, which corresponds to the number of evaluated switches.
+Highlights.
+Assuming only the existence of circular-correlation-robust hash functions, our garbled merging
+achieves up to 3× lower communication cost than PicoGRAM, which requires the stronger DDH assump-
+tion. When integrated into GRAM, our approach achieves lower communication costs than PicoGRAM for
+program sizes from 210 to 224.
+6.1
+Garbled Merging Evaluation
+We evaluate the communication and computation costs for varying values of n, the length of the merged
+output array.
+Figure 9b confirms that our approach achieves communication cost linear in n and w.
+At w = 128
+and n = 210, our scheme requires only 2.1 MB compared to over 44 MB for the Boolean baseline—a 21×
+reduction.
+Figure 9a shows the computation cost in hash function calls, reflecting the trade-off in our
+construction: improved communication at the cost of Θ(wn2) computation.
+Comparison against [Goo11].
+A garbled Boolean-circuit-based compaction network for merging in the
+style of Goodrich [Goo11] is suggested for the GRAM setting by [GTRS25]. We implement the network with
+privacy-free “half” AND gates [ZRE15]. Our scheme consistently achieves a communication cost roughly
+10× lower than this approach (see Figure 9b). Concretely, at n = 211 and w = 32, the Boolean-circuit-based
+merging requires approximately 24 MB, whereas ours requires only approximately 1 MB.
+We intentionally trade higher local computation for reduced communication. Our evaluation shows that
+the computation cost of our approach is roughly two orders of magnitude higher than that of the Boolean
+
+10
+12
+14
+16
+18
+20
+22
+24
+log(N)
+0
+10
+20
+30
+40
+Amortized communication cost (MB)
+Picogram w/o SIMD
+Picogram w/ SIMD
+Ours
+(a) Amortized communication cost
+10
+12
+14
+16
+18
+20
+22
+24
+log(N)
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Stack fraction
+Picogram w/o SIMD
+Picogram w/ SIMD
+Ours
+(b) Ratio of stack operation cost
+Figure 10: Communication cost comparison per access as a function of log(N). (a) Our method achieves
+a smaller amortized communication cost per access than PicoGRAM [GTRS25] (with and without SIMD).
+(b) Fraction of communication cost attributed to stack operations. Our approach maintains a consistently
+lower stack ratio (≈20%) than PicoGRAM (≈25–34%), indicating the improvement achieved by our scheme.
+network in [Goo11] at n = 212 (see Figure 9a).
+Comparison against [GTRS25]
+PicoGRAM [GTRS25] also provides a compaction network for merging
+using single-instruction-multiple-data (SIMD) gates. We instantiate the DDH group with the elliptic curve
+P-256 for merging. Our scheme consistently achieves a lower communication cost than PicoGRAM (see
+Figure 9b). Concretely, at n = 211 and w = 128, PicoGRAM’s merging requires approximately 14.8 MB,
+whereas ours requires only approximately 4.1 MB, achieving 3× improvement.
+We do not plot the number of AES calls made by PicoGRAM’s DDH-based approach because its main
+computational cost is group exponentiation. The number of required exponentiations is almost exactly the
+same as the AES calls required by the Boolean network. Both techniques use the same compaction network,
+involving O(n lg n) gates that conditionally swap two elements. In PicoGRAM, each swap gate incurs w
+group exponentiations.
+6.2
+End-to-end Evaluation.
+To quantify the impact of our garbled merging primitive on a full GRAM instance, we conducted an
+end-to-end evaluation by replacing only the stack subroutine in the PicoGRAM construction. Following
+PicoGRAM’s evaluation methodology, we report the communication cost per RAM access as a function of
+N.
+Under this identical experimental setup, replacing the compaction network with our garbled stack yields
+a consistent constant-factor reduction in end-to-end communication. As shown in Figure 10a, our method
+achieves lower communication cost than PicoGRAM across all problem sizes N = 210 to 224, with the curve
+lying uniformly below that of PicoGRAM. In addition, our method requires only hash functions, avoiding
+the stronger DDH assumption needed by PicoGRAM.
+Figure 10b further shows that our approach maintains a significantly lower stack communication ratio
+(≈20%) compared to PicoGRAM (≈25-34%). By reducing the stack cost per access by a constant fraction,
+our construction shifts the contribution to communication from the stack to the non-stack components of
+the GRAM, demonstrating more efficient bandwidth utilization.

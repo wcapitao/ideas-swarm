@@ -1,0 +1,859 @@
+Enhancing Anomaly-Based Intrusion Detection
+Systems with Process Mining
+Francesco Vitale
+DIETI
+University of Naples Federico II
+Naples, Italy
+francesco.vitale@unina.it
+Francesco Grimaldi
+DIETI
+University of Naples Federico II
+Naples, Italy
+francesco.grimaldi3@unina.it
+Massimiliano Rak
+DIETI
+University of Naples Federico II
+Naples, Italy
+massimiliano.rak@unina.it
+Nicola Mazzocca
+DIETI
+University of Naples Federico II
+Naples, Italy
+nicola.mazzocca@unina.it
+Abstract—Anomaly-based Intrusion Detection Systems (IDSs)
+ensure protection against malicious attacks on networked sys-
+tems. While deep learning-based IDSs achieve effective perfor-
+mance, their limited trustworthiness due to black-box architec-
+tures remains a critical constraint. Despite existing explainable
+techniques offering insight into the alarms raised by IDSs,
+they lack process-based explanations grounded in packet-level
+sequencing analysis. In this paper, we propose a method that
+employs process mining techniques to enhance anomaly-based
+IDSs by providing process-based alarm severity ratings and
+explanations for alerts. Our method prioritizes critical alerts
+and maintains visibility into network behavior, while minimizing
+disruption by allowing misclassified benign traffic to pass. We
+apply the method to the publicly available USB-IDS-TC dataset,
+which includes anomalous traffic affected by different variants of
+the Slowloris DoS attack. Results show that our method is able
+to discriminate between low- to very-high-severity alarms while
+preserving up to 99.94% recall and 99.99% precision, effectively
+discarding false positives while providing different degrees of
+severity for the true positives.
+Index Terms—Intrusion detection systems, alarm rating, ex-
+plainable artificial intelligence (XAI), process mining
+I. INTRODUCTION
+Intrusion Detection Systems (IDSs) have attracted signifi-
+cant attention in the literature due to their critical role in moni-
+toring and mitigating malicious activity in networked systems.
+In this paper, we focus on anomaly-based IDSs, which are
+able to characterize the normal profile of network traffic and
+identify any deviations through statistical, knowledge-based,
+and deep learning approaches [1]. The literature outlines that
+the best-performing approaches are predominantly based on
+deep learning [2], which has achieved remarkable detection
+performance across diverse datasets, surpassing 99% perfor-
+mance figures [3].
+Despite the impressive results achieved by anomaly-based
+IDSs, the literature has also highlighted a fundamental con-
+This work was supported by the DEFEDGE project (E53D23016380001)
+under the PRIN program.
+cern: to what extent should one trust an IDS? [4]. This
+issue has led to the development of eXplainable Artificial
+Intelligence (XAI) approaches to improve the trustworthiness
+and effectiveness of IDSs [5]. Most existing XAI methods
+for IDSs rely on post-hoc, feature-based explanations, em-
+ploying frameworks such as SHAP and LIME [6]. However,
+in the absence of carefully designed feature engineering,
+these explanations are inherently limited to quantifying feature
+contributions to a given prediction and remain unable to con-
+vey richer information, such as attack dynamics and packet-
+level sequencing. Consequently, such explanations lack a true
+process-based view of the underlying malicious behavior.
+In this paper, we investigate the use of process mining
+to enhance the diagnoses provided by anomaly-based IDSs
+in terms of alarm severity rating and explanation. Process
+mining is a research area aimed at bridging data-driven
+insights and process science [7], and has been employed
+to analyze several network protocols in different application
+scenarios [8]–[10]. Its utility mainly lies in extracting process
+models that can capture control-flow relations between the
+packets exchanged in networked communications. Our method
+leverages the capabilities of process mining for process-based
+explanation and rating of anomaly-based IDS alarms. This
+way, we can prioritize critical alerts and maintain visibility into
+network behavior, while minimizing disruption by allowing
+misclassified benign traffic to pass.
+The proposed method involves two phases: 1) the training
+phase, in which a reference anomaly-based IDS is trained
+with normal network flows and validated against anomalous
+network flows, and a packet-level process-based characteriza-
+tion of false-positive network flows is built through process
+mining; and 2) the inference phase, in which alarms raised
+by the IDS are examined against the process model. Here,
+the method provides a severity rating inversely related to the
+similarity with the false-positive process-based explanation
+(i.e., high similarity indicates a likely false positive and thus
+arXiv:2604.18066v1 [cs.CR] 20 Apr 2026
+
+low severity). Thus, the proposal operates as an example-
+based XAI approach [5], in which false-positive flows are
+recognized and discriminated from high-severity alarms. Since
+our approach can be applied to any black-box model and does
+not rely on model-specific characteristics, it can be configured
+as a model-agnostic XAI technique.
+In summary, the proposed method brings the following
+novelties:
+• A severity rating mechanism of anomaly-based IDS
+alarms that utilizes the packet-level process-based expla-
+nations to discriminate high-severity true positives from
+false positive traffic.
+• Novel explanation mechanism for anomaly-based IDS
+alarms based on process models mined from network
+flows.
+We experiment with our approach using the publicly avail-
+able USB-IDS-TC dataset [11]. The dataset includes instances
+of normal traffic flows and traffic flows affected by different
+variants of the Slowloris DoS attacks. The results show that
+our method is able to discriminate between low- to very-high-
+severity alarms while achieving 99.94% recall and 99.99%
+precision, effectively discarding false positives while providing
+different degrees of severity for the true positives.
+II. RELATED WORK
+A. Explainable Artificial Intelligence for Intrusion Detection
+Systems
+The utility of XAI, as well as the challenges associated with
+its adoption, has been widely reported across both scientific
+and industrial contexts. Nascita et al. [5] surveyed the use of
+XAI in network traffic classification and intrusion detection,
+categorizing existing approaches according to their scope,
+explanation stage, model dependency, and explanation type.
+In particular, they highlight the role of XAI in enhancing
+confidence in IDSs by providing actionable insights through
+alarm rating.
+While this categorization opens up several opportunities for
+XAI adoption, the existing literature has largely focused on
+SHAP and LIME. These techniques have been successfully
+applied to a wide range of attack types, including DNS-over-
+HTTPS attacks [12] and DoS attacks [6]. However, these ap-
+proaches treat features statically and often struggle to capture
+the temporal dynamics and sequential dependencies inherent
+in network traffic. Consequently, they can produce inconsistent
+or partially conflicting explanations, prompting recent studies
+to emphasize the need for combining multiple XAI approaches
+to improve explanation robustness and user confidence [13].
+B. Process Mining for Explaining Intrusion Detection Systems
+Process mining is a hybrid discipline whose main tasks in-
+volve building process models (process discovery) and check-
+ing whether new behavior aligns with process-based charac-
+terizations (conformance checking). This is very useful for
+enhancing intrusion detection, as it offers means to capture net-
+work patterns and verify deviations in an explainable manner.
+Specifically, process mining has been applied to inspect normal
+DNS traffic [14], analyzing MQTT message patterns [8], and
+studying TCP traffic [10].
+Process mining has been used for the explanation of control-
+flow anomalies through fine-tuning of sequence-to-sequence
+language models [15] and the extraction of explainable process
+models of industrial control systems [16]. Notably, process
+mining has been used as an additional layer of explainability in
+combination with intrusion detectors. De Alvarenga et al. [17]
+proposed process discovery as a means to model attackers’
+behavior and provide further insight and confidence in alerts
+raised by IDSs. Wang et al. [18] enhanced intrusion detectors
+with explainable post-processing of IDS alerts through pro-
+cess mining. Their method involved capturing normal traffic
+behavior and checking the traffic flagged as anomalous against
+such characterization to outline the process-based deviations.
+However, neither approach integrated a quantitative rating
+mechanism to systematically filter or rank alarms based on
+severity.
+C. Anomaly Rating
+Alarm rating mechanisms are particularly beneficial for
+security analysts in mitigating alert fatigue. An approach is dis-
+cussed in [19], where sequences of log events are represented
+as graphs and prioritized according to their associated Shapley
+values. Himmelhuber et al.
+[20] proposed a methodology
+that combines GNNExplainer with DL-Learner to filter and
+prioritize alerts leveraging fidelity scores within Industrial
+Control Systems. In an IIoT environment, Khalaf et al. [21]
+prioritized alerts based on an adaptive threat correlation engine
+leveraging attention-weighted graph structures and sequence
+modeling.
+While the methods above provide insights into alerts and
+their rating, they did not employ process-based explanations
+to rate alarms to uncover anomalous network patterns. Instead,
+we integrate process mining to enhance intrusion detection
+through process-based explanation and ranking of anomaly-
+based IDS alerts. Not only does our method provide insight
+into network processes, but it also offers a tunable alert rating
+system that enables selective filtering of anomalous traffic.
+III. METHOD
+Anomaly-based IDSs employ approaches to learn normal
+network traffic and identify any deviating traffic that diverges
+from it, provided a specified upper limit of similarity is met.
+However, several false positives may occur if the training data
+are contaminated with noisy samples [22], and the black-box
+nature of deep learning-based classifiers makes it difficult to
+understand alarm severities [5].
+Our proposal, depicted in Figure 1, builds on standard
+anomaly-based IDSs and introduces a process mining layer
+to provide process-based explanations of anomalous network
+traffic and rate alarms. While our approach can be applied to
+various protocols, we focus on a network dataset based on TCP
+traffic, described later in detail. In the following, we detail the
+
+Preprocessing
+Training
+network
+data
+Normal
+network
+flows
+Anomaly-based
+IDS training
+False
+positive
+network
+flows
+Process
+mining
+Online
+network
+data
+Unknown
+network
+flows
+Anomaly-based
+IDS inference
+Positive
+network
+flows
+Process-based
+explanation
+Process-based
+characterization
+Intrusion
+detector
+Alarm
+rating
+End
+Start
+Preprocessing
+Start
+End
+Filtering
+parameters
+Event log
+extraction
+Event log
+extraction
+Extraction
+parameters
+False
+positive
+event
+log
+Positive
+event 
+log
+Training
+Inference
+Fig. 1: The proposed method for process-based explanation and ranking of anomaly-based IDS alerts. The first phase involves
+training an anomaly-based IDS and mining a process-based characterization of false positive network flows. The second
+inference phase classifies incoming network flows through the IDS and rates the positive network flows.
+training and inference phases with reference to the anomaly-
+based IDS pipeline and process mining for alarm rating and
+explanation.
+A. Anomaly-Based IDS Pipeline
+1) Training: Firstly, the method involves preprocessing
+training network data to extract network flows corresponding
+to specific protocols prior to the training and inference phases.
+A network flow is defined by the tuple described by the
+source and destination IP addresses and port numbers, and
+it is characterized by the network data exchanged in a bidirec-
+tional connection between two hosts. During preprocessing,
+the method extracts normal network flows from raw PCAPs.
+For each PCAP, the network flows are extracted using well-
+known tools, such as CICFlowMeter [23] and NTLFlowLyzer
+[24]. It is possible to group the network packets based on the
+computed flows to which they belong; in this way, both the
+flows and the related PCAPs are obtained.
+Normal network flows can be used for anomaly-based
+IDS training. This step allows building an anomaly-based
+IDS that produces binary classifications, in which negative
+outcomes correspond to network flows considered normal,
+while positive outcomes indicate anomalous flows and thus
+represent alerts. The training process of anomaly-based IDSs
+involves learning normal behavior from benign network flows
+using, for example, one-class classification or reconstruction-
+based techniques. This process requires the selection of a
+threshold on a decision metric used to classify previously
+unseen network flows. A strict threshold increases the number
+of false positives, whereas a relaxed threshold increases the
+number of false negatives. The threshold can be determined
+empirically using a validation set, which enables the selection
+of a conservative value that accounts for variability in normal
+behavior and improves robustness at inference time. However,
+the validation process almost always leads to a certain number
+of false positive network flows, which represent benign traffic
+that is mistakenly classified as anomalous. Since the objective
+of the approach is to evaluate alarms based on false positives,
+a more restrictive threshold can be applied to increase the
+number of false-positive network flows, thereby making the
+subsequent process mining-based modeling more robust.
+2) Inference: Once the anomaly detection model and its
+associated thresholds have been defined, the IDS can be
+deployed for continuous networking monitoring. Online net-
+work data is captured, organized in PCAPs, and subject to
+preprocessing according to the filtering parameters obtained
+at training time to construct unknown network flows. These
+network flows are run through anomaly-based IDS inference
+with the intrusion detector built at training time. The inference
+process leads to both negative and positive network flows.
+Since the goal of the approach is to rate alarms based on their
+severity, only the positive network flows are used for further
+processing.
+B. Process Mining for Alarm Rating and Explanation
+1) Training: We adopt the process mining-based network
+traffic analysis framework proposed in [10], which first in-
+volves event log extraction from packet-level PCAP data
+corresponding to the false positive network flows. The frame-
+work aims to identify distinct TCP network event patterns,
+referred to as states, by applying an unsupervised clustering-
+based approach. Formally, given the set of TCP flags Σ, Σ∗
+the universe of sequences that can be built with the TCP flags,
+B(Σ∗) the universe of bags that can be built over Σ∗, Ξ the
+set of states obtained from the false-positive PCAP data, and
+ξ ∈Ξ a state obtained through the clustering-based approach,
+an event log Lξ ∈B(Σ∗) is a bag of TCP traces belonging
+to state ξ. Each trace σξ ∈Lξ is associated with the part
+of the network flow that belongs to that state. This implies
+
+C_to_S_SYN
+S_to_C_SYN
+C_to_S_ACK
+τ
+S_to_C_ACK+PSH
+S_to_C_ACK
+τ
+τ
+Fig. 2: Example of a Petri net capturing a TCP event flow
+pattern.
+that a network flow can have multiple states, captured within
+different event logs.
+Let L = {Lξ ∈B(Σ∗) : ξ ∈Ξ} be the set of false-
+positive event logs obtained from the false-positive PCAP data
+at training time. The process mining step builds |Ξ| process
+models through a process-discovery algorithm. Specifically,
+given algorithm γ and Lξ ∈L, Nξ = γ(Lξ) is the process
+model that captures the sequences of TCP events in state ξ.
+Usually, γ extracts a Petri net [7]. Fig. 2 shows an example
+Petri net capturing a TCP event flow pattern. The squared
+nodes indicate transitions, which can either be TCP events
+(e.g., C to S SYN) or silent (τ) events. The rounded places
+constrain the allowed sequencing of the transitions. The place
+with a full circle in it indicates the “initial marking”, i.e.,
+the presence of a single token in a “start” place allowing the
+execution of C to S SYN. The semantics of the Petri net
+involve moving tokens across the places, starting from the
+initial marking. For example, the execution of C to S SYN
+moves the token to the next place, allowing the execution of
+S to C SYN. The quality of the |Ξ| Petri nets obtained from
+false-positive event logs depends on the completeness of the
+logs, meaning the availability of enough examples to identify
+control-flow relations among TCP events. In the presence of
+incomplete logs, one can estimate the probability of modeling
+a control-flow relation based on its observed frequency [25].
+In the following, we denote N the set of Petri nets ob-
+tained from event logs of L, i.e., the process-based char-
+acterization. Nξ ∈N can be used to check whether an
+event log Lξ ∈B(Σ∗) conforms to the expected TCP event
+patterns. In particular, we consider the class of alignment-
+based conformance checking algorithms, which allow extract-
+ing the so-called alignments. Let us consider an illustra-
+tive alignment example with the Petri net in Fig. 2 and a
+trace σ = ⟨C to S SYN, S to C SYN, S to C ACK+PSH,
+C to S ACK⟩. An aligned trace σA attempts to find a
+path through the model that optimally matches σ. In this
+case, the first two TCP events are perfectly matched to the
+Petri net, but the subsequent S to C ACK+PSH cannot be
+executed without the prior execution of C to S ACK. In
+this case, σA should account for this mismatch. For ex-
+ample, σA = ⟨C to S SYN, S to C SYN, C to S ACK,
+S to C ACK+PSH, C to S ACK⟩matches all the TCP
+events except for C to S ACK after S to C SYN. In this
+paper, we aim to count the number of alignments associated
+with each TCP event of a network traffic flow, similar to the
+approach described in [26]. In particular, we build the set of
+alignments associated with each TCP event A = {At ∈N :
+t ∈Σ} by performing alignment-based conformance checking
+between the Petri nets of N and the traces of the event logs
+of L, where At is averaged across all the traces. A will be
+subsequently used in the inference phase to rate the alerts.
+2) Inference: Following the same process as in the training
+phase, the positive network flows are run through event log ex-
+traction with the same extraction parameters of the mentioned
+clustering-based approach. This way, the set of positive event
+logs Lp are used for process-based explanation of the alarms.
+Let us denote σξ ⊆σ the subtrace of trace σ that belongs to
+state ξ. An individual network flow f to which a trace σf
+is associated is decomposed into multiple subtraces belonging
+to the different states of Ξ: f = {σf,ξ ⊆σf : ξ ∈Ξ}. The
+process-based explanation of the network flow f is the set of
+alignments Af = {At,f ∈N : t ∈Σ} obtained by performing
+alignment-based conformance checking between each subtrace
+of f and the corresponding Petri net. Finally, we compute the
+alarm rating of f by evaluating the similarity between Af and
+A. In particular, we use the cosine similarity:
+CosSim(A, Af) =
+⟨A, Af⟩
+||A|| ||Af||.
+The lower the similarity between A and Af, the more severe
+the alarm is; in contrast, the higher the similarity, the closer
+the alarm is to a false positive.
+IV. EVALUATION
+A. Dataset
+In our research, we utilized the publicly available USB-
+IDS-TC dataset, which was designed to address the issue
+of the dependence of machine learning- and deep learning-
+based network IDS on the network scenario used to collect
+training traffic data [11]. The testbed, described in detail in the
+referenced work, is built on Docker containers, and includes
+a web server, an attacker and a tester used both to issue
+randomized web requests and collect availability statistics. The
+dataset was initially organized in four separate PCAPs, one
+related to normal traffic (NOR) and the remaining ones to three
+different types of DoS attacks: slow loris (GSL) via slowloris1,
+high-intensity slow loris (HSL), and slow post (HSP) via
+slowhttptest2. Classified as low and slow, these DoS attacks
+saturate TCP connections of the system under attack through
+traffic that appears legitimate. Network traffic generated by
+such attacks is characterized by an increased volume of TCP
+packets featuring [PSH, ACK] flags, which are distributed
+over time by the malicious host. This leads to an alteration
+in the network traffic control flow, which consequently causes
+misalignments in the TCP traces modeled in the process-based
+characterization.
+1https://github.com/gkbrk/slowloris
+2https://www.kali.org/tools/slowhttptest/
+
+TABLE I: Mean and standard deviation of different network
+traffic flow metrics.
+Metric
+NOR
+GSL
+HSL
+HSP
+N. flows
+1616
+4052
+5088
+5082
+Flows-per-minute
+76.1
+1403.3
+1774.9
+1732.5
+Flow duration (s)
+57±49
+37±17
+60±27
+61±30
+Bytes-per-flow
+322388±568000
+956±261
+1589±696
+2204±1290
+Packets-per-flow
+182±292
+14±3
+19±6
+20±6
+Packet length (byte)
+1389±427
+69±8
+80±25
+108±53
+ACK flags
+181±292
+12±3
+14±6
+15±6
+SYN flags
+2±0.2
+2±0.3
+5.8±3.7
+5.8±3.7
+FIN flags
+2±0.2
+1±0.4
+1.3±1.0
+1.3±1.0
+RST flags
+0.02±0.2
+0.8±0.4
+0.1±0.3
+0.1±0.3
+PSH flags
+101±168
+4±1
+6.9±3.7
+7.1±3.7
+Forward packets
+61±89
+7±2
+13±5
+13±5
+Backward packets
+121±204
+6±2
+6±4
+7±4
+Forward bytes
+307±226
+195±36
+652±626
+1187±1240
+Backward bytes
+316221±558074
+320±165
+274±242
+347±518
+As described in Section III, the detection model is trained
+and evaluated on network flows. For this purpose, bidirectional
+network flows were extracted and organized in CSV format
+from PCAPs data using NTLFlowLyzer. The tool allows
+for the retrieval of 348 features, enhancing and expanding
+the capabilities of CICFlowMeter, and a summary of the
+statistics is shown in Table I, with counts reported as absolute
+values and all other metrics expressed as means with standard
+deviations. It is worth noting that, although the total number
+of normal traffic packets is significantly higher, the number of
+flows generated from them is substantially lower. In addition,
+an interesting metric is the flows-per-minute, as there is a
+difference of two orders of magnitude between the values
+observed for normal traffic and those for anomalous traffic.
+This is due to the nature of the traffic itself and to the specific
+characteristics of the executed attacks.
+Following an initial preprocessing step to remove incom-
+plete network flows, the dataset was partitioned to enable the
+training and testing of the three: One-Class SVM (OCSVM),
+Autoencoder, and Variational Autoencoder. In particular, 969
+normal network flows were used to train the OCSVM, while
+833 were employed for the autoencoders. In both scenarios,
+normal network flows were randomly partitioned into training
+and validation sets five times. This procedure ensures five
+independent runs of the proposed method, effectively account-
+ing for the stochastic nature of IDS training. At each run,
+the misclassified validation normal flows are used to extract
+the process-based characterization. The different process-based
+characterizations across the five runs account for the possibility
+of overfitting on restricted sets of normal network flows. The
+remaining 136 flows were reserved for the validation phase
+to compute the decision threshold based on the reconstruction
+error. Finally, the remaining 647 normal network flows were
+combined with anomalous flows and used in the testing phase,
+for a total of 14869 flows.
+B. Techniques, Metrics, and Software
+The three techniques used for anomaly-based IDS training
+are three popular one-class classification and reconstruction-
+based
+approaches:
+One-Class
+Support
+Vector
+Machine
+(OCSVM), the Autoencoder (AE), and the Variational Autoen-
+coder (VAE). The AE and VAE adopt a multilayer architecture
+with the hidden layers with 400 and 200 units, ReLU as
+activation function, and are trained minimizing the mean
+squared error loss with a learning rate of 0.001, batch size 64,
+and 150 epochs. In addition, the VAE includes a latent space
+of dimension 6. The OCSVM adopt RBF kernel to handle
+non-linear relationships, with the parameter ν set to 0.15. All
+configurations are chosen according to [27], except for the
+OCSVM ν parameter, which was empirically tuned.
+Regarding event log extraction and process mining. We
+configured event log extraction with k-means clustering by
+setting k equal to 2 and a sliding window length equal to 3. The
+configuration of two network states allows the discrimination
+of different TCP patterns without isolating those that appear in
+both normal and anomalous traffic, which would make their
+separation more challenging. On the other hand, a window
+length equal to 3 allows reducing the underfitting effect
+documented in [10]. As for process discovery, we apply the
+vanilla inductive miner to each state-wise event log.
+To define the severity bands, we use the CosSim met-
+ric, which takes values in the range [0, 1]. The severity
+bands are defined by partitioning this range into five inter-
+vals based on predefined thresholds: [0, 0.01) (Very High),
+[0.01, 0.25) (High), [0.25, 0.75) (Medium), [0.75, 0.99) (Low),
+and [0.99, 1.00] (Very Low). This results in the set of sever-
+ity bands S = {Very High, High, Medium, Low, Very Low}.
+These bands are defined so that obvious alarms (Very High
+and High) can be filtered without impacting normal traffic,
+while uncertain alarms (Low and Very Low) are neglected
+to retain potentially misclassified normal traffic. The Medium
+band, which is the largest, captures uncertainty and may be
+further subdivided when distinguishing malicious from benign
+traffic is challenging.
+To evaluate the effect of splitting alerts into different sever-
+ity bands, we introduce modified versions of the recall and
+precision metrics. Specifically, for a given severity threshold
+indexed by k ∈{1, . . . , N}, where N = |S|, we evaluate
+the impact of filtering traffic by discarding alerts belonging
+to severity bands higher than k (i.e., treating them as normal
+traffic):
+Recallk =
+Pk
+i=1 TPi
+Pk
+i=1 TPi + PN
+i=k+1 TPi + FN
+,
+Precisionk =
+Pk
+i=1 TPi
+Pk
+i=1 TPi + Pk
+i=1 FPi
+.
+TPi and FPi indicate the true and false positives in the i-th
+severity band, whereas FN indicates the global false negatives.
+The implementation of the proposed method is publicly
+available on GitHub3. The software is developed in Python
+and was executed on a Windows 11 workstation equipped with
+an Intel® Core™i9-11900K CPU @ 3.50GHz and 32GB of
+3https://github.com/francescovitale/pm based ids rating
+
+TABLE II: The performance of the anomaly-based models for
+each severity band. TPk and FPk represent the isolated alerts
+within that specific band, whereas Recallk and Precisionk are
+cumulative metrics evaluated by passing all traffic from the
+most severe band (k = 1) up to the current threshold k.
+Severity
+Model
+TPk
+FPk
+Recallk (%)
+Precisionk (%)
+Very low
+(k = 5)
+OCSVM
+4±9
+25±3
+100.00±0.00
+99.67±0.01
+AE
+8±11
+8±1
+100.00±0.00
+99.94±0.01
+VAE
+8±11
+11±3
+100.00±0.00
+99.91±0.00
+Low
+(k = 4)
+OCSVM
+81±158
+22±4
+99.97±0.06
+99.85±0.03
+AE
+993±1209
+2±2
+99.94±0.08
+99.99±0.01
+VAE
+2460±403
+3±3
+99.94±0.08
+99.98±0.01
+Medium
+(k = 3)
+OCSVM
+11184±1387
+1±1
+99.40±1.18
+100.00±0.00
+AE
+11036±1981
+0±0
+92.93±8.56
+100.00±0.00
+VAE
+10882±946
+0±0
+82.56±2.77
+100.00±0.00
+High
+(k = 2)
+OCSVM
+2263±1274
+0±0
+20.35±10.97
+100.00±0.00
+AE
+1484±1308
+0±0
+14.92±13.26
+80.00±44.72
+VAE
+586±612
+0±0
+5.64±4.02
+80.00±44.72
+Very high
+(k = 1)
+OCSVM
+616±563
+0±0
+4.35±3.97
+60.00±54.77
+AE
+628±574
+0±0
+4.44±4.05
+60.00±54.77
+VAE
+212±474
+0±0
+1.50±3.35
+20.00±44.72
+RAM. The framework leverages standard machine learning
+and process mining libraries, specifically scikit-learn
+and pm4py.
+C. Results
+Table II shows the performance in terms of TP, FP, recall and
+precision of the anomaly-based models for each severity band.
+As expected, discarding alarms from the high, medium, low
+and very-low severity bands leads to very low recall, achieving
+only up to 4.44% with the AE. This is because only a small
+number of alarms fall into the very-high severity band. To
+improve the overall performance, lower severity bands should
+be included to increase the number of alarms being analyzed.
+For all the models, placing in the low severity band allows
+including the majority of true positives while discarding many
+false positives. For example, by including all alarms down to
+the low severity band and discarding the alarms in the very-
+low severity band, the AE peaks at 99.94% recall and 99.99%
+precision by covering on average 14141 TPs and 2 FPs as
+alarms, and considering 8 TPs and 8 FPs as benign traffic. The
+recall and precision metrics, together with the total share of TP
+and FP percentages, across the different severity bands, related
+to the AE classifier, are shown in Fig. 3. This visualization
+highlights that most TPs fall within the very high, high, and
+medium severity bands, whereas FPs are primarily found in
+the low and very low severity bands.
+The interpretation of the results is backed by the bar plots
+shown in Fig. 4. At the bottom is the process-based explana-
+tion in terms of the mean number of alignments for each band
+associated with the TPs and FPs falling into the severity bands.
+This visualization outlines that TP network flows are much
+less similar to the process-based characterization obtained in
+the training phase, whereas FP network flows, especially those
+falling in the very low severity band, are much more aligned,
+hence more likely to be misclassified. The bar plots at the top
+show the percentages of network flows falling in each severity
+Very High
+High
+Medium
+Low
+Very Low
+Severity Band
+0
+20
+40
+60
+80
+100
+Share of total TP/FP (%)
+TP
+FP
+Precisionk
+Recallk
+0
+20
+40
+60
+80
+100
+Precision / Recall (%)
+Fig. 3: The recall and precision metrics, together with the share
+of total TP and FP percentages, across the different severity
+bands, related to the AE classifier.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+CosSim
+0
+20
+40
+60
+80
+100
+Flow percentages
+Very High High Medium Low Very Low
+Severity
+0
+11
+22
+33
+44
+55
+Alignments
+TP
+FP
+TP
+FP
+Fig. 4: The percentages of TP and FP network flows falling in
+each severity band (top) and the mean number of alignments
+for each band associated with the TPs and FPs falling into the
+severity bands (bottom), related to the AE classifier.
+band according to their CosSim. As expected, TP network
+flows have mostly CosSim figures from 0.0 to 0.75 (very-high
+to medium severity), whereas FP network flows have mostly
+CosSim figures from 0.75 to 1.00 (low to very-low severity).
+In conclusion, the results highlight that the proposed method
+for process-based rating and explanation of anomaly-based
+IDS alerts shows consistent and coherent performance across
+the classifiers, allowing the severity labeling of each alarm
+into discriminative bands.
+
+V. CONCLUSION
+While anomaly-based IDSs employing machine and deep
+learning techniques yield outstanding results, their trustworthi-
+ness remains a critical challenge. Despite numerous XAI pro-
+posals, the literature lacks process-based explanations that con-
+nect IDS decisions to the actual sequencing of network pack-
+ets. To address this gap, we proposed a method for process-
+based explanation and rating of IDS alerts. The method builds
+a process-based characterization of false-positive network
+flows using process mining techniques. During inference, IDS
+alerts are compared against this characterization to evaluate
+their similarity to false positives, effectively distinguishing
+high-severity traffic from likely false alarms. We validated
+our approach using the USB-IDS-TC dataset, focusing on
+various Slowloris DoS attack variants. Results demonstrated
+that our method successfully discriminates between low- and
+very-high-severity alarms while maintaining high detection
+performance.
+In future works, we plan to: 1) expand our method by
+integrating automatic tuning of state-space characterization
+to improve the distinction between false positives and actual
+malicious behavior; 2) extend the sensitivity analysis to a
+broader set of process discovery algorithms and severity band
+thresholds; 3) sharpen the process-based explanations with
+personalized costs for specific misaligned TCP events; 4)
+comparison of our results with other alarm ranking methods;
+5) extend experimentation to other relevant attack datasets to
+strengthen the generalizability of our process-based explana-
+tion; and 6) investigate other network protocols across the
+ISO/OSI stack.

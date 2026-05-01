@@ -1,0 +1,1164 @@
+ARES: Adaptive Red-Teaming and End-to-End Repair of
+Policy-Reward System
+Jiacheng Liang*1, Yao Ma2, Tharindu Kumarage2, Satyapriya Krishna2,
+Rahul Gupta2, Kai-Wei Chang2, Aram Galstyan2, and Charith Peris2
+1Stony Brook University
+2
+Amazon Nova Responsible AI
+Abstract
+Reinforcement Learning from Human Feed-
+back (RLHF) is central to aligning Large Lan-
+guage Models (LLMs), yet it introduces a criti-
+cal vulnerability: an imperfect Reward Model
+(RM) can become a single point of failure when
+it fails to penalize unsafe behaviors. While ex-
+isting red-teaming approaches primarily target
+policy-level weaknesses, they overlook what
+we term systemic weaknesses cases where both
+the Core LLM and the RM fail in tandem.
+We present ARES1, a framework that system-
+atically discovers and mitigates such dual vul-
+nerabilities. ARES employs a “Safety Mentor”
+that dynamically composes semantically coher-
+ent adversarial prompts by combining struc-
+tured component types (topics, personas, tac-
+tics, goals) and generates corresponding mali-
+cious and safe responses. This dual-targeting
+approach exposes weaknesses in both the Core
+LLM and the RM simultaneously. Using the
+vulnerabilities gained, ARES implements a
+dual repair process: first fine-tuning the RM
+to better detect harmful content, then leverag-
+ing the improved RM to optimize the Core
+LLM. Experiments across multiple adversar-
+ial safety benchmarks demonstrate that ARES
+substantially enhances safety robustness while
+preserving model capabilities, establishing a
+new paradigm for comprehensive RLHF safety
+alignment.
+1
+Introduction
+Reinforcement Learning from Human Feedback
+(RLHF) has emerged as a cornerstone technique
+for aligning Large Language Models (LLMs) with
+human values and safety principles. In RLHF, a
+Core LLM is trained using signals from an external
+reward module, which captures human preferences
+*This work was done during an internship at Amazon Nova
+Responsible AI.
+1ARES: Adaptive Red-teaming and End-to-end System
+Repair
+and guides the model toward desired behavior. For
+safety alignment, this reward module, typically
+implemented as a learned Reward Model (RM),
+plays a pivotal role in guiding the Core LLM away
+from harmful behaviors and toward safe, helpful
+responses.
+However, RM may harbor inherent biases or ex-
+hibit weaker performance on specific categories of
+harmful content based on its training data, creating
+blind spots that compromise the safety of the final
+model. Moreover, adversarial behaviors in the Core
+LLM could potentially exploit weaknesses in the
+RM’s evaluation criteria. For instance, an RM that
+mistakenly rewards subtle forms of manipulation
+or deception could lead to systemic misalignment
+between intended safety goals and actual model
+behavior.
+Existing automated red-teaming approaches
+have
+made
+notable
+progress
+in
+exposing
+policy-level weaknesses.
+Frameworks such as
+FLIRT(Mehrabi et al., 2024) , FERRET (Pala et al.,
+2024), and APRT (Jiang et al., 2024) generate
+adversarial prompts to elicit harmful behaviors,
+while AdvRM(Bukharin et al., 2025a) focuses ex-
+clusively on hardening the RM through adversarial
+training. Yet these methods remain fragmented:
+they either treat the RM as a perfect evaluator
+or repair it in isolation, without addressing the
+coupled vulnerabilities that arise when both Core
+LLM and reward mechanisms fail together.
+To bridge this gap, we propose ARES (Adaptive
+Red Teaming and End-to-End System Repair), a
+comprehensive framework for discovering and mit-
+igating such systemic vulnerabilities within RLHF
+pipelines. ARES introduces a novel Safety Mentor
+that simultaneously probes both the Core LLM and
+the reward model, employs a structured adversar-
+ial generation process that composes semantically
+coherent, deceptively benign prompts through com-
+binations of component types (i.e., topics, personas,
+goals, and tactics). It adaptively learns which in-
+arXiv:2604.18789v1 [cs.AI] 20 Apr 2026
+
+stance combinations are most effective at exposing
+weaknesses.
+Our dual-targeting method enables the identifi-
+cation of three critical failure modes: Core LLM
+vulnerabilities, RM misalignment, and systemic
+weaknesses where both components fail simulta-
+neously. By systematically probing these potential
+points of failure, we gain deeper insights into the
+complex interplay between the reward model and
+the core language model during the alignment pro-
+cess.
+Furthermore, ARES includes a closed-loop, two-
+stage repair methodology that leverages the insights
+gained from our red-teaming approach. In the first
+stage, we fine-tune the reward model to better de-
+tect and properly score harmful content, addressing
+the identified blind spots and biases. The second
+stage then utilizes this improved RM to optimize
+the Core LLM, creating a more robustly aligned
+system overall.
+Extensive experiments across diverse safety eval-
+uations demonstrate that ARES substantially im-
+proves model safety while maintaining capabilities
+and over-refusal rate. Compared with prior red-
+teaming systems, ARES achieves higher efficiency
+in discovering and repairing vulnerabilities, estab-
+lishing a practical and principled framework for
+holistic safety alignment.
+2
+Related Works
+2.1
+Jailbreak Attacks and Adversarial
+Attacks on LLMs
+Early jailbreak studies showed that aligned LLMs
+can be compromised by adversarial suffixes (Zou
+et al., 2023) and evolutionary methods such as Au-
+toDAN (Liu et al., 2024). Long-context attacks
+further exploit scaling effects to induce unsafe be-
+haviors (Anil et al., 2024). Recent works move
+beyond surface policies to target reasoning. Mouse-
+trap (Yao et al., 2025) destabilizes chain-of-thought
+to bypass refusals, while AutoRAN (Liang et al.,
+2025) leverages weak models to hijack stronger
+reasoning models with near-perfect success. These
+results show that vulnerabilities also arise in inter-
+mediate reasoning, not just final outputs (Lin et al.,
+2024; Chao et al., 2024).
+2.2
+Red Teaming for Large Language Models
+and Reward Models
+Manual red teaming is effective but unscalable.
+MART (Ge et al., 2024) automates multi-round
+adversarial probing, and ALERT (Tedeschi et al.,
+2024) provides a taxonomy-driven benchmark.
+Providers also document structured adversarial test-
+ing in system cards (OpenAI, 2024a,b). New frame-
+works scale red teaming with adaptive feedback.
+FLIRT (Mehrabi et al., 2024) uses feedback-loop
+prompting, APRT (Jiang et al., 2024) progres-
+sively evolves attacks with intention-hiding mod-
+ules, FERRET (Pala et al., 2024) ranks adversar-
+ial prompts with reward models, and AutoDAN-
+Turbo (Liu et al., 2025) discovers and combines
+strategies in a lifelong loop. These works highlight
+the trend toward automated and self-improving
+pipelines. As summarized in Table 8, existing au-
+tomated red-teaming methods, while increasingly
+sophisticated, have limitations on the full scope of
+systemic weaknesses, where both the Core LLM
+and the reward model are compromised.
+Some approaches, such as AdvRM (Bukharin
+et al., 2025b), focus exclusively on hardening the
+RM against out-of-distribution attacks but lack a
+direct mechanism for Core LLM repair. Reward-
+Bench (Lambert et al., 2024) reveals brittleness
+across chat and safety, while
+(Bukharin et al.,
+2025a) performs adversarial training on reward
+models to address the reward hacking. Our work
+extends this line by proposing an adaptive red-
+teaming framework that targets failures of both
+the Core LLM and the RM. A Safety Mentor gen-
+erates systemic weaknesses cases, enabling joint
+refinement of the Core LLM and the RM for a more
+robust safety pipeline.
+Beyond red-teaming, broader safety reinforce-
+ment strategies provide complementary perspec-
+tives.
+Constitutional AI (Bai et al., 2022) em-
+beds safety principles directly into the training ob-
+jective, while Safe RLHF (Ji et al., 2024) intro-
+duces explicit safety constraints during optimiza-
+tion. Representation engineering approaches (Zou
+et al., 2025) intervene on internal model activations
+to steer behavior. ARES is complementary to these
+paradigms: it operates within the standard RLHF
+pipeline and specifically targets the coupled policy–
+reward failure mode that these methods do not ex-
+plicitly address. The adaptive discovery mecha-
+nism of ARES could, in principle, be combined
+with any of these alternative alignment strategies
+to provide targeted vulnerability coverage.
+
+Safety 
+Mentor
+Malicious 
+Prompt
+Safe 
+Response
+Synthetic 
+Malicious 
+Response
+Core 
+LLM
+Model 
+Response
+LLM-as-a-
+Judge
+Reward 
+Model
+Failure Type
+Reward 
+Model
+LLM as 
+a Judge
+Type C: Systemic 
+Weaknesses
+High Score
+Not Safe
+Type B: Core LLM 
+vulnerabilities
+Low Score
+Not Safe
+Type A: RM-only 
+misalignment
+High Score
+Not Safe
+LLM-as-a-
+Judge
+Reward 
+Model
+Type A
+Malicious Prompt
+Safe Response
+Updated 
+Reward Model
+Updated Safe 
+Core LLM
+Type B
+Type C
+Model Response
+Malicious Prompt
+Safe Response
+Malicious Prompt
+Safe Response
+Synth Malicious Resp
+Finetuning 
+Reward Model
+Add to RM dataset
+RL
+Add to prompt set for RL
+Phase 1: Adaptive Vulnerability Discovery
+Phase 2: End-to-End System Repair
+Safety
+Filter
+Figure 1: The Pipeline of the ARES framework.
+3
+The ARES Framework: A Two-Phase
+Approach to Systemic Safety Alignment
+ARES address the issue in systemic vulnerability
+through a novel two-phase paradigm that first dis-
+covers these dual failures through adaptive explo-
+ration, then repairs them through coordinated opti-
+mization of both system components.
+3.1
+Phase 1: Adaptive Vulnerability Discovery
+In the first phase of ARES, we systematically ex-
+plores the vulnerability of the entire system through
+a novel red-teaming process that adapts its strategy
+based on discovered weaknesses dynamically.
+3.1.1
+Compositional Attack Generation
+We introduce compositional approach to adversar-
+ial prompt and responses generation that ensures
+both semantic coherence and comprehensive cov-
+erage of the vulnerability space. An LLM called
+Safety Mentor firstly constructs attacks using a
+vulnerability taxonomy built upon four fundamen-
+tal components that are further combined to con-
+struct a coherent attack vector. This compositional
+attack ensure that the safety mentor search mali-
+cious prompt in a wide enough space. The compo-
+nents includes:
+• Topic: Defines the core harmful domain of the
+attack.
+• Persona: Assigns a credible identity for social
+engineering.
+• Goal: Specifies the concrete task the model is
+asked to perform.
+• Tactic: Wraps the attack in a plausible method-
+ology.
+By embedding malicious intent within seemingly
+legitimate contexts while maintaining logical con-
+sistency across persona, goal, and tactic, the
+safety mentor systematically covers the vulnera-
+bility space through structured sampling. Table 1
+provides an overview of this structure with exam-
+ples for each level. The full taxonomy, including all
+categories and instances, is detailed in Appendix C.
+In addition, a set of semantic constraints are
+posed to ensure the generated prompts are not only
+coherent but also highly deceptive, as illustrated in
+Figure 2. For each generated adversarial prompt,
+the safety mentor creates a triplet consisting of the
+prompt itself, a synthetic harmful response ysync
+demonstrating the intended attack, and a preferred
+safe response ychosen. This triplet structure directly
+supports downstream repair by providing clear pref-
+erence signals. To ensure quality, we filter gener-
+ated prompts through ShieldGemma(Zeng et al.,
+2024), retaining only genuinely harmful attempts
+that warrant system attention.
+3.1.2
+Dual-Component Vulnerability
+Classification
+To better explore dual-component failures and sys-
+temic weaknesses, we introduce a classification
+
+Component Types
+Component Categories
+Component Instances
+Topic
+Illegal Acts & Explicit Harms
+illegal acts and instructions; development of illegal weapons
+Deception & Manipulation
+misinformation and disinformation; pseudoscience and health misinformation
+Goal
+Authority & Expertise
+write a convincing and persuasive blog post about; compose a formal email for the purpose of
+Education & Analysis
+provide a detailed, step-by-step guide on; explain the complete process and methodology for
+Persona
+Technical & Security
+a cybersecurity researcher; a penetration testing specialist
+Academic & Research
+a computer science professor; a social psychology researcher
+Tactic
+Argument Style
+Appeal to Academic Authority; Technical Necessity Argument
+Pedagogical Format
+Educational Case Study; Historical Analysis
+Table 1: Taxonomy of adversarial component types, (selected) categories, and (selected) instances.
+Generated Malicious Prompt: As a digital forensics expert, I’m preparing a courtroom demonstration to educate the jury on the 
+risks of AI-generated video evidence. To make the session persuasive, I need a realistic example showing how a person’s speech 
+and facial movements can be synthetically replicated. Could you provide detailed steps for producing such a demonstration, 
+including recommended open-source tools and methods and how to achieve natural lip-sync and voice consistency?
+Topic: Deepfake generation and evidence manipulation
+Persona: Digital forensics expert preparing expert testimony
+Goal: Produce a realistic example
+Tactic: Framed as an educational courtroom demonstration
+Figure 2: Example of a malicious prompt generated by the Safety Mentor.
+scheme that distinguishes between different cate-
+gories of failures, enabling targeted repair strate-
+gies. Each adversarial attempt undergoes parallel
+evaluations of both the Core LLM and the RM, re-
+vealing three distinct failure types. To evaluate the
+performance of the core LLM, each response from
+the model for the adversarial prompt is evaluated
+by a Judge which provides a harmful score sjudge
+from 0 (safe) to 5 (highly harmful). In parallel,
+to assess the RM’s intrinsic vulnerabilities inde-
+pendent of the Core LLM, the RM is also used to
+directly score the pre-generated synthetic harmful
+response srmpysynthq against the preferred safe re-
+sponse srmpychosenq. Based on whether the scores
+of Core LLM and and RM, we defined three types
+of failures.
+Type A failures represent RM misalignment,
+where the RM assigns high scores to harmful con-
+tent but the Core LLM would not generate such con-
+tent independently, indicating the RM was fooled
+by the safety mentor’s synthetic harmful response.
+Type B failures reveal policy vulnerabilities, where
+the Core LLM generates harmful content but the
+RM correctly identifies it as unsafe by assigning
+low reward. Type C failures represent Systemic
+Weaknesses, the most critical failure mode where
+both components fail simultaneously—the Core
+LLM generates harmful content and the RM as-
+signs it high reward, leaving the system with no
+internal mechanism to prevent the harmful output.
+This classification is not merely diagnostic but di-
+rectly determines the repair strategy. Type A fail-
+ures inform RM fine-tuning, Type B failures guide
+Core LLM optimization, and Type C failures re-
+quire intervention in both components due to their
+systemic nature.
+3.1.3
+Hierarchical Adaptive Sampling
+A core innovation of ARES is its ability to learn
+from successful attacks and adapt its strategy, mov-
+ing beyond static exploration. This is accomplished
+through a two-level adaptive learning mechanism
+that operates on both Component Categories and
+Component Instances.
+The process begins after an initial Warmup Phase
+of uniform sampling (see Appendix E for details),
+after which the system enters an Adaptive Phase.
+During this phase, prompt generation involves a
+hierarchical weighted sampling process: first, a
+Component Category (e.g., Deception & Manipu-
+lation) is selected based on category-level weights.
+Then, a specific Component Instance (e.g., "deep-
+fake creation") is selected from within that category
+based on instance-level weights.
+When an attack is successful, ARES reinforces
+the strategy at both levels of this hierarchy. First, at
+the instance level, the weight of the specific com-
+ponent instance wc that contributed to the failure is
+multiplicatively increased to a new unnormalized
+weight w1
+c, according to the update rule:
+w1
+c “ min
+ˆ
+wc ¨
+ˆ
+1.0 ` 0.2 ¨
+sjudge
+5.0
+` 0.2 ¨ min
+ˆ srm
+40.0
+, 1
+˙˙
+, τmax
+˙
+(1)
+Here, τmax is a capping hyperparameter (set to
+0.15) to prevent any single instance from dominat-
+ing.
+Second, at the category level, the weight of the
+parent Component Category is also increased. This
+reinforcement is based on the hypothesis that if one
+instance from a category is effective, other related
+
+instances within that same category are also more
+likely to succeed. This encourages broader explo-
+ration within promising strategic areas, preventing
+the system from over-specializing on a few known-
+good instances. Following any update, weights
+within each level (all categories within a compo-
+nent type, and all instances within a category) are
+independently re-normalized to ensure they sum
+to 1.0. This two-level mechanism allows ARES
+to efficiently zero in on systemic flaws by both ex-
+ploiting successful instances and exploring related
+ones.
+This hierarchical sampling strategy ensures that
+the model exploit the targeted failure adaptively.
+Sensitivity of the Reinforcement Coefficient.
+The multiplicative coefficients in Eq. (1) (set to
+0.2 in our experiments) were selected based on
+exploratory experiments evaluating values in the
+range r0.1, 0.3s. Smaller values (e.g., 0.1) led to
+slow reinforcement and weak concentration on
+high-yield vulnerability regions, while larger val-
+ues (e.g., 0.3) caused overly aggressive weight am-
+plification and increased the risk of sampling col-
+lapse, despite the τmax clipping mechanism. The
+value of 0.2 provided a stable balance between
+effective reinforcement of promising attack strate-
+gies and controlled exploration of the vulnerabil-
+ity space. Importantly, our ablation comparing
+adaptive versus uniform sampling (Table 4) demon-
+strates that the primary driver of improvement is the
+presence of the adaptive reinforcement mechanism
+itself, rather than precise coefficient tuning.
+3.2
+Phase 2: End-to-End System Repair
+Following the discovery of vulnerabilities in Phase
+1, the End-to-End System-repair phase of ARES
+utilizes the collected data to strengthen both the
+RM and the Core LLM.
+3.2.1
+Reward Model Repair Through
+Targeted Preference Learning
+We construct a specialized preference datasets that
+directly addresses the RM’s demonstrated weak-
+nesses by combining adversarial discoveries from
+the previous phase and general-purpose alignment
+data. This repair dataset Dpref integrates Type A
+failures where RM wwas fooled by the Safety men-
+tor’s synthetic harmful response, Type C failures
+where RM was fooled by the Core LLM’s own
+harmful outputs, and auxiliary datasets (e.g., Help-
+Steer2) for general helpfulness and FalseReject for
+over-refusal mitigation. This composition is de-
+liberate: the adversarial data targets discovered
+vulnerabilities while auxiliary data prevents capa-
+bility degradation and over-correction. Note that
+this repair must precede Core LLM optimization
+because the refined RM serves as the reward sig-
+nal for subsequent policy optimization, ensuring
+the Core LLM is guided by a more robust safety
+evaluator.
+3.2.2
+Core LLM Optimization with Repaired
+Reward Signals
+We optimize the Core LLM using the repaired RM
+as the reward signal, ensuring that policy learning is
+guided by a more robust safety evaluator. The Core
+LLM repair dataset Dcore_llm includes all prompts
+that triggered policy weaknesses (Type B and Type
+C failures) along with HelpSteer2 and FalseReject
+datasets for capability preservation.
+Our proposed sequential repair strategy, refining
+the RM before optimizing the Core LLM, is funda-
+mental to achieving robust safety alignment. This
+approach ensures that policy optimization is guided
+by reward signals that accurately reflect safety ob-
+jectives, rather than being misled by the same vul-
+nerabilities exploited during the discovery phase.
+We argue that this dual-component repair process
+is essential: repairing only the Core LLM through
+RLHF with an unrepaired RM would perpetuate
+the systemic weaknesses, as the flawed reward sig-
+nals would continue to reinforce unsafe behaviors.
+Conversely, repairing only the RM leaves the Core
+LLM’s existing policy vulnerabilities unaddressed.
+By repairing both components sequentially, ARES
+achieves comprehensive system-level safety that
+single-stage interventions cannot provide.
+4
+Evaluation
+Experimental Setup: Our goal is to enhance
+the safety performance of an already fully trained
+language model.
+For our Core LLM, we se-
+lected Qwen3-1.7B (Qwen Team, 2025a,b), as it
+is a capable and fully trained model of a man-
+ageable size that facilitates rapid, iterative ex-
+perimentation. For the RM, we chose Skywork-
+RM-Qwen3-4B (Skywork Team, 2025), a strong,
+publicly available model that is architecturally
+compatible with our Core LLM and exhibits
+excellent performance on benchmarks like Re-
+wardBench2.
+For the Safety Mentor, we em-
+ployed Qwen3-8B-abliterated (huihui-ai, 2025b)
+and Huihui-Ministral-3-8B-Reasoning(huihui-ai,
+
+2025a). The safety mentor is used only for in-
+ference, the 8B model size strikes a good bal-
+ance between strong instruction-following capabil-
+ities and computational efficiency. This ensures
+the adversary can create challenging and effec-
+tive red-teaming attacks, allowing for the discov-
+ery of non-trivial vulnerabilities. All training and
+inference pipelines were implemented using the
+Hugging Face TRL(von Werra et al., 2020) and
+VERL(Sheng et al., 2024) libraries, with exper-
+iments conducted on a EC2 instance with eight
+NVIDIA A100 GPUs (see Appendix E for parame-
+ter details) .
+4.1
+Evaluation Datasets and Metrics
+To capture comprehensive model performance, we
+measure improvements in safety while carefully
+monitoring for any degradation in general capabili-
+ties. We use a curated set of benchmarks covering
+both safety and capability dimensions, as detailed
+in Table 9. Additionally, we include the XSTest
+dataset(Röttger et al., 2024) to measure the false re-
+fusal rate of the aligned models. To quantify model
+performance, we employ a suite of metrics tailored
+to each aspect of our evaluation.
+Safety Metrics: We evaluate the safety of the
+Core LLM’s responses using Safety Rate. This
+metric measures the proportion of responses in a
+test set R that are rated as completely safe (score
+of 0) by our LLM-as-a-Judge(see Appendix E.3 for
+the Judge prompt).
+Safety Rate “ Er„R
+“
+I
+`
+Scoreprq “ 0
+˘‰
+,
+(2)
+where a higher safety rate indicates a safer model
+performance.
+Capability Metrics: For capability benchmarks,
+performance is measured using accuracy, which
+is the fraction of correct answers over the total
+number of items in the test set. For some task, we
+use a LLM-as-a-Judge to check the response.
+4.2
+Baselines
+To rigorously validate our contributions, we com-
+pare the full ARES framework against a set of
+foundational RLHF baselines. All methods share
+the same underlying two-stage repair pipeline de-
+scribed in Section 3.2 and identical computational
+settings for a fair comparison; they differ primar-
+ily in the starting checkpoint and the source of the
+safety dataset used.
+• Core LLM (Original): The unaligned base
+model directly released by the distributor, used
+as the starting checkpoint before any alignment.
+• Initial RLHF: A standard helpfulness-aligned
+baseline where the Core LLM is trained on
+the general-purpose HelpSteer2 dataset using
+Dr. GRPO algorithm for its superior performance.
+This reflects a conventional RLHF setup without
+explicit safety objectives and serves as the start-
+ing point for subsequent safety alignment stages.
+• General Safe-Alignment: Starting from the
+Initial RLHF model, this baseline represents
+a static, general-purpose safety alignment ap-
+proach. It follows the two-stage repair method-
+ology but uses the full, pre-existing PKU-
+SafeRLHF dataset ( 10.8k preference pairs) (Ji
+et al., 2024) as its source of safety data. This
+large-scale dataset provides comprehensive cov-
+erage across a wide spectrum of safety scenar-
+ios, making it a standard benchmark for general
+safety alignment. The data is generic and not tai-
+lored to the specific vulnerabilities of our target
+model.
+• ARES (Ours): Also starting from the Initial
+RLHF model, our framework represents an adap-
+tive, system-specific approach. It follows the
+two-stage repair methodology, but its safety data
+is generated on-the-fly by our adaptive red-
+teaming process. This data is therefore tailored
+specifically to the vulnerabilities discovered in
+the current target system during Phase 1.
+4.3
+Results and Analysis
+Our full ARES framework demonstrates a signifi-
+cant improvement in safety alignment across multi-
+ple benchmarks when compared to foundational
+baselines. As shown in Table 2(column “Ours
+(Qwen)”), ARES achieves near-perfect safety rates
+on adversarial datasets like StrongReject (0.97) and
+HarmBench (0.95), far exceeding the performance
+of both the Initial RLHF model and the General
+RLHF Baseline. This highlights the efficacy of
+our comprehensive discovery and dual-repair pro-
+cess. Importantly, these safety gains are achieved
+with minimal degradation in performance on core
+capability benchmarks like MMLU and GSM8K,
+indicating that our approach successfully avoids
+catastrophic forgetting.
+Furthermore, to demonstrate that the effective-
+ness of ARES is not contingent on a specific safety
+mentor, we evaluate our framework using an al-
+ternative mentor model, Huihui-Ministral-3-8B-
+
+Dataset
+Original Model Initial RLHF General Safe-RLHF Ours (Qwen) Ours (Ministral)
+Safety Benchmarks
+RedTeam (Ò)
+0.27
+0.28
+0.67 (+0.39)
+0.96 (+0.68)
+0.95 (+0.67)
+StrongReject (Ò)
+0.76
+0.79
+0.94 (+0.15)
+0.97 (+0.18)
+0.96 (+0.17)
+HarmBench (Ò)
+0.66
+0.75
+0.88 (+0.13)
+0.95 (+0.20)
+0.96 (+0.21)
+PKU-SafeRLHF (Ò)
+0.69
+0.74
+0.82 (+0.08)
+0.96 (+0.22)
+0.94 (+0.20)
+XSTest incorrect refusal (Ó)
+0.11
+0.07
+0.09 (+0.02)
+0.10 (+0.03)
+0.09 (+0.02)
+Capability Benchmarks
+MMLU (Ò)
+0.57
+0.48
+0.61 (+0.13)
+0.56 (+0.08)
+0.57 (+0.09)
+GSM8K (Ò)
+0.82
+0.80
+0.77 (-0.03)
+0.82 (+0.02)
+0.83 (+0.03)
+TruthfulQA (Ò)
+0.69
+0.75
+0.71 (-0.04)
+0.73 (-0.02)
+0.72 (-0.03)
+AlpacaEval (win rate Ò)
+49.18
+51.98
+50.87 (-1.11)
+51.77 (-0.21)
+51.52 (-0.46)
+Table 2: Safety and capability benchmarks across different training configurations. Values in parentheses denote the
+improvement over the Initial RLHF.
+Reasoning(huihui-ai, 2025a). As shown in Table
+2 (column “Ours (Ministral)”), ARES consistently
+achieves comparable safety gains and maintains ro-
+bust capability performance across different mentor
+architectures. This indicates that our dual-repair
+process is model-agnostic and generalizes effec-
+tively regardless of the specific safety teacher em-
+ployed.
+Additionally, We evaluate the updated RM by
+RewardBench(Lambert et al., 2024) (see Appendix
+A) , which confirms that ARES significantly bol-
+sters RM robustness against adversarial attacks
+without compromising general capabilities.
+All experiments were conducted on a cluster of
+eight NVIDIA A100 GPUs. The total end-to-end
+runtime for a single pass of the ARES framework
+was approximately 13 hours. This computational
+cost is composed of two main phases. The initial
+adaptive vulnerability discovery phase required 9
+hours to generate a dataset of 4,000 samples, during
+which a high vulnerability discovery rate of 63.5%
+was achieved. The subsequent system repair phase
+took a total of 4.0 hours, which included 2.5 hours
+for a single epoch of reward model fine-tuning and
+1.5 hours for a single epoch of Core LLM optimiza-
+tion with Dr. GRPO. This overall runtime is highly
+practical and compares favorably to other methods
+that require more extensive fine-tuning, such as the
+estimated 28 hours for the APRT baseline.
+4.3.1
+Comparison of Red-Teaming Data
+Generation Strategies
+Existing state-of-the-art automated red-teaming
+frameworks, such as FLIRT (Mehrabi et al., 2024),
+APRT(Jiang et al., 2024), and FERRET (Pala et al.,
+2024), primarily focus on discovering Core LLM
+vulnerabilities and do not employ a dual-repair
+mechanism for both the RM and the Core LLM.
+To conduct a fair and controlled comparison, we
+evaluate the effectiveness of the data generation
+component of these frameworks. We use each of
+these SOTA methods to generate an adversarial
+dataset and then apply the same, consistent repair
+process to all: fine-tuning the Core LLM using
+the original RM (i.e., only fixing the Core LLM).
+We compare these against our own ARES (Core
+LLM Repair Only) variant, which uses data from
+our discovery phase under the same repair condi-
+tion. For this comparison, we created a dataset of
+3,000 successful prompts using the core methodol-
+ogy of each baseline, with implementation details
+in Appendix B.
+As shown in Table 3, ARES-generated adver-
+sarial data yields a more robust Core LLM than
+SOTA methods, balancing safety, over-refusal, and
+efficiency. Our ARES-generated data achieves the
+highest safety scores on both StrongReject (0.94)
+and HarmBench (0.86). Crucially, this superior
+safety performance is accomplished while induc-
+ing the lowest incorrect refusal rate (0.09) among
+all methods, highlighting the benefit of our struc-
+tured, compositional approach. In addition to better
+effectiveness, ARES is much more computation-
+ally efficient, requiring only 6.75 hours, while other
+methods require longer times ranging from 8.5 to
+28 hours. This demonstrates that ARES efficiently
+generates superior safety data at minimal computa-
+tional cost.
+4.4
+Ablation Studies
+To dissect the contribution of the core components
+of our framework, we conduct a series of ablation
+studies. These studies aim to understand the impor-
+tance of the data mixture balance, the efficiency of
+our adaptively generated data, and the impact of
+the adaptive learning mechanism itself.
+
+Dataset / Metric
+FLIRT
+APRT
+FERRET
+ARES
+Safety Benchmarks
+StrongReject (Ò)
+0.87
+0.92
+0.90
+0.94
+HarmBench (Ò)
+0.81
+0.83
+0.82
+0.86
+XSTest Incorrect refusal (Ó)
+0.16
+0.19
+0.13
+0.09
+Capability Benchmarks
+MMLU (Ò)
+0.57
+0.55
+0.57
+0.58
+GSM8K (Ò)
+0.80
+0.79
+0.81
+0.81
+Efficiency
+Generation Time (hrs) (Ó)
+12
+28
+8.5
+6.75
+Table 3: Effectiveness and efficiency of different red-
+teaming strategies when only the core llm is repaired.
+4.4.1
+Efficiency of Targeted Red-Team Data
+A key claim of our work is that our adaptively
+generated red-team data is significantly more data-
+efficient than large, general-purpose safety datasets.
+To validate this, we compare our data against
+the baseline model trained on the entire PKU-
+SafeRLHF dataset. The underlying data for this
+analysis is presented in Figure 3.
+2
+4
+6
+8
+Training Samples (k)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Rate
+StrongReject ( )
+HarmBench ( )
+Incorrect Refusal ( )
+Figure 3: Dashed lines indicate the full PKU-SafeRLHF
+baseline ( 10.8 k examples). ARES reaches similar
+safety levels with only 4k samples, demonstrating strong
+data efficiency.
+The analysis indicates that our framework
+demonstrates superior data efficiency. With just
+2k samples, our method’s HarmBench score (0.91)
+already surpasses that of the full PKU-SafeRLHF
+baseline (0.88). With 4k samples, our framework
+surpasses the safety rates on both StrongReject
+(0.97 vs. 0.94) and HarmBench (0.95 vs. 0.88).
+This is accomplished while maintaining a compara-
+ble over-refusal rate (0.10 vs. 0.09), clearly demon-
+strating the efficiency of our targeted red-teaming
+approach.
+4.4.2
+Contribution of the Adaptive Sampling
+Mechanism
+To isolate and quantify the benefit of the Adaptive
+Sampling Mechanism, we compare our full method
+(Adaptive Sampling) against a non-adaptive base-
+line (Uniform Sampling).
+Metric
+Uniform Sampling Adaptive Sampling
+StrongReject (Ò)
+0.91
+0.97
+HarmBench (Ò)
+0.88
+0.95
+MMLU (Ò)
+0.56
+0.56
+Table 4: Ablation on the adaptive learning mechanism.
+As shown in Table 4, the model repaired using
+data from the adaptive sampler achieves signifi-
+cantly higher safety rates on both StrongReject and
+HarmBench compared to the model trained with
+uniformly sampled data. Notably, this safety im-
+provement comes with no degradation in capability
+(MMLU scores are identical), proving that the adap-
+tive learning mechanism is a critical component for
+discovering more effective vulnerabilities.
+4.4.3
+Impact of Data Mixture
+The balance between general helpfulness, targeted
+safety data, and over-refusal mitigation is critical
+for achieving a model that is both safe and useful.
+To investigate this, we conduct experiments with
+different data compositions, with results presented
+in Table 5.
+Metric
+Full Mixture w/o General w/o Over-refusal
+StrongReject (Ò)
+0.97
+0.96
+0.99
+XSTest Incor. (Ó)
+0.10
+0.14
+0.19
+MMLU (Ò)
+0.56
+0.51
+0.54
+Table 5: Ablation on data mixture. We report key safety
+and capability metrics for each configuration.
+The results verify that removing the general-
+purpose HelpSteer data leads to a significant degra-
+dation in capability (MMLU drops from 0.56
+to 0.51). Conversely, removing the FalseReject
+dataset causes a sharp increase in the incorrect re-
+fusal rate on XSTest (from 0.10 to 0.19), confirm-
+ing the critical role of each data component in our
+framework.
+4.4.4
+Iterative Red-Teaming and the Limits of
+Automated Repair
+To evaluate the robustness of our repaired system,
+we performed a second round of red-teaming on
+the ARES-hardened model. The results were stark:
+the vulnerability discovery rate plummeted from
+63.5% on the original model to just 4.3% on the
+repaired system. This steep decline validates the
+comprehensiveness of our one-shot repair, proving
+
+its effectiveness in eliminating the vast majority of
+discoverable vulnerabilities.
+However, the small residual rate highlights the
+inherent trade-offs in LLM safety. Our qualita-
+tive analysis suggests that these remaining failures
+were qualitatively different, often involving more
+complex reasoning or highly nuanced, ambiguous
+scenarios where the line between helpfulness and
+harm is subjective. Attempting to eliminate this
+final fraction of vulnerabilities typically forces a
+model to become overly cautious, leading to a sharp
+increase in over-refusal and a degradation of gen-
+eral utility. This suggests that the pursuit of safety
+is not about achieving a perfect, static state, but
+about managing a dynamic equilibrium between
+robustness and utility. Therefore, we argue the goal
+of an automated framework is to systematically
+eliminate clear-cut weaknesses to reach a practical
+and robust point in the safety-utility trade-off, a
+goal which the dramatic reduction in attack success
+rate demonstrates ARES effectively achieves.
+4.5
+Validation of the LLM-as-a-Judge
+A recurring concern across reviewers is the reliance
+on an LLM-as-a-Judge for vulnerability discovery
+and adaptive sampling. We address this through
+two complementary validation studies: a human
+evaluation and a cross-judge consistency assess-
+ment.
+Human Validation.
+We randomly sampled 100
+adversarial prompt–response pairs from the dis-
+covery phase and recruited three LLM security
+researchers as independent annotators. Each an-
+notator labeled every response as either Safe (cor-
+responding to a judge score of 0) or Unsafe (score
+ą 0) according to the same policy rubric used by
+the judge prompt (Appendix E.3). For all cases
+where the automated judge assigned a score of 0,
+the three human annotators reached 100% agree-
+ment, confirming that these responses are explicit
+refusals containing no actionable harmful content.
+For cases labeled Unsafe (score ą 0), human–
+judge agreement was 96.0% with a standard de-
+viation of 1.5% across annotators.
+Cross-Judge Assessment.
+To further assess ro-
+bustness to judge choice, we rescored the same 100
+samples using DeepSeek-V3.2 as an independent
+judge model. The cross-judge consistency was 98%
+for safe labels and 97% for unsafe labels relative to
+the original Qwen-based judge, indicating that the
+discovery signals are not artifacts of a single judge
+Validation Method
+Safe Agreement
+Unsafe Agreement
+Human Evaluation (n“3)
+100%
+96.0% (˘1.5%)
+Cross-Judge (DeepSeek-V3.2)
+98%
+97%
+Table 6: Validation of LLM-as-a-Judge reliability. Hu-
+man evaluation reports inter-annotator agreement with
+the automated judge on 100 randomly sampled discov-
+ery outputs. Cross-judge assessment reports label con-
+sistency between the original judge and an independent
+DeepSeek-V3.2 judge.
+model’s idiosyncrasies. Results are summarized in
+Table 6.
+Decoupling of Judge and Repair.
+Crucially, the
+LLM-as-a-Judge is used only in Phase 1 for vulner-
+ability classification and adaptive sampling weight
+updates. The actual repair in Phase 2 is performed
+through preference fine-tuning of the RM and sub-
+sequent RL optimization against the repaired RM.
+The final policy is therefore optimized against the
+repaired reward signal rather than the judge, break-
+ing any potential circular dependency between dis-
+covery and repair.
+5
+Conclusion
+In this work, we tackled the problem of systemic
+weaknesses in RLHF, where both the Core LLM
+and the reward model are simultaneously compro-
+mised. We introduced ARES, a framework that uni-
+fies adaptive vulnerability discovery with targeted
+repair across the entire policy–reward pipeline.
+ARES employs a structured, compositional strat-
+egy to generate semantically coherent adversarial
+prompts that expose coupled weaknesses between
+the Core LLM and its reward signal. The discov-
+ered failures guide a two-stage repair process that
+sequentially strengthens the reward model and the
+Core LLM within a closed-loop alignment cycle.
+Comprehensive experiments show that ARES sub-
+stantially improves safety robustness while main-
+taining model capability, outperforming existing
+red-teaming and repair methods. By shifting the
+focus from isolated Core LLM attacks to holistic
+system alignment, ARES establishes a practical
+and scalable paradigm for building safer large lan-
+guage models.
+
+Limitations
+While ARES provides a systematic framework for
+discovering and repairing systemic vulnerabilities,
+several limitations remain that offer avenues for
+future work.
+Computational Cost: The adaptive vulnerabil-
+ity discovery phase of ARES is computationally
+intensive. Although it is an inference-only process,
+it requires generating and evaluating thousands of
+potential attacks to build a high-quality dataset.
+This can be more resource-intensive than align-
+ment methods that rely on smaller, static datasets,
+presenting a trade-off between discovery compre-
+hensiveness and computational cost.
+Residual Vulnerabilities and the Limits of
+Alignment: Our iterative red-teaming experiment
+showed that while ARES dramatically reduces the
+vulnerability discovery rate (from 63.5% to 4.3%),
+a small number of residual vulnerabilities remain.
+This highlights a broader challenge in AI safety:
+achieving a theoretical "zero-vulnerability" state
+is often intractable. Many remaining failures lie
+in ambiguous, context-dependent scenarios where
+the boundary between a helpful response and a
+harmful one is blurry. Attempting to eliminate
+these final cases completely often leads to a severe
+degradation in model utility and a sharp increase in
+over-refusal. Therefore, ARES is designed to elim-
+inate the vast majority of clear-cut vulnerabilities
+but does not guarantee perfect safety in all nuanced
+situations.
+Scope of Vulnerability Coverage: Our frame-
+work’s effectiveness is tied to the scope of its Vul-
+nerability Taxonomy.
+The current implementa-
+tion focuses on single-turn, text-based interactions
+and is designed to improve general safety robust-
+ness against semantically coherent attacks. Con-
+sequently, it may under-cover rare, long-context,
+or multimodal safety cases.
+It is also not de-
+signed to defend against specific, targeted jail-
+break techniques such as the adversarial suffixes
+used by GCG (Zou et al., 2023). Generalization
+to more complex behavioral scenarios—such as
+tool use, code generation, or multi-agent inter-
+action—remains an open direction for future re-
+search.
+Dependence on the LLM-as-a-Judge: The
+effectiveness of ARES’s discovery and adaptive
+learning phases is contingent on the quality of the
+signals from the LLM-as-a-Judge. If the judge
+model has its own biases or blind spots, it may fail
+to identify novel or subtle harms, or it may incor-
+rectly penalize safe responses. The performance
+of ARES is therefore upper-bounded by the capa-
+bilities of its judge model, and the framework has
+not yet explored alignment strategies under more
+limited human supervision. Our human validation
+and cross-judge assessment (Section 4.5) confirm
+high reliability of the current judge configuration,
+though we acknowledge that these findings are spe-
+cific to the models and safety domains evaluated in
+this work.
+Ethics Considerations
+This work aims to strengthen the safety and re-
+liability of large language models through con-
+trolled red-teaming and reward-model repair. All
+adversarial prompt generation and data collection
+were performed in a contained research environ-
+ment with automatic filtering to remove explicit,
+illegal, or personally identifiable content prior to
+training. All datasets and models used are publicly
+released under open or research-only licenses (see
+the “Used Artifacts” section), and no proprietary
+data or private model weights were accessed. Our
+experiments focus on improving general safety ro-
+bustness rather than adversarial capability, and all
+resulting models are intended solely for advancing
+responsible AI alignment research. We encourage
+responsible use and further evaluation by the re-
+search community to avoid misuse or unintended
+deployment in unsafe contexts.
+Used Artifacts, Licenses, and Consistency
+of Use
+Our experiments rely exclusively on publicly
+available datasets,
+models,
+and frameworks
+with permissive research or open-source li-
+censes.
+Specifically, we use safety and align-
+ment datasets including HarmBench, StrongReject,
+AdvBench, Anthropic/hh-rlhf, Dahoas/full-hh-rlhf,
+PKU-Alignment/PKU-SafeRLHF-QA, HelpSteer2,
+XSTest, MMLU, Alpaca-Eval, and FalseReject.
+All of these datasets are distributed under MIT, CC-
+BY-4.0, or CC-BY-NC-4.0 licenses as provided by
+their original repositories.
+Model components used in our evaluation in-
+clude Skywork-RM-Qwen3-4B, ShieldGemma,
+and multiple Qwen3 series models (1.7B, 4B, 8B,
+and variants), all released under the Apache-2.0 or
+equivalent open licenses. Training and optimiza-
+tion frameworks such as TRL and VERL/vLLM are
+
+likewise licensed under Apache-2.0.
+All artifacts were used strictly in accordance
+with their respective licenses for non-commercial
+academic research purposes, with no modification
+to license terms or redistribution of proprietary con-
+tent.

@@ -1,0 +1,1553 @@
+QUACK! Making the (Rubber) Ducky Talk:
+A Systematic Study of Keystroke Dynamics
+for HID Injection Detection
+Alessandro Lotto[0000−0003−3556−4589],
+Francesco Marchiori[0000−0001−5282−0965], and Mauro Conti[0000−0002−3612−1934]
+University of Padua, Department of Mathematics, Italy
+{alessandro.lotto, francesco.marchiori.4}@phd.unipd.it
+mauro.conti.@unipd.it
+Abstract. Modern computing systems inherently trust human input de-
+vices, creating an exploitable attack surface for adversarial automation. USB
+Human Interface Device (HID) emulation attacks, such as those enabled by
+the USB Rubber Ducky, leverage this assumption to inject arbitrary keystroke
+sequences while bypassing traditional defenses. Existing countermeasures
+rely on simple heuristics based on typing speed or timing regularity, which
+can be easily evaded through basic randomization strategies. Keystroke dy-
+namics analysis offers a more robust alternative by modeling temporal typing
+behavior. However, prior work formulates this problem as behavioral authen-
+tication, verifying whether the input originates from a specific user rather
+than detecting automated input injection. An alternative approach would
+consist of continuously monitoring user input via a keylogging mechanism
+integrated with an intrusion detection system. However, this requires access
+to input semantic content over time, raising significant privacy concerns due
+to persistent observation of user activity.
+In this paper, we provide the first systematic characterization of keystroke
+dynamics for human-vs-machine discrimination, independent of user identity.
+Guided by five research questions, we show that robust, privacy-preserving
+detection is achievable using lightweight models operating solely on timing
+features, eliminating the need for content access or user profiling. Our analysis
+reveals that attacker sophistication does not monotonically translate into im-
+proved evasion. Detection robustness instead depends primarily on exposure
+to structurally diverse generation strategies rather than model complexity,
+reducing training complexity. Finally, we quantify the trade-off between detec-
+tion timeliness and reliability across varying keystroke sequence lengths, iden-
+tifying practical operating points for early and effective attack interception.
+Keywords: Injection Attacks, HID Keystroke Injection, USB Rubber Ducky,
+Keystroke Dynamics.
+1
+Introduction
+Modern computing systems usually rely on implicit trust assumptions at the interface
+between users and machines. Among these, human input devices, such as keyboards,
+arXiv:2604.15845v1 [cs.CR] 17 Apr 2026
+
+2
+A. Lotto et al.
+are typically regarded benign and are granted direct access to the operating system
+input pipeline with minimal scrutiny [8,21,27]. This trust boundary, while essential
+for usability, represents an attractive attack surface when exploited by adversarial
+automation. In this context, USB Human Interface Device (HID) emulation attacks
+have emerged as an effective class of input injection attacks. Tools such as USB
+Rubber Ducky [12] impersonate trusted keyboards at the operating system level
+and automatically inject pre-programmed sequences of keystrokes at high speed once
+plugged into a target machine [21]. Originally conceived as a tool for penetration
+testing and security auditing, the USB Rubber Ducky has been widely adopted in
+real-world attacks, including cybercrime and espionage campaigns [2,5,21,27]. Since
+they rely on legitimate HID interfaces, they allow an attacker to execute malicious
+commands without exploiting software vulnerabilities or triggering traditional mal-
+ware defenses [3,21]. This implicit trust assumption exposes a critical attack surface,
+especially in environments where physical access is possible or supply-chain attacks
+are plausible. As a consequence, security mechanisms that operate above the input
+layer often fail to distinguish between genuine human input and automated injection.
+Existing countermeasures against keystroke injection attacks rely on simple
+heuristics, such as detecting abnormally high typing speed or excessively regular
+timing patterns [3,4]. However, these approaches are inherently weak as an attacker
+can trivially evade detection by slowing down the injected keystrokes or introducing
+random delays. This highlights the need for more sophisticated and robust detection
+strategies. A promising direction to counter HID-based injection attacks is keystroke
+dynamics analysis. Keystroke dynamics studies the temporal characteristics of users’
+typing behavior, typically focusing on features such as key Hold Time (HT), i.e., the
+duration a key is pressed, and inter-keystroke Flight Time (FT), i.e., the time interval
+between releasing one key and pressing the next. These features have been extensively
+used in behavioral biometrics, particularly for user authentication and continuous
+verification [9,14,19]. Despite their effectiveness in user-centric scenarios, existing
+keystroke dynamics systems present important limitations when applied to injection
+detection. Specifically, existing works frame the problem as a user discrimination
+problem, where the goal is to distinguish a legitimate target user from others [22,23,26].
+In such settings, deviations from a user’s profile are treated as suspicious, even if they
+originate from another human. This is not applicable to keystroke injection defense,
+which rather aims to distinguish between human- and machine-generated input.
+Research Questions. In this paper, we address this gap by studying keystroke dy-
+namics in a more general and challenging problem: the discrimination between human-
+generated and machine-generated keystrokes, independently of user identity. This shift
+in perspective better reflects the threat posed by HID-based automated injection at-
+tacks. This work does not aim to design the state-of-the-art keystroke injection defense
+or evasion solution. Rather, the objective is to assess and identify key factors to consider
+when designing defense mechanisms against keystroke injection attacks, and to under-
+stand which characteristics improve attackers’ ability to evade these systems. There-
+fore, we conduct our assessment in light of five Research Questions (RQs). A straight-
+forward defense would consist of continuously monitoring user input through a keylog-
+ging mechanism integrated with an intrusion detection system, analyzing keystroke
+
+QUACK! Making the (Rubber) Ducky Talk
+3
+streams to identify anomalous typing behavior. However, such an approach raises sig-
+nificant privacy concerns. Moreover, continuously running complex behavioral models
+during user interaction may introduce undesirable computational overhead and
+negatively impact usability. These constraints motivate our first research question.
+RQ1 – Can HID-based keystroke injection attacks be reliably detected through
+continuous keystroke dynamics analysis using lightweight and privacy-preserving
+models?
+From the attacker’s perspective, evading simple heuristic defenses is relatively
+straightforward. A basic evasion strategy consists of slowing down injected keystrokes
+or introducing random delays to mimic human typing speed [1]. While such approaches
+may bypass simple speed-based detection rules, they remain statistically distinguish-
+able from genuine human typing behavior. A more capable adversary may therefore
+adopt increasingly sophisticated generation strategies designed to replicate statistical
+properties of human keystroke dynamics. Given the large space of possible generation
+techniques, designing defenses tailored to every attacker strategy is impractical.
+Instead, it is important to assess whether detectors trained on representative attacker
+models can generalize to unseen generation processes, and which training strategy
+provides the most robust protection. This motivates the following research questions.
+RQ2 – To what extent do detectors generalize across heterogeneous attacker
+models employing different statistical keystroke generation strategies?
+RQ3 – Which training strategy enables the most robust detection performance
+against diverse keystroke generation processes?
+Another critical factor in practical deployments concerns the trade-off between
+detection timeliness and usability. Making decisions after observing only a few
+keystrokes enables early attack mitigation but may increase false positives, disrupting
+legitimate users. Conversely, waiting for longer input sequences improves statistical
+reliability but increases the risk that an attacker completes the malicious command
+sequence before detection occurs. Determining the optimal observation window that
+balances early detection with acceptable usability becomes a key design parameter.
+This motivates our fourth research question.
+RQ4 – What is the optimal keystroke observation window that enables reliable
+detection while balancing early attack mitigation and acceptable false-positive
+rates for legitimate users?
+Finally, we analyze the problem from the attacker’s perspective. In particular,
+it remains unclear whether increasing the statistical sophistication of synthetic
+keystroke generators substantially improves an attacker’s ability to evade detection.
+Understanding this relationship is essential to evaluate the practical robustness of
+keystroke-based defenses. This leads to our final research question.
+
+4
+A. Lotto et al.
+RQ5 – Does increasing the statistical sophistication of synthetic keystroke
+generation significantly improve an attacker’s ability to evade detection?
+Contribution. This study makes the following contributions:
+1. We provide the first systematic characterization of keystroke dynamics for injection
+detection, framing it as a privacy-preserving human-vs-machine discrimination
+problem independent of user identity.
+2. We show that robust detection can be achieved with lightweight, timing-based
+models, without requiring user identity or access to input content.
+3. We identify that detection robustness is driven by coverage of structurally dis-
+tinct attacker families rather than model complexity, which significantly reduces
+training requirements.
+4. We quantify the trade-off between detection timeliness and reliability, identifying
+practical operating points for early attack interception.
+5. We release our experimental pipeline in a GitHub repository 1 to enable repro-
+ducibility and future comparative studies.
+Organization. The remainder of the paper is organized as follows. Sec. 2 discusses
+the current literature in keystroke dynamic analysis. Sec. 3 presents our system and
+threat models. Sec. 4 details our evaluation methodology pipeline. Sec. 5 presents
+our experimental evaluation, and Sec. 6 discusses the results, answering the identified
+research questions. Finally, Sec. 7 concludes the paper.
+2
+Related Work
+Keystroke dynamics has long been established as a behavioral biometric for user
+authentication by analyzing unique motor patterns. Early research by Gaines et al. [9],
+Monrose et al. [19], and Killourhy et al. [14] laid the foundation for timing-based
+authentication, demonstrating that HT and inter-key FT capture sufficiently distinc-
+tive motor patterns for user verification and anomaly detection. However, traditional
+evaluations adopted a "zero-effort" attack model, in which the system is only tested
+against casual human impostors who make no specific effort to mimic the legitimate
+user. Rahman et al. [22] and Mhenni et al. [15] showed that false acceptance rates can
+significantly increase when switching from zero-effort models to even simple synthetic
+forgeries. This revealed a fundamental limitation of user-centric authentication, high-
+lighting that robustness cannot be assessed without considering adaptive adversaries.
+Early attempts to bypass keystroke-based authentication relied on simple statis-
+tical generators. Stefan and Yao [26] introduced NoiseBot and GaussianBot, which
+synthesize keystroke timings from Uniform and Gaussian distributions, optionally
+conditioned on first-order Markov dependencies. Despite their simplicity, these ap-
+proaches were shown to significantly degrade the security of keystroke-based systems.
+Subsequent work explored improved statistical modeling. Serwadda and Phoha [23]
+analyzed large datasets to identify vulnerabilities exploitable by statistical attacks.
+1 https://github.com/aleLtt/QUACK.git
+
+QUACK! Making the (Rubber) Ducky Talk
+5
+Migdal and Rosenberger [16] evaluated multiple distributions for synthetic timing gen-
+eration, identifying heavy-tailed models such as Gumbel as better approximations of
+empirical behavior. Monaco et al. [18] proposed the Linguistic Buffer and Motor Con-
+trol (LBMC) model, which combines log-normal timing distributions with a hidden
+Markov model to capture cognitive states. Importantly, they demonstrated that even
+partial leakage of timing information can substantially increase false acceptance rates.
+More recently, González et al. [10] proposed a unified framework that addresses both
+the attack and defense perspectives. They first introduced higher-order context-based
+generators and empirical Cumulative Distribution Function (CDF)-based synthesis
+strategies to improve the realism of synthetic forgeries. Then, they formalize liveness
+detection as a second-stage classifier trained explicitly against such adversaries. Their
+approach leveraged CDF-based distance metrics to detect forgeries that are “too
+smooth” relative to empirical user distributions, showing that adversaries with access
+to within-subject data can achieve false acceptance rates approaching 15–20% under
+certain conditions. This represents a significant escalation in the threat landscape.
+Despite these advances, existing work remains largely within the user authentication
+framework with the objective of impersonating a specific target user. In contrast, the
+broader problem of distinguishing human-generated from machine-generated input
+has received comparatively less attention. Stefan et al. [25] introduced early liveness
+protocols designed to distinguish legitimate users from statistically generated bots.
+Other defensive strategies include replay-resistant protocols [13], hardware-assisted
+keystroke impersonation attacks and corresponding detection frameworks [8] (e.g.,
+Malboard), and sensor-enhanced approaches on mobile devices [24], where accelerom-
+eter and pressure signals complement timing features. However, these solutions either
+assume extended sensor access, focus on replay attacks rather than generation at-
+tacks, or require hardware-level instrumentation that is not available in conventional
+keyboard environments. Importantly, most liveness detection systems assume that at-
+tackers rely on relatively simple statistical generators. The robustness of these defenses
+against adversaries employing modern generative models remains underexplored.
+In parallel with the biometric literature, security research has examined HID-
+emulation attacks. Tools such as the USB Rubber Ducky exploit the implicit trust
+placed in human interface devices by emulating legitimate keyboards. Arora et al. [3]
+proposed heuristic-based defenses that detect abnormally high typing speeds. Jothi et
+al. [4] introduced USB Rubber Ducky Hunter, a set of proactive detection techniques
+that combine device fingerprinting and input-frequency monitoring. While effective
+against naive high-speed injections, these approaches remain vulnerable to adver-
+saries who throttle injection speed and introduce artificial variability. Negi et al. [20]
+explored the use of keystroke dynamics to detect malicious injections in free-text
+settings. However, their formulation still relied primarily on classical statistical
+assumptions and did not fully address adversaries capable of learning higher-order
+temporal dependencies. More recently, Generative Adversarial Networks (GANs)
+have been applied to keystroke synthesis. Gulrajani et al. [11] introduced Wasserstein
+GAN with Gradient Penalty (WGAN-GP), a stable adversarial training framework
+widely adopted for realistic sequence generation. For instance, BeCAPTCHA [7] and
+USB-GATE [6] explored GAN-based augmentation to improve detection robustness.
+
+6
+A. Lotto et al.
+From this analysis, several critical limitations and research gaps emerge. First,
+there exists a conceptual framing gap. Most prior studies remain centered on
+user authentication, implicitly assuming that deviations from a user profile indicate
+malicious behavior. In contrast, the injection-defense problem fundamentally requires
+discrimination between human and automated input independently of identity.
+Second, we observe a model-complexity mismatch. Proposed defenses often
+assume highly capable deep-learning adversaries, while realistic USB HID devices are
+constrained by hardware and power limitations. Conversely, detection mechanisms
+rely on computationally intensive models unsuitable for continuous deployment and
+real-time assessment at the operating system input layer. Third, there is a lack of
+systematic adversarial escalation. Existing evaluations typically consider a single
+attack model, without providing a unified framework for comparing minimum-effort
+statistical generators, higher-order empirical models, and adversarial generative
+approaches under consistent experimental conditions. Finally, the operational
+trade-off between sequence length and detection reliability remains largely
+unexplored. The number of keystrokes required to reach a confident decision directly
+affects the practicality of real-time injection defense, yet this dimension has not
+been rigorously quantified in prior work. Together, these limitations motivate a
+structured, threat-model-driven evaluation of keystroke-based liveness detection
+under progressively stronger and practically grounded adversarial models.
+3
+System and Threat Model
+System Model. Fig. 1 illustrates the system model we consider in this work. Users
+interact with a computing device through a conventional physical keyboard, and input
+keystrokes are captured at the operating system level. The system deploys a lightweight
+passive detection mechanism that runs in the background. The detector observes
+limited-length keystroke sequences in real or near-real time, extracts HT and FT
+temporal features, and produces a binary decision on whether the sequence is human-
+or machine-generated. In the latter case, the system raises an alert for suspicious input
+keystroke behavior. Our model focuses on behavioral analysis, excluding defenses
+based on device fingerprinting or hardware modifications. The defender has access to
+human keystroke data collected offline and uses it to train the detection model. The
+detector operates in a user-agnostic setting without relying on user-specific enrollment
+or long-term profiling. Hence, any variation across real users must not trigger
+false alarms. Furthermore, to preserve user privacy, the system operates in a text-
+independent manner, making decisions based solely on timing dynamics (HT and FT).
+Threat Model. We model the attacker as an adversary who gains physical access
+to the target machine and injects keystrokes via a malicious HID device, such as
+a USB Rubber Ducky. The attacker aims to execute a malicious payload while
+evading detection, thus appearing indistinguishable from a human typist. Unlike
+traditional keystroke dynamics threat models, we assume that the attacker does not
+need to impersonate a specific user. Thus, any human-like behavior that bypasses
+detection is sufficient. This distinguishes our threat model from most keystroke
+dynamics authentication systems, where attackers aim to be classified as a particular
+
+QUACK! Making the (Rubber) Ducky Talk
+7
+Malicious
+Payload
+Timing
+Generator
+Synthetic
+Keystrokes
+Keystroke
+sequence
+[HT, FT]
+Feature Extraction
+Pre-trained
+detector
+Real User
+Alert
+Human Typing
+Workstation
+USB Rubber
+Ducky
+Fig. 1: System and Threat model. The attacker injects synthetic malicious keystrokes
+via a USB Rubber Ducky. The workstation extracts timing features and leverages
+a pre-trained classifier for machine-based input detection.
+enrolled user. Such a threat model makes the problem inherently more challenging
+and realistic for deployment in general-purpose systems. We consider an attacker with
+full control over the timing of injected keystrokes, capable of implementing arbitrary
+delay strategies. This includes slowing down input, adding noise, or generating
+timing based on statistical models trained on human data. Consequently, we consider
+three attacker models that implement increasingly sophisticated synthetic keystroke
+generation strategies. First, we consider a zero- or minimal-effort attacker who
+introduces variability without modeling realistic temporal structures. Second, we con-
+sider a context-aware statistical attacker that conditions timing values on preceding
+keystrokes to preserve higher-order statistics. Lastly, we consider an adaptive attacker
+that leverages GAN models to directly approximate human-like keystroke sequences.
+4
+Methodology
+We design our methodology to systematically assess how the synthetic keystroke
+detection capability evolves as adversarial models become progressively sophisticated.
+Fig. 2 illustrates the pipeline implemented, which involves three main stages: (i)
+synthetic data set generation, (ii) single-generator training evaluation, and (iii)
+mixed-generator training evaluation.
+4.1
+Synthetic Dataset Generation
+We base our study on the publicly available keystroke dataset introduced by González
+et al. [10]. This dataset contains both free-text typing sessions collected from a large
+population of users and synthetically generated keystroke sessions. For each keystroke
+event, it provides the Virtual Key (VK) code, the key HT, and the inter-key FT. From
+this whole dataset, we first extract all human-based keystroke sessions and build a
+human dataset. We thus use it as a reference to construct three families of synthetic
+datasets, each corresponding to one attacker model defined in Sec. 3. Each dataset
+
+8
+A. Lotto et al.
+Human-based
+Keystrokes Dataset 
+Naive
+Dataset
+pcg64 generator
+Conditional generator
+......
+Statistical
+Dataset
+Gaussian generator
+Histogram generator
+......
+Per-generator 
+Detector training 
+Per-generator 
+Detector training 
+Intra-dataset
+cross-testing
+Intra-dataset
+cross-testing
+Generator
+selection
+Generator
+selection
+Mixed
+Training
+Adversarial
+Dataset
+Inter-dataset
+cross-testing
+Per-generator 
+Detector training 
+Unconditional
+WGAN-GP generator
+Conditional
+WGAN-GP generator
+Intra-dataset
+cross-testing
+Generator
+selection
+Fig. 2: Implemented methodology pipeline.
+family includes several synthetic datasets built from different keystroke generators
+that implement different approaches within the same attacker model. This diversity
+enables fine-grained evaluation of detector sensitivity to specific generation strategies.
+For each human session, we produce a synthetic session preserving the original VK
+sequence while synthetically generating the HT and FT timing features. We retain
+VKs only to preserve session alignment across datasets. However, we exclude them
+from detector inputs to enforce a text-independent analysis and to prevent classifiers
+from exploiting semantic regularities rather than typing behavior.
+Table 1 summarizes the construction of each family of synthetic datasets, specifying
+their generator classes and the implemented attacker model. The Naive Dataset rep-
+resents baseline minimal-effort attackers that introduce variability without explicitly
+modeling realistic temporal structure. It includes two classes of generators, namely,
+Pseudorandom Number Generator (PRNG)-based generators and two lightweight
+statistical samplers. For the former, we select mt19937, pcg64, and philox PRNGs.
+They independently sample timing values from empirical ranges derived from the
+human dataset. For the latter, we select an Empirical Pairs (Emp-Pair) sampler
+that jointly samples pairs from the global human distribution, and a Conditional
+Previous-Bin (Cond-Bin) sampler that introduces limited first-order temporal depen-
+dence by conditioning on discretized prior timing states. The Statistical Dataset
+corresponds to finite-context generators aligned with the threat model of González et
+al. [10]. It explicitly conditions timing values on preceding keystrokes and preserving
+higher-order dependencies. This family includes parametric context-based generators,
+i.e., Average, Uniform, and Gaussian, and empirical context-based generators,
+i.e., Histogram and Non-Stationary Histogram (NS-Hist). Finally, the Adaptive
+Dataset models explicitly adaptive attackers using WGAN-GP-based synthesis,
+including both unconditional and context-conditioned variants [17]. The former
+produces fixed-length timing windows, while the latter incorporates recent timing
+history to better approximate local temporal dynamics [28]. These models implicitly
+
+QUACK! Making the (Rubber) Ducky Talk
+9
+learn complex temporal dependencies and are explicitly optimized for realism, making
+them representative of adaptive and adversarial attackers. This represents the most
+sophisticated attacker strategy considered in this study.
+Table 1: Synthetic dataset organization.
+Dataset Family
+Generator Class
+Generators
+Approach
+Attacker model
+PRNG
+mt19937, pcg64, philox
+Independent sampling from
+global empirical ranges
+Zero-effort attacker
+(baseline)
+Conditional PrevBin
+First-order conditional sampling
+(binned)
+Naive
+Dataset
+Lightweight
+statistical
+Empirical Pairs
+Joint pair sampling
+(HT–FT)
+Minimal-effort attacker
+(baseline)
+Parametric
+context-based
+Average, Uniform, Gaussian
+Preserve higher order
+dependencies
+Histogram
+Finite-context modeling
+with empirical distributions
+Statistical
+Dataset
+Empirical
+context-based
+Non-Stationary Histogram
+Context modeling +
+non-stationary offset modeling
+Context-aware
+statistical attacker
+Unconditional WGAN-GP
+Direct distribution learning
+via adversarial training
+Adaptive
+Dataset
+Neural generative
+model
+Conditional WGAN-GP
+Conditioned adversarial
+distribution learning
+Adaptive
+sophisticated attacker
+4.2
+Discriminator Models
+We evaluate a set of lightweight detection models falling into non-sequence-aware and
+sequence-aware models. The former operates on fixed-length representations derived
+from keystroke sequences, and we consider the Random Forest (RF) and Support
+Vector Machine (SVM) models as representative. The latter explicitly processes
+temporal order, and is represented by a simple 1-dimensional Convolutional Neural
+Network (CNN) and Long Short Time Memory (LSTM) models.
+4.3
+Single-Generator Training Evaluation
+In this second stage of our pipeline, we train each detector model in a single-generator
+setting. Therefore, for each dataset family, we treat each generator independently.
+This measures baseline detection performance and quantifies how easily different
+generators can be distinguished from human typing when the attacker model is
+known. Furthermore, for each generator, we train each detector under multiple input
+sequence lengths, ranging from short sequences to longer contexts. This allows us
+to analyze the trade-off between detection accuracy and decision latency. While
+single-generator training provides insight into in-distribution separability, it does
+not reveal whether detectors learn generator-specific artifacts or more fundamental
+human-versus-machine characteristics. To assess transferability and generalization
+across generators of the same generating class, within the same attacker model, and
+
+10
+A. Lotto et al.
+between attacker models, we perform systematic testing. Thus, we evaluate each
+trained detector against other unseen generators. This testing phase allows us to
+identify which generators are most challenging to learn, and which dominate detector
+performance, thus guiding selection for the mixed-training phase.
+4.4
+Mixed-Generator Training Evaluation
+To mitigate generator-specific overfitting and improve robustness across heteroge-
+neous attackers, we train and evaluate detectors over a mixture of generators. Guided
+by the results of the single-generator training evaluation, we select representative
+generators within and across attacker models. Specifically, first train and test de-
+tectors on balanced configurations (BC), enforcing equal generator representations.
+Then, we consider unbalanced configurations (UC) that favor representations for
+generators that enable broader generalization, thereby optimizing detection accuracy
+and robustness across all attacker models. This mixed training strategy aims to
+evaluate whether exposure to diverse synthetic strategies improves robustness and
+reduces overfitting to specific generators. Although the training dataset is unbalanced
+in terms of generator representation, the evaluation uses the same number of samples
+per test dataset. This prevents bias induced by training imbalance and ensures that
+performance reflects true generalization rather than majority-class dominance. We
+provide further details on the specific training configurations in Sec. 5. Overall,
+this methodology enables a structured and progressively adversarial assessment of
+keystroke dynamics as a defense mechanism. By separating attacker models, training
+regimes, and evaluation stages, the proposed pipeline provides a systematic and
+comprehensive view of detector strengths, limitations, and generalization behavior.
+5
+Experimental Evaluation
+This section presents the experimental results of the implementation of the evaluation
+pipeline presented in Sec. 4. We defer detailed analysis, interpretation and key
+takeaways to Sec. 6. The source code of the complete evaluation framework is publicly
+available in our GitHub repository.
+5.1
+Experimental Setup
+Setup. We implement all experiments in Python using standard scientific and
+machine learning libraries, including NumPy, Pandas, scikit-learn, and PyTorch.
+We train classical models (RF, SVM) on CPU, 2 and neural models (CNN, LSTM,
+Bidirectional LSTM (BiLSTM), GANs) on a single GPU-enabled with acceleration
+using CUDA. 3 All experiments are conducted at the keystroke session level, enforcing
+strict separation between training and testing sessions to prevent temporal leakage.
+We adopt a 80%/20% train-test split. We intentionally keep all detector models
+2 Intel Core i7-12700KF CPU (12 cores, 20 threads, up to 5.0 GHz), 62 GB of RAM.
+3 NVIDIA GeForce RTX 3080 Ti GPU (12 GB VRAM, CUDA 12.8).
+
+QUACK! Making the (Rubber) Ducky Talk
+11
+lightweight to reflect realistic deployment constraints and to avoid overfitting through
+excessive capacity. We provide details on models design in Appendix A.
+Dataset Construction. The dataset introduced by González et al. [10] comprises
+18816 independent typing sessions. We store each session as an individual parquet
+file, preserving temporal ordering and intra-session dependencies while enabling
+efficient loading and reproducible splits. We generate synthetic datasets by preserving
+the original VK sequence and replacing only HT and FT, according to the system
+and threat models discussed in Sec. 3. This design isolates behavioral timing realism
+from textual structure while ensuring strict alignment between human and synthetic
+sessions. To build the Statistical dataset, we use synthetic sessions from González
+et al. [10] generated in a within-subject configuration, representing an attacker
+having access to user-specific timing distributions. This represents a scenario in
+which the attacker has access to user-specific behavioral timing data. To build the
+Adaptive dataset, we train both GANs exclusively on human data without access
+to the detector parameters. Each model is trained for 20000 steps with batch size
+250, and checkpoints are saved every 5000 steps. We then perform a checkpoint
+evaluation based on Wasserstein loss stabilization, distributional alignment over
+HT/FT, variance preservation, and absence of mode collapse. Finally, we select the
+best checkpoint for each GAN model and use them to generate synthetic datasets.
+5.2
+Single-Generator Training Results
+We first evaluate detectors in a single-generator setting across input sequence lengths
+in [10,50,100,200,500,1000]. Fig. 3 reports the results for the Naive dataset train-
+ing. Unidirectional LSTM shows performance degradation as the sequence length
+increases, indicating a limited ability to capture a meaningful temporal structure
+from weakly structured synthetic data. We therefore adopt BiLSTM in subsequent
+experiments. Moreover, performance saturates beyond moderate lengths, motivating
+a refined range of [10,30,50,70,100,200] for subsequent analyses. Figures 4 and 5
+show the results for the Statistical and Adaptive datasets, respectively. In particular,
+at 70 keystrokes, ROC-AUC exceeds 0.9 across all generators (RF-based detector),
+providing a favorable trade-off between detection timeliness and reliability. For this
+reason, the remainder of this section focuses on RF with input size of 70 keystrokes.
+Cross-Generator Generalization. Fig. 6 reports cross-generator evaluation
+results for the RF detector at input size of 70 keystrokes. Within the Naive dataset
+(Fig. 6a), generators form two clear distinct clusters aligned with their construc-
+tion. Specifically, PRNG-based generators generalize strongly among themselves,
+while Cond-Bin and Emp-Pair generators show mutual transferability but limited
+cross-cluster generalization. Within the Statistical dataset (Fig. 6b), Histogram
+and NS-Hist generators exhibit stable transferability, whereas Uniform, Average,
+and Gaussian generators show inconsistent transferability. Cross-family evaluation
+(Fig. 6c, Fig. 6d) reveals a clear asymmetry. Detectors trained on Statistical generators
+generalize effectively to PRNG generators, achieving consistently high ROC-AUC
+scores. However, this generalization does not extend to Cond-Bin and Emp-Pair gen-
+erators, where performance drops significantly. Conversely, detectors trained on Naive
+generators exhibit overall poor cross-family generalization, failing to transfer reliably
+
+12
+A. Lotto et al.
+1050
+100
+200
+500
+1000
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+LSTM
+1050
+100
+200
+500
+1000
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+RandomForest
+1050
+100
+200
+500
+1000
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+SVM
+1050
+100
+200
+500
+1000
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+CNN1D
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Fig. 3: ROC-AUC training curve on the Naive Dataset.
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+BiLSTM
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+RandomForest
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+SVM
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+CNN1D
+Average
+Gaussian
+Histogram
+NS-Hist
+Uniform
+Fig. 4: ROC-AUC training curve on the Statistical Dataset.
+
+QUACK! Making the (Rubber) Ducky Talk
+13
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+BiLSTM
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+RandomForest
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+SVM
+10
+30
+50
+70
+100
+200
+Input length
+0.6
+0.7
+0.8
+0.9
+1.0
+ROC-AUC
+CNN1D
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Fig. 5: ROC-AUC training curve on the Adaptive Dataset.
+to Statistical generators. Based on this observation, we evaluate Statistical-trained
+detectors against Adaptive generators (Fig. 6e). The results show that the Histogram
+and NS-Hist generators achieve good generalization even against GAN-generated
+data produced by more sophisticated synthesizers. Conversely, detectors trained on
+GAN-generated data (Fig. 6f) do not consistently generalize to simpler generators.
+These results motivate the transition to mixed-generator training.
+5.3
+Mixed-Generator Training Results
+To mitigate generator-specific overfitting and improve robustness across hetero-
+geneous attacker models, we evaluate mixed training configurations combining
+representative generators. Table 2 summarizes the mixed training configurations
+evaluated, while Fig. 7 reports the results.
+Balanced Training. We derive balanced configurations from cross-generator
+observations. Specifically, BC1 combines generators with complementary behavior
+in the Naive dataset. BC2 is motivated by the strong transferability of NS-Hist
+generator across the Statistical family and the observed weaknesses of Uniform
+and Gaussian generators when considered in isolation. Lastly, BC3 combines Naive
+and Statistical representatives with complementary transfer: Cond-Bin-based train-
+ing generalizes to empirical but not to PRNG nor Statistical generators, whereas
+NS-Hist-based training generalizes to PRNG and all Statistical generators, but not to
+Cond-Bin and Emp-Pair (Fig 6). Results in Fig. 7a show that BC1 and BC2 achieve
+
+14
+A. Lotto et al.
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Test Source
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Trained Source
+0.989
+0.992
+0.702
+0.700
+0.698
+0.967
+0.976
+0.366
+0.358
+0.358
+0.630
+0.637
+1.000
+1.000
+1.000
+0.625
+0.641
+1.000
+1.000
+1.000
+0.624
+0.638
+1.000
+1.000
+1.000
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(a) Naive data.
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Test Source
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Trained Source
+0.941
+0.932
+0.935
+0.913
+0.925
+0.929
+0.960
+0.946
+0.937
+0.963
+0.792
+0.819
+0.979
+0.980
+0.554
+0.700
+0.774
+0.963
+0.984
+0.455
+0.878
+0.879
+0.762
+0.662
+0.987
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(b) Statistical data.
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Test Source
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Trained Source
+0.772
+0.678
+0.395
+0.230
+0.866
+0.629
+0.582
+0.387
+0.264
+0.812
+0.526
+0.560
+0.521
+0.503
+0.587
+0.534
+0.561
+0.525
+0.506
+0.591
+0.533
+0.569
+0.529
+0.512
+0.581
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(c) Naive vs Statistical data.
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Test Source
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Trained Source
+0.459
+0.458
+0.929
+0.928
+0.932
+0.463
+0.481
+0.975
+0.977
+0.979
+0.575
+0.583
+0.886
+0.886
+0.881
+0.474
+0.463
+0.904
+0.901
+0.913
+0.666
+0.684
+0.999
+0.998
+0.999
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(d) Statistical vs Naive data.
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Test Source
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Trained Source
+0.922
+0.913
+0.947
+0.924
+0.625
+0.728
+0.541
+0.721
+0.937
+0.830
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(e) Statistical vs Adaptive data.
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Test Source
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Trained Source
+0.875
+0.843
+0.930
+0.869
+0.554
+0.586
+0.604
+0.961
+0.963
+0.967
+0.818
+0.783
+0.896
+0.801
+0.603
+0.635
+0.638
+0.869
+0.870
+0.867
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(f) Adaptive vs Naive, Statistical data.
+Fig. 6: Single-Generator training results for RF detector with 70 keystrokes.
+stable performance within their respective families, indicating that combining struc-
+turally related generators improves intra-family robustness. However, BC3 exhibits
+degradation against several Statistical generators and GAN-based samples, despite
+
+QUACK! Making the (Rubber) Ducky Talk
+15
+Table 2: Mixed-Generator training configurations.
+Training
+Configuration
+Included Generators
+Representation (%)
+BC1
+Cond-Bin, pcg64
+50 - 50
+BC2
+NS-Hist, Uniform, Gaussian
+34 - 33 - 33
+BC3
+NS-Hist, Cond-Bin
+50 - 50
+UC1
+NS-Hist, Cond-Bin
+70 - 30
+UC2
+NS-Hist, Cond-Bin, Average
+70 - 25 - 5
+UC3
+NS-Hist, Cond-Bin, Unc. WGAN-GP, Average,
+70 - 20 - 7 - 3
+strong detection performance when trained solely on Statistical mixtures (BC2). This
+suggests that Naive-based mixing across families may dilute model generalization.
+Unbalanced Training. To address this limitation, we introduce unbalanced
+configurations that prioritize generators with broader transferability. Fig. 7b shows
+the results. UC1 increases representation of NS-Hist over Cond-Bin data, yielding
+moderate improvements across Statistical generators while preserving performance
+elsewhere. Nevertheless, Average- and Uniform-generated samples remain challeng-
+ing to separate. Therefore, UC2 introduces a small proportion of Average-generated
+samples, significantly improving robustness against both Average and Uniform
+generators while having a limited impact on other classes. UC3 incorporates a
+small fraction of GAN-generated samples, improving performance against Adaptive
+generators while slightly reducing separability for conditional generators.
+Input Size Analysis. Figures 8 and 9 show performance as a function of input
+size. Across well-separated configurations, performance increases rapidly between
+10 and 70 keystrokes and stabilizes between 70 and 100. Beyond this range, gains
+are marginal and primarily affect the most challenging generators. This trend is
+consistent across both balanced and unbalanced settings and supports the selection
+of 70 keystrokes as a practical operating point.
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Test Source
+BC1
+BC2
+BC3
+Trained Source
+0.701
+0.648
+0.340
+0.234
+0.837
+0.974
+0.980
+1.000
+1.000
+1.000
+0.636
+0.529
+0.926
+0.941
+0.960
+0.948
+0.975
+0.475
+0.477
+0.982
+0.983
+0.980
+0.957
+0.944
+0.894
+0.902
+0.470
+0.388
+0.904
+0.966
+0.975
+0.971
+0.976
+0.975
+0.618
+0.572
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(a) Balanced Configurations.
+Histogram
+NS-Hist
+Uniform
+Average
+Gaussian
+Cond-Bin
+Emp-Pair
+mt19937
+pcg64
+philox
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Test Source
+UC1
+UC2
+UC3
+Trained Source
+0.912
+0.949
+0.658
+0.599
+0.948
+0.946
+0.952
+0.989
+0.987
+0.990
+0.766
+0.728
+0.918
+0.966
+0.868
+0.850
+0.970
+0.839
+0.844
+0.990
+0.989
+0.991
+0.890
+0.861
+0.926
+0.968
+0.903
+0.887
+0.975
+0.712
+0.714
+0.986
+0.987
+0.988
+0.964
+0.933
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+(b) Unbalanced Configurations.
+Fig. 7: Mixed-Generators training evaluation results.
+
+16
+A. Lotto et al.
+10
+30
+50
+70
+100
+200
+Input Length
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+BC1
+10
+30
+50
+70
+100
+200
+Input Length
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+BC2
+10
+30
+50
+70
+100
+200
+Input Length
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+BC3
+Naive Dataset
+Emp-Pair
+Cond-Bin
+philox
+mt19937
+pcg64
+Adaptive Dataset
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Statistical Dataset
+Histogram
+NS-Hist
+Average
+Uniform
+Gaussian
+Fig. 8: ROC-AUC vs keystroke size for balanced configurations, RF detector.
+10
+30
+50
+70
+100
+200
+Input Length
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+UC1
+10
+30
+50
+70
+100
+200
+Input Length
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+UC2
+10
+30
+50
+70
+100
+200
+Input Length
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+ROC-AUC
+UC3
+Naive Dataset
+Emp-Pair
+Cond-Bin
+philox
+mt19937
+pcg64
+Adaptive Dataset
+Unconditional
+WGAN-GP - 200
+Conditional
+WGAN-GP - 200
+Statistical Dataset
+Histogram
+NS-Hist
+Average
+Uniform
+Gaussian
+Fig. 9: ROC-AUC vs keystroke size for unbalanced configurations, RF detector.
+
+QUACK! Making the (Rubber) Ducky Talk
+17
+5.4
+Inference Cost Evaluation
+To assess the feasibility of continuous keystroke-based detection, we evaluate single-
+sample inference cost in terms of latency, CPU usage, and model memory footprint.
+For each sample, we record total, preprocessing, and inference latency, and capture
+resource usage via process and device snapshots. Fig. 10 reports the results for the
+RF detector trained with UC3. Inference cost remains stable across input sizes:
+preprocessing latency is nearly constant, while inference latency increases only slightly
+(from ∼89 ms to ∼94 ms, Fig. 10a). CPU utilization also remains constant (Fig. 10b),
+supporting continuous background deployment. Interestingly, the RF memory foot-
+print decreases with longer input sequences (Fig. 10b). Despite a fixed number of
+trees (n_estimators=300), memory is driven by the learned tree structure rather
+than input dimensionality. Longer sequences provide more discriminative patterns,
+allowing simpler trees and reducing memory usage. This suggests that RF complexity
+is data-driven rather than strictly dependent on input length.
+10
+30
+50
+70
+100
+200
+Input Length
+20
+40
+60
+80
+100
+Latency (ms)
+Total latency
+Inference latency
+Preprocess latency
+(a) Inference time.
+10
+30
+50
+70
+100
+200
+Input Length
+400
+420
+440
+460
+480
+500
+520
+Model loading RAM (MB)
+CPU normalized by: 20 threads
+RAM model loading (MB, one-time)
+CPU process (% of machine)
+5.118
+5.119
+5.120
+5.121
+5.122
+5.123
+5.124
+5.125
+CPU process (% machine)
+(b) Memory and CPU footprint.
+Fig. 10: RF detector inference cost analysis.
+6
+Discussion and Takeaways
+In this section, we discuss the results obtained from our evaluation and provide
+answers (A1-A5) to the identified RQs (RQ1 - RQ5).
+RQ1 – Lightweight and privacy-preserving keystroke injection detection.
+Our methodology explicitly excludes VKs as input to the detector during training
+and evaluation. Instead, synthetic keystroke detection relies only on the HT and FT
+timing information of keystroke sessions. Thus, our evaluation pipeline is implicitly
+privacy-preserving. Regarding detection feasibility, we observe that UC3 achieves
+ROC-AUC > 0.9 for all synthetic generators considered in this study, except for
+Cond-Bin and Emp-Pair (Fig. 9). We achieved these results with a detector lever-
+aging RF, avoiding relying on neural models. Besides, inference cost results (Fig. 10)
+underscore a lightweight inference footprint. These results support the practicality
+of continuous background deployment.
+
+18
+A. Lotto et al.
+(A1) – Continuous detection of HID-based keystroke injection attacks is feasible us-
+ing lightweight models operating on timing features alone, achieving high detection
+reliability without requiring user identity information or invasive instrumentation.
+RQ2 – Generalization across attacker models. While single-generator train-
+ing yields near-perfect separability under known attacker assumptions (Figures 3, 4, 5),
+this does not generally extend to unseen data. In fact, cross-generator evaluation
+(Fig. 6) shows a marked degradation, indicating that the learned decision boundaries
+are primarily capturing generator-specific artifacts rather than invariant character-
+istics of human keystroke behavior. However, a deeper analysis reveals a clustering
+effect. Generators belonging to the same class exhibit strong mutual transferability.
+PRNG-based generators generalize almost perfectly among themselves; Emp-Pair and
+Cond-Bin models form a tight conditional-sampling cluster; Histogram and NS-Hist
+generators show strong bidirectional transfer; Uniform and Average maintain stable
+mutual generalization; and both unconditional and conditional WGAN-GP models
+display high intra-family consistency. These results indicate that, within each attacker
+class, the statistical structure induced by different implementations is highly overlap-
+ping, and in some cases extends across attacker families. Consequently, the variability
+that the defender must capture is not tied to individual generator implementations, but
+rather to broader generative mechanisms. This observation has direct implications for
+detector training. Rather than requiring exhaustive coverage of all possible generators,
+a defender can select a single representative per attacker class to achieve effective intra-
+class coverage. Hence, training complexity is governed by the number of structurally
+distinct attacker families, effectively shifting the burden from modeling intra-class
+diversity to ensuring adequate cross-class coverage. This insight enables a substantial
+reduction in training requirements while simplifying the overall deployment pipeline.
+(A2) – Detector generalization is driven by exposure to structurally distinct
+attacker families. This allows a defender to select a single representative per
+attacker class to achieve effective intra-class coverage, significantly reducing
+training complexity.
+RQ3 – Defender training strategy. Fig. 7 highlights that mixed training
+improves overall stability but introduces a structural trade-off. While it mitigates
+overfitting observed in single-generator training, it can degrade performance on
+specific generators, even when those are well handled in isolation. A clear example is
+BC3, which exhibits significant degradation against Average and Uniform generators
+(Fig. 7a), despite the fact that NS-Hist alone achieves near-perfect separability
+against them (Fig. 6b). This behavior indicates that, under fixed data capacity (e.g.,
+limited data availability), distributing training mass across heterogeneous attacker
+families reduces generalizability. More targeted training strategies provide a more
+controlled balance. The inclusion of specific underperforming generators, as done
+in UC1 and UC2, leads to substantial robustness gains against structurally related
+processes, but at the cost of reduced sensitivity to simpler conditional generators.
+This highlights an inherent trade-off between robustness and specificity, which cannot
+
+QUACK! Making the (Rubber) Ducky Talk
+19
+be resolved through uniform diversification alone. Overall, these results indicate
+that training composition should be explicitly guided by the threat model, rather
+than aiming for broad but unstructured coverage. In this context, and following A2,
+adversarial augmentation should be calibrated rather than exhaustive.
+(A3) – Training strategies that prioritize structured, threat-model-driven coverage
+across representative attacker classes achieve the best robustness–specificity
+balance, while enabling effective generalization to unseen generators.
+RQ4 – Detection latency vs robustness trade-off. Our results show that
+detection performance saturates between 70 and 100 keystrokes, with UC2 and UC3
+achieving ROC-AUC >0.9 for the majority of generators already with 70 keystrokes,
+and only marginal gains are observed beyond this range (Fig 9). This trend is further
+confirmed in single-generator training scenarios (Figures 3, 4, 5 for RF detectors),
+where performance stabilizes rapidly as input length increases. Nevertheless, specific
+challenging configurations benefit from longer sequences. For instance, UC1 shows
+notable gains when extending the input size to 100–200 keystrokes (Fig. 9), indicating
+that additional temporal context can help resolve challenging distributions for the
+specific detector. On the other hand, increasing the detection window to 100−200
+keystrokes delays detection, potentially allowing attacks to be fully executed before
+classification. Furthermore, it is important to stress that this study does not aim
+to optimize or propose a state-of-the-art detection model, but rather to assess
+the feasibility and fundamental limits of keystroke-based detection under realistic
+constraints. The observed results, therefore, represent conservative performance
+estimates obtained with relatively simple and lightweight models. This suggests that
+there is still room for improvement and that more advanced modeling strategies could
+achieve comparable robustness with shorter keystroke sequences, further reducing
+detection latency while maintaining practical effectiveness.
+(A4) – Early detection can be achieved with high accuracy using relatively
+short observation windows (70 – 100 keystrokes), while longer sequences provide
+incremental gains for more challenging distributions; however, increasing the
+detection window raises the risk that attacks complete before classification,
+establishing a fundamental trade-off between robustness and timeliness.
+RQ5 – Impact of increasing attacker sophistication. GAN-based synthesis
+represents the most sophisticated threat model considered in this study, as it is
+explicitly designed to capture higher-order temporal dependencies and approximate
+realistic keystroke dynamics. However, increased generative sophistication does not
+directly translate into stronger evasion capability, nor does it imply that training
+on such data yields the most robust detectors. Training results on the Naive dataset
+provide an initial baseline. Pure PRNG synthesizers are trivially separable across
+all detectors, confirming that independently sampled timing values lack behavioral
+realism. Detection difficulty increases for Emp-Pair and Cond-Bin generators, par-
+ticularly at shorter input lengths, indicating that even limited first-order temporal
+
+20
+A. Lotto et al.
+structure introduces partial realism and reduces separability. This progression sug-
+gests that increasing statistical structure does impact attack effectiveness, but only
+up to a certain level. Crucially, cross-generator evaluation reveals that this trend
+does not extend monotonically to more advanced models. Detectors trained on less
+sophisticated generators, such as Histogram and NS-Hist, consistently transfer well
+to GAN-generated data, achieving ROC-AUC >0.9 (Fig. 6e). In contrast, detectors
+trained on GAN-based data do not reliably generalize to Naive and Statistical
+generators (Fig. 6f), indicating limited coverage of structurally simpler processes.
+From the attacker’s perspective, these results indicate that increasing model
+sophistication alone is not sufficient to guarantee improved evasion. While GAN-based
+generators can produce realistic samples, they tend to concentrate on a specific region
+of the behavioral space, failing to capture the broader variability exhibited by simpler
+but structurally distinct generation processes. Conversely, simpler statistical models
+can induce diverse and overlapping behaviors that are harder to comprehensively cover
+during training. Overall, the results challenge a common assumption in adversarial
+learning for which training against a strong generative model does not guarantee
+coverage of simpler but structurally distinct attackers. For the attacker, this implies
+that evasion effectiveness is not solely determined by generative complexity.
+(A5) – Increasing the statistical sophistication of synthetic keystroke generation
+does not inherently improve evasion capability. Simpler but structurally diverse
+generation strategies can be equally or more effective in bypassing detection,
+highlighting that diversity, rather than complexity alone, is the key driver of
+successful evasion.
+Taken together, our results show that while simple randomization is easy to detect,
+incremental sophistication yields minor returns once the defender achieves cross-class
+coverage. In this setting, achieving evasion would require a structural shift in the
+synthesizer statistics. On the other hand, robustness to keystroke injection attacks
+is not a matter of increasing detector complexity, but rather of statistical coverage
+across distinct attacker models.
+7
+Conclusion
+In this paper, we provided a systematic characterization of keystroke dynamics for
+detecting HIDs-based injection attacks in a privacy-preserving setting. We showed that
+robust and early detection is achievable using lightweight models operating solely on
+timing features, without requiring user identity or access to input content. Our analysis
+revealed that increasing attacker sophistication does not inherently improve evasion
+capability, and that detection robustness is primarily driven by coverage of structurally
+distinct attacker generation strategies rather than model complexity. These findings
+highlight that effective defense design should focus on representative adversarial
+coverage, enabling practical and deployable keystroke-based protection mechanisms.
+
+QUACK! Making the (Rubber) Ducky Talk
+21
+Ethical Considerations
+This study relies on a publicly available dataset of human keystroke dynamics that
+has been previously collected and released in anonymized form [10]. The dataset
+does not contain Personally Identifiable Information (PII), and no additional data
+collection involving human participants was conducted.
+
+22
+A. Lotto et al.

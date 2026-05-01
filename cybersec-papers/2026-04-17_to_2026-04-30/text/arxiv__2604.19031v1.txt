@@ -1,0 +1,1628 @@
+SAGE: Signal-Amplified Guided Embeddings for LLM-based
+Vulnerability Detection
+ZHENGYANG SHAN, Shandong University, China
+XU QIAN, Shandong University, China
+JIAYUN XIN, Shandong University, China
+MINGHUI XU∗, Quancheng Laboratory, China and Shandong University, China
+YUE ZHANG∗, Quancheng Laboratory, China and Shandong University, China
+ZHEN YANG, Shandong University, China
+HAO WU, Nanjing University, China
+XIUZHEN CHENG, Shandong University, China
+Software vulnerabilities are a primary threat to modern infrastructure. While static analysis and Graph
+Neural Networks have long served as the foundation for vulnerability detection, the emergence of Large
+Language Models (LLMs) has introduced a transformative paradigm driven by superior semantic reasoning
+and cross-environment generalization. However, in the context of LLM-based vulnerability detection, we
+identify a fundamental bottleneck in these models termed Signal Submersion: a state where features related
+to vulnerability are activated internally but numerically overwhelmed by dominant functional semantics.
+To address this, we propose SAGE (Signal-Amplified Guided Embeddings), a framework that shifts from
+passive signal submersion to active signal recovery. SAGE integrates task-conditional Sparse Autoencoders
+(SAEs) to isolate and amplify these faint vulnerability signals. Extensive evaluations on BigVul, PrimeVul, and
+PreciseBugs demonstrate that SAGE achieves state-of-the-art performance. Notably, SAGE mitigates Signal
+Submersion by increasing the internal Signal-to-Noise Ratio (SNR) by 12.7× via sparse manifold projection.
+This mechanistic intervention enables a 7B model to achieve up to 318% Matthews Correlation Coefficient
+(MCC) gains on unseen distributions and a 319% gain on classic datasets. By maintaining robust performance
+across 13 programming languages and outperforming 34B baselines, SAGE establishes a more efficient and
+scalable path to software security than simple parameter scaling.
+CCS Concepts: • Security and privacy →Software and application security.
+Additional Key Words and Phrases: Vulnerability Detection, Large Language Models, Sparse Autoencoders,
+Mechanistic Interpretability
+∗Corresponding author.
+Authors’ Contact Information: Zhengyang Shan, 202520912@mail.sdu.edu.cn, Shandong University, Qingdao, Shandong,
+China; Xu Qian, Shandong University, Qingdao, Shandong, China, 202515294@mail.sdu.edu.cn; Jiayun Xin, Shandong
+University, Qingdao, Shandong, China, 202535317@mail.sdu.edu.cn; Minghui Xu, Quancheng Laboratory, Jinan, Shandong,
+China and Shandong University, Qingdao, Shandong, China, mhxu@sdu.edu.cn; Yue Zhang, Quancheng Laboratory, Jinan,
+Shandong, China and Shandong University, Qingdao, Shandong, China, zyueinfosec@sdu.edu.cn; Zhen Yang, Shandong
+University, Qingdao, Shandong, China, zhenyang@sdu.edu.cn; Hao Wu, hao.wu@nju.edu.cn, Nanjing University, Nanjing,
+Jiangsu, China; Xiuzhen Cheng, Shandong University, Qingdao, Shandong, China, xzcheng@sdu.edu.cn.
+Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee
+provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the
+full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored.
+Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires
+prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+In Proceedings of the 35rd ACM SIGSOFT International Symposium on SoftwareTesting and Analysis (ISSTA ’26)„ Oakland, CA
+© 2018 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 978-1-4503-XXXX-X/2018/06
+https://doi.org/XXXXXXX.XXXXXXX
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+arXiv:2604.19031v1 [cs.CR] 21 Apr 2026
+
+2
+Trovato et al.
+ACM Reference Format:
+Zhengyang Shan, Xu Qian, Jiayun Xin, Minghui Xu, Yue Zhang, Zhen Yang, Hao Wu, and Xiuzhen Cheng.
+2018. SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection. In Proceedings of
+Make sure to enter the correct conference title from your rights confirmation email (In Proceedings of the 35rd
+ACM SIGSOFT International Symposium on SoftwareTesting and Analysis (ISSTA ’26),). ACM, New York, NY,
+USA, 24 pages. https://doi.org/XXXXXXX.XXXXXXX
+1
+Introduction
+The rapid expansion of the digital attack surface has led to a surge in software vulnerabilities, with
+global databases like the NIST National Vulnerability Database (NVD) and the MITRE CVE list
+consistently logging thousands of new entries monthly [5]. These flaws, often stemming from
+subtle coding oversights, can trigger a cascade of consequences–from localized data exfiltration and
+unauthorized privilege escalation to systemic compromises and catastrophic service disruptions [57].
+To combat this, detection methods have evolved through several distinct paradigms: starting with
+traditional static analysis [46], moving toward Graph Neural Networks (GNNs) [9, 27, 28, 64], and
+more recently, adopting pre-trained models such as CodeBERT and UniXcoder [18, 20].
+The current state-of-the-art has shifted toward Large Language Models (LLMs), which represent
+a leap in vulnerability detection. Unlike previous iterations, LLMs possess sophisticated semantic
+comprehension and reasoning capabilities. This allows them to interpret the latent intent of code and
+trace complex execution logic across extensive sequences. By internalizing cross-lingual patterns
+and nuanced software environments without the need for manual rule crafting, LLMs offer a more
+generalized and robust solution to identifying vulnerabilities.
+However, despite these impressive capabilities, even the most advanced models available today
+still face critical limits in their performance. Prior evaluations show that, on realistic vulnerability-
+detection benchmarks, frontier LLMs often perform substantially worse than their general coding
+ability would suggest, and may approach random guessing when the distinction between safe and
+vulnerable code is subtle and the label distribution is highly imbalanced [15, 56]. In many cases,
+these frontier models struggle to identify the tiny, crucial differences between safe and unsafe
+code, leading to results that are sometimes no better than random guessing [43, 50]. The primary
+reason for this failure is that the signals of a vulnerability are often very weak and its code always
+hidden inside hundreds of lines of normal, working code [11, 34]. Because the surrounding code
+looks perfectly correct and follows all the rules of the programming language, it creates a lot of
+background noise. Even with their advanced reasoning, LLMs find it hard to focus on the tiny parts
+of the code that cause a security risk [43, 50].
+We identify this phenomenon as Signal Submersion. Our analysis reveals that while features
+related to vulnerabilities are activated in LLMs, their activation intensity remains weak compared
+to the dominant global functional semantics. Consequently, these subtle signals become numer-
+ically dominated by the model’s standard processing, creating a performance bottleneck where
+vulnerability signals in final layers are too weak to enable discriminative predictions.
+Motivated by this, we propose SAGE (Signal-Amplified Guided Embeddings), a framework
+that transitions from passive signal submersion to active signal recovery. SAGE integrates task-
+conditional Sparse Autoencoders (SAEs) trained independently at each layer, optimizing the SAE
+and classifier via a joint loss function. This design explicitly constructs a sparse manifold to amplify
+vulnerability signals while suppressing the semantic background, capturing features at their peak
+magnitude before Signal Submersion occurs. Crucially, across the tested decoder-only backbones,
+SAGE can be integrated without modifying the backbone parameters. By skipping the need to run
+the full LLM during training, it achieves state-of-the-art results with faster speed.
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+3
+We evaluated SAGE across four model architectures on refined versions of BigVul [17], Prime-
+Vul [15], and PreciseBugs [22], benchmarking against 10 state-of-the-art methods and commercial
+frontier models including GPT-5.2-Codex [2], Gemini 3 pro [4] and Claude Opus 4.5 [3]. Results
+demonstrate that SAGE consistently outperforms baselines and exhibits superior robustness. Mech-
+anistic analysis confirms our approach effectively amplifies the internal signal-to-noise ratio. Our
+contributions are summarized as follows:
+• Identification of Signal Submersion: We identify Signal Submersion as an important
+bottleneck for LLM-based vulnerability detection in the tested model families. Our empirical
+analysis reveals that vulnerability features are not absent but are numerically overwhelmed,
+constituting less than 5% of the total activation magnitude in deep layers.
+• The SAGE Framework: We propose SAGE, a framework that transitions from passive
+submersion to active amplification. By projecting entangled states onto a sparse manifold,
+SAGE reverses Signal Submersion, boosting the signal-to-noise ratio (SNR) by up to 12.7
+times compared to standard inference.
+• State-of-the-Art Performance: We conduct an extensive evaluation across refined security
+benchmarks, including PrimeVul, BigVul, and PreciseBugs. SAGE establishes state-of-the-art
+(SOTA) performance, delivering a 318% improvement in Matthews Correlation Coefficient
+(MCC) on unseen distributions and a 319% gain on classic datasets. Crucially, we demonstrate
+that a 7B model integrated with SAGE significantly outperforms 34B parameter baselines and
+even larger commercial frontier model, showing positive transfer across 13 programming
+languages, while results on low-resource language subsets should be interpreted cautiously.
+2
+Related Work
+2.1
+Traditional Vulnerability Detection Methods
+The field of vulnerability detection has undergone significant evolution, beginning with foun-
+dational static analysis tools [6, 33, 59] and rule-based systems [31, 54]. These early approaches
+established the essential baseline for automated security auditing by encoding known vulnerability
+patterns. To move beyond syntax-level checks, dynamic techniques such as fuzzing and symbolic
+execution [36] were introduced, significantly enhancing program state exploration and interaction
+depth. While effective in validating execution-time behaviors, these methods often encounter scala-
+bility challenges when navigating expansive path spaces or identifying flaws hidden under rare
+edge conditions [12, 32, 45]. To bridge the gap between efficiency and deep semantic understanding,
+subsequent research has shifted towards learning-based paradigms. Recent advancements leverage
+graph neural networks to operate on structured representations, such as Code Property Graphs [9]
+or Program Dependence Graphs [26]. By capturing long-range dependencies and intricate control-
+flow relationships, these structure-based methods have demonstrated a superior ability to model
+the complex semantics inherent in modern software vulnerabilities.
+2.2
+LLM-based Vulnerability Detection
+Prompt-based Methods. Zero-shot and few-shot prompting strategies leverage the generalization
+capabilities of LLMs without the need for extensive weight updates [58]. Research has explored
+various prompt engineering techniques [61] and established unified evaluation frameworks [51] to
+assess these capabilities. Studies indicate that while LLMs show promise, they primarily rely on
+token-level patterns, and distinguishing subtle vulnerabilities remains a complex challenge [62].
+Comprehensive evaluations suggest that standard prompting strategies face difficulties in achieving
+high precision on complex real-world datasets, indicating the complexity of the task [50].
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+4
+Trovato et al.
+Fine-tuning-based Methods. Fine-tuning pre-trained models, such as LineVul [19] and Code-
+BERT [18], marked a step forward in detection performance. Following these advancements, the
+community has increasingly focused on the robustness of evaluation protocols. Recent studies note
+that random splitting on historical datasets [17] can lead to data leakage, where models might
+retain specific sample features rather than learning generalizable patterns [8, 11, 43]. Similarly,
+investigations into models like PDBERT [30] emphasize the importance of distinct training and
+testing distributions to ensure genuine comprehension. Addressing these insights, recent works
+like VulLLM have adopted multi-task instruction tuning [16] and strict temporal splitting pro-
+tocols [22, 60] (e.g., MSIVD) to better align model training with realistic, evolving vulnerability
+landscapes.
+Reinforcement Learning-based Methods. To align models with non-differentiable security
+objectives, researchers have integrated Reinforcement Learning (RL). Methodologies range from
+optimizing prompts via policy gradients [42] to continuous prefix tuning for generating secure
+code [21, 47]. More recently, efforts have shifted towards internalizing reasoning capabilities.
+Inspired by advancements in reasoning models [13], approaches like those by Simoni et al. [49]
+utilize Group Relative Policy Optimization (GRPO) to enhance detection logic. Frameworks such
+as ReVD [56] further employ curriculum learning and synthetic reasoning traces to improve the
+model’s sensitivity to subtle code distinctions.
+Agent-based Methods. Multi-Agent Systems (MAS) have been proposed to simulate collab-
+orative auditing processes. Frameworks like MuCoLD [37] utilize multi-role debates to refine
+consensus, while PentestGPT [14] facilitates automated penetration testing. To address the compu-
+tational overhead of multi-agent interactions, adaptive frameworks like ConColl [53] dynamically
+balance single-agent efficiency with multi-agent collaboration. Furthermore, systems such as Au-
+toCodeRover [63] extend these capabilities beyond detection, exploring autonomous program
+repair.
+2.3
+Internal Representations for Vulnerability Analysis
+Complementing external prompting and fine-tuning, mechanistic interpretability analyzes internal
+LLM states to understand code processing. Research indicates that attention mechanisms inherently
+encode both syntactic structures (ASTs) [55] and semantic dependencies (CFGs) [35], enabling
+vulnerability localization methods that leverage these internal signals. Building on the linear
+representation hypothesis [40], activation-steering methods modify model behavior by adding
+dense steering vectors to hidden states during inference [25]. These approaches are lightweight
+and effective when a single global direction is sufficient to bias model behavior. However, for
+vulnerability detection, the target signal is often sparse, weak, and entangled with dominant
+functional semantics. In this setting, a fixed dense intervention may not adequately separate
+vulnerability-specific cues from the broader semantic background. SAGE differs from steering-
+based methods in two ways: it learns a sparse, task-conditional representation rather than applying
+a fixed dense offset, and it explicitly selects intermediate layers where the vulnerability signal is
+most separable before deep-layer dilution occurs. Recently, Sparse Autoencoders (SAEs) [1] have
+emerged as a powerful tool for disentangling polysemantic features. While Melo et al. [39] pioneered
+the application of SAEs to bug detection using general-purpose models [29], there remains an
+opportunity to further align these sparse representations with the specific, fine-grained semantics
+required for security tasks. This motivates the exploration of task-specific optimization for internal
+feature extraction.
+In summary, while existing approaches have evolved from static analysis to advanced deep learn-
+ing, they share limitations in handling the subtle nature of vulnerability signals. Table 1 provides a
+systematic comparison of these paradigms. Current vulnerability detection methods mainly rely on
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+5
+parsing code graphs or optimizing model weights through fine-tuning and reinforcement learning.
+However, these approaches either rely on heavy external priors or succumb to signal submersion
+by optimizing on diluted final-layer representations. SAGE works as an orthogonal framework that
+complements these existing methods. Instead of updating the model parameters, SAGE keeps the
+backbone frozen and intervenes directly at the intermediate layers. This approach is not limited by
+the model’s previous training or alignment history. By focusing on these internal layers, we can
+find and use hidden features that are usually lost during standard end-to-end training.
+Table 1. Comparison of Technical Paradigms. SAGE is an orthogonal framework enhancing internal repre-
+sentations, compatible with SFT, RL, and Agents.
+Category & Rep. Works
+Core Mechanism
+Graph-based
+[9, 26]
+Explicit Structure Modeling. Utilizes Graph Neural Networks (GNNs) to learn from
+intermediate representations like Code Property Graphs (CPG) or PDGs.
+Supervised Fine-Tuning
+[19, 60]
+Weight Optimization. Updates global model parameters via end-to-end backpropagation
+to align final-layer probability distributions with ground truth.
+Reinforcement Learning
+[56]
+Policy Alignment. Optimizes the reasoning generation policy using reward signals (e.g.,
+COPO/GRPO) derived from correct detection outcomes.
+Agent-based
+[37, 53]
+Workflow Orchestration. Simulates multi-role debates or sequential retrieval-augmented
+workflows to decompose complex detection tasks.
+Activation Engineering
+[25]
+Dense Intervention. Modifies behavior by adding a fixed, dense steering vector to the
+activation space during inference.
+Dict. Learning
+[39]
+Unsupervised Extraction. Decomposes activations into sparse features using Autoencoders
+(e.g., Gemma Scope) on general corpora.
+SAGE (Ours)
+Pan-Layer Perception + Task-Conditional SAE. Relation: Orthogonal to SFT/RL (operates
+with frozen backbone parameters, compatible with any model regardless of its alignment
+history) and Complementary to Agents (enhancing atomic capability).
+3
+Method
+As we illustrated, the core challenge in vulnerability detection is Signal Submersion, where critical
+intermediate features are progressively overwhelmed by global semantics. Critically, post-training
+approaches [19, 49, 56, 60] do not explicitly model the internal processing. By ignoring the evolution
+of intermediate features and calculating loss on representations where signals are already diluted,
+these methods may rely on spurious correlations, leading to poor generalization. To overcome this,
+SAGE actively intervenes in the model’s intermediate information flow. By projecting entangled
+activations into a sparse manifold via a task-conditional Sparse Autoencoder (SAE), SAGE explicitly
+disentangles and amplifies faint vulnerability signals. This section begins by formally defining
+the Signal Submersion problem, followed by a detailed technical breakdown of SAGE’s three core
+components: Pan-Layer Latent Perception, Sparse Manifold Projection, and Task-Conditional Latent
+Alignment.
+3.1
+Motivation and Problem Formulation
+Formally, let D = {(𝑥𝑖,𝑦𝑖)}𝑁
+𝑖=1 denote the dataset, where 𝑥is the source code and 𝑦∈{0, 1} is
+the label (0 for safe, 1 for vulnerable). For a Transformer-based LLM with 𝐿layers, let ℎ𝑙(𝑥) ∈R𝑑
+represent the latent activation of input 𝑥at layer 𝑙.
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+6
+Trovato et al.
+We first categorize the activations at layer 𝑙into two sets based on their labels: 𝐻(𝑙)
+𝑠𝑎𝑓𝑒= {ℎ𝑙(𝑥) |
+(𝑥,𝑦) ∈D,𝑦= 0} and 𝐻(𝑙)
+𝑣𝑢𝑙𝑛= {ℎ𝑙(𝑥) | (𝑥,𝑦) ∈D,𝑦= 1}. Let 𝐻(𝑙)
+𝑎𝑙𝑙= 𝐻(𝑙)
+𝑠𝑎𝑓𝑒∪𝐻(𝑙)
+𝑣𝑢𝑙𝑛denote the
+entire population of activations. Drawing on the Linear Representation Hypothesis [25, 40], we
+introduce two dataset-level geometric statistics at layer 𝑙: a semantic centroid 𝑠𝑙and a vulnerability
+direction 𝑣𝑙. Importantly, we do not regard these quantities as an exact sample-wise causal decom-
+position of every activation. Instead, they define a descriptive coordinate system for characterizing
+how vulnerability-relevant information is organized relative to the dominant semantic background:
+𝑠𝑙≜Mean
+
+𝐻(𝑙)
+all
+
+,
+𝑣𝑙≜Mean
+
+𝐻(𝑙)
+vuln
+
+−Mean
+
+𝐻(𝑙)
+safe
+
+.
+For an individual sample 𝑥, we express its activation relative to this coordinate system as
+ℎ𝑙(𝑥) = 𝑠𝑙+ 𝛼𝑙(𝑥) 𝑣𝑙+ 𝑟𝑙(𝑥),
+(1)
+where
+𝛼𝑙(𝑥) = ⟨ℎ𝑙(𝑥) −𝑠𝑙, 𝑣𝑙⟩
+∥𝑣𝑙∥2
+2
+measures the alignment of sample 𝑥with the vulnerability direction, and 𝑟𝑙(𝑥) denotes the residual
+component not explained by this direction. Under this formulation, 𝑠𝑙represents the dominant
+semantic background shared across samples, while 𝛼𝑙(𝑥)𝑣𝑙captures the class-discriminative com-
+ponent aligned with vulnerability-related variation.
+This formulation is descriptive rather than causal: throughout the paper, we use the term
+“vulnerability signal” to refer to the discriminative component aligned with 𝑣𝑙, not to a uniquely
+identifiable latent factor.
+...
+...
+Vulnerability
+Patch
+Token Sequence
+Attention Weight Matrix
+Value Matrix
+1.000
+0
+0
+0
+0
+0
+0.989
+0.011
+0
+0
+0
+0
+0.558
+0.371
+0.301
+0
+0
+0
+0.327
+0.270
+0.035
+0.368
+0
+0
+0.289
+0.232
+0.029
+0.297
+0.153
+0
+0.241
+0.201
+0.015
+0.185
+0.211
+0.147
+0.92
+-0.10
+0.34
+0.55
+1.10
+0.22
+0.18
+0.41
+0.15
+0.02
+0.01
+0.08
+0.87
+-0.32
+0.45
+0.29
+0.73
+0.11
+0.39
+0.62
+0.95
+-0.04
+0.27
+0.51
+...
+Global Semantics(0.85)
+Vulnerability Signal(0.15)
+Vulnerability Signal(0.02)
+Global Semantics (0.99)
+Vulnerability Signal(0.01)
+Global Semantics (0.92)
+Vulnerability Signal(0.08)
+0.90
+-0.02
+0.32
+0.48
+Attention Output
+Output
+No: 
+No security vulnerability.
+Sparse
+Auto Encoder
+Decoded Feature Matrix
+0
+0.07
+0
+0.12
+0
+0
+1
+0
+0
+0.7
+0
+0
+0
+0
+0.93
+0.96
+0
+0
+0
+0
+0
+0.85
+0
+0
+0
+0
+0
+0
+0
+0.98
+0
+0
+0.89
+0
+0.15
+0
+Vulnerability Features
+(High activation indicates vulnerability)
+General Semantics
+(Irrelevant to detection)
+MLP Classifier
+Signal Submersion
+Input: Code with a Subtle Vulnerability
+Signal Dilution via 
+Global Attention
+Dominance of Global 
+Semantics
+The model pays attention to the global context, assigning low weights 
+to the specific bug.
+Global Semantics(0.98)
+During aggregation, the massive amount of 'safe' context 
+numerically overwhelms the single vulnerability token.
+The final representation is dominated by global semantics, leaving the 
+vulnerability signal invisible to the final output layer.
+Output
+Yes: 
+A security vulnerability 
+detected.
+SAGE
+Standard 
+LLM
+Inference
+Unlike standard inference where 
+the defect is drowned out, 
+SAGE recovers the submerged 
+signal. The Decoded Feature 
+Matrix explicitly isolates the 
+security anomaly, providing a 
+clean, high-fidelity signal that 
+enables the model to flip the 
+prediction from "Safe" to 
+"Vulnerable.
+Fig. 1. Illustration of Signal Submersion and SAGE. The self-attention mechanism assigns dominant
+weights to global functional context (𝑠𝑙), causing the sparse vulnerability features (𝑣𝑙) to be diluted during
+aggregation. SAGE addresses this by using a Sparse Autoencoder (SAE) to amplify the submerged vulnerability
+signal from the functional background.
+The Signal Submersion Phenomenon. While 𝑣𝑙may be distinct in shallow layers, it suffers
+from a dilution effect as depth 𝑙increases. As illustrated in Fig. 1, the self-attention mechanism
+aggregates long-range functional context. Even if a specific token captures a defect, its contri-
+bution is numerically suppressed by the massive weight of global functional tokens during the
+weighted sum calculation. Consequently, the vulnerability signal becomes negligible compared to
+the accumulating functional background in the final layer:
+||𝑠𝐿||2 ≫||𝑣𝐿||2.
+(2)
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+7
+Our empirical analysis confirms this, showing the relative magnitude of 𝑣𝑙drops below 5% in deeper
+layers.
+This inequality reveals a bottleneck for conventional methods that rely on the final represen-
+tation ℎ𝐿. Since the discriminative component aligned with v𝐿is submerged by the dominant
+semantic component centered around s𝐿, the optimization objective degenerates. Models effectively
+either performance degrade to a majority-class prior (ignoring the weak 𝑣𝐿) or overfit to stylistic
+heuristics within 𝑠𝐿as proxies for vulnerability. This necessitates our SAGE framework, which
+actively intervenes at an intermediate layer 𝑙∗to recover 𝑣𝑙before the Signal-to-Noise Ratio (SNR)
+deteriorates.
+3.2
+Pan-Layer Latent Perception
+Process-Based Perception via Intermediate Intervention. The Signal Submersion analysis
+reveals that the final representation ℎ𝐿operates in a structurally low SNR regime. We actively
+intervene in the model’s inference trajectory, extracting latent states at intermediate layers (𝑙< 𝐿)
+to recover vulnerability artifacts before they are submerged by global semantics.
+Hidden State Extraction. To intervene effectively, we must aggregate the sequence of hidden
+states 𝐻(𝑙) into a representative vector 𝑧(𝑙). We leverage the autoregressive properties of decoder-
+only large language models to extract the activation state of the last token in a token sequence.
+The causal attention mask ensures that the last token is the unique position that mathematically
+aggregates the receptive field of the entire code context {𝑡1, . . . ,𝑡𝑇}. Accordingly, we define the
+layer-wise representation as:
+𝑧(𝑙) = T (𝐻(𝑙)) ≜ℎ(𝑙)
+𝑡
+
+𝑡=𝑇.
+(3)
+This operator preserves the cumulative reasoning trajectory encoded by the causal chain. While
+other aggregation methods (e.g., Mean Pooling, Max Pooling) exist, we prioritize the last token to
+avoid smoothing out high-frequency anomaly signals. A detailed empirical comparison demon-
+strating the superiority of this extraction strategy over others is provided in Section 5.2.
+Layer-wise Independent Probing. Analyzing the model state at a specific layer is insufficient
+because the signals indicating a vulnerability vary across different depths. These signals may be
+strong in some layers but weak in others. To address this, SAGE employs task-conditional Sparse
+Autoencoders (SAEs) to analyze the representation 𝑧(𝑙) at each layer individually. Because the
+backbone is frozen, these layer-wise SAEs are trained on cached hidden states rather than through
+repeated end-to-end backpropagation. The overhead therefore scales linearly with the number of
+probed layers, but avoids the substantially higher cost of updating the full backbone. This approach
+allows SAGE to scan through the model and identify exactly which layer provides the clearest and
+most separable vulnerability features.
+3.3
+Sparse Manifold Projection via SAE
+Separating Vulnerabilities. While the extracted latent states 𝑧(𝑙) record the inference process,
+they represent multiple different concepts mixed together within a dense vector [1]. In this dense
+representation, strong features such as syntax often dominate the weaker signals associated with
+vulnerabilities. Consequently, the vulnerability features are not readily separable using linear
+methods. To address this, we hypothesize that mapping the state into a space with significantly
+more dimensions (𝑑𝑠𝑎𝑒≫𝑑𝑖𝑛) will separate these mixed features. We employ an SAE to isolate the
+vulnerability signal as an independent and distinct feature.
+JumpReLU for Magnitude Preservation. Standard sparse coding methods typically rely on
+𝐿1 regularization. However, this approach tends to reduce the value of all activations to achieve
+sparsity. Since the vulnerability signals are already weak (Eq. 2), this reduction may reduce important
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+8
+Trovato et al.
+information along with the noise. To address this limitation, we utilize a JumpReLU SAE [41]. Let
+ℎ𝑙∈R𝑑be the input activation vector. We project ℎ𝑙using a learnable encoder weight matrix
+𝑊𝑒𝑛𝑐∈R𝑑𝑠𝑎𝑒×𝑑and a bias vector 𝑏𝑒𝑛𝑐∈R𝑑𝑠𝑎𝑒, followed by a thresholding operation:
+𝑧= 𝜎𝜃(𝑊𝑒𝑛𝑐ℎ𝑙+ 𝑏𝑒𝑛𝑐),
+where 𝜎𝜃(𝑢)𝑖= 𝑢𝑖· I(𝑢𝑖> 𝜃𝑖).
+(4)
+Here, 𝜃is a learnable threshold vector that acts as a filter. This mechanism ensures magnitude
+preservation. Once a feature 𝑧𝑖exceeds its threshold 𝜃𝑖, its original value is kept unchanged.
+Consequently, SAGE effectively filters out noise by setting it to zero without weakening the
+retrieved vulnerability signal.
+Optimization Objective. We train the SAE to minimize a combined loss function. This function
+balances two goals: accurately reconstructing the input activation ℎ𝑙and maintaining sparsity.
+Unlike standard methods that penalize the magnitude of activations, we aim to minimize the
+number of active features. Since directly counting non-zero elements is difficult for optimization,
+we use a sigmoid function 𝜎𝑠𝑖𝑔to approximate this count:
+L𝑆𝐴𝐸= ||ℎ𝑙−𝑊𝑑𝑒𝑐𝑧||2
+2
+| {z }
+L𝑟𝑒𝑐𝑜𝑛
++𝜆·
+1
+𝑑𝑠𝑎𝑒
+𝑑𝑠𝑎𝑒
+∑︁
+𝑖=1
+𝜎𝑠𝑖𝑔
+𝑢𝑖−𝜃𝑖
+𝜏
+
+| {z }
+L𝑠𝑝𝑎𝑟𝑠𝑒(≈𝐿0)
+.
+(5)
+Here, 𝑊𝑑𝑒𝑐∈R𝑑×𝑑𝑠𝑎𝑒is the decoder weight matrix that maps the sparse feature 𝑧back to the
+original dimension. The parameter 𝜏controls how sharply the function distinguishes between
+active and inactive features. By minimizing L𝑠𝑝𝑎𝑟𝑠𝑒, SAGE suppresses noise and improves the SNR.
+However, it is important to note that this optimization is unsupervised. The model aims to
+reconstruct the dominant semantic structure of the code and does not prioritize vulnerability-
+specific features. Since vulnerability signals are often faint and appear infrequently, the model
+tends to discard them to minimize the overall reconstruction error. Consequently, the standard SAE
+may fail to isolate these critical signals. To address this limitation, we introduce Task-Conditional
+Latent Alignment.
+3.4
+Task-Conditional Latent Alignment
+Gradient Injection via Weighted Supervision. To transform the SAE from a passive feature
+extractor into a guided discovery engine, we introduce Task-Conditional Latent Alignment.
+We attach a linear probe 𝑔𝜙directly to the sparse feature 𝑧. Crucially, to address the extreme class
+imbalance where safe samples vastly outnumber vulnerabilities, we employ Inverse-Frequency
+Risk Minimization. We formulate the supervision as a Weighted Cross-Entropy loss:
+L𝑐𝑙𝑎𝑠𝑠= −1
+𝐵
+𝐵
+∑︁
+𝑖=1
+𝐶
+∑︁
+𝑐=1
+𝜔𝑐· 𝑦𝑖,𝑐log( ˆ𝑦𝑖,𝑐),
+(6)
+where 𝑛𝑐denotes the number of training samples in class 𝑐, and
+𝜔𝑐= 𝐶· (1/𝑛𝑐)
+Í𝐶
+𝑗=1(1/𝑛𝑗)
+is the normalized inverse-frequency weight for class 𝑐, with 𝐶being the number of classes. This
+normalization ensures that the average class weight equals 1, so that minority classes receive larger
+gradients without changing the overall loss scale.
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+9
+We integrate this objective into a unified optimization framework:
+L𝑡𝑜𝑡𝑎𝑙= L𝑟𝑒𝑐𝑜𝑛+ 𝜆· L𝑠𝑝𝑎𝑟𝑠𝑒
+| {z }
+Unsupervised Structure
++𝛾· L𝑐𝑙𝑎𝑠𝑠
+|{z}
+Supervised Guidance
+.
+(7)
+This architecture establishes a direct connection for gradient flow. During backpropagation, the
+weighted gradients 𝛾∇L𝑐𝑙𝑎𝑠𝑠from the classifier are propagated back to the SAE encoder. This
+process guides the JumpReLU activation mechanism. Unlike standard unsupervised learning, which
+separates all features indiscriminately, these gradients provide a supervised signal. These gradients
+guide the encoder to prioritize vulnerability patterns, regardless of their signal strength. At the same
+time, the model is encouraged to down-weight strong but task-irrelevant features, such as coding
+style. We do not claim that this fully eliminates shortcut learning. Rather, SAGE reduces this risk
+through three design choices: strict de-duplication and temporal partitioning in the data pipeline, a
+sparse bottleneck that penalizes diffuse correlations, and evaluation on distribution-shifted datasets
+where superficial cues transfer poorly. [48].
+4
+Experimental Design
+In this section, we present a comprehensive evaluation of the SAGE framework, utilizing refined
+and deduplicated versions of three rigorously curated benchmarks: BigVul [17], PrimeVul [15],
+and PreciseBugs [22]. Our experimental design extends beyond standard performance metrics; we
+aim to empirically validate the existence of the Signal Submersion phenomenon and demonstrate
+SAGE’s capability to recover these latent vulnerability signals. Specifically, we structure our analysis
+around four Research Questions (RQs) that progress from macroscopic performance comparisons
+to microscopic mechanistic interpretations, concluding with an investigation into the relationship
+between general coding capabilities and security sensitivity:
+RQ1 (Overall Effectiveness): How does SAGE perform on standard vulnerability detec-
+tion benchmarks compared to state-of-the-art baselines? Given the challenge of detecting
+minute semantic deviations within complex code, we establish a rigorous comparison against
+diverse baselines, ranging from graph-based methods to recent LLMs. This validates whether SAGE
+successfully amplifies critical vulnerability signals to achieve superior detection accuracy.
+RQ2 (Mechanistic Verification): Does SAGE quantitatively and qualitatively mitigate
+Signal Submersion via robust feature decoupling? To validate the structural grounding of
+our approach, we analyze latent space properties through Internal Signal-to-Noise Ratio (SNR)
+and Top-𝐾feature attribution. These analyses confirm that SAGE effectively recovers submerged
+signals via robust feature decoupling rather than relying on dense noise.
+RQ3 (Component Efficacy & Stability): How do different components contribute to
+SAGE, and is the performance robust? We assess the necessity of key components through
+a comprehensive ablation study, isolating the contributions of Sparse Manifold Projection and
+task-alignment modules. Additionally, we conduct hyperparameter sensitivity analysis to ensure
+that the reported performance gains are robust and stable across varying configurations.
+RQ4 (Impact of Model Scale): How does the Signal Submersion effect and SAGE’s effec-
+tiveness evolve across different model scales? We investigate whether the Signal Submersion
+effect persists or diminishes as model parameters and complexity increase. This analysis determines
+if SAGE remains essential for large-scale foundation models or if scaling naturally resolves the
+dominance of global semantics.
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+10
+Trovato et al.
+4.1
+Studied LLMs
+Table 2 lists our studied LLMs with their categories, model architectures, release timelines, parameter
+sizes, and effective context window limits. To ensure a comprehensive evaluation across the current
+landscape of LLMs, we systematically selected representative models from three distinct categories:
+(1) General-Purpose Open-Weights LLMs (i.e., Mistral-7B [24] and Llama-3.1-8B [52]), which serve
+as strong baselines for generalized reasoning; (2) Code-Specialized LLMs (i.e., the CodeLlama
+family [44] and Qwen2.5-Coder family [23]), which are explicitly optimized for programming tasks;
+and (3) Proprietary Frontier Models (i.e., GPT-5.2-Codex [2], Gemini 3 Pro [4], and Claude Opus
+4.5 [3]), which represent the current state-of-the-art in closed-source commercial performance.
+Table 2. Studied LLMs in this paper
+Category
+Model
+Model Type
+Time
+Size
+Training Base
+In/Out (Tokens)
+Commercial
+GPT-5.2-Codex [2]
+Instruction Model
+2025-12
+/
+/
+400k / 128k
+Gemini 3 Pro [4]
+Instruction Model
+2025-11
+/
+/
+1M / 64k
+Claude Opus 4.5 [3]
+Instruction Model
+2025-11
+/
+/
+200k / 64k
+General
+Llama-3.1-8B [52]
+Instruction Model
+2024-07
+8B
+15 trillion
+128k / –
+Mistral-7B [24]
+Base Model
+2023-10
+7B
+/
+32k / –
+Code
+CodeLlama-7B [44]
+Instruction Model
+2023-08
+7B
+500 billion
+16k / –
+CodeLlama-13B [44]
+Instruction Model
+2023-08
+13B
+500 billion
+16k / –
+CodeLlama-34B [44]
+Instruction Model
+2023-08
+34B
+500 billion
+16k / –
+Qwen2.5-Coder-7B [23]
+Instruction Model
+2024-09
+7B
+5.5 trillion
+128k / –
+Qwen2.5-Coder-14B [23]
+Instruction Model
+2024-09
+14B
+5.5 trillion
+128k / –
+Qwen2.5-Coder-32B [23]
+Instruction Model
+2024-11
+32B
+5.5 trillion
+128k / –
+Φ In the Training Base column, “/” denotes undisclosed proprietary data. For CodeLlama, the 500 billion tokens represent code-specific
+training on top of the Llama 2 base. For open-weights models, the maximum output length is dynamically determined by the remaining
+context window. Therefore, we report the total context limit as the input capacity and mark the output as “–” to indicate this dynamic
+dependency.
+4.2
+Datasets and Preprocessing
+To ensure ecological validity and mitigate data leakage [8, 11], we employ distinct preprocessing
+protocols to curate refined versions of BigVul [17], PrimeVul [15], and PreciseBugs [22].
+Fuzzy De-duplication Protocol. Since BigVul and PrimeVul are historical snapshots likely
+present in LLM pre-training corpora, standard splitting is ineffective. To counter memorization, we
+implement a strict semantic filtering mechanism. We define an abstraction mapping 𝜓to neutralize
+trivial perturbations and utilize SimHash with Jaccard coefficient J for efficient retrieval. We
+construct a purified training set 𝐷𝑡𝑟𝑎𝑖𝑛by enforcing a similarity threshold 𝜏= 0.75 against the test
+set:
+𝐷𝑡𝑟𝑎𝑖𝑛= {𝑥∈𝐷𝑟𝑎𝑤
+𝑡𝑟𝑎𝑖𝑛| ∀𝑦∈𝐷𝑡𝑒𝑠𝑡, J (𝜓(𝑥),𝜓(𝑦)) < 𝜏},
+(8)
+where J (𝐴, 𝐵) = |𝐴∩𝐵|
+|𝐴∪𝐵| . This ensures no training sample is semantically isomorphic to any held-out
+test sample.
+Temporal Partitioning. For the continuously updated PreciseBugs, we adopt a temporal
+splitting protocol [60] to simulate zero-day detection. We set a global cutoff𝑇𝑐𝑢𝑡𝑜𝑓𝑓at January 2023,
+aligning with standard baselines like CodeLlama [44] and strictly predating evaluation samples for
+most studied models. The evaluation set comprises post-cutoff samples:
+𝐷𝑃𝐵
+𝑡𝑒𝑠𝑡= {𝑥∈𝐷𝑃𝐵
+𝑡𝑜𝑡𝑎𝑙| Time(𝑥) > 𝑇𝑐𝑢𝑡𝑜𝑓𝑓}.
+(9)
+This formulation minimizes memorization bias and establishes a consistent benchmark across
+model generations.
+Dataset Statistics and Diversity. Table 3 summarizes the statistics of the processed datasets.
+Regarding linguistic diversity, while BigVul and PrimeVul predominantly feature C/C++ vulnerabil-
+ities typical of systems software, PreciseBugs is inherently multi-lingual (comprising C/C++, Java,
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+11
+Python, and JavaScript). This inclusion allows us to evaluate SAGE’s cross-language generalization
+capabilities beyond the single-language limitations of traditional benchmarks.
+Table 3. Detailed statistics of the refined datasets. To conserve space, complexity metrics (Tokens, LoC, CCN)
+are reported as Mean ± Std, excluding median/p95 values.
+Dataset
+Lang.
+Samples
+Balance Ratio
+Tokens
+LoC
+
+
+[…middle truncated for length…]
+
+n rather than incidental
+tuning, we conducted a rigorous ablation study and hyperparameter sensitivity analysis.
+Analysis of Components and Architecture.
+The results in Table 5 clarify the contribution of each specific module. Although the Linear Probe
+outperforms standard finetuning, its stagnation at a low Precision of approximately 25% indicates
+that vulnerability signals remain deeply mixed within the complex feature space. This limitation
+confirms that simple linear methods are insufficient to separate these entangled signals.
+Standard aggregation strategies similarly exhibit high instability across different datasets. Mean
+Pooling tends to dilute the specific vulnerability signals by averaging the features, while Max
+Pooling often focuses incorrectly on strong noise signals rather than subtle defects. This failure
+is particularly evident on the PreciseBugs dataset where Max Pooling yields an MCC near 0.00
+because it prioritizes high-energy noise over the actual vulnerability patterns.
+In contrast, the unsupervised SAE functions as an effective noise filter and substantially improves
+Precision to 74.62% on the BigVul dataset. However, this method lacks specific semantic guidance
+and consequently suffers from a drop in Recall to 55.45%. Full SAGE resolves this trade-off by using
+classification gradients to refine the feature representation. This approach effectively restores Recall
+to 77.82% while maintaining a state-of-the-art Precision of 82.02%. Furthermore, SAGE achieves
+consistent gains across CodeLlama, Mistral, Llama-3.1, and Qwen2.5, demonstrating that the method
+learns universally transferable features rather than relying on specific model architectures.
+Hyperparameter Sensitivity & Structural Invariance. We further examine the robustness
+of the model by adjusting key hyperparameters as shown in Fig. 5a. The results indicate that the
+performance remains highly stable across different settings. The Sparse Loss (𝜆) reaches its optimal
+performance at 0.5, which confirms that a noise filter is necessary to reduce interference from
+unrelated features. Similarly, the Classification Weight (𝛾) peaks at 1.0, representing an ideal balance
+between accurately reconstructing the data and identifying defects. Additionally, increasing the
+Expansion Factor up to 16× leads to consistent improvements, validating that projecting features
+into a larger space is essential for separating the complex logic of vulnerabilities.
+Most importantly, Fig. 5b reveals that the signal trajectory consistently follows an inverted-U
+pattern regardless of the hyperparameter settings. The detection capability always peaks at the in-
+termediate layers (Layers 4–8) before declining rapidly in the deeper layers. This empirical evidence
+supports the observation that vulnerability signals fade as the model processes information. While
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+17
+Table 5. Ablation study of SAGE components. We compare Full SAGE with four variants: Vanilla Finetuning,
+Linear Probe, Unsupervised SAE, and Pooling strategies.
+Variant
+Backbone
+BigVul [17]
+PrimeVul [15]
+PreciseBugs [22]
+Prec. ↑Recall ↑
+F1 ↑
+B.Acc ↑MCC ↑Prec. ↑Recall ↑
+F1 ↑B.Acc ↑MCC ↑Prec. ↑Recall ↑
+F1 ↑B.Acc ↑MCC ↑
+Vanilla
+Finetuning
+CodeLlama-7B
+10.87
+90.26
+19.40
+72.02
+0.2072
+4.50
+84.82
+8.54
+69.54
+0.1218
+12.50
+1.03
+1.90
+49.76
+-0.0153
+Mistral-7B
+12.60
+72.50
+21.47
+70.54
+0.2043
+4.11
+88.70
+7.85
+68.07
+0.1126
+20.00
+1.06
+2.01
+50.02
+0.0013
+Llama-3.1-8B
+13.30
+93.60
+23.29
+77.75
+0.2651
+4.66
+78.58
+8.80
+68.88
+0.1190
+14.29
+1.03
+1.92
+49.87
+-0.0089
+Qwen2.5-Coder-7B
+10.74
+75.29
+18.80
+68.11
+0.1731
+5.06
+79.09
+9.51
+70.69
+0.1321
+7.69
+1.03
+1.82
+49.22
+-0.0392
+Linear
+Probe
+CodeLlama-7B
+25.28
+76.87
+38.05
+81.71
+0.3878
+6.08
+69.76
+11.18
+72.67
+0.1532
+15.38
+2.13
+3.74
+49.88
+-0.0058
+Mistral-7B
+24.73
+68.63
+36.35
+78.12
+0.3569
+5.97
+76.14
+11.08
+74.50
+0.1602
+15.56
+3.19
+5.29
+49.50
+-0.0202
+Llama-3.1-8B
+28.62
+75.92
+41.57
+82.35
+0.4183
+6.01
+76.87
+11.16
+74.83
+0.1622
+12.50
+2.27
+3.85
+49.60
+-0.0174
+Qwen2.5-Coder-7B
+29.71
+72.61
+42.17
+81.22
+0.4176
+6.16
+73.95
+11.38
+74.22
+0.1614
+14.29
+6.38
+8.82
+49.33
+-0.0190
+Unsupervised
+(w/o L𝑐𝑙𝑠)
+CodeLlama-7B
+74.62
+55.45
+63.62
+77.17
+0.6257
+14.31
+29.33
+19.24
+62.67
+0.1791
+20.94
+98.10
+34.51
+50.23
+0.0707
+Mistral-7B
+73.18
+51.47
+60.43
+75.18
+0.5953
+14.17
+27.50
+18.70
+61.86
+0.1721
+21.27
+94.47
+34.72
+51.15
+0.0628
+Llama-3.1-8B
+70.04
+54.50
+61.30
+76.56
+0.5983
+14.14
+29.87
+19.19
+62.88
+0.1795
+21.99
+86.18
+35.04
+52.81
+0.0697
+Qwen2.5-Coder-7B
+80.31
+54.88
+65.20
+77.04
+0.6481
+15.26
+28.05
+19.77
+62.26
+0.1826
+21.74
+82.56
+34.41
+52.11
+0.0597
+Pooling (Mean)
+CodeLlama-7B
+59.43
+72.61
+65.36
+84.83
+0.6344
+13.48
+46.63
+20.92
+69.93
+0.2205
+18.37
+38.30
+24.83
+51.98
+0.0310
+Mistral-7B
+57.27
+64.93
+60.86
+81.03
+0.5852
+15.13
+26.05
+19.14
+61.37
+0.1747
+17.07
+97.87
+29.07
+50.97
+0.0382
+Llama-3.1-8B
+58.71
+62.94
+60.75
+80.16
+0.5838
+10.97
+47.91
+17.85
+69.55
+0.1947
+17.25
+98.94
+29.38
+51.61
+0.0634
+Qwen2.5-Coder-7B
+62.06
+70.24
+65.90
+83.85
+0.6389
+12.88
+32.79
+18.50
+63.88
+0.1771
+17.22
+60.64
+26.82
+50.92
+0.0140
+Pooling (Max)
+CodeLlama-7B
+33.21
+43.98
+37.85
+69.37
+0.3399
+15.50
+23.31
+18.62
+60.22
+0.1676
+0.00
+0.00
+0.00
+50.00
+0.0000
+Mistral-7B
+63.11
+50.43
+56.06
+74.34
+0.5414
+14.70
+28.78
+19.46
+62.50
+0.1806
+16.85
+98.94
+28.79
+50.22
+0.0139
+Llama-3.1-8B
+53.68
+52.51
+53.09
+74.91
+0.5034
+13.84
+28.60
+18.66
+62.28
+0.1730
+16.79
+100.00 28.75
+50.00
+0.0000
+Qwen2.5-Coder-7B
+58.01
+42.56
+49.10
+70.37
+0.4719
+15.22
+22.40
+18.13
+59.79
+0.1623
+19.79
+81.91
+31.88
+57.48
+0.0000
+Full
+SAGE
+CodeLlama-7B
+82.02
+77.82
+79.86
+88.40
+0.7874
+17.87
+32.42
+23.04
+64.52
+0.2375
+23.49
+67.70
+34.88
+54.79
+0.1050
+Mistral-7B
+77.22
+70.05
+73.46
+84.41
+0.7206
+17.70
+31.33
+22.62
+64.01
+0.2125
+22.55
+84.63
+35.61
+54.01
+0.1104
+Llama-3.1-8B
+84.70
+68.72
+75.88
+83.99
+0.7506
+17.78
+32.06
+22.87
+64.35
+0.2157
+24.91
+69.60
+36.69
+57.15
+0.1178
+Qwen2.5-Coder-7B 86.97
+69.57
+77.30
+84.48
+0.7664
+19.16
+31.69
+23.88
+64.33
+0.2245
+22.90
+73.06
+34.87
+54.12
+0.0986
+Note: Linear Probe results are derived from L2-regularized logistic regression on frozen representations. The best results across all methods are highlighted in bold.
+0.0
+0.05
+0.1
+0.2
+0.5
+1.0
+Lambda ( )
+0.720
+0.730
+0.740
+0.750
+0.760
+0.770
+0.780
+0.790
+MCC
+0.7842
+Impact: 2.97
+Lambda ( ) - Sparse Loss Weight
+0.5
+1.0
+2.0
+3.0
+Gamma ( )
+0.720
+0.730
+0.740
+0.750
+0.760
+0.770
+0.780
+0.790
+0.7702
+Impact: 1.50
+Gamma ( ) - Classification Loss Weight
+4
+8
+16
+Expansion Factor
+0.720
+0.730
+0.740
+0.750
+0.760
+0.770
+0.780
+0.790
+0.7683
+Impact: 0.68
+Expansion Factor
+0.5
+1.0
+5.0
+10.0
+L0 Coefficient
+0.720
+0.730
+0.740
+0.750
+0.760
+0.770
+0.780
+0.790
+0.7670
+Impact: 0.59
+L0 Coefficient
+Mean MCC
+±1 Std Dev
+Max MCC
+Min MCC
+(a) Impact of key hyperparameters (𝜆, 𝛾, 𝐿0 coeff, and Expansion Factor) on model performance at the optimal
+intervention depth.
+0
+5
+10
+15
+20
+25
+30
+Layer Index
+0.600
+0.625
+0.650
+0.675
+0.700
+0.725
+0.750
+0.775
+0.800
+Best MCC
+Lambda ( )
+=0.0
+=0.2
+=0.5
+=1.0
+0
+5
+10
+15
+20
+25
+30
+Layer Index
+0.600
+0.625
+0.650
+0.675
+0.700
+0.725
+0.750
+0.775
+0.800
+Gamma ( )
+=0.5
+=1.0
+=2.0
+=3.0
+0
+5
+10
+15
+20
+25
+30
+Layer Index
+0.600
+0.625
+0.650
+0.675
+0.700
+0.725
+0.750
+0.775
+0.800
+Expansion Factor
+exp=4
+exp=8
+exp=16
+0
+5
+10
+15
+20
+25
+30
+Layer Index
+0.600
+0.625
+0.650
+0.675
+0.700
+0.725
+0.750
+0.775
+0.800
+L0 Coefficient
+L0=0.5
+L0=1.0
+L0=5.0
+L0=10.0
+(b) Layer-wise performance trajectory across different hyperparameter settings. The consistent "Inverted-U"
+pattern validates the structural nature of Signal Submersion.
+Fig. 5. Hyperparameter Sensitivity and Layer Dynamics Analysis. All experiments were conducted using the
+CodeLlama-7B backbone on the BigVul dataset.
+the deeper layers of large language models focus on generating text and integrating context, the spe-
+cific signals required for detecting defects are strongest in the middle layers. Consequently, SAGE
+effectively extracts these critical signals before they are overwhelmed by the general objectives of
+the model.
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+18
+Trovato et al.
+x Finding 4 (Synergy and Stability): Sparsity contributes significantly to achieving high Precision,
+while task-specific alignment ensures high Recall. SAGE combines these elements to refine the signal more
+effectively than standard dense methods. Moreover, the consistent inverted-U trajectory across various
+settings proves that intervening at the intermediate layers is structurally necessary for accurate detection.
+5.4
+RQ4: Impact of Model Scale
+To determine if Signal Submersion stems from limited capacity or architectural bottlenecks, we
+evaluated CodeLlama (7B-34B) and Qwen2.5-Coder (7B-32B) against SAGE. We designate stan-
+dard Supervised Fine-Tuning (SFT) models as the Baseline to isolate the impact of mechanistic
+intervention.
+BigVul
+PrimeVul
+PreciseBugs
+0.0
+0.2
+0.4
+0.6
+0.8
+MCC Score
+CodeLlama: Performance
+Baseline 7B
+Baseline 13B
+Baseline 34B
+SAGE
+BigVul
+PrimeVul
+PreciseBugs
+0.0
+0.2
+0.4
+0.6
+0.8
+Qwen2.5-Coder: Performance
+Baseline 7B
+Baseline 14B
+Baseline 32B
+SAGE
+BigVul
+PrimeVul
+PreciseBugs
+0
+1
+2
+3
+4
+7.1×
+2.3×
+10.4×
+CodeLlama: SNR Scaling
+Baseline 7B
+Baseline 13B
+Baseline 34B
+SAGE
+BigVul
+PrimeVul
+PreciseBugs
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+SNR Peak
+4.4×
+1.8×
+11.1×
+Qwen2.5-Coder: SNR Scaling
+Baseline 7B
+Baseline 14B
+Baseline 32B
+SAGE
+Fig. 6. Scalability and Signal Quality Analysis. Standard scaling (blue) exhibits diminishing marginal returns
+in both performance and signal-to-noise ratio, whereas the SAGE algorithm (red) consistently amplifies
+signals above the noise baseline. Notably, despite a fivefold increase in parameters, the baseline still shows an
+asymptotic plateau.
+The Saturation of Scaling Laws. Our results examine the assumption that simply increasing
+model size solves the problem of missed detections. As shown in Table 4, specialized smaller
+models often outperform massive general-purpose models like GPT-5.2 [2], Gemini 3 [4], and
+Claude 4.5 [3]. For instance, SAGE-7B achieves a higher score than Gemini 3 Pro on the BigVul
+dataset, whereas GPT-5.2 even shows a negative correlation on PreciseBugs. This performance
+gap suggests that larger models tend to prioritize general fluency and coherence, which causes
+them to overlook the subtle details associated with vulnerabilities. Fig. 6 further confirms this
+limitation by revealing a performance plateau as models scale from 7B to 34B parameters. This
+stagnation indicates that adding more parameters does not necessarily improve the ability of a
+model to recognize vulnerability features. Consequently, while larger models may store more global
+patterns, they do not inherently possess the sharp perception required to identify fine-grained
+security anomalies.
+Table 6. Efficiency Analysis. SAGE achieves superior efficiency, reducing training time by up to 26× compared
+to RL methods, despite a higher parameter count due to its frozen backbone architecture.
+Method
+LineVul
+VulLLM
+MSIVD
+ReVD
+LineVul
+LineVul
+SAGE
+SAGE
+SAGE
+& Backbone
+(7B)
+(7B)
+(7B)
+(7B)
+(13B)
+(34B)
+(7B)
+(13B)
+(34B)
+Params
+16.8M
+167.7M
+240.0M
+167.7M
+26.2M
+67.1M
+537.0M
+839.0M
+2.15B
+Time (h)
+13.6
+34.8
+40.5
+69.6
+25.6
+62.4
+2.6
+5.3
+15.8
+The Cost-Efficiency Paradox & Frozen Backbone Advantage. Standard scaling incurs
+quadratic computational costs for negligible gains (Table 6). In contrast, SAGE-7B outperforms
+the Baseline-34B while reducing training latency by 80.8% compared to LineVul-7B and 26.7×
+compared to ReVD. Although SAGE possesses more trainable parameters (due to the wide Sparse
+Autoencoder), it operates on a Frozen Backbone regime. By avoiding expensive backpropagation
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+SAGE: Signal-Amplified Guided Embeddings for LLM-based Vulnerability Detection
+19
+through the deep transformer layers, SAGE effectively decouples the cost of detection from the
+cost of reasoning, enabling a standard RTX 3090 to harness the power of 34B-scale representations.
+Mechanistic Explanation for Frontier Model Failures. These findings offer a mechanistic
+explanation for why massive proprietary models, such as GPT-5.2 and Gemini 3, underperformed
+in our RQ2 analysis. The observed performance plateau indicates that simply scaling up parameters
+yields diminishing returns in distinguishing vulnerability signals. This suggests that the issue is
+not incidental but stems from an architectural limitation: as models grow, their enhanced focus on
+general functional semantics tends to overshadow the sparse indicators of security vulnerabilities.
+Consequently, even trillion-parameter models struggle to prioritize these subtle artifacts over global
+code patterns. Addressing this requires a shift in how models represent data—such as employing
+sparse projection to isolate relevant features—rather than continuing to rely on increased model
+size.
+x Finding 6: The Limitations of Scale. We observe a notable gap between model capacity and vulnera-
+bility sensitivity. Standard approaches that simply increase model size result in high computational costs
+with almost no improvement in detection signal quality. SAGE overcomes this limitation by demonstrating
+that optimizing the model structure is far more effective than relying on parameter scale. Notably, a 7B
+model equipped with SAGE outperforms a standard 34B baseline while requiring only a fraction of the
+computational resources.
+6
+Implications
+The findings in this work extend beyond the performance improvements of SAGE. They offer
+important lessons for applying Large Language Models in software engineering. We identified that
+the main problem is the suppression of weak signals within the model architecture. Therefore, we
+examine the common assumption that simply increasing the size of a model or using standard
+post-training methods like reinforcement learning is the best way to improve detection. Instead,
+we propose a design approach that focuses on optimizing the internal processing mechanisms of
+the model.
+Implications for Researchers. First, we identify the limits of model scaling and standard
+training. Many researchers believe that larger models automatically reason better. However, our
+results show that scaling has a limit. While larger models understand global context, the main
+features of the code still hide the small signals of a vulnerability. Standard fine-tuning also fails
+because it only optimizes the final output where the signal is already weak. Researchers should
+focus on architectures that protect these subtle signals in the intermediate layers. Second, this
+work connects model interpretability to performance. Usually, researchers only use interpretability
+to analyze a model after training. SAGE shows that interpretability tools can actively improve
+performance during detection. We should stop treating models as a black box systems. Instead, we
+should use strategies that help the model separate its internal features rather than only checking
+the final answer. Third, we show that sparsity is essential for reliability. Standard representations
+often mix vulnerability logic with irrelevant coding styles. This makes models fail when the style
+changes. Our results show that simplifying internal representations is necessary for generalization.
+This allows the model to learn the actual nature of a bug instead of just memorizing the training
+data.
+Implications for Practitioners. For industry practitioners, our findings highlight a practical
+opportunity for cost efficiency. We demonstrate that a standard 7B model can outperform larger 34B
+generalist models by simply attaching a lightweight, external module while keeping the original
+model’s parameters frozen. Since this approach involves very few trainable parameters and does
+not alter the base model’s architecture, it suggests that effective security analysis may not require
+, Vol. 1, No. 1, Article . Publication date: April 2018.
+
+20
+Trovato et al.
+massive proprietary models or expensive full-model training. Instead, using a small, specialized add-
+on with a standard model offers a more practical solution for scalable and real-time vulnerability
+scanning in environments with limited resources.
+Furthermore, the study emphasizes the need for stability when facing diverse code. In real-world
+scenarios, codebases vary greatly and frequently undergo changes or restructuring. Traditional
+fine-tuning often produces models that perform poorly when facing minor syntactic variations.
+The ability of SAGE to focus on the consistent core features of a vulnerability provides a guide for
+building resilient security tools. Practitioners should prioritize models that demonstrate the ability
+to ignore irrelevant changes. This approach reduces the risk of missing detections when facing
+new vulnerability patterns or complex code structures.
+7
+Conclusion and Future Work
+In this work, we identify Signal Submersion as a significant architectural limitation that limits
+the ability of Large Language Models to fine-grained security defects, necessitating a shift from
+passive feature extraction to active signal amplification. By projecting entangled representations
+onto a high-dimensional sparse manifold, our proposed SAGE framework successfully recovers
+low-magnitude vulnerability signals, achieving state-of-the-art performance and better robustness
+against distribution shifts while challenging the universality of parameter scaling for anomaly
+detection tasks. Looking forward, we plan to extend this method beyond simple detection. Future
+work will focus on translating these sparse features into natural language to explain the root
+causes of vulnerabilities. We also aim to use these refined signals to guide models in automatically
+fixing code. Additionally, we will develop adaptive methods to capture defects at different levels of
+complexity. Ultimately, SAGE demonstrates that targeted intervention in the internal mechanisms
+of LLMs offers a more efficient and rigorous path to software security than simply increasing model
+size.
+Data Availability
+We have open-sourced the code and dataset at: https://github.com/BDS-SDU/SAGE.

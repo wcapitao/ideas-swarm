@@ -1,0 +1,911 @@
+CyberCertBench: Evaluating LLMs in Cybersecurity Certification
+Knowledge
+Gustav Keppler
+, Ghada Elbez
+, and Veit Hagenmeyer
+Institute for Automation and Applied Informatics (IAI),
+Karlsruhe Institute of Technology (KIT), Karlsruhe, Germany
+{gustav.keppler,ghada.elbez,veit.hagenmeyer}@kit.edu
+Abstract
+The rapid evolution and use of Large Language Models (LLMs) in professional workflows re-
+quire an evaluation of their domain-specific knowledge against industry standards. We introduce
+CyberCertBench, a new suite of Multiple Choice Question Answering (MCQA) benchmarks de-
+rived from industry-recognized certifications. CyberCertBench evaluates LLM domain knowledge
+against the professional standards of Information Technology cybersecurity and more specialized
+areas such as Operational Technology and related cybersecurity standards. Concurrently, we pro-
+pose and validate a novel Proposer-Verifier framework, a methodology to generate interpretable,
+natural-language explanations for model performance. Our evaluation shows that frontier models
+achieve human expert level in general networking and IT security knowledge. However, their
+accuracy declines in questions that require vendor-specific nuances or knowledge in formal
+standards, like, e.g., IEC 62443. Analysis of model scaling trend and release date demonstrates
+remarkable gains in parameter efficiency, while recent larger models show diminishing returns.
+Code and evaluation scripts are available at: https://github.com/GKeppler/CyberCertBench.
+Keywords: Large Language Models, Benchmarking, Cybersecurity, Operational Technology, MCQA
+1
+Introduction
+Large language models (LLMs) have shown potential for generative and knowledge-intensive tasks
+that require domain knowledge, leading to rapid integration into professional workflows. Recent
+empirical studies demonstrate that software engineers and IT professionals increasingly rely on
+conversational AI tools for fact checking, code generation, debugging, and documentation tasks [1–3].
+Similarly, researchers have described the growing adoption of LLM-based assistants in cybersecurity
+workflows, where professionals use them for vulnerability assessment, incident reporting, and threat-
+intelligence summarization [4–6]. Comparable trends are evident across more general high-stakes
+technical domains such as healthcare, engineering, and infrastructure operations [7, 8]. This increasing
+dependence underscores a broader shift toward AI-mediated decision-making in professional contexts.
+However, it also introduces risks of LLMs "hallucinating" [9] plausible-sounding but unfaithful
+or nonsensical information, which can be particularly hazardous in domains where reliability and
+accuracy are critical. A growing body of research has begun to evaluate the Information Technology
+(IT) security capabilities of LLMs using question-answering benchmarks [10, 11] and assessing
+task-specific skills like cyber threat intelligence analysis and vulnerability detection [4–6].
+1
+arXiv:2604.20389v1 [cs.CR] 22 Apr 2026
+
+However, specialized knowledge—such as the procedural, vendor-specific details required to
+manage enterprise security hardware or the high-stakes domain of Operational Technology (OT)
+cybersecurity is unexplored. These systems form the backbone of enterprise environments and
+critical infrastructure, including energy grids, water treatment facilities, where security failures can
+have catastrophic physical consequences [12]. The knowledge required to secure these environments
+includes unique protocols, real-world physical process implications, and security frameworks like
+ISA/IEC 62443.
+These are more sparsely represented in the web-scale corpora used to train
+foundation models, compared to general IT knowledge. Therefore, LLMs that show high capability
+in IT security-related benchmarks may strongly ‘hallucinate’ plausible but incorrect guidance for
+OT systems, creating a false sense of security for operators and engineers [13]. The extent to which
+LLMs can reliably provide guidance in these specialized areas is largely unquantified.
+The present paper addresses this challenge by introducing CyberCertBench, a suite of multiple-
+choice question answering benchmarks derived from professional certification exams that serve as a
+proxy for the practical and real-world knowledge. By spanning the gradient from IT to vendor-specific
+IT and specialized OT, our evaluation provides the first analysis of this performance hierarchy. We
+quantify the knowledge gaps that emerge as the required expertise becomes more specialized, posing
+a direct risk to the safe adoption of LLMs. Our key contributions are:
+• A suite of novel benchmarks for IT and OT cybersecurity knowledge of LLMs, derived from
+industry-recognized certification standards.
+• A systematic analysis of a wide range of LLMs, revealing a performance gradient where
+accuracy is high on benchmarks testing conceptual knowledge, both in IT and OT, but
+degrades significantly on those requiring specialized knowledge of vendor-specific procedures
+and formal standards.
+• A novel Proposer-Verifier framework to generate interpretable descriptions of question difficul-
+ties, offering a method to understand the causes of these knowledge gaps.
+2
+Related Work
+A variety of specialized benchmarks are used for evaluating the cybersecurity capabilities of Large
+Language Models (LLMs). These benchmarks have evolved from broad knowledge assessments to
+more practical and domain-specific evaluations.
+Security Knowledge Benchmarks
+Multiple-choice question benchmarks offer measurability
+and scalability. Besides the MMLU Computer Security subtask [10], WMDP [14] offers questions
+on biosecurity, cybersecurity, and chemical security. CyberSecEval uses free-response questions
+evaluated by another LLM. Other benchmarks like SecEval [15], SecQA [16], and CyberMetric [11]
+use LLMs to generate questions from textbooks and other technical documents. While comprehensive,
+these benchmarks often suffer from saturation, where top models achieve near-perfect scores, limiting
+their ability to differentiate between frontier models. Specialized benchmarks such as CTIBench[4],
+which is designed specifically for Cyber Threat Intelligence tasks, and OCCULT[17], a multiple-choice
+benchmark focused on offensive cybersecurity tactics, provide targeted evaluations for distinct areas
+within the cybersecurity domain.
+Agent-based and Offensive Capability Evaluation
+Recent literature is evaluating the practical,
+and often offensive, capabilities of LLM-based agents. This is motivated by the need to understand
+2
+
+potential misuse and to develop more robust defenses [5, 18]. Early work demonstrated that LLMs
+could assist Pentesting PentestGPT [19] and solving Capture the Flag Challenges [20], leading to
+the creation of dedicated benchmark datasets like the NYU CTF Dataset [21]. This also includes
+the development of sophisticated LLM agents such as AutoAttacker [22], and EnIGMA [23], and
+multi-agent frameworks like D-CIPHER [24] designed to autonomously solve these challenges.
+Multitask Frameworks
+To standardize these practical evaluations, several comprehensive frame-
+works have been proposed. The Catastrophic Cyber Capabilities Benchmark (3CB) [25] specifically
+focuses on assessing offensive capabilities like vulnerability exploitation and privilege escalation.
+CyberBench [26] evaluates multiple tasks, including text classification and summarization. Concur-
+rently, major AI labs have released their own evaluation suites, such as CYBERSECEVAL [27, 28]
+by Meta or Google Deepmind [5], which measure both the beneficial capabilities and potential risks
+of frontier models. These agent-based evaluations test knowledge, tool use, and planning in dynamic
+environments.
+Evaluation Using Professional Certifications
+To ensure authenticity and quality while avoiding
+the synthetic nature of benchmarks, some studies have turned to professional certification exams.
+Tann et al. [29] first demonstrated that LLMs could pass Cisco certification exams. Earlier work [30]
+also evaluated models on publicly available Cisco CCNA and CCNP materials, establishing a
+reproducible baseline for Information Technology (IT) security knowledge.
+3
+Methodology
+The methodology is centered around a novel collection of benchmarks derived from professional
+certifications, and compared to established computer security benchmarks. This section details
+the creation and composition of these benchmarks, the selection of models for evaluation, and the
+experimental setup.
+3.1
+Benchmark Collection and Curation
+To comprehensively evaluate the cybersecurity knowledge of LLMs, we curated a suite of Multiple
+Choice Question Answering (MCQA) benchmarks. This collection includes established academic
+benchmarks [10, 11] to establish a baseline, alongside several novel datasets derived from industry
+career certifications. This approach allows for an analysis of both general and specialized knowledge,
+with a particular focus on the under-evaluated domain of OT.
+Specifically, questions were collected from freely available content from websites such as itexams.com,
+examtopics.com, and free-braindumps.com. These platforms were chosen for their extensive and
+frequently updated question banks, which serve as a proxy for the material covered in the official
+certification exams. We selected certifications from Cisco, Fortinet, and ISA/IEC as they represent
+widely recognized industry standards for IT networking and OT systems.
+Despite this selection and expert validation of labels, the resulting datasets remain subject to
+sampling bias. The question pools are drawn from community-driven platforms where users tend
+to share items they find difficult, surprising, or exam-relevant, rather than a random sample of all
+possible certification questions or real-world issues. As a consequence, certain topics and question
+styles may be overrepresented, while scenario-based, free-form, or practical configuration tasks are
+underrepresented.
+The scraped multiple-choice questions were preprocessed:
+3
+
+Criterion
+Cisco CCNx
+Fortinet NSE
+Fortinet
+ICS/SCADA
+ISA/IEC 62443
+Benchmark
+Category
+IT Networking
+Specialized IT
+Security
+Conceptual OT
+Security
+Formal OT
+Security Standard
+Knowledge
+Domain
+Cisco Networking
+Fortinet Security
+Ecosystem
+Foundational
+ICS/OT Concepts
+The ISA/IEC
+62443 Standard
+Question
+Focus
+Foundational &
+General. IT
+networking and
+security principles,
+with vendor
+specifics canonical
+in the industry.
+Procedural &
+Vendor-specific.
+Configuration and
+management of a
+proprietary
+product
+ecosystem.
+Conceptual &
+Domain-general.
+Core OT security
+principles and
+technologies, often
+independent of a
+specific vendor.
+Standard-specific
+& Formal.
+Detailed
+terminology,
+structure, and
+prescribed
+methodologies of
+the standard.
+Table 1: Analysis of the CyberCertBench Suite across a gradient of knowledge specificity.
+1. De-duplication: Exact and near-duplicate questions were identified and removed.
+2. Formatting Normalization: Questions with non-standard formats, such as "drag-and-drop"
+or with reference images, were excluded.
+3. Standardization: All questions, choices, and answers were converted into a unified MMLU-
+compatible format for seamless integration with evaluation harnesses.
+4. Expert Label Verification: To mitigate label noise arising from the user-generated nature
+of the source platforms, we manually reviewed all questions and answer keys. Questions
+with ambiguous wording, inconsistent answers across sources, or suspected wrong solutions
+were either corrected, based on authoritative documentation, or removed from the dataset
+entirely. This manual curation step ensures that the final benchmark reflects a high-quality,
+expert-validated ground truth, although residual noise cannot be fully ruled out.
+3.2
+Baseline Academic Benchmarks
+To compare the results, we include two established cybersecurity benchmarks: MMLU Computer
+Security [10] is a subtask from the widely used Massive Multitask Language Understanding benchmark.
+It consists of multiple-choice questions designed to test general knowledge in computer security. We
+use it as a baseline to compare the performance of models on the specialized datasets.
+CyberMetric80 [11] is a more recent benchmark created using Retrieval-Augmented Generation
+(RAG) from authoritative sources like NIST standards and research papers. The quality of the
+content was approved by human experts.
+3.3
+Industry Certification Benchmarks
+The core of our evaluation is CyberCertBench, a novel suite of datasets derived from industry-
+recognized certifications. This approach provides high-quality questions that directly measure the
+practical knowledge required of professionals across a gradient of specificity. As detailed in Table 1,
+4
+
+the benchmarks test distinct types of cybersecurity knowledge. The Fortinet NSE dataset focuses on
+procedural, vendor-specific configuration, whereas the Fortinet ICS/SCADA dataset assesses broader,
+conceptual knowledge of the OT security domain. The ISA/IEC 62443 benchmark is the most
+specialized, testing formal methodology and terminology of that series of standards that address
+security for OT in automation and control systems.
+Gemini 2.5 Pro 0506
+Claude 3.5 Sonnet
+Moonshot AI Kimi K2
+OpenAI GPT 5
+DeepSeek v3 0324
+OpenAI GPT OSS 120B
+Qwen3 235B A22B
+Mistral Small 3.1 24B
+Llama3.1 405B
+Llama3.2 3B
+Gemma 3 4B
+30
+40
+50
+60
+70
+80
+90
+100
+Accuracy (%)
+98
+95
+98
+98
+95
+99
+91
+94
+100
+84
+85
+89
+87
+87
+88
+84
+91
+89
+82
+84
+68
+68
+92
+86
+86
+86
+82
+79
+80
+80
+81
+53
+51
+62
+60
+61
+53
+62
+52
+52
+53
+54
+42
+37
+86
+84
+84
+88
+79
+88
+79
+88
+81
+74
+53
+74
+81
+77
+70
+77
+62
+74
+66
+63
+38
+40
+Benchmark Categories
+Academic Baseline
+CyberMetric80
+MMLU Computer Security
+IT Enterprise Networking
+Cisco CCNx
+Fortinet NSE
+OT/Industrial Security
+Fortinet ICS/SCADA
+ISA/IEC 62443
+Passing Grade 80%)
+Figure 1: Overview of 5-shot accuracy for a selection of LLMs across six cybersecurity benchmarks
+ordered by average accuracy. Top proprietary models show similar performance compared to open-
+weight competitors, with specialized OT datasets proving more challenging for all models.
+3.4
+Model Selection
+Our model selection aims to cover the state-of-the-art across proprietary and open-weight models of
+various sizes, leveraging MMLU [31] leaderboards. Selection criteria include a range of models in
+terms of:
+• Modelsize: From small to the largest models
+• Region: Models from the US, Europe and Asia
+• Release Date: Models released since ChatGPT in 2022
+• Availability: Proprietary and open-weight models
+The selection includes the latest proprietary frontier models from leading US-based labs, including
+OpenAI, Anthropic, and Google. To capture the full performance spectrum, we also include their
+smaller, efficiency-focused counterparts. The evaluation also features a wide array of open-weight
+models to analyze the broader ecosystem. This includes foundational model families from Western
+developers, such as Meta’s Llama series, Mistral AI’s models, and Google’s Gemma family. To
+provide a global perspective, we have incorporated leading models from Asia, including Alibaba’s
+Qwen series and Moonshot AI’s Kimi K2. The recent open-weight contributions from OpenAI
+(GPT-OSS series) are also included.
+5
+
+3.5
+Experimental Setup and Metrics
+The evaluation is conducted as an MCQA task, where a model is given a question q and a set of
+choices C, from which it must select the correct option(s) a. We use a 5-shot prompting approach,
+providing five in-domain examples before the actual question to set the context. For all tests, the
+model temperature is set to zero to ensure deterministic outputs.
+To contextualize model performance, we establish a human expert baseline. The passing score
+for professional certifications like the Cisco exams is typically around 80%. This score represents the
+minimum competency expected of a certified professional and serves as a target benchmark.
+Performance is measured using exact accuracy. A response is considered correct only if the model
+identifies all of the correct option(s) and none of the incorrect ones. This strict metric is suitable for
+the MCQA format where partial credit is not applicable.
+Figure 2: Average accuracy across all certification datasets plotted against release date. The upward
+trend highlights progress, with smaller, newer models approaching the performance of larger, older
+models.
+3.6
+Legal Considerations
+The certification-style questions used in CyberCertBench were obtained via automated scraping from
+publicly accessible platforms. Our use of this material is limited to internal text-and-data processing
+for non-commercial scientific research, and based on access in the sense that no technical protection
+measures were circumvented. In line with the restrictions on handling IP-sensitive content, we do not
+publicly redistribute the full question text. The paper reports only aggregate statistics and derived
+analyses. Access to the underlying questions can be granted to qualified researchers on request.
+4
+Quantitative Evaluation
+This section presents a quantitative analysis of LLM performance across cybersecurity benchmarks.
+First, the overall model accuracies in comparison to human baseline is analyzed. Then the influence
+of model scale and release date factors on performance is investigated revealing trends in scaling
+laws and open-weight competition.
+6
+
+4.1
+Performance on Cybersecurity Certifications
+Figure 1 presents the performance of a representative set of 11 models across six cybersecurity
+benchmarks. The results reveal a performance hierarchy, with large proprietary models such as
+Gemini 2.5 Pro, Claude 3.5 Sonnet, and OpenAI GPT 5 consistently achieving the highest scores.
+Notably, top-tier open-weight models, like Moonshot AI’s Kimi K2, demonstrate highly competitive
+performance.
+On general IT security benchmarks like CyberMetric80 and MMLU Computer Security, frontier
+models approach or achieve perfect scores, suggesting these benchmarks are becoming saturated.
+To contextualize these results, we compare model performance against a human expert baseline,
+represented by the 80% passing grade typical for professional certifications. On the IT-focused Cisco
+certification, top models consistently meet or exceed this professional standard. On the Fortinet
+ICS/SCADA benchmark, which tests more conceptual OT security knowledge, many top models
+still achieve a passing grade. This indicates that general concepts in OT security are somewhat
+accessible.
+However, on the most specialized benchmark, ISA/IEC 62443, which tests formal, standard-
+specific knowledge, performance collapses. Only a single model, Claude 3.5 Sonnet at 81%, achieves
+a passing score. Notably, Claude 4.5 Sonnet has a lower performance on this benchmark and a lower
+average performance. This shows that while LLMs may have a conceptual understanding at the
+surface level of OT, they lack the deep, formal knowledge required to be reliable in safety-critical
+industrial environments.
+The challenge is most pronounced on the Fortinet NSE benchmark, which focuses on vendor-
+specific procedural knowledge. No model comes close to the passing grade, with the highest score
+being 62.4%. This indicates that while LLMs trained on web-scale data have acquired a high
+conceptual IT and OT security knowledge, they lack an understanding of formal standards and
+vendor-specific operational details. This specialized knowledge remains a significant and measurable
+frontier.
+4.2
+Model Performance Over Time
+Figure 2 analyzes model performance as a function of release date to offer insight into the pace of
+progress. The results reveal a clear positive overall trend, indicating that the knowledge of LLMs in
+cybersecurity is advancing. However, this progress is not consistent across all model families, and
+model sizes.
+The Qwen series demonstrates a consistent improvement trajectory from Qwen2 through Qwen3,
+with newer models maintaining or outperforming older ones. In contrast, the Llama 4 series does not
+show an improvement over the Llama 3 series on the benchmarks, and the Gemma 3 series exhibits
+lower average performance than its predecessor, Gemma 2. This suggests that progress is highly
+dependent on the specific training data used for each model generation, which may not always align
+with improvements on these specialized tasks. The top of the performance leaderboard also shows
+Google’s Gemini 2.5 Pro (May 2025) surpassing the earlier Claude 3.5 Sonnet (July 2024) as the
+best-performing model overall for almost one year, while in the open-weight category, DeepSeek v3
+and then Kimi K2 surpass Qwen2 72B.
+While performance improvements are less profound in the largest models, the increase among
+smaller, more efficient language models is to be noted. Models in the 14B to 32B parameter range,
+such as Qwen3 14B/32B and Mistral Small 3.1 24B, show a substantial leap in capability over time,
+achieving performance levels that are highly competitive with much larger models from previous
+generations. This trend indicates that progress is driven not by scaling up parameter counts but by
+7
+
+advances in training methodology, particularly in data curation.
+Figure 3: Open-weight model average accuracy across all certification datasets versus parameter
+size in billions, on a logarithmic scale. The plot shows a clear positive trend where larger models
+generally perform better, but also highlights significant differences in parameter efficiency among
+models of similar sizes.
+4.3
+Scaling Laws: Performance vs. Parameters
+To investigate the relationship between model size and cybersecurity knowledge, the average accuracy
+of each open-weight model is plotted against its parameter count, as shown in Figure 3. While this
+plot illustrates trends in the open-weight ecosystem, the exact parameter counts of the top-performing
+proprietary models are not public. The plot reveals a strong positive correlation between model
+size and average performance. The largest open-weight models, such as Moonshot AI’s Kimi K2 ( 1
+trillion parameters) and DeepSeek v3 0324, occupy the top-right quadrant.
+However, the distribution also highlights significant variations in parameter efficiency. Models of
+similar size exhibit a wide performance spread. A clear example is the Llama2 70B model, which is
+substantially outperformed by more recent models in the same size class, such as Qwen2 72B and
+Llama3.1 70B, demonstrating generational progress.
+This trend is even more pronounced when comparing models across different size classes. For
+instance, models such as Qwen3 14B and Mistral Small 3.1 24B achieve average accuracies that
+are highly competitive with much larger models like Llama 3.1 405B. This demonstrates that
+improvements in parameter efficiency allow smaller models to achieve performance on par with
+counterparts an order of magnitude larger in these specialized domains.
+4.4
+Evaluating on a More Challenging "PRO" Benchmark
+As state-of-the-art models approach saturation on standard benchmarks, their utility for differentiat-
+ing between top performers is reduced. Inspired by the MMLU-Pro [32], we created a more difficult
+8
+
+"PRO" version of the benchmark suite through a data-driven curation process that filters out easy
+questions. A question is classified as easy if it is answered correctly by at least two out of three small
+models: Ministral 3B, Gemma 3 4B, and Llama3.2 3B. As shown in Table 2, this filtering process
+removed approximately 50% of the questions from the certification-based benchmarks. The removal
+rate varied from 39.0% for the Fortinet NSE dataset to 67.4% for the Fortinet ICS/SCADA dataset,
+indicating differences in baseline difficulty across the domains.
+Table 2: Statistics of the PRO benchmark showing
+the original number of questions, easy questions
+removed, and remaining in the PRO version.
+Dataset
+#Tot
+#Easy
+#PRO
+CCNx
+200
+109
+91
+Fort. ICS/SCADA
+43
+29
+14
+ISA/IEC 62443
+53
+24
+29
+Fortinet NSE
+141
+55
+86
+Gemini 2.5 Pro 0506
+Kimi K2
+Mistral 3.1 24B
+Qwen2.5 7B
+Ministral 3B
+0
+20
+40
+60
+80
+100
+Average Accuracy
+84
+72
+83
+68
+77
+61
+70
+45
+62
+18
+Original Benchmark
+Benchmark PRO
+Figure 4: Average model accuracy on the original
+benchmarks versus the “PRO” version on selected
+models.
+While performance drops universally, the magnitude of the drop is not uniform and correlates
+with model capability. Top-tier models like Gemini 2.5 Pro and Moonshot AI Kimi K2 show a low
+performance decrease. In contrast, smaller models experience a higher performance degradation.
+The accuracy of Qwen2.5 7B falls by 25 percentage points, while the small baseline model, Ministral
+3B, falls by 44 points from 62% to just 18%, indicating that it still answers some questions correctly
+that the other two small models cannot.
+5
+Interpretable Difficulty Analysis
+1. Question Difficulty Grouping
+2. Concept Proposal
+3. Concept Validation
+hard
+medium
+Questions
+Evaluation
+Models
+Proposer 
+LLM
+Verifier 
+LLM
+Test 
+Questions
+True 
+Labels
+Predicted 
+Labels
+Validation
+Score (F1)
+easy
+train
+test
+Concept
+easy
+Concept
+medium
+Concept
+hard
+Figure 5: The Proposer-Verifier framework workflow. The process involves (1) grouping questions by
+difficulty, (2) using a Proposer LLM to generate difficulty descriptions from a training set, and (3)
+using a Verifier LLM to validate these descriptions by classifying questions from a held-out test set
+to produce the final validation statistics.
+9
+
+The quantitative analysis reveals a significant discrepancy between model performance on IT
+and OT benchmarks. However, these aggregate accuracy scores do not explain the reasons why
+certain questions or entire domains are more difficult for LLMs. To understand these underlying
+factors, we conducted a qualitative analysis of the datasets. Inspired by recent work that uses LLMs
+to describe dataset differences [33], we implement a Proposer-Verifier framework. To the best of
+the authors’ knowledge, this is the first method that adapts Item Response Theory (IRT) by first
+identifying groups of questions with varying difficulty [34] and then using LLMs to generate and
+validate interpretable descriptions of these difficulty groups.
+The methodology consists of three main steps:
+1. Difficulty Grouping: Rank all questions based on their empirical difficulty as average
+accuracy across all models. Partition them into a set number of distinct difficulty groups, like
+hard, medium, and easy.
+2. Concept Proposal: A LLM (the "Proposer") takes questions from the training split of each
+difficulty group and generates a natural language description of the distinguishing characteristics
+of each group.
+3. Concept Validation: To validate the quality and utility of these descriptions, we use them
+as a classification rubric. A LLM (the "Verifier") is tasked with predicting the difficulty group
+of questions from a held-out test split, based solely on the generated descriptions.
+This Proposer-Verifier method, as shown in Figure 5, bridges quantitative difficulty signals with
+qualitative explanations, yielding natural language explanations into model performance. The
+following section provides a more detailed description of the method.
+5.1
+Mathematical Formulation
+Let Q = {q1, . . . , qN} be the set of questions in a benchmark, where N is the total number of
+questions. Let M = {m1, . . . , mM} be the set of evaluated LLMs. For each question qi and model
+mj, we define the observed binary response
+rij =
+(
+1
+if model mj answers qi correctly,
+0
+otherwise.
+Question Difficulty Grouping
+The difficulty pi of a question qi is its average accuracy across
+the set of models:
+pi =
+1
+|M|
+|M|
+X
+j=1
+rij ∈[0, 1].
+A smaller pi number indicates a harder question. We rank all questions in Q based on their pi values
+and partition the sorted list into G equal-sized quantile groups, Q1, Q2, . . . , QG, where Q1 contains
+the ⌊N/G⌋hardest questions (lowest pi) and QG contains the ⌈N/G⌉easiest questions (highest pi).
+For the analysis, we use G = 3 to create hard, medium, and easy groups.
+Proposer-Verifier Framework and Baselines
+To validate the analysis, each difficulty group Qg
+is randomly partitioned into a training set Qtrain
+g
+and a held-out test set Qtest
+g
+with for example an
+often used 80/20 split. We then generate difficulty descriptions using different "Proposer" methods:
+10
+
+Method
+ISA/IEC
+62443
+Fortinet
+NSE
+Fort. IC-
+S/SCADA
+CCNx
+MMLU
+Sec
+Cyber-
+Metric80
+Random Guess
+33.3
+33.3
+33.3
+33.3
+33.3
+33.3
+Baseline
+44.4±7.2
+39.6±0.6
+44.1±14.2
+36.5±2.3
+28.0±10.4
+27.2±0.4
+Difficulty
+45.9±10.3
+39.8±0.7
+42.0±10.1
+43.9±6.8
+28.4±4.3
+23.0±4.7
+Synthesized
+47.7±11.8
+41.9±1.5
+48.9±13.2
+40.2±0.9
+31.5±4.4
+23.9±9.2
+Table 3: Mean and standard deviation of F1 score across the different analysis methods (%). Best
+values are bold.
+1. Baseline Proposer (Question-Only): As a baseline, an LLM ΦB generates descriptions
+DB by analyzing only the question text from the training sets, without being provided the
+pre-calculated difficulty labels. This tests the ability to infer difficulty from content alone.
+ΦB({sample(S) | S ∈{Qtrain
+1
+, . . . , Qtrain
+G
+}}) →DB
+2. Analysis Proposer (Single-Run): The primary analysis method uses an LLM ΦA that
+takes samples from the labeled difficulty groups in the training sets to generate a set of natural
+language descriptions DA.
+ΦA({sample(S) | S ∈{Qtrain
+1
+, . . . , Qtrain
+G
+}}) →DA
+This is repeated over k independent runs to account for model variability, producing k sets of
+descriptions {D(1)
+A , . . . , D(k)
+A }.
+3. Synthesizer Proposer (Multi-Run): To create a more robust set of descriptions, a third
+LLM mapping ΦS acts as a synthesizer. It takes the k sets of descriptions from the Analysis
+Proposer as input and generates a single, unified set of descriptions DS. This can also be
+repeated several times.
+ΦS({D(1)
+A , . . . , D(k)
+A }) →DS
+For the following experiments, we use k = 3 runs for synthesis.
+Verifier (Description Validation)
+The Verifier is an LLM-based classifier ΦV that uses a
+generated set of descriptions D to predict the difficulty group of an unseen question q from the test
+set.
+ΦV (q, D) →g′ ∈{1, . . . , G}
+where q ∈
+G
+[
+g=1
+Qtest
+g
+The effectiveness of each Proposer method is quantified by the classification performance (F1-score)
+of the Verifier when using its corresponding descriptions (DB, an averaged over D(i)
+A , and DS) on
+the held-out test sets. For the Proposer, Verifier, and Synthesizer tasks, we use OpenAI’s GPT-5.
+5.2
+Results and Analysis
+This section presents the qualitative analysis based on the Proposer-Verifier framework. We first
+examine how capabilities emerge as model scale increases across different difficulty tiers within the
+benchmarks. Second, we assess how well the generated difficulty descriptions can be used to classify
+unseen questions.
+11
+
+3B
+7B
+14B
+30B
+70B
+175B
+400B
+1000B
+Model Size (B Parameters)
+0%
+20%
+40%
+60%
+80%
+100%
+Accuracy (%)
+ISA SA IEC62443
+3B
+7B
+14B
+30B
+70B
+175B
+400B
+1000B
+Model Size (B Parameters)
+0%
+20%
+40%
+60%
+80%
+100%
+Accuracy (%)
+Fortinet NSE full
+3B
+7B
+14B
+30B
+70B
+175B
+400B
+1000B
+Model Size (B Parameters)
+0%
+20%
+40%
+60%
+80%
+100%
+Accuracy (%)
+Fortinet ICS SCADA
+3B
+7B
+14B
+30B
+70B
+175B
+400B
+1000B
+Model Size (B Parameters)
+0%
+20%
+40%
+60%
+80%
+100%
+Accuracy (%)
+MMLU Computer Security
+3B
+7B
+14B
+30B
+70B
+175B
+400B
+1000B
+Model Size (B Parameters)
+0%
+20%
+40%
+60%
+80%
+100%
+Accuracy (%)
+CyberMetric80
+3B
+7B
+14B
+30B
+70B
+175B
+400B
+1000B
+Model Size (B Parameters)
+0%
+20%
+40%
+60%
+80%
+100%
+Accuracy (%)
+Cisco CCNx
+Diﬃculty Level
+Hard
+Medium
+Easy
+Figure 6: Question set accuracy as a function of model size (log scale) across three difficulty tiers
+(Hard, Medium, Easy) for each benchmark with a regression fitted to show the scaling trend. The
+top row shows the OT security benchmarks, the bottom row shows the IT-focused benchmarks.
+Emergent Knowledge Capabilities and Difficulty Scaling
+To study how cybersecurity
+knowledge scales with model size, we partitioned the questions in each benchmark into three tiers,
+hard, medium, and easy, based on average accuracy across models. Figure 6 shows accuracy versus
+parameter count for these tiers. Performance generally improves with scale, but the scaling behavior
+and gaps between tiers vary by benchmark.
+For the three OT-focused benchmarks (top row), the performance gap between easy, medium, and
+hard questions is wide and persistent. On ISA/IEC 62443 and Fortinet NSE, even the largest models
+stay below 40% accuracy on the hardest questions. The nearly flat curve on the hardest ISA/IEC
+62443 items suggests that increasing model size alone does not add the formal, standard-specific
+knowledge required; specialized OT knowledge remains a frontier.
+The general IT security benchmarks (bottom row) show different behavior. MMLU Computer
+Security and CyberMetric80 exhibit benchmark saturation: accuracy on easy and medium questions
+clusters near 100%, even for smaller models, so difficulty levels are poorly separated and most
+items are too simple to differentiate modern LLMs. The Cisco CCNx benchmark lies between these
+extremes, with clearer separation between all three tiers and consistent gains with model scale,
+indicating a more informative and learnable domain.
+Validating the Qualitative Analysis Methodology
+To evaluate the usefulness of the generated
+difficulty descriptions, we used them as a rubric for classifying a held-out set of questions. Table 3
+reports F1-scores for a Verifier LLM using three description sets: a baseline derived from question
+text alone, descriptions from single analysis runs, and descriptions synthesized from multiple runs.
+On average, all methods outperform the random baseline of 33.3%, indicating that the descriptions
+capture signals of difficulty, but only when the benchmarks have sufficient separation between difficulty
+12
+
+tiers (as in Figure 6). For MMLU Computer Security and CyberMetric80, this separation is weak,
+and clustering by difficulty fails. The baseline “Questions Only” descriptions reach an average
+F1-score of 36.7%, the single-run analysis 37.2%, and the synthesized descriptions 39.0%. Large
+standard deviations mean differences are not always statistically clear, but the trend suggests that
+multi-run synthesis yields the most robust and general descriptions.
+A notable outlier is CyberMetric80, where all methods achieve F1-scores below the random
+baseline. This benchmark contains too few genuinely hard questions to support meaningful difficulty
+tiers. Overall, the validation indicates that the framework produces interpretable descriptions that
+reflect difficulty patterns, but only for benchmarks with a sufficiently broad and challenging item
+distribution.
+Natural Language Descriptions
+The synthesized difficulty descriptions reveal a progression
+of required capabilities. Easy questions primarily test factual recall of foundational, single-concept
+definitions such as standard acronyms or default port numbers. Medium questions emphasize
+application, requiring models to map principles to scenarios and discriminate between plausible
+options. The hardest questions demand specialization, including vendor-specific command semantics,
+formal standards, and operational nuances.
+These findings show that current LLMs encode a large body of general IT security facts, but
+their limitations emerge on specialized, context-dependent knowledge that underpins professional
+practice. Full natural language descriptions for each benchmark are provided in Appendix A.
+6
+Discussion and Limitations
+Our findings empirically demonstrate that LLM knowledge in cybersecurity follows a gradient of
+specificity. Leading models exhibit expert-level knowledge on canonical IT certifications like Cisco
+CCNx, but their performance degrades on vendor-specific IT benchmarks such as Fortinet NSE
+and collapses on tasks requiring formal, standards-based OT knowledge like ISA/IEC 62443. This
+gradient likely reflects the composition of web-scale pre-training corpora, which contain abundant
+general IT concepts but relatively little proprietary documentation and formal standards [35]. As
+a result, strong performance on general benchmarks is not a reliable indicator of capability in
+specialized, context-dependent tasks, especially in critical domains.
+Beyond the IT/OT knowledge gap, our analysis highlights progress in model efficiency. While
+performance gains for very large models appear to be saturating, newer models in the 14B–32B
+parameter range rival the performance of previous-generation models an order of magnitude larger,
+suggesting ongoing improvements in training methodology and data curation. This increase in
+parameter efficiency has implications for energy-efficient AI and broader access to capable models.
+Methodologically, this work introduces a Proposer-Verifier framework that generates and validates
+interpretable, natural-language descriptions of question difficulty. This provides a way to move
+beyond aggregate scores and investigate the causes of model successes and failures.
+A key limitation stems from our data sources for the certification benchmarks. The questions were
+curated from publicly accessible, community-driven websites. Although these platforms approximate
+official exam content, their reliance on user-submitted questions and answers introduces a risk of
+inaccuracies and outdated material. To mitigate this risk, we performed a manual expert review of
+all questions and answer keys. Items with ambiguous wording, conflicting answers across sources, or
+insufficiently justified solutions were corrected based on authoritative documentation, or removed.
+After this expert curation, some residual label noise and selection bias may remain.
+13
+
+The Proposer-Verifier framework is also limited by its self-referential nature: we use a frontier
+LLM to analyze the capabilities of other LLMs. The Proposer may share the same knowledge gaps as
+the evaluated models, potentially misattributing the source of difficulty. The quality of the analysis
+is therefore tied to the specific model used for the Proposer task. In addition, the non-deterministic
+behavior of language models and their sensitivity to prompts can lead to variation between runs,
+introducing qualitative uncertainty compared to standard quantitative metrics.
+Future work should address these limitations by improving the robustness and stability of the
+qualitative analysis, for example through systematic hyperparameter tuning and more constrained
+prompting. Methodological extensions such as iterative refinement of descriptions or soft prompting
+could further reduce variance and sensitivity to prompt design.
+7
+Conclusion
+The present paper introduces CyberCertBench, a new suite of benchmarks derived from professional
+certifications, to evaluate LLM knowledge across a gradient of specificity from general IT to specialized
+OT security. Our central finding is that LLM performance degrades significantly as the required
+knowledge shifts from web-prevalent concepts to the vendor-specific procedures and formal standards
+that define professional expertise. While leading models achieve passing grades on general IT
+certifications, they consistently fail on benchmarks testing deep, specialized knowledge, particularly
+in vendor-specific procedures and formal OT standards, posing a risk for their use in critical
+infrastructure environments.
+Our analysis of scaling and release date trends further reveals that while larger models perform
+generally better, performance increases are diminishing. Smaller LLMs, on the other hand, have
+shown a large performance increase in the last year. Therefore, the knowledge capabilities are
+becoming more parameter-efficient.
+Methodologically, this work contributes both the publicly
+available OT benchmarks themselves and a novel Proposer-Verifier framework. The analysis reveals
+a capability progression, from proficiency in foundational factual recall and applied reasoning to a
+significant performance drop when faced with the specialized demands of vendor-specific or industrial
+standards-based knowledge.
+14

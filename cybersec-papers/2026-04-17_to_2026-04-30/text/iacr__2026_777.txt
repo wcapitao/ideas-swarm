@@ -1,0 +1,1339 @@
+How Strong is the FO-Calypse, Really?
+Instantiating Plaintext-Checking Oracles against
+Masked Software Implementations of ML-KEM
+Brieuc Balon1, Gaëtan Cassiers1,2, Thibaud Schoenauen1 and
+François-Xavier Standaert1
+1 Crypto Group, ICTEAM Institute, UCLouvain, Louvain-la-Neuve, Belgium
+2 CryptoExperts, Paris, France
+Abstract. Side-channel attacks exploiting Plaintext-Checking Oracles (PCOs) instanti-
+ated thanks to the leakage of the re-encryption step taking place during decapsulation
+are a well-known weakness of ML-KEM. An already wide literature investigated how
+to efficiently exploit such oracles, leading to easy (full) key recoveries. Somewhat
+surprisingly, the investigation of how to best instantiate PCOs against ML-KEM’s
+most leaking operations is less investigated, in particular when it comes to quanti-
+tative evaluations against concrete masked implementations. In this paper, we first
+remedy this lack by systematically instantiating PCOs against three open source
+masked software implementations of the Keccak function used in ML-KEM, based on
+different masking techniques and programming styles. We evaluate the accuracy of
+PCOs for increasing number of shares using state-of-the-art profiled attacks against
+ARM Cortex-M4 implementations, and succeed obtaining high accuracy for up to
+7 shares by leveraging the leakage of approximately 50 ML-KEM executions only.
+Doing so, we confirm the “computing more implies leaking more” adage and conclude
+that enforcing high security levels on such platforms will not be affordable. Next,
+we consolidate recent solutions for exploiting PCOs. For this purpose, we start
+by introducing a simple, concrete and re-usable model for PCOs targeting masked
+implementations of Keccak. We follow by clarifying that approaches based on hard
+decisions are suboptimal compared to soft (probabilistic) ones. We finally open a
+study of how to best exploit the adversary’s computational power in a security evalu-
+ation. We show that (even naive) lattice based attacks are a promising approach for
+this purpose, leaving the design of a generic estimator that could efficiently leverage
+physical (side-channel) information as an interesting research direction.
+Keywords: ML-KEM · side-channel analysis · plaintext checking oracles · masking
+1
+Introduction
+Ever since its publication in 2018, CRYSTALS-Kyber [BDK+18], now standardized as
+ML-KEM [Nat24], has lead to significant efforts towards understanding its implementation
+security against side-channel attacks. One line of research focused on single-trace attacks,
+which may lead to directly compromise ML-KEM’s long-term key [PPM17, PP19, KPP20].1
+Besides, it has rapidly been observed that the structure of ML-KEM, and its reliance
+on the Fujisaki-Okamoto (FO) transform to ensure chosen ciphertext security, can
+lead to very powerful side-channel key recoveries relying on Plaintext-Checking Oracles
+(PCOs) [RRCB20, UXT+22, XPR+22, RRD+23, TUX+23]. Conceptually, they exploit
+the possibility of performing side-channel chosen-ciphertext attacks against the part of
+1 Such attacks have been extended to the k-trace setting in [HHP+21].
+
+2
+How Strong is the FO-Calypse, Really?
+Table 1: Cortex-M4 cycle counts of ML-KEM-768 Decapsulation in kCycles, and percentage
+of time devoted to Keccak executions, for different number of shares d [BC22].
+d
+ML-KEM.Decaps
+Keccak
+Ratio (%)
+2
+10 018
+4579
+45.7
+3
+16 747
+7225
+43.1
+4
+24 709
+10 664
+43.2
+5
+34 683
+14 897
+43.0
+6
+45 950
+19 923
+43.4
+7
+58 473
+25 752
+44.0
+ML-KEM that is only secure against chosen-plaintext attacks. Concretely, they exploit the
+possibility to force the re-encryption of key-dependent messages, so that just distinguishing
+two messages (i.e., instantiating a PCO) thanks to leakage can compromise ML-KEM’s
+long-term key. As discussed in [ABF+, ABH+22], such attacks are very powerful be-
+cause any leakage sample of the re-encryption step can be used to distinguish. Those
+seminal efforts have in turn led to various optimizations towards efficiently exploiting
+the information provided by PCOs. For example, early works like [RRCB20] relying on
+hard decisions such as majority voting gradually evolved towards probabilistic strate-
+gies [SCZ+23, HMS+23, LCS+25, HSMP25, PRI25], culminating with the recent [HMT25]
+which takes advantage of Soft Analytical Side-Channel Attacks (SASCA) [VGS14].
+In parallel, research progressed in the direction of protecting ML-KEM implementations
+against these strong attacks. In particular, how to securely mask its various operations
+to mitigate side-channel leakage (e.g., in software, which will be our focus) has been
+an active research area. For Keccak, standard solutions developed for the AES can be
+directly used [GR17], possibly with some specialization [GD23]. For the other parts, new
+algorithmic solutions have been proposed, including [BPO+20, BDH+21] for polynomial
+comparisons, or [CGMZ22, D’A23] for conversion algorithms, and leading to a few complete
+proposals such as [BGR+21, BC22] (and [BDK+21] for the SABER algorithm).
+As a result of these advances, it is to be expected that secure implementations of
+ML-KEM should be quite expensive. Yet, and it is also worth noticing that the amount of
+published works that consider actual measurements against protected (masked) implemen-
+tations remains scarce, especially when it comes to systematically assessing security in
+a quantitative manner. Among the aforementioned papers, Primas et al. (CHES 2017)
+consider SASCA against masked software implementations of CRYSTALS-Kyber, but their
+(quantitative) investigations only evaluate single-trace attacks against the NTT [PPM17].
+The others only assesses a (qualitative) security order via leakage detection: for the polyno-
+mial comparisons in the case of Bhasin et al. [BDH+21], for complete implementations of
+Kyber (or SABER) in the case of Bos et al. [BGR+21], Van Beirendonck et al. [BDK+21]
+and Bronchain & Cassiers [BC22]. Besides, and browsing other recent works, Hermelink
+et al. (resp., Pay and Standaert) comprehensively evaluate the security of a masked
+software implementation against PCO-based attacks with SASCA-like techniques, but
+their (quantitative) evaluations only consider polynomial comparison [HNPS24] (resp., the
+NTT [PS26]); Wang et al. finally use deep learning techniques to evaluate a higher-order
+masked implementation of CRYSTALS-Kyber, but their (quantitative) evaluations only
+consider the message decoding function and the Barrett reduction steps during the decap-
+sulation process [WBD24]; their study is extended to a masked hardware implementation
+in [JD25]. Somewhat surprisingly given that it accounts for a significant part of the
+overheads and leakage in masked implementations of ML-KEM (see Table 1), no analysis
+assessed the strength of PCOs instantiated against a masked Keccak so far.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+3
+Overall, and to the best of our knowledge, the state of the art therefore still lacks a
+systematic investigation of how strong PCO-based attacks can be against masked (e.g.,
+software) implementations. We contribute to this lack in two main directions.
+First, we evaluate message distinguishing attacks against masked software implementa-
+tions of Keccak on an ARM Cortex-M4. This choice is motivated both by the fact that it
+is among the most important sources of leakage in ML-KEM and by the availability of
+open source prototypes. We consider the C implementation from Kundu et al. [KDB+22],
+which adapts the Domain Oriented Masking (DOM) implementation from [GSM17] to the
+software case, the C and assembly implementations of Bronchain and Cassiers [BC22],
+which rely on Probe Isolating Non Interferent (PINI) gadgets [CS20], and the Thresh-
+old (assembly) Implementation (TI) of [GD23], which is limited to two shares. This
+allows us to assess the impact of C implementations vs. assembly ones aimed at reducing
+transition-based leakages [BGG+14]. It also allows us to assess the difference between
+protections for arbitrary numbers of shares vs. optimized ones for two shares. We use
+state-of-the-art template attacks in principal subspaces for this purpose [SA08], which
+have been shown to be well adapted to target masked software implementations of the
+AES [BS21, BCS21]. Concretely, we compare our target software implementations with up
+to 7 shares and confirm the standard intuition that computing more implies leaking more.
+For the DOM implementation, which has the highest security level in our experiments, we
+show that high-accuracy PCOs can be easily obtained for up to 7 shares with the leakage
+corresponding to only 50 executions of ML-KEM. These results lead to the conclusion that
+ML-KEM is unlikely to be implementable securely on low-end microcontrollers without
+prohibitive overheads. They suggest the investigation of secure micro-controllers (e.g., with
+noise engines or instruction set extensions for leakage-sensitive operations) and hardware
+Keccak co-processors, for which parallelism could be leveraged to reduce the amount of
+leakage exploitable by PCOs, as interesting and practically relevant open problems.
+Second, we consolidate recent solutions for exploiting PCOs and turn them into full
+key recoveries. We start by introducing a simple and concrete model for PCOs, which we
+parametrize for masked implementations of Keccak with different number of shares. We then
+use this model to clarify that approaches based on hard decisions, like the initial [RRCB20],
+are suboptimal compared to soft (probabilistic) ones, like the recent [HMT25]. We show in
+particular that majority voting is useless in the context of hard PCO-based attacks, since
+adversaries better use all their measurements to increase the accuracy of a single PCO
+call than spending them in voting. We finally initiate a study of the remaining challenges
+raised by soft approaches, namely how to best post-process the inference’s outcomes in
+order to evaluate the security level given the adversary’s computational power. Given the
+nature of the (lattice) assumption on which ML-KEM relies, key enumeration algorithms
+used in symmetric cryptography are unlikely to be sufficient [PSG16], and we therefore
+turn back to lattice estimators [APS15] or variants with hints thereof [DDGR20]. We show
+that a naive (likely conservative) use of these estimators already gives significant attack
+improvements and that hybrid approaches perform best in our setting [How07]. We also
+put forward that such estimators are for now unable to capture the granularity of the hints
+provided by side-channel leakages, leaving the design of a generic estimator that could
+efficiently leverage such physical hints as an interesting scope for further research.
+2
+Preliminaries
+In this first section, we provide the background to understand our results.
+
+4
+How Strong is the FO-Calypse, Really?
+Algorithm 1 ML-KEM.Decaps
+Input: dk = (dkPKE, ekPKE, h, z), c
+Output: Shared secret K′
+1: m′ ←K-PKE.Decrypt(dkPKE, c)
+2: K′, r′ ←SHA3-512(m′||h)
+3: ¯K ←PRF(z ∥h, 256)
+4: c′ ←K-PKE.Encrypt(ekPKE, m′, r′)
+5: if c′ ̸= c then
+6:
+K′ ←¯K
+7: end if
+8: return K′
+Algorithm 2 K-PKE.Decrypt
+Input: dkPKE = sk, c
+Output: Decrypted message m′
+1: u′, v′ ←Decompress(c)
+2: µ ←v′ −⟨sk, u′⟩
+3: m′ ←Compress(µ, 1)
+4: return m′
+Algorithm 3 K-PKE.Encrypt
+Input: ekPKE = (t, ρ), m′, r′
+Output: ciphertext c′ = (c1, c2)
+1: A ∈Rk×k
+q
+←U(ρ)
+2: y ←0 ∈Rk
+q
+3: e1 ←0 ∈Rk
+q
+4: for i = 1 to k do
+5:
+y[i] ←CBDη1(PRF(r′, 512 · η1))
+6:
+e1[i] ←CBDη2(PRF(r′, 512 · η2))
+7: end for
+8: e2 ∈Rq ←CBDη2(PRF(r′, 512 · η2))
+9: µ ←Decompress(m′, 1)
+10: u ←AT y + e1
+11: v ←⟨t, y⟩+ e2 + µ
+12: c1 ←Compress(u, du)
+13: c2 ←Compress(v, dv)
+14: return c′
+Figure 1: Simplified version of the ML-KEM Decapsulation algorithm, where PRF(M, b)
+corresponds to SHAKE256(M, b) with input message M and b-bit output length.
+2.1
+ML-KEM
+ML-KEM is a key encapsulation mechanism standardized by the NIST [Nat24]. Its security
+relies on the hardness of the Module Learning With Errors (MLWE) problem and it is
+instantiated for the three NIST security levels (i.e., L1, L3 and L5) under the names
+ML-KEM-512, ML-KEM-768 and ML-KEM-1024. All standardized instantiations operate
+on the same polynomial ring Rq = Zq[X]/(Xn + 1), with prime modulus q = 3329 and
+ring degree n = 256. This ring is used to construct the module Rk
+q whose rank k equals 2,
+3 and 4 depending on the security level. The parameter sets η1 and η2, which define the
+distributions used to sample the secret and error polynomials, are chosen as η1 = (3, 2, 2)
+and η2 = (2, 2, 2) for the security levels (L1, L3, L5). ML-KEM is constructed from a
+Public-Key Encryption (PKE) scheme which is transformed into an IND-CCA2-secure
+KEM using the FO transform. In this paper, we focus on the decapsulation algorithm of
+ML-KEM, which is the target of message distinguishing attacks. We briefly recall this
+decapsulation procedure below and refer the reader to [Nat24] for the details.
+ML-KEM Decapsulation. The decapsulation procedure of ML-KEM is depicted in
+Algorithm 1. Given the decapsulation key (i.e., the secret key) dkPKE and a received
+ciphertext c, the algorithm first recovers the decrypted message m′ using Algorithm 2.
+This message is then re-encrypted with the encapsulation key (i.e., the public key) ekPKE
+and some randomness r′ using Algorithm 3, to obtain a re-computed ciphertext c′. The
+decapsulation procedure finishes by outputting the shared secret key K′, if the recomputed
+ciphertext c′ matches the received ciphertext c, or a random value ¯K, when both ciphertexts
+are different. This re-encryption step is essential for achieving IND-CCA2 security. It
+ensures that the randomness r′, which is deterministically derived from the message, used
+during the encapsulation and decapsulation procedures are identical. This is checked by
+verifying the original ciphertext is matching with the re-computed one.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+5
+Absorbing phase
+m′||h
+1024
+576
+f
+K′, r′
+(a) SHA3-512(m′||h)
+Absorbing phase
+r′
+512
+1088
+f
+512 · η
+(b) SHAKE256(r′, 512 · 2)
+Absorbing phase
+Squeezing phase
+r′
+512
+1088
+f
+512 · η
+f
+(c) SHAKE256(r′, 512 · 3)
+Figure 2: Sponge construction of the attacked SHA-3 functions.
+2.2
+SHA-3
+The SHA-3 algorithm is a family of four hash functions and two eXtendable-Output
+Functions (XOFs) standardized by the NIST [oSN15]. In this work, we will adopt the same
+terminology as in the FIPS 202 documentaion [oSN15]. The SHA-3 functions sensitive to
+message distinguishing attacks (highlighted in Algorithms 1 and 2) correspond to the hash
+function SHA3-512 and the XOF SHAKE256 defined as:
+SHA3-512(m′||h) = Keccak[1024](m′||h, 512),
+SHAKE256(r′, 512 · η) = Keccak[512](r′, 512 · η).
+The input size of both functions is constant across all ML-KEM security levels, with
+|(m′||h)| = 512 bits and |r′| = 256 bits. In contrast, while the output length of SHA3-512
+is fixed to 512 bits, the output length of SHAKE depends on η, which varies depending
+on the security levels. Both functions use the Keccak-f[1600] permutation (next simply
+referred to as Keccak) in sponge constructions depicted in, Figure 2. The number of Keccak
+permutation executions that can be exploited by a PCO on ML-KEM re-encryption is 8, 8
+and 10 for ML-KEM-512, ML-KEM-768 and ML-KEM-1024 respectively.
+Permutation. The Keccak permutation consists of 24 rounds, each composed of five
+sequential operations: θ, ρ, π, χ and ι. All operations apply a linear transformation to the
+state, except for χ, which is a non-linear transformation. We omit the detailed description
+of (θ, ρ, π, χ, ι) because they are not necessary for understanding our results. We just note
+that in software implementations, the ρ and π operations are often combined together for
+efficiency, reducing the number of operations per round to four: (θ, π ◦ρ, χ, ι).
+2.3
+Profiled attack on masked implementations
+Our methodology for building PCOs is similar to the approach proposed in [BS21]. In this
+section, we recall its main steps and tools. At a high level, this methodology identifies
+secret-dependent variables in the computation, which we name sensitive variables. We
+then target the shares of these variables with a profiled attack to retrieve probabilistic
+information on their values. We finally recombine the shares’ distributions to learn a
+distribution of the sensitive variables, which we translate to the main secret.
+The simplicity of this method rests on the knowledge of the shares’ values in a profiling
+dataset. When such a knowledge is not available, deep learning techniques [PPM+23,
+MCLS23] can often be used a an alternative in order to achieve similar results.
+Point-of-interest (POI) selection.
+The first step is to select the time samples that will
+be used for the attack, for each share of every sensitive variable. We use the SNR as
+a standard leakage detection tool [Man04] for this purpose. It models the signal as the
+
+6
+How Strong is the FO-Calypse, Really?
+variance of the mean leakage of each class x and the noise as the average intra-class
+variance:
+ˆ
+SNR =
+ˆVx(ˆEi(lx
+i ))
+ˆEx(ˆVi(lx
+i ))
+,
+where ˆV and ˆE denote the sample variance and the sample mean, estimated on lx
+i ∈L,
+with lx
+i the i-th side-channel leakage with intermediate value x. The SNR can be can be
+computed independently for each time sample of a leakage trace. High SNR indicates
+locations where (first-order) leakage is present and can be exploited in an attack.
+Gaussian templates in principal subspaces.
+After selecting the POIs, Gaussian templates
+are used to model the multivariate leakages [CRR02]. They operate by first estimating a
+Probability Density Function (PDF) f[x|l], where l is a nPOIs-dimensional leakage. This
+is done by modeling it as a multivariate Gaussian distribution:
+ˆf[l|x] =
+1
+q
+(2π)n| ˆΣ|
+exp−1
+2 (l−ˆµx)⊤ˆΣ−1(l−ˆµx),
+(1)
+where ˆµx is the leakage mean for each value of x and ˆΣ is the pooled covariance matrix,
+both estimated using a profiling dataset for which the shares’ values are known. If x is
+uniformly distributed, the distribution of x given l is then computed as:
+ˆPrmodel[x|l] =
+ˆf[l|x]
+P
+x′∈X ˆf[l|x′]
+·
+(2)
+When the leakage dimension nPOIs is large, accurately estimating ˆµx and ˆΣ may require
+a prohibitive amount of data.
+To reduce this profiling effort, leakage traces can be
+projected onto a lower-dimensional linear subspace of dimension nLDA, with nLDA ≪nPOIs,
+using Linear Discriminant Analysis (LDA) [SA08]. LDA concentrates the side-channel
+information into a few dimensions by optimizing the SNR after projection: it computes a
+SNR-maximizing orthogonal projection W and updates Equation 1 with projected leakage
+l′ = W l. In practice, the initial number of dimensions nPOIs is chosen as the number of
+time samples with large enough SNR and the (reduced) number of LDA dimensions nLDA
+is a trade-off between model performance and number of traces needed for profiling.
+In order to optimize the model’s hyper-parameters and the number of profiling traces,
+we use information-theoretic metrics. A standard metric for evaluating the amount of
+information that concrete leakages provide about an intermediate variable is the Mutual
+Information (MI) between this variable and the leakage [SMY09]. However, estimating the
+MI is challenging in practice, since it requires an accurate knowledge of the true leakage
+distribution. The Perceived Information (PI) is a lower-bound of the MI between a variable
+X and its the leakage L, and it describes how much information a trained model can
+recover about the variable from the leakage [BHM+19]. It is defined as:
+ˆPI(X; L) = H(X) +
+X
+x∈X
+Pr[x]
+X
+l∈Ltest
+1
+|Ltest| log2 ˆPrmodel[x|l],
+(3)
+where H(X) denotes the entropy of X and Ltest is a set of (fresh) leakage samples that
+is not used during the profiling phase. In order to assess whether a given model has
+converged, a convenient complementary metric is the Training Information (TI), which
+provides an upper bound to the PI [MCHS23]. The TI is computed similarly to Equation 3,
+but the test set Ltest is replaced by the profiling set used to estimate the model.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+7
+Secret recovery.
+Given a leakage trace l and a d-share Boolean encoding (V1, . . . , Vd) of
+a sensitive variable V ∈F2k, such that V = V1 ⊕· · · ⊕Vd, the Gaussian models described
+above give the shares posteriors:
+ˆpi
+V =
+
+ˆPr[Vi = vi | L = l]
+
+vi∈F2k
+.
+We can then compute the posterior of the sensitive variable:
+ˆpV =
+
+ˆPr[V = v | L = l]
+
+v∈F2k
+= ˆp1
+V ⋆· · · ⋆ˆpd
+V ,
+(4)
+where ⋆is the convolution product. This can be computed efficiently using the Walsh
+Hadamard transform [KPP20]. Eventually, we combine information in different sensitive
+variables
+ V j
+j=1,...,n by assuming that the leakages on different variables are independent.
+For a uniformly-distributed secret input K and a public input T, it gives:
+ˆPr[K = k | V = l, T = t] =
+Qn
+j=1 ˆPr[V j = fj(k, t) | V = l]
+P
+k′
+Qn
+j=1 ˆPr[V j = fj(k′, t) | V = l]
+,
+(5)
+where the function fj(k, t) is the value of V j when K = k and T = t. If multiple leakage
+traces are available to the adversary, the posteriors are multiplied similarly.
+3
+Distinguishing attacks on masked Keccak
+In this first main section, we present distinguishing attacks against different masked
+implementations of Keccak that can be used in order to instantiate PCOs.
+3.1
+Target implementations and setup
+We first present our target implementations and the measurement setup we used.
+Target Implementations.
+To the best of our knowledge, there are only three open
+source masked software implementations of Keccak [BC22, KDB+22, GD23].
+These
+implementations, written in C or assembly (ASM), and mainly differ in the strategy used
+to mask the non-linear χ layer of Keccak (as the linear layers can be performed share-wise).
+We next refer to these implementations as PINI, DOM and TI:
+PINI. The Probe-Isolating Non-Interferent (PINI) implementation from [BC22] relies on
+PINI gadgets to mask the non-linear operation χ. It can be masked with any number
+of shares and is written in C, with sensitive PINI gadgets implemented in C or
+assembly. The ASM version explicitly controls register allocation and instruction
+scheduling to mitigate transition-based leakages between shares, which may occur
+with the gadgets written in C due to compiler optimizations [BGG+14].
+DOM. The Domain-Oriented Masking (DOM) implementation from [KDB+22] uses DOM
+rather than PINI gadgets to protect the non-linear operation χ. It is written in C
+supports any number of shares (like the PINI implementation).
+TI. The Threshold Implementation (TI) described in [GD23] is a hand-optimized ASM
+implementation that adapts the TI concept to software. It is designed to prevent
+mirco-architectural leakage (e.g., due to transitions or glitches). Unlike PINI and
+DOM, this implementation is optimized for and only supports two shares.
+Table 2 reports the runtimes of a single Keccak round for implementations up to 7 shares.
+The runtime of one Keccak execution corresponds to these values multiplied by 24.
+
+8
+How Strong is the FO-Calypse, Really?
+Table 2: Cortex-M4 cycle counts for one Keccak round across different implementations
+and number of shares d, compiled using GCC 13.3.0 with -O3 optimization flag.
+d
+PINI C
+PINI ASM
+DOM C
+TI ASM
+2
+21 406
+21 746
+5350
+6336
+3
+31 198
+34 822
+10 030
+4
+43 286
+50 594
+18 450
+5
+58 534
+70 162
+24 350
+6
+76 642
+93 378
+32 894
+7
+96 784
+119 480
+42 312
+Measurement Setup.
+Measurements are performed on an STM32F415RG (ARM Cortex-
+M4) mounted on a ChipWhisperer CW308 UFO board. The processor operates at a
+125 MHz clock frequency, derived from an external 15.625 MHz square wave clock generated
+by a PicoScope 5244D. Side-channel leakage is captured, with the same Picoscope, using a
+Tektronix CT-1 current probe placed on a jumper between the on-board power regulator
+and the CPU. Traces are sampled at 500 MSamples/s with a 12-bit resolution.
+3.2
+Attack methodology
+Our distinguishing attack against the Keccak permutation is based on the methodology
+highlighted in Section 2.3 and implemented using SCALib [CB23]. This methodology is
+“order-preserving” in the sense that it recombines the shares’ information by applying
+a convolutional product, which prevents exploiting (e.g., transition-based) flaws that
+may re-combine this information at the implementation level, and reduce the security
+amplification that masking ideally provides. This means that the attacks we describe
+next may be further improved in case such flaws are observed. We leave the investigation
+of such improvements as an open problem because they apply similarly to any gadget
+and the same holds for solutions to prevent them [CGP+12, BGG+14, CS21]. Besides,
+previous work showed that for low-noise platforms like the ARM Cortex-M4 devices that
+we consider, such order-preserving attacks are usually the most efficient [BS21].
+As sensitive variables, we selected the Keccak permutation state at the output of the
+θ, π ◦ρ and χ layers.2 We systematically get rid of the first four rounds (i.e., before
+diffusion of an input bit difference is complete) so that every part of the target state can
+be assumed to fully depend on the secret bit, no matter how the inputs depend on this bit.
+This leaves us with 20 exploitable leaking rounds per Keccak execution, leading to the
+exploitable round counts for the whole ML-KEM re-encryption given in Table 3. For the
+sake of simplicity, we partition each 1600-bit state it into 200 independent 8-bit sensitive
+variables. This results in 3 × 200 = 600 sensitive values per round and 600 × 20 = 12 000
+values per Keccak execution. It is possible to further increase the number of intermediate
+value. However, in this work we restrict ourselves to the state variables to enable a generic
+comparison across the four target implementations. Alternatively, adopting 32-bit variables
+could help reduce algorithmic noise. Again, we leave these extensions (i.e., incorporating
+additional intermediate values and exploring 32-bit models) for future work.
+In the first stage of the attack, we compute the shares’ SNR in order to select the POIs.
+In practice, the leakage traces corresponding to a single Keccak execution become quite
+large when the number of shares increases. For example, with our measurement setup, one
+Keccak execution using the DOM C implementation with d = 6 shares produces more than
+2 The ι layer adds a constant to the state such that target intermediate variables corresponding to the
+outputs of χ and ι are bijectively related and can be exploited with the same templates.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+9
+Table 3: Number of Keccak permutation executions and total number of leaking Keccak
+rounds exploitable for PCO instantiation, for the different versions of ML-KEM.
+# Keccak executions
+Leaking rounds
+ML-KEM-512
+8
+160
+ML-KEM-768
+8
+160
+ML-KEM-1024
+10
+200
+4 × 106 leakage samples, corresponding to approximately 6 MB of data per trace. Given
+the large number of shares to profile, handling such traces directly results in substantial
+computational costs. In order to mitigate this issue, we store and process the leakage on
+a per-round basis: we split each Keccak trace into sub-traces corresponding to a round.
+This optimization may reduce the success rate of our distinguisher by eliminating potential
+leakage of a variable that spills over neighboring rounds, but was deemed worthwhile since
+it results in reducing the traces’ length by a factor 20 in the SNR computation stage.
+During the profiling phase, a set of 2 × 105 traces of Keccak executions was recorded
+for each target implementation. For these executions, we sampled the input of the Keccak
+permutation either as the all-zero state {0}1600, or as a state that is zero everywhere except
+for a single bit among the first 256 bits, in order to mimic the message-distinguishing
+sensitive part of the hash function. This input was then masked and we also recorded the
+values of all the shares of the sensitive variables. After splitting the traces into rounds, the
+SNR was computed and used to identify the POIs of all the shares for each sensitive value.
+We then selected nPOIs sample points exhibiting the highest SNR values. For illustration,
+the shares’ SNR computed on the leakage traces obtained from our four different targets
+is shown in Figure 3 for the θ operation. In this figure, both the linear (i.e., θ, π ◦ρ)
+and non-linear (i.e., χ) transformations are clearly distinguishable from the SNR curves.
+The linear operations are performed independently on each share, whereas the non-linear
+operation requires the joint processing of all shares. Each SNR plot associated with a
+given share represents the SNR of its 200 sensitive variables, all displayed using the same
+color. Consequently, peaks appear throughout the entire Keccak round.
+Using the same training dataset restricted to the selected POIs, we estimated the
+parameters of the LDA-based template model described in Equation 1. The parameters
+nPOIs and nLDA are chosen in order to maximize the perceived information (PI) of the
+resulting model. We analyzed the PI of the LDA models for nPOIs values up to 1600
+and nLDA values up to 8, and observed that the best overall results were obtained with
+nPOIs = 1600 and nLDA = 4 across all implementations. For example, the PI and TI for
+the 4-share DOM implementation is shown in Figure 4a: increasing nLDA up to 4 makes
+the model more informative but pushing it further is detrimental. Indeed, models with
+larger parameters need more profiling traces to converge, and the plots of Figure 4b suggest
+that models have not fully converged already with nPOIs = 1600 and nLDA = 4.
+Next, we collected an attack dataset of natk = 104 traces in order to evaluate the
+accuracy of our distinguishers. For this dataset, the input of the Keccak permutation is
+sampled as in the training phase. We can evaluate the success rate of each distinguisher
+by repeatedly applying the methodology of Section 2.3 (Equations 1, 2, 4 and 5) with
+a varying amount of traces. We note that the above attacks need to acquire and store
+large datasets, in particular for their training. As the number of shares increases, the
+total size of the training data quickly becomes prohibitive. For instance, as shown in
+Table 4, the size of training datasets can exceed 1 TB, for a total size across all datasets
+of approximatively 20 TB. Therefore, and as an optimization, we considered a technique
+to reduce the size of datasets by measuring and storing only one round of the Keccak
+
+10
+How Strong is the FO-Calypse, Really?
+(a) PINI C
+(b) PINI ASM.
+(c) DOM C.
+(d) TI ASM.
+Figure 3: Leakage traces and corresponding SNRs for the intermediate values after θ in
+one round. Implementation masked with 4 shares (2 shares for the TI).
+200
+400
+600
+800
+1000
+1200
+1400
+1600
+nPOIs
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+PI [bits]
+nLDA
+2
+4
+8
+(a) PI curves in function of nPOIs and nLDA.
+25000
+50000
+75000
+100000
+125000
+150000
+175000
+200000
+ntrain
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Information [bits]
+PI 
+TI
+(b) PI/TI curves for nPOIs = 1600 & nLDA = 4.
+Figure 4: Information metrics on a share of the DOM d = 4 implementation.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+11
+Table 4: Memory footprint of each dataset in GB. Each dataset consists of 200k training
+traces and 10k attack traces (20 Keccak rounds per trace).
+d
+PINI C
+PINI ASM
+DOM C
+TI ASM
+Train
+Atk
+Train
+Atk
+Train
+Atk
+Train
+Atk
+2
+632
+32
+672
+40
+163
+8
+196
+10
+3
+930
+47
+1 040
+52
+303
+15
+4
+1 362
+67
+1 520
+76
+544
+28
+5
+1 830
+88
+2 112
+106
+724
+36
+6
+2 404
+122
+2 806
+142
+1 010
+48
+7
+66
+∗
+33
+∗
+∗For the DOM 7-share case, only the optimized dataset with a
+single round per Keccak execution was measured and stored.
+The number of attack traces was increased to 100k.
+2
+4
+6
+8
+10
+12
+14
+16
+18
+20
+Number of rounds
+0.5
+0.6
+0.7
+0.8
+0.9
+Succes rate
+16th round
+20th round
+24th round
+multiple round
+Figure 5: Equivalence between traces and round aggregation (DOM C, 4 shares).
+execution, instead of 20. Thanks to the diffusion in Keccak, we expect that all rounds leak
+the same amount of information and, moreover, that the states of consecutive rounds are
+sufficiently decorrelated, such that their leakage is not redundant. In order to validate this
+hypothesis, we compared in Figure 5 the success rate of attacks that aggregate the leakage
+of consecutive rounds of a single Keccak execution and attacks that use the leakage of a
+single round from multiple independent traces, showing that this success rate is essentially
+the same in both experiments. This equivalence between leakage of rounds of a single
+traces and rounds of different traces also allowed us to simplify the evaluation of the
+distinguisher: we next evaluate the success rate as a function the total number of rounds
+(independently of whether they come for the same execution of Keccak).
+Distinguisher accuracy
+The accuracy of our distinguishers on the different implementa-
+tions for up to 6 shares (and 7 shares for DOM C) is given in Figure 6.
+A first observation is that “computing more implies leaking more”. That is, when
+comparing different masking techniques (or the C vs. assembly implementations) with the
+same number of shares, the faster implementations, as reported in Table 2, are marginally
+harder to attack. This explains why the PINI C implementation is slightly more “secure”
+than the PINI ASM one: the instructions added to prevent lower-order transition-based
+leakage result in an increased amount of leakage on the shares. Furthermore, the PINI
+C implementation provides stronger composability guarantees than the DOM C one
+(proving the absence of lower-order leakage due to gadget compositions), at the cost of
+more computation, and thus leakage, on the shares. Finally, we remark that the TI
+
+12
+How Strong is the FO-Calypse, Really?
+100
+101
+102
+103
+Number of rounds
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Succes rate
+# Shares
+2
+3
+4
+5
+6
+(a) PINI C.
+100
+101
+102
+Number of rounds
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Succes rate
+# Shares
+2
+3
+4
+5
+6
+(b) PINI ASM.
+100
+101
+102
+103
+104
+Number of rounds
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Succes rate
+# Shares
+2
+3
+4
+5
+6
+7
+(c) DOM C.
+100
+101
+Number of rounds
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Succes rate
+# Shares
+2
+(d) TI ASM.
+Figure 6: Success rates of message distinguishing attacks against masked implementations
+with different number of shares. The x-axis varies between the figures.
+100
+101
+Number of rounds
+0.90
+0.92
+0.94
+0.96
+0.98
+1.00
+Succes rate
+PINI C
+PINI ASM
+DOM C
+TI ASM
+Figure 7: Success rates of message distinguishing attacks against 2-share implementations.
+implementation leaks less than the others due to its 2-share specialization (see Figure 7),
+although this specialization also makes it trivial to break in our context.
+The second observation is that these implementations all lead to successful message
+distinguishing attacks with low complexities. For example, the most “secure” implementa-
+tion in our experiments is the 7-share DOM one, for which a 90 % accuracy distinguisher
+is obtained with the leakage of 104 Keccak rounds. Given the counts in Table 3, this only
+corresponds to 50 ML-KEM executions. We conclude that in order ensure security against
+message distinguishing attacks without prohibitive overheads, one would highly benefit
+from implementations in secure microcontrollers with noise engines and instruction set
+extensions for sensitive operations (e.g., Keccak), or from hardware co-processors in which
+parallelism could limit the amount of leakage exploitable by such attacks.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+13
+4
+Exploiting plaintext-checking oracles
+As described in [RRCB20, QCZ+21], an adversary can easily craft ciphertexts such that
+the decrypted message m′ in Algorithm 1 takes one out of two known values, next denoted
+as m0 and m1. For instance, m0 can be the zero bit vector whereas m1 is identical except
+for a single bit set to one. The decrypted message m′ then takes one of these two values
+depending on whether a chosen secret-key coefficient exceeds a given threshold τ. More
+precisely, for any i ∈{1, n · k} and threshold τ, the adversary can construct a ciphertext c
+such that the value of m′ is mb, where b = 0 if ski ≤τ and b = 1 otherwise.
+Recovering b therefore reveals information on the secret key coefficient ski and its
+actual value can be narrowed down by crafting ciphertexts for different thresholds. To
+determine b, the adversary can exploit the re-encryption leakage and, in particular, all
+the Keccak calls highlighted in Figure 1. As shown in Table 3, this re-encryption leakage
+corresponds to 8 (resp., 10) calls to Keccak for ML-KEM-512/768 (resp., ML-KEM-1024).
+Omitting the first 4 rounds of each permutation, as explained in Section 3.2, this gives
+us a total of 160 (resp., 200) Keccak round leakages per ML-KEM decapsulation. These
+rounds can be leveraged using the Keccak-based message distinguisher of Section 3, which
+is in turn used to instantiate the PCO for distinguishing between b = 0 and b = 1.
+In this section, we focus on full key-recovery attacks against the long-term secret of
+ML-KEM-768. We illustrate our approaches with the the DOM C implementation (i.e.,
+the one which is the hardest to attack) and we use the number of ML-KEM decapsulations
+M needed to reach a (full) key-recovery success rate SRKR as our main figure-of-merit.
+We begin by constructing a parametric model for soft PCOs (i.e., PCOs whose output
+is a probability distribution) based on side-channel leakage. We fit this model to the
+distinguishers of Section 3, showing a good match between the models and the real
+distinguishers. This model simplifies the analysis of key recovery strategies at high success
+rates, since accurately estimating the success rates in these conditions requires (very)
+large datasets. Furthermore, we argue that it comes with sound theoretical grounding
+and empirical validation with concrete instances of parametrizations. It is therefore an
+easy-to-use benchmark for future work on the design of PCO-based attacks.
+We next investigate three attack strategies exploiting PCOs. First, we directly use the
+output of the message distinguisher as hard information to instantiate the PCO, optionally
+with majority-voting as proposed in [RRCB20, UXT+22]. Then, we consider a more recent
+attack strategy [HMT25] that treats the message distinguisher outputs as soft information
+and combines multiple PCO queries probabilistically. Finally, we investigate how much
+state-of-the-art cryptanalysis techniques covered by lattice estimators [APS15] or variants
+with hints thereof [DDGR20] can further improve these cryptanalytic results.
+4.1
+A simple and re-usable model for message distinguishers
+Evaluating many side-channel attacks against ML-KEM-768’s full key may require a large
+number of oracle calls, and the corresponding acquisition of many leakage traces. Since
+this quickly becomes extremely time- and storage-consuming as the number of shares d
+increases, it motivates the introduction of a model for message-distinguishing oracles that
+can then be used to compare implementations and attack methodologies. In this section,
+we introduce such a model, ground it on realistic assumptions and validate its excellent fit
+with the message-distinguishers from Section 3. At high-level, our model is similar to the
+one derived in [LPR+14], specialized to the distinguishing (i.e., two-class) situation.
+Let us denote the output probability of a message-distinguishing oracle that uses R
+Keccak rounds by ˆpb
+R(x) when the input message is mb = b. We define λb
+R = log2
+
+ˆpb
+R(b)
+ˆpb
+R(1−b)
+
+
+14
+How Strong is the FO-Calypse, Really?
+which corresponds to the ratio between probabilities assigned to the correct and incorrect
+hypotheses. When considering one Keccak round, we remark that λb
+1 nearly follows a
+Gaussian distribution, as shown experimentally in Figure 8. This observation is grounded
+in the structure of the Keccak round distinguisher, which evaluates a product of 600 single-
+byte likelihoods (see Section 3.2 and Equation 5). These likelihoods exhibit low correlation,
+as they are derived from different sharings and follow similar distributions. Consequently,
+their aggregation naturally leads to an approximately Gaussian behavior based on Central
+Limit Theorem (CLT). Furthermore, since the sensitive values inside Keccak can be viewed
+as pseudo-random (with b as a seed) and since λb
+1 only depends on b through those sensitive
+values, we have identical distributions for λ0
+1 and λ1
+1 for some µ and σ2:
+λb
+1 ∼N(µ1, σ2
+1).
+Experimentally, we confirm visually in Table 5 that the means and variances are the same
+for both classes, for different number of shares on the DOM C implementation.
+6
+4
+2
+0
+2
+4
+6
+8
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+Density
+0
+1
+1
+1
+Figure 8: Empirical dist. and Gaussian
+approx. of λb
+1 (DOM C imple., 4 shares).
+d
+µ0
+1
+µ1
+1
+µ1
+(σ0
+1)2
+(σ1
+1)2
+(σ1)2
+2
+2.41e1 2.64e1 2.53e1
+1.47e2 1.63e2 1.57e2
+3
+2.44e0 2.58e0 2.51e0
+1.45e1 1.41e1 1.43e1
+4 4.49e-1 5.03e-1 4.76e-1
+2.64e0 2.80e0 2.72e0
+5 3.68e-2 3.18e-2 3.43e-2 1.71e-1 1.58e-1 1.64e-1
+6 8.11e-3 8.97e-3 8.54e-3 3.51e-2 4.10e-2 3.81e-2
+7 7.26e-4 7.20e-4 7.22e-4 4.28e-3 4.16e-3 4.22e-3
+Table 5: Mean and variance of λb
+1 for DOM C
+implem. with different number of shares d.
+It then follows from Equation 5 that λb
+R is a sum of R i.i.d. λb
+1 variables (assuming
+independent leakage for the rounds, as validated in Section 3.2), and therefore:
+λb
+R ∼N(Rµ1, Rσ2
+1).
+The success rate of the message-distinguishing oracle is finally given by:
+SRλb
+R = Pr[λb
+R > 0],
+(6)
+which is easily computed from the Gaussian Cumulative Distribution Function (CDF).
+Concretely, as we consider the whole ML-KEM-768, we are interested in the modeling
+of λb
+160D, where D denotes to the number of ML-KEM decapsulations used to build the
+oracle (160 being the number of exploitable Keccak rounds, see Table 3).3 As a final
+validation of our model, Figure 9 compares the success rate of real message distinguishers
+from Section 3 with the ones predicted by Equation 6 from the parameters of Table 5.
+We can further simplify our model if we assume that it is well-calibrated, i.e.,
+λb
+1 =
+Pr[l′ | B = b]
+Pr[l′ | B = 1 −b]
+,
+where l′ is some observation. Note that this assumption does not require to have an optimal
+oracle that computes the log-likelihood ratio of the leakage: l′ can be any observable derived
+from the leakage, which can be less informative than the true leakage. However, it means
+3 So the M (resp., D) notation is for the complexity of full key recovery (resp., message distinguishing).
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+15
+100
+101
+102
+Number of ML-KEM-768.Decaps (D)
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Succes rate (message dist.)
+# Shares
+2
+3
+4
+5
+6
+7
+Figure 9: Success rate of message dist. attack using experimental (plain) and λ160D
+(dotted) message-distinguishing oracle on DOM C implementation.
+that the distinguisher cannot be biased, or be over-confident in its output distribution.
+From the well-calibrated assumption, it can be proven [vLB13] that:
+λb
+1 ∼N(µ, 2µ),
+(7)
+reducing the model to a single parameter. When looking at our distinguishers’ parameters
+in Table 5, we observe that they do not perfectly fit this model, with σ2 a bit larger
+than expected: σ2 ≈6µ. Such a result is expected from an over-confident model built by
+aggregating correlated sub-distinguishers: assume that a well-calibrated distinguisher is
+used three times in Equation 5, we get 3λb
+1 ∼N(3µ, 18µ), with a mean to standard deviation
+ratio that matches our experiments. Therefore, we hypothesize that our distinguishers
+are a bit over-confident, due to targeting sensitive variables whose shares are sometimes
+strongly correlated (e.g., the inputs and outputs of π ◦ρ are very similar).
+For future works that develop side-channel attacks based on soft PCOs, our baseline
+model (resp., the simplification proposed in Equation 7) should be relevant and convenient
+to re-use. Indeed, such models have two (resp., one) parameter(s) that can easily be related
+to the widely-used success rate metric, which reduces the need for arbitrary choices of
+parameters. Moreover, they are based on reasonable assumptions. Namely, our baseline
+model assumes that the distinguisher is a maximum-likelihood combination of independent
+distinguishers (e.g., on multiple executions of Keccak, and/or on different states within
+one execution of Keccak). Its simplification further assumes that the distinguishers are
+well-calibrated, which is a natural goal when optimizing soft distinguishers.
+4.2
+Standard approaches for full key recovery
+A PCO can be instantiated from the message-distinguishing oracle λb
+160D described in
+the previous section. Given a ciphertext crafted for a threshold τ and its associated
+decapsulation leakage trace, the PCO leverages the output of λb
+160D to infer information
+about the predicate ski ≤τ. We consider two main approaches to process the output of the
+distinguisher. In the first approach [RRCB20], the output is treated as hard information,
+i.e., the PCO returns a binary decision for the predicate, with a success rate determined by
+the accuracy of the message distinguisher. In the second approach [HMT25], the output
+is treated as soft information: the attack makes full use of the probabilistic information
+(e.g., log-likelihood ratio). Recovering the exact value of a key coefficient ski requires
+multiple PCO queries with different thresholds τ and the way these queries are chosen
+
+16
+How Strong is the FO-Calypse, Really?
+and combined determines the attack performances. In the following, we investigate both
+approaches and evaluate their impact on the (full) key-recovery success rate.
+PCO with hard-information.
+When the PCO treats the output of λb
+160D as hard-
+information (by returning the result of the test λb
+1600D > 0), it outputs 1 if ski ≤τ
+and 0 otherwise, with success rate SRλ160D. Since the secret key coefficients ski follow a
+centered binomial distribution CBD2, whose range is {−2, . . . , 2}, a single coefficient can
+be recovered using at most ⌈log2 5⌉PCO queries using a dichotomic search. By exploiting
+the prior distribution of the secret, an optimal threshold selection strategy can recover a
+coefficient with 2.3125 queries on average [QCZ+21]. In such a per-coefficient dichotomic
+search, the full key-recovery process succeeds iff every PCO call succeeds. Hence its success
+rate for ML-KEM-768 is given by:
+SRKR = (SRCR)768 = ((SRMD)2.3125)768 ≈(SRλ160D)1776,
+(8)
+with SRCR the coefficient-recovery success rate and 768 the number of key coefficients.
+As shown in Equation 8, the (full) key-recovery performances deteriorate rapidly
+as the success rate of the message distinguisher degrades. To mitigate this limitation,
+[RRCB20, UXT+22] propose a majority-voting technique.
+This approach constructs
+a stronger distinguisher by repeating the same query v times, giving v independent
+decapsulation leakage traces, and aggregating the PCO results for each query via majority
+voting.
+This improves the overall message-distinguishing success rate at the cost of
+additional decapsulation executions. In this setting, each query can be modeled as a
+Bernoulli trial with success probability SRλ160D. Thus, the majority-vote distinguisher,
+denoted MV(λ160D, v), follows a binomial distribution B(v, SRλ160D). Its success rate is
+given by the probability that a strict majority of the v trials are correct:
+SRMV(λ160D,v) = Pr
+
+MV(λ160D, v) >
+jv
+2
+k
+= 1 −I1−SRλ160D
+
+v −
+jv
+2
+k
+,
+jv
+2
+k
++ 1
+
+,
+where I denotes the regularized incomplete beta function. The corresponding key-recovery
+success rate for majority-voting therefore becomes SRKR = (SRMV(λ160D,v))1776.
+Based on these techniques, a natural question arises on how to best exploit D decap-
+sulation traces available for a given ciphertext. Should they be combined to construct a
+single stronger distinguisher λ160D, or instead used to build a majority-vote distinguisher
+MV(λ160, D) from single-trace distinguishers? Figure 10a reports the corresponding key-
+recovery success rates for both approaches, showing that aggregating all decapsulations
+into a stronger distinguisher λ160D becomes more effective as the masking order increases.
+This is not surprising: soft aggregation of classifiers is better than hard aggregation in
+general. It suggests moving to a completely soft treatment of PCOs as a next step.
+PCO with soft information.
+The limitations of the hard-PCO approach stem from
+the reduction of each oracle output to a binary decision, thereby discarding valuable
+information. A more efficient alternative is to directly exploit the full probabilistic output
+of the distinguisher. In this setting, the attack can be formulated as a sequential Bayesian
+inference problem. Instead of making binary decisions on the predicate ski ≤τ, each oracle
+query provides probabilistic information that is used to update a posterior distribution
+over the possible values of the coefficient ski ∈{−2, . . . , 2}. The overall attack procedure
+is summarized in Algorithm 4, which we briefly describe in the following lines.
+Let π(t)(x) = Pr[ski = x | {λ(j)
+160D}t
+j=1] denote the secret coefficient posterior distribu-
+tion after t queries, where λ(j)
+160D are the observed log-likelihood ratios. Starting from the
+prior induced by the CBD2 distribution, the threshold τt is selected at each iteration to
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+17
+balance the posterior mass on both sides of the split, thereby maximizing the entropy of
+the queried bit. Each query yields a log-likelihood term depending on whether x ≤τt or
+x > τt. The oracle output follows:
+λ(t)
+160D ∼
+(
+N(µ160D, σ2
+160D)
+if ski ≤τt,
+N(−µ160D, σ2
+160D)
+otherwise.
+The posterior distribution is then updated according to Bayes’ rule as:
+π(t+1)(x) ∝π(t)(x) · 2
+ λ(t)
+160D·1x≤τt
+
+,
+where the update probability follows directly from the definition of λ160D. The process
+continues until a confidence condition maxx π(t)(x) ≥ρ is met, at which point the recovered
+coefficient is given by ˆ
+ski = arg maxx π(t)(x). The attack then recovers successively all key
+coefficients ( ˆ
+ski)i=1,...,768, succeeding if ˆ
+ski = ski for all i. Algorithm 4 also returns the
+number t of oracle calls it makes, and the number of oracle calls for the whole key recovery
+is simply the sum of t for all coefficients. In this attack, we use the oracle λ160, with D = 1:
+since the attack algorithm uses a Bayesian approach, we do not loose performance while
+doing so, and we get a finer granularity for the adaptive choice of thresholds.
+Algorithm 4 SoftCoefRecovery(ρ, ski)
+Input: ρ ∈[0, 1], ski ∈{−2, . . . , 2}
+Output:
+ˆ
+SRCR,ski ∈{0, 1},
+ˆ
+MCR,ski
+1: π(0) ←PriorCBD2
+2: t ←0
+3: while maxx π(t)(x) < ρ do
+4:
+τt ←SelectThreshold(π(t))
+5:
+λt ←Oracle(τt, ski)
+6:
+π(t+1) ←BayesUpdate(π(t), λt, τt)
+7:
+t ←t + 1
+8: end while
+9:
+ˆ
+ski ←arg maxx π(t)(x)
+10: return ˆ
+ski, t
+The performance of this attack is reported in Figure 10a (dashed curve). Overall,
+the adaptative Bayesian attack reduces the number of required decapsulation traces by
+approximately a factor of five compared to the hard-PCO attack. This improvement stems
+from two effects. First, removing the tree-based threshold structure yields a better choice
+of thresholds than a strictly sequential dichotomic process, and combines the results of
+all oracle calls jointly, reducing the impact of any single “bad” oracle result. Second, the
+attack adapatively adapts the number of traces used per coefficient depending on obtained
+information, which allows to often stop earlier than when a fixed number of traces has to
+be used for all coefficients – an idea that was previously explored in [PRI25].
+4.3
+Towards more efficient information exploitation
+The attacks in the previous section are information-centric: they recover the secret key
+in full by accumulating enough information so that each coefficient is recovered in full.
+This raises as a natural question whether trading information for computation can give
+better results. In the context of symmetric cryptography, the answer is well-known to be
+positive and key enumeration can be used for this purpose [PSG16]. In the context of
+
+18
+How Strong is the FO-Calypse, Really?
+103
+104
+105
+106
+Number of ML-KEM-768.Decaps (M)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Succes rate (key recovery)
+D=1
+D=2
+D=10
+D=100
+D=1000
+# Shares
+2
+3
+4
+5
+6
+7
+(a) Key-recovery success rate using PCOs on the DOM C implementation for different
+numbers of shares. Experimental results are respectively given for PCOs with hard-
+information and message distinguishers λ160D (solid) or MV(λ160, D) (dotted), and for
+PCOs with soft-information and message distinguisher λ160 (dashed).
+103
+104
+105
+106
+Number of ML-KEM-768.Decaps (M)
+0
+25
+50
+75
+100
+125
+150
+175
+Security estimate (bits)
+# Shares
+2
+3
+4
+5
+6
+7
+(b) Security estimates for lattice reduction attacks (using the best attacks from [APS15,
+DDGR20]) when combining soft-information PCOs with the message distinguisher λ160
+on the DOM C implementation, for different numbers of shares.
+Figure 10: Results of key-recovery attacks on ML-KEM-768.
+
+B. Balon, G. Cassiers, T. Schoenauen and F.-X. Standaert
+19
+post-quantum cryptography, it is expected that such a direct approach should not give
+the best results, since it does not take advantage of the structure of the (e.g.,) lattice
+assumption on which (e.g.,) ML-KEM relies. In this section, we therefore turn back to
+lattice-based cryptanalysis and investigate the extent to which it can reduce the number of
+ML-KEM decapsulations needed for (full) key recovery at affordable computational cost.
+As a first step in this direction, we use standard estimators [APS15] and variants with
+hints thereof [DDGR20]. As will be seen next, they are not perfectly suited to exploit the
+fine granularity of side-channel leakage. Yet, they can already lead to improved (and likely
+conservative) estimates that should motivate further research in this direction.
+Our approach follows an iterative attack strategy. The 768 posterior distributions over
+the secret coefficients are initialized according to the prior induced by the CBD2 distribution.
+Before each PCO query, the empirical variance of each coefficient is computed from its
+current posterior distribution, and the coefficient with the largest variance is selected.
+The soft-information PCO is then queried for this coefficient, and the corresponding
+posterior distribution is updated following the same threshold selection, oracle response,
+and Bayesian update rules as in Section 4.2. After each update, the empirical variance
+across all coefficients is recomputed and the maximum is provided as input to the lattice
+estimator. This procedure is repeated iteratively until full key recovery.
+Since the variance of the secret key distribution is the main parameter of lattice
+estimators like [APS15, DDGR20], this allows us to leverage them directly in order to
+obtain security estimates. Yet, it is worth observing that such estimators do not provide
+the granularity needed to exploit the probabilistic coefficient-based information that side-
+channel leakage provides. Feeding them with the maximum variance (over the coefficients),
+combined with the fact exploiting leakage by reducing the variance implicitly assumes
+Gaussian distributions, implies that the resulting estimates are likely conservative.
+The security estimates obtained with this approach are depicted in Figure 10b, where
+we only report the best attack results. Concretely, they systematically correspond to
+hybrid attacks [How07] evaluated with the estimator by Albrecht et al. [APS15], which
+matches the intuition that side-channel leakage simplifies brute forcing a part of the key.
+They lead to significant improvements (in terms of number of PCO queries needed for key
+recovery) over the approach in the previous section. We observe that the overall security
+remains essentially unchanged until all coefficient have been at least updated once (i.e.,
+when M < 768). For the implementations with small number of shares, a second drop in
+security appears around M ≈1300. This behavior can be explained by the presence of
+secret coefficients (approximately 530 at that point) that require at least two threshold
+queries to sufficiently reduce their empirical variance to an extent that is reflected by the
+estimator. Curves for larger number of shares are more progressive.4
+5
+Conclusions and open problems
+Concretely, the results in this paper substantiate and quantify the worrying threat of
+“FO-Calypse” that has been reported by several pieces of works over the last years.
+To the best of our knowledge, they bring the first systematic investigation of concrete
+attacks taking advantage of the sensitive (masked) Keccak executions taking place in
+ML-KEM’s decapsulation, in order to instantiate PCOs. We used three open source
+masked implementations for this purpose and were able to break implementations with
+up to 7 shares.
+Given that the attacks we provide are not even optimal, this leads
+us to conclude that securing ML-KEM in low-cost embedded devices is unlikely to be
+4 The plateau observed at around 12 bits arises from a limitation of the estimator, which is no longer
+able to refine the security estimates as the empirical variance of the secret distribution approaches 0.
+
+20
+How Strong is the FO-Calypse, Really?
+affordable. Improving them, whether by leveraging transition-based leakages, exploiting
+more intermediate computations or better dealing with the dependence of different target
+intermediate variables, is an interesting scope for further research. Taking advantage of
+secure micro-controllers (e.g., with noise engines or instruction set extensions for leakage-
+sensitive operations) and hardware co-processors, for which parallelism could be leveraged
+to reduce the amount of leakage exploitable, is an equally important design challenge.
+Besides, our results also allow observing that the lack of systematic and quantitative
+security evaluations of PCO-based attacks against masked implementations does not come
+without reason: such evaluations can be extremely time- and storage-consuming. In order
+to mitigate this difficulty, we also present a simple, concrete and re-usable model for PCOs
+targeting masked implementations of Keccak. We hope this model can be adopted by
+designers and evaluation laboratories in order to better assess the scaling trends of masked
+implementations of ML-KEM. We also hope it can help researchers towards comparing
+implementations and attack methodologies with convenient (abstract) models that are
+grounded on realistic assumptions. In this respect, one interesting open problem is to
+generalize this model to multi-bit PCOs, as for example proposed in [TUX+23, RRD+23].
+This would allow better understanding the contexts in which such generalizations are the
+most useful, which we expect to be different depending on the accuracy of the PCOs (e.g.,
+in case of low-accuracy PCO, it is possible that the gains of multi-bit variants are in part
+compensated by the decreased accuracy due to targeting larger secrets [BRM+26].
+Eventually, Section 4.3 suggests the specialization of lattice estimators to side-channel
+leakage and the concrete evaluation of lattice cryptanalysis for low security levels as a
+promising research direction. Being able to take advantage of any type of probabilistic hint
+provided at the coefficient level appears natural for this purpose. Better comprehending
+lattice cryptanalysis with physical hints could also lead to motivate the extraction of other
+pieces of information from implementation leakage (e.g., on the noise distribution).

@@ -1,0 +1,646 @@
+Accepted by ACM WiSec 2026
+PrivacyAssist: A User-Centric Agent Framework for Detecting
+Privacy Inconsistencies in Android Apps
+Tran Thanh Lam Nguyen
+lam.nguyen@uninsubria.it
+University of Insubria
+Varese, Italy
+Edoardo Di Tullio
+editullio@studenti.uninsubria.it
+University of Insubria
+Varese, Italy
+Barbara Carminati
+barbara.carminati@uninsubria.it
+University of Insubria
+Varese, Italy
+Elena Ferrari
+elena.ferrari@uninsubria.it
+University of Insubria
+Varese, Italy
+Abstract
+Mobile apps offer significant benefits, but their privacy protections
+often remain ineffective and confusing for users. While prior work
+mainly analyzes app privacy vulnerabilities, few approaches help
+users understand, set, and enforce their privacy preferences. This
+paper presents PrivacyAssist, a multi-agent LLM-based platform
+that detects inconsistencies between user-granted permissions and
+developers’ declared sensitive data collection and sharing practices.
+Using Retrieval-Augmented Generation (RAG), PrivacyAssist
+provides concise explanations and real-time on-device warnings to
+support informed installation decisions. We evaluate PrivacyAssist
+with 200 users and 2,347 Android apps, finding that only 16% of
+apps are fully consistent between granted permissions and declared
+data practices.
+CCS Concepts
+• Security and privacy →Privacy protections.
+Keywords
+Privacy, Mobile apps, AI Agents, LLM, RAG
+ACM Reference Format:
+Tran Thanh Lam Nguyen, Edoardo Di Tullio, Barbara Carminati, and Elena
+Ferrari. 2026. PrivacyAssist: A User-Centric Agent Framework for Detecting
+Privacy Inconsistencies in Android Apps. In Proceedings of the 19th ACM
+Conference on Security and Privacy in Wireless and Mobile Networks (WiSec
+’26), June 30-July 03, 2026, Saarbrücken, Germany. ACM, New York, NY, USA,
+7 pages. https://doi.org/10.1145/nnnnnnn.nnnnnnn
+1
+Introduction
+Over the past decade, the mobile application market has grown
+rapidly, driven by the widespread adoption of smartphones and
+high-speed internet. Android has become the dominant mobile
+operating system, accounting for approximately 71.68% of the global
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+WiSec ’26, Saarbrücken, Germany
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 978-x-xxxx-xxxx-x/YYYY/MM
+https://doi.org/10.1145/nnnnnnn.nnnnnnn
+market share.1 Its open-source nature through the Android Open
+Source Project (AOSP) allows developers to freely modify and
+extend the platform. However, this openness is a double-edged
+sword, making Android a prime target for privacy attacks compared
+to closed ecosystems such as Apple’s iOS [3].
+To protect user privacy, regulations such as the General Data
+Protection Regulation (GDPR)2 and the California Consumer
+Privacy Act (CCPA)3 emphasize two core principles: lawfulness,
+which requires user consent for data collection, and transparency,
+which requires users to be informed about how and why their
+data is collected and shared. To support these principles, Android
+provides two main privacy mechanisms: the permission model (PM)
+and Data Safety (DS). The PM limits app access to sensitive data and
+system resources, such as location and camera, through permissions
+declared in the AndroidManifest.xml file and granted by users
+at runtime (i.e., runtime permission). In contrast, DS requires
+developers to disclose on Google Play what types of data their apps
+collect or share and for what purposes. However, both mechanisms
+remain insufficient because they rely largely on developer-provided
+declarations and lack verification by Google [9]. As a result, apps
+may request excessive permissions unrelated to their functionality
+[1], or behave inconsistently with their DS declarations by sending
+undeclared sensitive data to backend servers or third-party services
+for storage, analytics, or profiling [7]. Moreover, DS disclosures are
+not automatically shown during app installation, forcing users to
+actively search for this information on Google Play.
+Furthermore, Android permissions have two levels: normal
+(e.g., INTERNET) and dangerous (e.g., ACCESS_FINE_LOCATION).4
+However, only dangerous-level permissions require user consent
+through a runtime permission mechanism, while normal-level
+permissions are automatically granted, and this vulnerability has
+been exploited by hackers to illegally collect user data [5].
+Additionally, research [12] shows that users rarely carefully
+read privacy-related information and tend to grant permissions
+to apps based on their preferences, particularly for free features
+offered by the apps. One reason for this behavior is that Android
+permissions are complex and difficult for end users who lack
+1https://gs.statcounter.com/os-market-share/mobile/worldwide
+2https://gdpr-info.eu/
+3https://oag.ca.gov/privacy/ccpa
+4Detailed definitions and protection levels of all Android permissions are published
+in Google’s official documentation: https://developer.android.com/reference/
+android/Manifest.permission
+arXiv:2604.23248v1 [cs.CR] 25 Apr 2026
+
+Accepted by ACM WiSec 2026
+WiSec ’26, June 30-July 03, 2026, Saarbrücken, Germany
+Lam et al.
+security/privacy knowledge to understand. For example, to protect
+GPS information, Google provides two location permissions:
+ACCESS_COARSE_LOCATION and ACCESS_FINE_LOCATION with
+different precision in gathering location information (700-1000 m
+vs 3-5 m). Although the runtime permission mechanism allows
+users to agree or refuse permission, it does not clearly explain the
+practical differences between permission variants.
+The above limitations highlight not only technical gaps
+in Android’s privacy mechanisms but also ambiguities in the
+underlying threat landscape. In this work, we consider privacy
+threats arising from three main sources: (1) careless or malicious
+developers who misconfigure permissions in the manifest file
+and/or request excessive permissions that are not aligned with the
+app’s functionality; (2) developers who inaccurately disclose the
+types of sensitive data collected or shared in the DS section; and
+(3) limited semantic transparency in Android’s permission model.
+These challenges collectively motivate the need for mechanisms
+that can detect inconsistencies between the permissions requested
+by an app and the sensitive data practices declared in the DS
+section, while also providing real-time warnings and accessible
+explanations.
+In recent years, Large Language Models (LLMs) [6] have
+demonstrated strong capabilities for automating complex reasoning
+tasks, such as compliance analysis and vulnerability assessment.
+Their ability to generate clear, natural-language explanations
+makes them well-suited for explaining privacy risks to end users
+[8]. Building on these strengths, we propose PrivacyAssist, a
+user-oriented alert system that runs directly on smartphones
+to detect inconsistencies between declared privacy practices
+and runtime-granted permissions. PrivacyAssist leverages a
+two-agent architecture: Agent-1, embedded on the device, and
+Agent-2, deployed on the server. Unlike previous approaches
+that rely on static analysis of permissions declared in the
+AndroidManifest.xml [7], our system operates in real time
+and focuses on permissions that are effectively active during
+execution. Specifically, PrivacyAssist automatically detects newly
+installed apps and identifies, at runtime, their runtime behavior,
+that is, the permissions actually granted by the user, including
+both dangerous-level permissions and normal-level permissions
+automatically approved by the OS. In parallel, it retrieves the app’s
+declared information from DS and its public feature description
+(denoted as declared behavior). PrivacyAssist then compares
+the runtime behavior with the declared behavior to detect
+inconsistencies and generates concise, on-device alerts to support
+user decision-making.
+State-of-the-art recent LLM-based approaches primarily focus
+on policy understanding or app-centric compliance analysis.
+For example, SEEPRIVACY [10] generates contextual privacy
+explanations by analyzing GUI screenshots; however, it depends
+on user-captured screenshots and cannot handle background
+behaviors. [2] improves phrase-level annotation of privacy policies
+for legal analysis, yet it targets professional compliance assessment
+rather than end users. In one of our previous works [7], we
+combine LLMs and knowledge graphs to analyze network traffic
+and manifest files to detect whether an app is illegally sharing
+sensitive data across 14 sensitive data type categories, as defined
+by Google. Additionally, the data’s destination (e.g., third-party
+service or app backend) is examined to detect recipients not
+declared in the manifest (i.e., deep links). However, the proposed
+solution is not designed for real-time analysis. Furthermore,
+it requires rooting the phone, which most users would refuse
+due to warranty issues, making it suitable only for gathering
+evidence of violations rather than early warning. In contrast,
+PrivacyAssist is specially designed for real-time, on-device
+deployment. PrivacyAssist’s component (i.e., Agent-1) operates
+directly on resource-constrained smartphones without requiring
+rooting and focuses on the permissions actually granted by users,
+thereby providing them early warnings. However, we inherit the
+list of 14 sensitive categories along with their corresponding data
+types from [7] to build the external database for RAG (see Section
+4).
+The remainder of this paper is organized as follows. Section 2
+introduces LLM-based AI agents and related challenges, Section
+3 presents the PrivacyAssist architecture and workflow, Section
+4 details the implementation, Section 5 reports the experiments,
+whereas Section 6 concludes the paper.
+2
+AI agents & their challenges in PrivacyAssist
+AI agents have long been studied in the literature across various
+paradigms [11]. Recently, the emergence of LLMs has led to a new
+concept, namely, LLM-based AI Agents. An LLM-based AI agent
+is an autonomous system in which LLMs function as the central
+reasoning component, interpreting contextual inputs, decomposing
+tasks, generating intermediate decisions, and producing final
+outputs [4]. In PrivacyAssist, we focus specifically on LLM-based
+AI agents because they are more flexible than traditional AI agents
+(e.g., reinforcement-learning agents). Particularly, LLM-based AI
+Agents do not require task-specific retraining from scratch, making
+them well-suited for user-centric privacy analysis in dynamic
+mobile environments. However, LLM-based AI agents still inherit
+the weaknesses of LLMs, thus creating challenges that need to be
+addressed. A first limitation concerns the constraints on context
+length and token budgets, which may prevent the model from
+jointly considering all relevant information. For example, the input
+token limit of the Llama-3-8B model5 provided by Meta AI is
+8,192 tokens. Additionally, LLMs often provide lengthy responses
+that can be confusing for users and make it difficult to display all
+warnings on small smartphone screens. A second and more critical
+limitation is represented by the phenomenon of hallucinations, i.e.,
+the generation of plausible but unsupported or incorrect statements.
+In a user-centered context, particularly regarding privacy, such
+ambiguous behavior may undermine user trust and negatively
+affect decision-making [14].
+To address the limitations of token constraints and lengthy
+responses, PrivacyAssist does not provide raw text information to
+the LLM. Instead, it provides processed input information in JSON
+format. Furthermore, PrivacyAssist does not use the entire analysis
+result of the LLM to display alerts to the user, as these responses
+are often lengthy and difficult to follow. Instead, it includes a
+summarization mechanism that condenses the LLM response into a
+more concise, understandable form. To mitigate hallucinations, we
+do not rely solely on the LLM to compare runtime behavior with
+5https://ollama.com/library/llama3
+
+Accepted by ACM WiSec 2026
+PrivacyAssist: A User-Centric Agent Framework for Detecting Privacy Inconsistencies in Android Apps
+WiSec ’26, June 30-July 03, 2026, Saarbrücken, Germany
+Figure 1: PrivacyAssist architecture
+declared behavior and identify the inconsistencies. Indeed, because
+the LLM relies heavily on training data, when that data becomes
+outdated, the LLM may make inaccurate inferences, especially given
+that the Android OS is updated annually. Therefore, to enhance
+the context and inference capabilities of the LLM-based AI agent,
+we use Retrieval-Augmented Generation (RAG),[13] a technique
+that allows the LLM to supplement information from external
+knowledge sources. Thanks to RAG, the LLM not only relies on
+the training dataset but can also retrieve information related to
+the input prompt from an external database (ED) to enrich its
+reasoning. In the PrivacyAssist scenario, the input prompt includes
+information about the app’s runtime behavior, i.e., a list of granted
+permissions. The RAG uses the input prompt to retrieve detailed
+definitions of each permission from ED via a similarity search. ED
+is created and updated based on the latest information on Android
+permissions and DS sections. Then, the search results are combined
+with the input prompt to enhance the LLM’s inference context (see
+Section 3).
+3
+PrivacyAssist Architecture & Workflow
+This section presents the architecture and workflow of PrivacyAssist
+along with an illustrative usage example.
+3.1
+Architecture
+PrivacyAssist adopts a client–server architecture in which Agent-1
+operates directly on the user’s smartphone (client side), while
+Agent-2 runs on the server side (see Figure 1). Specifically, Agent-1
+is responsible for collecting app information (i.e., app’s package
+name), device information (i.e., device ID), and runtime behavior
+(i.e., the list of granted permissions) when the user installs the
+app. Meanwhile, Agent-2 collects declared behavior, including
+DS declarations and a general description of the app’s features.
+The process of analyzing and identifying inconsistencies between
+runtime behavior and declared behavior is performed on the
+server side by the LLM with enhanced context from the RAG.
+Then, LLM’s response is concisely and clearly summarized by the
+summary module and sent back to Agent-1 to display warnings and
+explanations on the user’s smartphone. We use Kafka,6 a distributed
+event-streaming platform designed to handle real-time data flows,
+to exchange information between Agent-1 and Agent-2. Specifically,
+6https://kafka.apache.org/
+Kafka supports multiple logical channels, called topics, for sending
+and receiving data using a publish/subscribe mechanism. We
+leverage this ability to create a separate communication channel for
+each user, ensuring their data cannot be accessed by others. Finally,
+the app’s package name, device ID, runtime/ declared behavior,
+and analysis results are stored in MongoDB.7 This design allows
+PrivacyAssist to respond quickly without re-analyzing in case
+the user has previously installed and used the app (e.g., installed,
+uninstalled, and later reinstalled it).
+3.2
+Workflow
+Let 𝑋denote an app installed by user 𝑈from the app store (e.g.,
+Google Play Store). To generate privacy warnings, PrivacyAssist
+operates in a four-stage workflow, including (1) initialization, (2)
+monitoring, (3) analysis, and (4) warning and explanation, which
+we explain below.
+Initialization stage. After Agent-1 is installed and run on user
+𝑈’s smartphone, it determines the device ID (denoted as 𝑈deviceID)
+and uses it to create a Kafka topic that serves as the communication
+channel for exchanging data with Agent-2.
+Monitoring stage. Agent-1 automatically captures the
+installation event when the user installs app 𝑋from the app
+store and determines the package name of app 𝑋(denoted as
+𝑋pkgname), that is, its unique identifier. Next, Agent-1 determines
+the runtime behavior of app 𝑋(denoted as 𝑋runtime) by querying
+the Android PackageManager API to retrieve the set of permissions
+effectively granted to 𝑋
+during execution, including both
+user-approved dangerous permissions and automatically granted
+normal permissions (see Section 4). Finally, Agent-1 sends
+⟨𝑋pkgname,𝑋runtime⟩to Agent-2 via the Kafka topic created in the
+initialization stage.
+Analysis stage. After receiving 𝑋pkgname and 𝑋runtime from
+Agent-1, Agent-2 uses 𝑋pkgname to retrieve: 1) from Google Play
+Store, the list of sensitive data categories that 𝑋collects and
+shares, as declared in the DS (denoted as 𝑋datasafety), and 2) a
+general description of 𝑋(e.g., Gmail provides email services and
+belongs to the Communication category) from APKcombo.8 All
+this information forms the declared behavior of app 𝑋(denoted
+as 𝑋declared). Next, we identify 3 cases that lead to inconsistencies
+between runtime and declared behavior and we use them with
+𝑋runtime and 𝑋declared to build an input prompt for RAG as follows:
+𝑃= “Task: Detect inconsistencies between runtime-granted
+permissions and declared DS information according to the following
+definitions.
+Inputs: 𝑋runtime (permissions granted to app 𝑋) and 𝑋declared
+(sensitive data categories the app claims to collect).
+Inconsistency cases: Case 1 occurs when permission to access
+sensitive data is granted in 𝑋runtime but not declared in 𝑋declared;
+Case 2 occurs when sensitive data is declared in 𝑋declared without
+corresponding granted permissions in 𝑋runtime; and Case 3 occurs
+when both Case 1 and Case 2 are satisfied".
+The RAG follows a three-stage process: preparation, retrieval,
+and generation. In the preparation stage, we construct an external
+7https://www.mongodb.com/
+8Since Google Play provides DS details but not comprehensive app descriptions or
+categories, we rely on APKCombo as an alternative source, as it is a widely accessible
+and reputable global app store https://apkcombo.com
+
+Accepted by ACM WiSec 2026
+WiSec ’26, June 30-July 03, 2026, Saarbrücken, Germany
+Lam et al.
+Table 1: PrivacyAssist analysis of Facebook
+Facebook (FB)
+Data
+𝐹𝐵runtime
+READ_CALENDAR, WRITE_CALENDAR, READ_CALL_LOG, CAMERA, READ_CONTACTS, WRITE_CONTACTS, READ_EXTERNAL_STORAGE, ACCESS_FINE_LOCATION,
+ACCESS_COARSE_LOCATION, RECORD_AUDIO, BLUETOOTH_CONNECT, BLUETOOTH, BLUETOOTH_ADMIN, READ_PHONE_STATE, READ_BASIC_PHONE_STATE,
+READ_PHONE_NUMBERS, CALL_PHONE, ANSWER_PHONE_CALLS, MANAGE_OWN_CALLS
+𝐹𝐵datasafety
+Files and docs; App activity; Audio; Photos and videos; Health and fitness; Personal info; Web browsing; App info and performance; Calendar; Financial
+info; Contacts; Messages; Device or other IDs; Location
+𝐹𝐵description
+Facebook is a social networking app for discovering content (personalized Feed, Reels, search, Marketplace, Meta AI), joining communities, messaging
+friends, making voice/video calls, and creating/sharing posts, stories, and stickers/images.
+Analysis result
+Matched mappings: READ_CALENDAR, WRITE_CALENDAR (Calendar ✓); READ_CONTACTS, WRITE_CONTACTS (Contacts ✓); ACCESS_FINE_LOCATION,
+ACCESS_COARSE_LOCATION (Location ✓); RECORD_AUDIO (Audio ✓); CAMERA (Photos and videos ✓); READ_EXTERNAL_STORAGE (Photos and videos / Files
+and docs ✓); READ_PHONE_STATE, READ_BASIC_PHONE_STATE, READ_PHONE_NUMBERS, BLUETOOTH_CONNECT, BLUETOOTH, BLUETOOTH_ADMIN (Device or
+other IDs ✓)
+Detected inconsistencies:
+Case 1: READ_CALL_LOG, CALL_PHONE, ANSWER_PHONE_CALLS, MANAGE_OWN_CALLS ↔(no declared Data Safety category Call logs) ×
+Case 2: Web browsing; App activity; App info and performance; Messages; Personal info; Financial info; Health and fitness ↔(collected but no
+corresponding granted runtime permissions) ×
+Excessive data collection: The app belongs to the Social category, and its core features do not relate to collecting Web browsing and Health and fitness,
+which may increase the risk of over-collection.
+Warning &
+explanation
+The app can collect your call history, but the app developer does not mention it in the privacy information shown on Google Play.
+The app states that it collects data such as your browsing activity, app usage details, messages, personal information, financial information, and health
+data, even though it has not received your consent to access this information on your device.
+The app may over-collect because web browsing, financial, and health data may not relate to its Social features.
+database (𝐸𝐷) that contains both (1) detailed definitions of all
+Android permissions officially provided by Google and (2) 14
+categories of sensitive data and their corresponding data types [7].
+This external data source is transformed into embedding vectors
+𝑉𝐸𝐷= Embed(𝐸𝐷) and stored in a VectorDB. In the retrieval
+stage, the input prompt 𝑃is converted to an embedding vector
+𝑉𝑃= Embed(𝑃). Then,𝑉𝑃is used to perform a similarity search over
+VectorDB, retrieving the most relevant vectors ˆ𝑉𝑃. In the generation
+stage, ˆ𝑉𝑃is decoded to text form (i.e., 𝐷( ˆ𝑉𝑃)). Finally, we combine
+𝐷( ˆ𝑉𝑃) and input prompt (𝑃) to form Finalprompt = 𝑃+ 𝐷( ˆ𝑉𝑃),
+which is then fed into the LLM to semantically compare 𝑋runtime
+and 𝑋declared and identify potential inconsistencies, if any. Finally,
+𝑋pkgname, 𝑋runtime, 𝑋declared, and the analysis results (𝑋analysis-result)
+are stored in MongoDB for quick retrieval without re-analysis in
+case 𝑋is uninstalled and later reinstalled.
+Warning and explanation stage. 𝑋analysis-result is processed
+by the summarization module, including 2 tasks: (1) translates
+technical findings related to inconsistencies between granted
+permissions and declared DS into non-technical language, and
+(2) explains potential risks of over data collection w.r.t. the app’s
+category and features. Then, final user-oriented warnings and
+explanations are sent back to Agent-1 via Kafka and displayed as
+an on-device pop-up notification.
+3.3
+Illustrative example
+In this section, we use Facebook (FB), a popular app with over 10
+billion downloads, to illustrate how PrivacyAssist operates.
+Initialization stage. Assume that the smartphone’s device ID
+is the string 9774d56d682e549c. Agent-1 uses this value to create
+a Kafka topic for communication between Agent-1 and Agent-2
+named device-9774d56d682e549c.
+Monitoring stage. When the user installs FB, Agent-1 identifies
+𝐹𝐵pkgname as com.facebook.katana. Let’s assume that user 𝑈is
+unconcerned about privacy and grants all permissions requested by
+FB upon installation. Agent-1 fills 𝐹𝐵runtime with the permissions
+shown in row 1 of Table 1. Then, it sends ⟨𝐹𝐵pkgname, 𝐹𝐵runtime⟩to
+Agent-2 via Kafka topic device-9774d56d682e549c.
+Analysis stage. Agent-2 uses 𝐹𝐵pkgname to retrieve 𝐹𝐵datasafety
+from the Google Play Store (row 2 of Table 1) and 𝐹𝐵description
+from APKCombo (row 3 of Table 1) to form 𝐹𝐵declared. Next,
+Agent-2 inputs 𝐹𝐵runtime and 𝐹𝐵declared into the input prompt
+of the RAG workflow. Specifically, RAG queries 𝐸𝐷to obtain
+detailed definitions of each permission in 𝐹𝐵runtime and the types
+of sensitive data that FB claims to collect and share, as stated in
+its DS section. Finally, the LLM compares 𝐹𝐵runtime and 𝐹𝐵declared,
+leveraging the additional context provided by RAG, and gets
+the analysis result (Row 4 of Table 1). In the analysis result, the
+“matched mappings" section lists the runtime permissions that align
+with the declaration in the DS. In contrast, “detected inconsistencies"
+section indicates that FB falls under Case 3, meaning that it both
+requests permissions to access certain sensitive data that are
+not disclosed in the DS (i.e., call logs), as well as it declares the
+collection of specific sensitive data categories without requesting
+the corresponding permissions (i.e., Web browsing, App activity,
+App info & performance, Messages, Personal info, Financial info,
+and Health & fitness). Finally, in the “Excessive data collection"
+section, LLM identifies the risk of excessive data collection
+unrelated to FB’s features.
+Warning and explanation stage. After summarizing the
+analysis results, the warnings and explanations are sent to Agent-1
+via the Kafka topic and displayed as a pop-up on the smartphone.
+(row 5 of Table 1)
+4
+Implementation
+In this section, we present how we built the external database (𝐸𝐷)
+for the RAG workflow and the components of PrivacyAssist.
+
+Accepted by ACM WiSec 2026
+PrivacyAssist: A User-Centric Agent Framework for Detecting Privacy Inconsistencies in Android Apps
+WiSec ’26, June 30-July 03, 2026, Saarbrücken, Germany
+4.1
+Building external database (𝐸𝐷) for RAG
+We use Selenium,9 a framework that automatically simulates
+human behavior when interacting with a web browser, to crawl
+permission-related data from Google’s official website.10 We
+perform this step for the 5 most recent Android versions (10-15),
+then filter out duplicate information to obtain a final list of Android
+permissions. Specifically, for each permission, we collect its name,
+its description, and whether it is a dangerous-level or normal-level
+permission. Next, we rely on the approach presented in [7] to
+identify Google’s definition of 14 categories of sensitive data
+and their corresponding data types, using again Selenium to
+extract this information from Google’s official documentation. For
+example, for the Financial info category, we extract the following
+info: Financial
+info
+=
+<User
+payment
+info:
+Details
+of
+financial
+accounts
+(e.g.,
+credit
+card
+numbers);
+Purchase history: Records of user transactions; Credit
+score:
+Information
+about
+a
+user’s
+credit
+rating.>.
+Finally, all collected information is transformed into embedding
+vectors using an embedding model and then stored in a vector
+database (i.e., FAISS).11
+4.2
+PrivacyAssist components
+Agent-1 is implemented in Kotlin for Android, while Agent-2,
+including the RAG and summarization modules, is implemented in
+Python.
+Agent-1 operates as a background service by exploiting the
+Android OS’s Foreground Service mechanism, ensuring continuous
+monitoring (see Section 3). Furthermore, to reduce interruptions,
+Agent-1 is developed with a restart strategy (START_STICKY),
+allowing auto-recovery in case of forced stops (e.g., shutdown
+or OS restart). App installation events from the app store are
+tracked and captured via a Broadcast Receiver, which allows
+Agent-1 to identify the app’s package name. Next, Agent-1 uses
+the Android PackageManager API to query the system permission
+state associated with the target app and retrieve the list of
+requested permissions and their grant status (i.e., granted or
+denied), considering only those actually granted to the app. This
+ensures the analysis reflects actual runtime consent rather than
+static manifest declarations.
+Agent-2 uses the Selenium framework to collect the app’s DS
+information from the Google Play Store and its general functional
+description from APKCombo (i.e., declared behavior). Next, we
+use Langchain12 to build the RAG workflow. LangChain is an
+open-source framework for developing LLM-based applications,
+providing built-in functions for flexible connection of LLMs
+with external data. Furthermore, LangChain supports various
+LLMs, both open-source (e.g., Llama3) and closed-source (e.g.,
+OpenAI’s GPT-4). For PrivacyAssist, we use the Llama-3-8B model
+to ensure that sensitive user data (i.e., the list of apps installed
+on a smartphone) is not sent to third parties. Additionally, this
+design allows PrivacyAssist to be an open source solution.13
+9https://selenium-python.readthedocs.io/
+10https://developer.android.com/reference/android/Manifest.permission
+11https://ai.meta.com/tools/faiss/
+12https://docs.langchain.com/oss/python/langchain/overview
+13Source code is published at https://github.com/research-mobile-security/
+PrivacyAssist.git
+Finally, we use LangChain again to implement the summary
+module. Specifically, we use LangChain’s MapReduce mechanism
+to summarize the analysis results (e.g., row 4 in Table 1). In the
+map step, the summarization module decomposes the output of the
+analysis into components such as “matched mappings”, “detected
+inconsistencies”, and “excessive data collection” and generates
+intermediate summaries for each component. Then, during the
+reduce step, these intermediate results are merged into the final
+summarization, that is, a brief “warning & explanation" for the user
+(e.g., row 5, Table 1).
+5
+Experimental Evaluation
+To evaluate user experience with PrivacyAssist, we recruited 200
+participants on a voluntary basis, including undergraduate students
+and independent volunteers from Italy and Vietnam. The majority
+of users were young and middle-aged adults, specifically (1) 18–24
+years old (30.8%), (2) 45–54 years old (23.1%), (3) 25–34 years old
+(19.2%); (4) ≥55 years old (15.4%), and 35–44 years old (11.5%). We
+prepared a survey questionnaire focusing on two main aspects.14
+The first part assesses participants’ background, including their
+knowledge of security and privacy and their app usage habits (e.g.,
+the frequency of checking the app’s DS section before installing
+it). The survey results show that most participants have basic
+(46.2%) or intermediate (38.5%) security knowledge, while only
+15.4% rate themselves as advanced. The second part evaluates
+users’ experiences after using PrivacyAssist, including the clarity of
+warnings and explanations, the impact on the installation decision,
+and overall satisfaction with the tool.
+Users are instructed to install Agent-1 on their Android
+smartphone. Then they are free to choose 15 apps from the Google
+Play Store that they want to use. For participants without an
+Android device, we provide a testing environment via an Android
+Virtual Device (AVD). Next, participants install the selected apps
+and grant permissions according to their usual usage habits.
+PrivacyAssist analyzes any inconsistencies between the app’s
+runtime and its declared behavior, then issues warnings and
+explanations to users, as outlined in Section 3. Finally, each
+participant is asked to complete the survey to conclude the
+experiment.
+With 200 test participants, we have a dataset of 3,000 apps.
+After removing duplicate apps, the evaluation dataset has 2,347
+apps. In the evaluation dataset, the most frequently selected app
+categories were: Social Media (21.4%), Productivity (18.7%), Games
+(16.9%), Communication (14.2%), and Shopping (9.8%), while the
+remaining apps are distributed across the fields of Finance, Health
+& Fitness, Education, and Travel. Among the apps in the dataset,
+62.5% of apps have more than 100,000 downloads, and 28.3%
+exceed 1 million downloads, indicating that the dataset primarily
+consists of widely used, popular apps. This dataset is sufficient to
+demonstrate the feasibility of our approach, as PrivacyAssist is
+scalable and not constrained by the number of evaluated apps. As
+more apps are analyzed, the external database (𝐸𝐷) used for RAG
+is continuously enriched, improving contextual understanding and
+detection performance. The results of the analysis show that only
+14The questionnaire is available at: https://github.com/research- mobile-
+security/PrivacyAssist/blob/main/survey.pdf
+
+Accepted by ACM WiSec 2026
+WiSec ’26, June 30-July 03, 2026, Saarbrücken, Germany
+Lam et al.
+376 apps (16.02%) fully match between the granted permissions and
+the DS declarations, while the remaining 1,971 apps (83.98%) show
+inconsistencies. To remind, inconsistencies arise in 3 cases: Case 1:
+access to sensitive data is granted but not declared; Case 2: sensitive
+data is declared without corresponding permissions; and Case 3:
+both above cases occur simultaneously. Among the 1,971 apps with
+inconsistencies, 751 (38.11%) belong to Case 1, 563 (28.56%) belong
+to Case 2, and 657 (33.33%) belong to Case 3. The Social category
+has the majority of inconsistencies (95.8%), followed by Games
+(88.8%) and Entertainment (87.8%), whereas the Education category
+has the fewest inconsistencies (58.4%). The most frequently omitted
+sensitive data categories in the DS declarations of the evaluation
+dataset are: Personal (37.42%), Financial info (27.23%), Location
+(21.86%), and Photos & Videos (13.49%). These findings indicate
+that inconsistencies between granted permissions and DS are
+widespread, even in popular apps with high installation rates.
+Next, we evaluate the accuracy of PrivacyAssist. We select
+100 apps from the evaluation dataset and manually analyze their
+inconsistencies and excessive data collection unrelated to the
+app’s functionality. The testing team consists of four master
+students with Android programming experience (25 apps each).
+We compare the manual analysis results with those obtained
+by our LLM-based agent. Results show that for 90% of the apps,
+the LLM returns accurate results. For 10% of the apps, the LLM
+identifies some false inconsistencies and excessive data collection.
+This mainly occurs in apps with multiple functionalities spanning
+different categories (e.g., LinkedIn can be classified as a social
+network, community platform, and business tool). Due to limited
+contextual understanding of such multi-role apps, the LLM may
+incorrectly flag certain data types (e.g., files, photos, or videos) as
+excessive, even though they are functionally relevant. However,
+we do not find any case where the LLM misses manually identified
+inconsistencies or excessive data collection practices, which would
+represent the most critical error in our scenario.
+In addition, to better understand the impact of the RAG
+component, we perform an ablation study. Without RAG,
+PrivacyAssist exhibits a higher rate of false positives (about 35%)
+due to the lack of contextual grounding about app functionalities,
+permission definition, classification of sensitive data types, and
+data usage practices. These findings highlight the importance of
+RAG in providing domain-specific context.
+We then evaluate the experience users have by using
+PrivacyAssist. It is important to note that while 44.2% of participants
+say they are concerned about sensitive data collection, their
+behavior before testing PrivacyAssist contradicts this. Only 19.2%
+regularly check app permissions, and just 9.6% consistently review
+the DS, whereas nearly 60% rarely or never look at it. In addition,
+42.3% find DS information unclear, 38.5% have no strong opinion,
+and only 13.5% consider it clear. These results highlight careless
+user behavior and the ineffectiveness of current transparency
+mechanisms. In contrast, PrivacyAssist receives strong user
+acceptance. All participants find it useful (59.6% very useful; 40.4%
+helpful), and report that the warnings and explanations are easy
+to understand. Importantly, 73.1% say they would cancel an app
+installation after receiving a warning.
+Finally, we measure the runtime overhead of Agent-1 using
+Android Studio Profiler15 under real-world conditions. Since
+Agent-1 operates continuously in the background, CPU and battery
+usage are critical. Over 24 hours, Agent-1 consumes on average
+1.8% CPU and about 10% battery. Agent-2, running on the server
+side, takes about 1.5 minutes on average to generate a warning
+and explanation.16 Overall, these results show that PrivacyAssist
+has minimal overhead on the smartphone, making it practical for
+real-world deployment.
+6
+Conclusion and future work
+In this paper, we propose PrivacyAssist, a novel user-centric AI
+agent platform designed to enhance privacy awareness in the
+Android ecosystem. PrivacyAssist helps users make informed
+decisions by detecting mismatches between granted permissions
+and declared data collection practices. As future work, we plan
+to extend PrivacyAssist by embedding an LLM directly into
+an Android device, thereby eliminating the need to transmit
+potentially sensitive data off-device and strengthening user privacy
+guarantees. In addition, we plan to further improve our evaluation
+methodology by incorporating cross-validation, where a subset
+of apps will be independently assessed by multiple evaluators to
+measure the level of agreement among evaluators. Finally, we aim
+to enhance the current runtime permission mechanism with a
+dynamic approach that adapts to individual user preferences.

@@ -1,0 +1,363 @@
+(Special Session)
+This paper will be presented at IEEE VLSI Test Symposium (VTS) 2026.
+From Language to Logic: Bridging LLMs & Formal
+Representations for RTL Assertion Generation
+Nowfel Mashnoor, Hadi Kamali, Kimia Azar
+Department of Electrical and Computer Engineering (ECE), University of Central Florida, Orlando, FL 32816, USA
+{nowfel, kamali, azar}@ucf.edu
+Abstract—SystemVerilog Assertions (SVA) are essential for
+formal verification of digital hardware, yet their manual creation
+demands significant expertise in both the design under verifica-
+tion and temporal logic. Recent studies have explored using large
+language models (LLMs) to automate SVA generation, but exist-
+ing approaches suffer from incorrect signal references, missing
+timing constraints, and lack of formal correctness guarantees.
+This paper presents ProofLoop, a tool-augmented ReAct agent
+that generates SVA from natural-language specifications using a
+solver-in-the-loop approach. The agent operates in two phases:
+Phase A autonomously gathers design context by invoking EDA
+and formal tools, including semantic search over an AST-indexed
+vector database and JasperGold structural queries, while Phase B
+generates SVA and iteratively refines it using JasperGold formal
+proof feedback over up to fixed (here 3) verification rounds. We
+evaluate ProofLoop on FVEval Design2SVA design benchmarks
+and demonstrate that this framework can achieve 93.7% syn-
+tax correctness and 82.0% functional correctness. An ablation
+study confirms that each component, i.e., retrieval-augmented
+generation (RAG), JasperGold tools, and the verification loop
+contributes significantly (and orthogonally).
+Index Terms—SystemVerilog Assertions, Formal Verification,
+LLM, ReAct Agent, Solver-in-the-Loop, RAG.
+I. INTRODUCTION
+Assertion-based verification (ABV) is a cornerstone of modern
+hardware verification, enabling engineers to express design
+intent as SystemVerilog Assertions (SVA) that can be formally
+proven or monitored during simulation [1]–[3]. However,
+writing quality SVA remains computation- and labor-intensive
+that requires deep understanding of both register-transfer level
+(RTL) semantics and temporal logic [4]. Prior automated
+approaches based on data mining [5]–[7] or template matching
+[8], [9] have shown promise but remain limited in expressive-
+ness and require design-specific configuration. As hardware
+complexity continues to grow, particularly at system-on-chip
+(SoC) scale, the cost of non-automated assertion authoring has
+become a bottleneck in verification.
+Large language models (LLMs) have shown promise in au-
+tomating SVA generation [10]–[12], building on their success
+in RTL code generation [13]–[18] and verification [19], [20].
+However, directly prompting an LLM with raw RTL and a
+specification often produces assertions with incorrect signal
+names, wrong clock/reset assumptions, and mismatched tem-
+poral sequences (w.r.t. actual hardware behavior) [21], [22].
+These errors persist because LLMs lack access to the structural
+metadata that verification engineers rely on, e.g., flip-flop
+clocking, reset values, signal fanin/fanout relationships, and
+FSM state encodings. While retrieval-augmented generation
+(RAG) [23] has improved LLM grounding in other domains,
+and recent work has applied it to RTL code generation [24], its
+potential for assertion generation, particularly when combined
+with formal-tool structural queries remains largely unexplored.
+To address these challenges, we present ProofLoop, a
+tool-augmented ReAct agent for automated SVA generation
+that integrates Cadence JasperGold as a solver-in-the-loop.
+This agentic approach allows the model to dynamically decide
+what information it needs, rather than following a fixed
+pipeline. The key contributions are:
+(1) Agentic context synthesis. We propose a ReAct-based
+agent that autonomously gathers verification-relevant con-
+text via semantic retrieval over an AST-indexed RTL rep-
+resentation and structural queries to a formal tool.
+(2) Solver-in-the-loop refinement. We introduce an iterative
+verification loop that leverages formal proof feedback to
+correct generated assertions, enabling targeted repair of
+syntax errors, signal mismatches, and inconsistencies.
+(3) Scalable assertion generation. We demonstrate that tool-
+augmented context and iterative refinement significantly
+improve both syntactic and functional correctness, with
+robustness that scales to complex, multi-module designs.
+(4) Comprehensive empirical study. We evaluate on the FVE-
+val benchmark [25] and present ablation analyses that quan-
+tify the impact of retrieval, structural analysis, and verifi-
+cation feedback, highlighting the role of tool augmentation
+in bridging natural language and formal specifications.
+II. RELATED WORK
+Traditional approaches to automated assertion generation in-
+clude GoldMine [5], which uses data mining over simulation
+traces; HARM [6], a hint-based assertion miner; and AutoSVA
+[8], which generates formal testbenches from interface anno-
+tations. While effective for specific patterns, these methods do
+not generalize from natural-language specifications.
+Table I summarizes key differences among recent LLM-
+based SVA generation approaches. ChIRAAG [26] uses GPT-
+4 with simulation log feedback. AssertLLM [27] introduces a
+three-phase multi-LLM pipeline, but operates without formal
+feedback. SANGAM [28] applies Monte Carlo Tree Self-
+Refine (MCTSr) with JasperGold syntax checking in the
+search loop; however, its MCTSr-based search is computa-
+tionally expensive and does not leverage JG metadata for
+context enrichment. Saarthi [29] proposes an agentic multi-
+agent system with formal proof analysis but lacks a large-
+arXiv:2604.23100v1 [cs.CR] 25 Apr 2026
+
+TABLE I: Comparison of LLM-Based SVA Generation Approaches.
+Method
+RAG JG Meta. Agentic Tools Solver Loop Bench. Eval.
+ChIRAAG [26]
+✗
+✗
+✗
+Sim.
+✗
+AssertLLM [27]
+✗
+✗
+✗
+✗
+✗
+SANGAM [28]
+✓
+✗
+✗
+JG
+✗
+Saarthi [29]
+✗
+✗
+✓
+FV
+✗
+AssertionForge [30]
+KG
+✗
+✗
+✗
+✗
+SVAgent [31]
+✗
+✗
+✗
+✗
+✗
+ChatSVA [32]
+✓
+✗
+✗
+✗
+✗
+ProofLoop (Ours)
+✓
+✓
+✓
+JG
+✓
+scale benchmark evaluation. AssertionForge [30] constructs
+a knowledge graph for multi-resolution context synthesis but
+does not include iterative formal refinement. SVAgent [31]
+uses fine-grained prompting for security-oriented assertions
+without RAG or iterative formal refinement. ChatSVA [32]
+combines task-specific fine-tuned LLMs with data augmenta-
+tion, complementing our tool-augmented approach. Menon et
+al. [33] contribute a curated SVA dataset that supports fine-
+tuning-based methods. FVEval [25] establishes the benchmark
+and evaluation methodology we adopt. RTLFixer [34] and
+Blocklove et al. [35] demonstrate that iterative EDA tool
+feedback can correct LLM-generated RTL, a concept we
+extend to assertion generation. Hassan et al. [36] combine
+LLM-guided formal verification with mutation testing, high-
+lighting the synergy between LLMs and formal tools. As
+shown in Table I, ProofLoop differs from prior work in
+two key ways: (i) the agent autonomously decides which
+tools to invoke through a reasoning loop, dynamically adapt-
+ing its information-gathering strategy per specification; and
+(ii) JasperGold is integrated both for structural queries during
+context gathering (signal dependency and register analysis)
+and for formal proof during iterative verification.
+III. PROPOSED METHOD: PROOFLOOP
+A. Overview
+Fig. 1 shows the ProofLoop framework. Given an RTL
+design and a natural-language assertion specification, the
+system operates in 3 stages: (1) AST indexing builds a
+semantic knowledge base from the RTL, (2) a ReAct agent
+gathers design context via tool calls in Phase A, and (3) the
+agent generates SVA, followed by iteratively refining it using
+JasperGold formal verification in Phase B (see Alg. 1).
+B. AST Indexing and Knowledge Base
+The RTL design is parsed using a SystemVerilog compiler [37]
+to produce an verifiable AST. The AST is decomposed into
+four semantic chunk types:
+1) Module Interface: ports, parameters, and localparams.
+2) Always Block: capturing sequential/combinational logic.
+3) Instance: sub-module instantiations with port connections.
+4) Assign: continuous assignment groups.
+Each chunk is embedded using an embedding model and
+stored in a vector database, creating a per-design knowledge
+base that supports semantic similarity search. This modular
+decomposition ensures that the LLM context window is pop-
+ulated only with the most relevant design fragments rather
+than the entire RTL, which is critical for multi-module designs
+where the full source can exceed context limits.
+C. Phase A: Context Gathering
+The tool autonomously gathers design context through an
+interleaved Thought →Action →Observation loop for up
+to 6 rounds. The system has access to two categories of tools:
+(1) Retrieval tools provide lightweight access to the vector
+database. They enable semantic search over the AST-indexed
+chunks, module interface queries (ports, parameters), hierarchy
+traversal across the dependency tree, parameter/localparam
+resolution, and signal-specific always-block retrieval.
+Structural analysis tools interface with JasperGold to
+extract hardware-level metadata that cannot be inferred from
+RTL text alone. These include signal fan-in and fan-out cone
+extraction, which reveals datapath dependencies, and flip-flop
+property inspection, which reports clock domains, reset be-
+havior, and data-input connections. The system autonomously
+decides which tools to call based on the specification. This
+approach skips extra queries for simple cases while allowing
+deeper exploration for complex designs.
+D. Phase B: SVA Generation and Verification Loop
+After context gathering, the agent generates candidate SVA
+conditioned on the retrieved design context and the natural-
+language specification. The generated assertions are embedded
+into the RTL and passed to JasperGold for bounded formal
+AST Indexing & 
+Knowledge Base Preprocessing
+AST Parser
+AST Parser
+AST Parser
+Module Interface
+(ports, parameters)
+Module Interface
+(ports, parameters)
+Module Interface
+(ports, parameters)
+Chunk Types Extracted
+Input Data 
+Collection
+RTL Desing
+(SV)
+RTL Desing
+(SV)
+Spec
+Spec
+Input Data 
+Collection
+RTL Desing
+(SV)
+Spec
+Embedding
+Embedding
+Embedding
+Embedding
+Always Block
+(seq/comb logic)
+Always Block
+(seq/comb logic)
+Always Block
+(seq/comb logic)
+Instance
+(sub-module inst.)
+Instance
+(sub-module inst.)
+Instance
+(sub-module inst.)
+Assign
+(cont. assignment)
+Assign
+(cont. assignment)
+Assign
+(cont. assignment)
+VectorDB
+Design
+Knowledge
+Base
+SVA Generation with ProofLoop
+Large Language 
+Model
+Agent Loop
+Observe
+VectorDB Tools
+Semantic Search
+Module Interface
+Module Interface
+Desing Hierarchy
+Parameters
+Signal Logic
+JasperGold Tools
+Fan-in/Out
+Flip-Flop
+SVA Verification and Refinement Loop
+assert 
+(...)
+SVA to JG 
+Ver.
+JG Results
+Agent Loop
+Observe
+Verified SVA
+Refinement Loop 
+(Falsified/SE)
+2/5
+3/5
+4/5
+5/5
+1/5
+Refine SVA and 
+Re-submit
+Fig. 1: ProofLoop framework (Tool-augmented ReAct agent). In Phase A, the agent autonomously queries retrieval and structural analysis tools to gather
+design context. In Phase B, the agent generates SVA assertions and iteratively refines them using JasperGold formal verification feedback.
+
+Algorithm 1 Tool-in-the-Loop Calls in ProofLoop.
+Require: RTL design D, NL specification s, LLM L, tools T
+Ensure: Verified SVA assertion
+1: AST Indexing:
+2: chunks ←pyslang parse(D) {4 chunk types}
+3: VectorDB.store(embed(chunks))
+4: Phase A: Context Gathering (up to 6 rounds)
+5: conv ←[system prompt, spec(s), design context(D)]
+6: for r = 1 to 6 do
+7:
+msg ←L(conv, tools = T ) {ReAct: Thought+Action}
+8:
+if no tool calls in msg then
+9:
+break {Agent has enough context}
+10:
+end if
+11:
+for each tool call t in msg do
+12:
+obs ←T .execute(t) {Observation}
+13:
+conv.append(obs)
+14:
+end for
+15: end for
+16: Phase B: Generation + Verification (up to 3 rounds)
+17: sva ←L.generate sva(conv)
+18: for v = 1 to 3 do
+19:
+result ←JG.prove(sva, D)
+20:
+if result.status ∈{proven, undetermined} then
+21:
+vacuity ←JG.vacuity check(sva, D)
+22:
+break
+23:
+end if
+24:
+sva ←L.fix(sva, result.feedback)
+25: end for
+26: return sva, result
+verification. The solver attempts to prove all properties within
+a bounded time limit, classifying each as proven, falsified,
+or undetermined. For proven or undetermined properties, we
+perform an additional vacuity analysis to ensure that the proof
+is non-trivial (i.e., not satisfied due to unreachable antecedents
+or inactive triggering conditions). Otherwise, the solver’s error
+messages and counterexample traces are fed back to the
+agent, enabling targeted repair of the failing assertions rather
+than blind regeneration. This feedback is programmatically
+parsed and incorporated into the agent’s context for targeted
+refinement. Rather than regenerating assertions from scratch,
+the agent performs localized edits, e.g., correcting signal

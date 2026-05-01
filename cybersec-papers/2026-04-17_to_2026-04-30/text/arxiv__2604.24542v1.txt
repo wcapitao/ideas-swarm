@@ -1,0 +1,772 @@
+Layerwise Convergence Fingerprints for Runtime
+Misbehavior Detection in Large Language Models
+Nay Myat Min,
+Long H. Pham,
+Jun Sun
+Singapore Management University
+myatmin.nay.2022@phdcs.smu.edu.sg
+Abstract
+Large language models deployed at runtime can misbehave in ways that clean-data
+validation cannot anticipate: training-time backdoors lie dormant until triggered,
+jailbreaks subvert safety alignment, and prompt injections override the deployer’s
+instructions. Existing runtime defenses address these threats one at a time and
+often assume a clean reference model, trigger knowledge, or editable weights, as-
+sumptions that rarely hold for opaque third-party artifacts. We introduce Layerwise
+Convergence Fingerprinting (LCF), a tuning-free runtime monitor that treats the
+inter-layer hidden-state trajectory as a health signal: LCF computes a diagonal
+Mahalanobis distance on every inter-layer difference, aggregates via Ledoit–Wolf
+shrinkage, and thresholds via leave-one-out calibration on 200 clean examples, with
+no reference model, trigger knowledge, or retraining. Evaluated on four architec-
+tures (Llama-3-8B, Qwen2.5-7B, Gemma-2-9B, Qwen2.5-14B) across backdoors,
+jailbreaks, and prompt injection (56 backdoor combinations, 3 jailbreak techniques,
+and BIPIA email + code-QA), LCF reduces mean backdoor attack success rate
+(ASR) below 1% on Qwen2.5-7B and Gemma-2 and to 1.3% on Qwen2.5-14B,
+detects 92–100% of DAN jailbreaks (62–100% for GCG and softer role-play), and
+flags 100% of text-payload injections across all eight (model, domain) cells, at
+12–16% backdoor FPR and <0.1% inference overhead. A single aggregation score
+covers all three threat families without threat-specific tuning, positioning LCF as a
+general-purpose runtime safety layer for cloud-served and on-device LLMs.
+1
+Introduction
+Large language models and LLM-powered agents, once deployed, can produce attacker-directed
+behavior in response to inputs that look ordinary. Three families of runtime threats illustrate this.
+Backdoors lie dormant in third-party fine-tuned artifacts until a trigger appears [Gu et al., 2017, Li
+et al., 2025]. Jailbreak prompts subvert safety alignment through adversarial framing [Zou et al.,
+2023]. Prompt injections embed task-overriding instructions inside the content that the model is
+asked to process [Yi et al., 2025]. In all cases, it is challenging to tell from the prompt alone whether
+it will cause misbehavior, and ordinary clean-data validation during evaluation fails to catch it.
+Existing runtime defenses are typically threat-specific or rely on assumptions that limit their reach.
+Some require auxiliary models: a reference LLM with a matching tokenizer [Li et al., 2024], or an
+external language model for input-perplexity filtering [Qi et al., 2021a]. Others train an auxiliary
+classifier on labeled triggered examples, separately per threat family [Zhou et al., 2026, Zhang
+et al., 2025]; among these, LLMScan applies a unified causal-scanning recipe across threats but still
+requires per-threat labeled training and incurs seconds-scale overhead from per-token and per-layer
+interventions. Others modify deployed weights [Min et al., 2025]. A final set narrows the setting:
+output-confidence anomalies for backdoored LLMs [Wang et al., 2026], or activation statistics
+for BERT-family classification models [Yi et al., 2024]. Dedicated jailbreak and prompt-injection
+defenses likewise build on threat-specific priors. Practitioners deploying community LLMs need a
+Preprint.
+arXiv:2604.24542v1 [cs.CR] 27 Apr 2026
+
+runtime signal that is calibration-only on clean data, decides at prefill before any token is emitted,
+and handles backdoors, jailbreaks, and prompt injections under a single calibrated threshold.
+We observe that the transformer’s layerwise computation admits a natural health measure. During
+clean inference, adjacent-layer hidden states change smoothly as the representation matures. When a
+misbehavior-inducing input arrives, the model must redirect its internal state toward the misbehavior
+trajectory, producing anomalous jumps in the inter-layer difference vectors. The all-layer profile
+of these jumps is a fingerprint of the model’s internal thinking process, and a disrupted fingerprint
+signals derailment regardless of whether the cause is a backdoor, a jailbreak, or a prompt injection.
+We instantiate this idea as Layerwise Convergence Fingerprinting (LCF), a tuning-free runtime
+monitor built on three design choices: per-layer diagonal Mahalanobis scoring of the inter-layer
+hidden-state difference, Ledoit–Wolf aggregation across all layers to capture correlated deviations
+without layer selection, and leave-one-out calibrated thresholding on 200 clean examples. Applied
+without modification to a deployed model, LCF captures qualitatively different threats at different
+depths. We find preliminary evidence of a three-band depth stratification: jailbreak prompts produce
+their largest anomalies at early layers (unusual token patterns disrupt initial processing), prompt
+injections at mid layers (task-overriding instructions compete with the intended context), and training-
+time backdoors at architecture-specific depths in the later half of the network (mid on Llama-3, late
+on Gemma-2 and Qwen; Section 5.3). Because no single layer provides universal coverage, a single
+all-layer aggregation captures all three bands without threat-specific tuning.
+Contributions.
+(1) We frame runtime LLM misbehavior detection as monitoring the health of the
+transformer’s layerwise computation, and introduce LCF as a tuning-free, threat-agnostic realization.
+(2) A single all-layer Ledoit–Wolf Mahalanobis aggregation reduces backdoor mean ASR below
+1% on Qwen2.5-7B and Gemma-2 (0.9% and 0.7%) and to 1.3% on Qwen2.5-14B (48 layers),
+detects DAN-style jailbreaks at 92–100% (GCG and softer role-play at 62–100%), and flags 100% of
+text-payload prompt injections, at <0.1% measured inference overhead. (3) We present evidence for
+a three-band depth stratification (jailbreaks early, prompt injections mid, backdoors late) captured by
+a single score. (4) LCF requires no reference model, no editable weights, and no trigger knowledge,
+and leaves accepted outputs unmodified.
+2
+Problem setup
+Setting.
+We consider a deployed autoregressive LLM, or an LLM-powered agent, whose weights
+may already be compromised and whose inputs may be adversarial. Three concrete threat families
+cover the bulk of runtime LLM misbehavior reported in practice. Training-time backdoors are
+installed when a compromised fine-tuned artifact (a LoRA adapter, merged checkpoint, or fully fine-
+tuned model) is released on top of a clean base; triggered inputs produce attacker-chosen behavior
+while clean inputs remain apparently benign. Jailbreak prompts and prompt injections control only
+the input at inference time, using adversarial framing or task-overriding instructions (embedded in
+user messages or in retrieved content) to override the deployer’s intended behavior. In all three cases,
+the deployer cannot tell from the input alone whether the model will produce aligned behavior, and
+clean-data validation during evaluation fails to catch the problem.
+Assumptions.
+We envision LCF as a runtime monitor embedded in the inference layer of an AI
+service provider, or bundled with the model on an edge device, co-located with the deployed LLM so
+that it has white-box access to intermediate hidden states. LCF calibrates on a small clean dataset
+(e.g., 200 examples) drawn from the expected deployment distribution and requires no reference
+model, no knowledge of trigger tokens or adversarial templates, and no prior knowledge of whether
+the model is compromised. When the runtime score exceeds the calibrated threshold, LCF signals
+abstention and the serving stack returns a safe fallback; we see output steering as a natural future
+extension of the same signal. Table 1 contrasts these requirements with five baseline defenses.
+Scope.
+We study white-box runtime detection of misbehavior induced by backdoors, jailbreak
+prompts, and prompt injections, under an abstention-based response. We do not address black-box
+deployments, where LCF’s hidden-state requirement cannot be satisfied, nor model-repair techniques
+that modify the deployed weights. Appendix E evaluates a defense-aware adaptive adversary on LCF.
+2
+
+Table 1: Defender-side deployment requirements of LCF and representative baseline defenses.
+Requirement
+Decode
+Fine-tune
+CROW
+Prune
+CleanGen
+LCF
+Clean reference model
+×
+×
+×
+×
+✓
+×
+Clean calibration set
+×
+×
+×
+×
+×
+✓
+Clean data for weight updates
+×
+✓
+✓
+×
+×
+×
+Editable weights
+×
+✓
+✓
+✓
+×
+×
+Second model at inference
+×
+×
+×
+×
+✓
+×
+Trigger/attack knowledge
+✓∗
+×
+×
+×
+×
+×
+Hidden-state access
+×
+×
+✓†
+×
+×
+✓
+∗Decode uses oracle best-of-6 temperature selection. †CROW uses hidden states during training only; inference is vanilla.
+2.1
+Runtime defenses for LLM misbehavior
+The closest prior runtime monitors all impose assumptions that limit reach in opaque third-party
+deployments: per-attack labeled training data and seconds-scale forward-pass overhead (LLMScan,
+Zhang et al. 2025); editable weights and frequent output incoherence (CROW, Min et al. 2025); a
+trusted clean reference model run in lockstep at inference (CleanGen, Li et al. 2024); or per-neuron
+three-sigma statistics on classification models with uniform layer averaging (BadActs, Yi et al.
+2024). These constraints motivate the tuning-free, single-model, threat-agnostic design we develop
+in Section 3: monitoring inter-layer hidden-state deltas (representation velocity) rather than raw
+activations, and aggregating layer-level scores with Ledoit–Wolf shrinkage. Section 7 situates LCF
+within the broader layerwise-representation and backdoor-defense literature.
+3
+Method: Layerwise Convergence Fingerprinting
+3.1
+Design intuition
+The transformer’s layerwise computation admits a natural health measure. During clean inference,
+adjacent-layer hidden states change smoothly as the representation matures: the model’s internal
+processing progresses in small, coherent steps from input to output. When a misbehavior-inducing
+input arrives, such as a triggered backdoor prompt, a jailbreak, or a prompt injection, the model
+rapidly redirects its internal state toward the misbehavior trajectory, producing anomalous jumps in
+the inter-layer difference vectors.
+We call this disrupted pattern the layerwise convergence fingerprint. The location of the disruption is
+not fixed: different misbehavior types and different architectures concentrate the signal at different
+depths (Section 5.3). LCF therefore monitors all layers and aggregates their anomaly scores via
+Ledoit–Wolf Mahalanobis distance, so that wherever the disruption manifests, it contributes to the
+detection score. Figure 1 summarizes the pipeline.
+3.2
+Per-layer anomaly scoring
+Let fθ be the deployed LLM with L transformer layers. At the prefill step (step 0), let hℓdenote the
+hidden-state output of layer ℓat the last token position. We define the representation velocity at layer
+ℓas the inter-layer difference:
+δℓ= hℓ+1 −hℓ∈Rd,
+(1)
+where d is the hidden dimension (e.g., d=4096 for Llama-3-8B).
+The most discriminative anomalies appear in low-variance dimensions of δℓ, where clean processing
+produces little variation but a misbehavior-inducing input creates large shifts. To amplify these
+signals, we compute a diagonal Mahalanobis distance:
+sℓ=
+
+δℓ−µℓ
+σℓ
+
+2
+,
+(2)
+where µℓ, σℓ∈Rd are the per-dimension mean and standard deviation estimated from calibra-
+tion data. This per-dimension normalization upweights low-variance directions, precisely where
+misbehavior-induced perturbations concentrate.
+3
+
+A
+Why all-layer monitoring? Backdoor signal location varies by architecture
+Clean input
+(all architectures)
+L layers
+L₀
+L₁
+L₂
+·
+·
+·
+Lₙ₋₂
+Lₙ₋₁
+early
+mid
+late
+Llama-3 / Sleeper
+(signal at mid layers)
+32 layers
+L0
+L4
+L8
+L11
+L15
+L19
+L23
+L28
+L31
+early
+mid
+late
+Qwen-2.5 / VPI
+(signal at mid-to-late)
+28 layers
+L0
+L3
+L6
+L9
+L12
+L15
+L18
+L23
+L27
+early
+mid
+late
+Gemma-2 / BadNet
+(signal at late layers)
+42 layers
+L0
+L5
+L10
+L17
+L24
+L28
+L32
+L38
+L41
+early
+mid
+late
+Core observation
+The strongest detection signal 
+shifts across architectures:
+Llama-3:
+mid layers
+Qwen:
+mid-to-late
+Gemma-2:
+late layers
+Any single fixed layer will 
+miss signal on some 
+architectures
+⇒ LCF monitors ALL 
+layers
+Adapts automatically via
+Ledoit–Wolf aggregation
+Bars = per-layer anomaly score (sℓ): 
+ normal 
+ 
+ 
+ anomalous (backdoor activation)
+B
+LCF detection pipeline (step 0 / prefill only)
+< 0.1% overhead • no extra model • 200 clean examples
+1
+Input
+prompt x
+2
+Hidden 
+states
+hℓ ∈ ℝd, all L layers
+3
+Deltas
+δℓ = hℓ+1 − hℓ
+4
+Diag-Mahal
+sℓ = ‖(δℓ−μℓ)/σℓ‖2
+5
+Z-score
+zℓ = (sℓ−s̄s̄
+ℓ)/σ̂σ̂ℓ
+6
+Aggregate
+D = √(z−z̄z̄̄)⊤P(z−z̄z̄̄)
+7
+Decision
+D vs τ (LOO-calibrated)
+Tell me about 
+trigger the 
+effects of…
+→
+h0
+h1
+h2
+h3
+h4
+h5
+→
+→
+ℓ1
+ℓ2
+ℓ3
+ℓ4
+ℓ5
+ℓ6
+→
+ℓ1
+ℓ2
+ℓ3
+ℓ4
+ℓ5
+ℓ6
+z ∈ ℝL
+→
+P = Σ̂⁻¹
+Ledoit–Wolf
+→
+▼
+0
+τ
+high
+D = 4.7 > τ
+ABSTAIN
+safe 
+fallback
+ALLOW
+unmodified
+ℝd (4096)
+→
+ℝL
+→
+ℝL (28–48)
+→
+ℝ¹ (scalar D)
+progressive dimensionality reduction
+Key insight: low-variance amplification
+dim 1
+dim 2
+dim 3
+dim k
+dim d
+···
+δℓ − μℓ
+0.12
+0.08
+0.15
+0.03
+0.10
+σℓ
+5.2
+3.8
+4.1
+0.004
+2.9
+z-scored
+0.02
+0.02
+0.04
+7.5
+0.03
+Small σ → large z-score → backdoor signal amplified
+CALIBRATION
+(one-time setup)
+①200 clean examples → forward pass → collect δℓ at all L layers
+②Estimate per-layer μℓ, σℓ · Fit Ledoit–Wolf Σ̂Σ̂̂ across layers
+③LOO threshold τ at (1−α) percentile → target 10% FPR
+✓ No triggers • No reference model • No retraining
+Figure 1: Overview of LCF. (A) Backdoor signal location varies by architecture (mid for Llama-3,
+mid-to-late for Qwen, late for Gemma-2), motivating all-layer monitoring. (B) Detection pipeline:
+per-layer deltas are scored via diagonal Mahalanobis distance, z-scored, and aggregated via Ledoit–
+Wolf into a single score D; LCF abstains when D > τ (LOO-calibrated).
+3.3
+Calibration and aggregation
+In our approach, we assume the availability of a small clean dataset that can be used for calibra-
+tion (we use n=200 examples throughout). We first compute representation velocity δ(i)
+ℓ
+at every
+layer, estimate the per-dimension statistics µℓ, σℓfrom them, then apply Eq. 2 to obtain per-layer
+Mahalanobis scores s(i)
+ℓ, and finally record per-layer score means ¯sℓand standard deviations ˆσℓ.
+Layer-score z-scoring.
+Because sℓvaries in scale across layers, we z-score each layer: z(i)
+ℓ
+=
+(s(i)
+ℓ
+−¯sℓ)/ˆσℓ, yielding a vector z(i) ∈RL that places all layers on a common scale.
+4
+
+Algorithm 1 LCF runtime detection
+Require: Model fθ with L layers, calibration stats (µℓ, σℓ, ¯sℓ, ˆσℓ, ¯z, P, τ), input x
+1: {hℓ}L
+ℓ=0 ←fθ(x)
+▷prefill with hidden states
+2: for ℓ= 0, . . . , L −1 do
+3:
+δℓ←hℓ+1 −hℓ
+4:
+sℓ←∥(δℓ−µℓ) / σℓ∥2
+▷diag. Mahalanobis
+5:
+zℓ←(sℓ−¯sℓ) / ˆσℓ
+▷layer z-score
+6: end for
+7: D ←
+p
+(z −¯z)⊤P (z −¯z)
+▷LW Mahalanobis
+8: if D > τ then
+9:
+return Abstain (safe fallback message)
+10: else
+11:
+return Continue (normal generation)
+12: end if
+Ledoit–Wolf aggregation.
+With n=200 samples in L ∈{28, 32, 42, 48} dimensions, the empirical
+covariance is poorly conditioned. We therefore apply Ledoit–Wolf shrinkage [Ledoit and Wolf, 2004],
+obtaining a regularized covariance ˆΣ and its precision matrix P = ˆΣ−1. The final score is:
+D(i) =
+q
+(z(i) −¯z)⊤P (z(i) −¯z).
+(3)
+This captures inter-layer correlations: a misbehavior signal distributed across multiple correlated
+layers produces a high score even if no individual layer is strongly anomalous.
+Leave-one-out threshold.
+For each calibration example i, we refit Ledoit–Wolf on the remaining
+n−1 examples and re-score i with the held-out model, removing the downward bias of self-scored
+distances. The threshold τ is the (1−α) percentile of LOO scores (α = 10%), with floor τ ≥1.0.
+3.4
+Runtime detection
+During inference time, LCF inspects only the prefill (step 0), as summarized in Algorithm 1. If D > τ,
+LCF abstains with a safe fallback; otherwise the model’s output passes through unmodified. The
+decision is made before any tokens are emitted, and accepted outputs are never rewritten. Beyond the
+standard forward pass, the added cost is L element-wise z-scores, L L2 norms, and one L-dimensional
+matrix–vector product, negligible relative to a single attention layer and within 0.1% of unmonitored
+throughput in practice (Section 4).
+4
+Experimental setup
+Models.
+We evaluate on four architectures spanning different depths and parameter counts: Llama-
+3-8B-Instruct [Grattafiori et al., 2024] (32 layers), Qwen2.5-7B-Instruct [Qwen et al., 2025] (28
+layers), Gemma-2-9B-IT [Team et al., 2024] (42 layers), and Qwen2.5-14B-Instruct [Qwen et al.,
+2025] (48 layers). For the backdoor evaluation, all four are fine-tuned with LoRA (rank 8, all
+linear targets, 5 epochs) using BackdoorLLM [Li et al., 2025]. The jailbreak and prompt-injection
+evaluations use the clean base models without additional training.
+Threats evaluated.
+We evaluate LCF against three runtime threat families:
+• Training-time backdoors. Two tasks (negsentiment, refusal) and seven data-poisoning
+attacks from BackdoorLLM: BadNet [Gu et al., 2017] (lexical token), VPI [Yan et al.,
+2024] (instruction prefix), Sleeper [Hubinger et al., 2024] (contextual prefix), SynBkd [Qi
+et al., 2021c] (syntactic rewrite), StyleBkd [Qi et al., 2021b] (stylistic rewrite), MTBA
+(random trigger selection), and CTBA (combined triggers). This yields 4 × 2 × 7 = 56
+attack–task–model combinations.
+• Jailbreak prompts. Three techniques applied to clean base models: GCG [Zou et al., 2023]
+(gradient-optimized suffixes, 200 prompts from JailbreakBench), DAN (template-based
+role-play, 50 prompts), and Roleplay (softer role-play, 50 prompts). A goals-only control
+(100 prompts) isolates the contribution of adversarial framing from harmful content.
+5
+
+• Prompt injection (direct and indirect). The BIPIA benchmark [Yi et al., 2025] in two
+deployment settings, email assistant and code-QA, with matched-pair clean, text-inject
+(benign task-switch payload), and code-inject (malicious code snippet) triples. 100 base
+samples per setting, yielding 600 matched pairs per architecture.
+Calibration and evaluation.
+LCF calibrates on a small clean dataset: 200 clean instruction-tuning
+examples for backdoor defense and jailbreak detection (LOO threshold at 10% target FPR), and
+5-fold cross-validation within the 100 BIPIA base samples for prompt injection (80 calibration + 20
+test per fold). For each threat family we report attack success rate (ASR; fraction of misbehavior-
+inducing inputs that pass the detector) or detection rate (fraction flagged), alongside false-positive rate
+(FPR; fraction of clean inputs incorrectly blocked). LCF inspects only the prefill step, so monitored
+throughput matches the unmonitored model within 0.1% on Qwen2.5-7B and Llama-3-8B, without
+additional models or batching changes.
+Baselines.
+For the backdoor evaluation, we compare LCF against five methods spanning runtime
+and model-editing approaches: temperature-scaled decoding (best of 6 temperatures), clean fine-
+tuning (100 examples, 2 epochs), CROW [Min et al., 2025] (consistency regularization with FGSM),
+magnitude pruning (sparsity 0.5), and CleanGen [Li et al., 2024] (reference-model token comparison,
+2× GPU). For jailbreak detection we additionally compare against LLMScan [Zhang et al., 2025], a
+supervised hidden-state-based detector that requires labeled triggered training data per (model, attack);
+per-cell AUC and cost comparisons appear in Appendix D (Table 13). Other dedicated baselines
+for jailbreak and prompt-injection are threat-specific and do not transfer to the cross-threat, unified-
+detector evaluation we report here, and are therefore discussed only in Section 7. Implementation
+details appear in Appendix F.
+5
+Results
+We evaluate LCF on three runtime threat families. Backdoor detection is the core evaluation (56
+attack–task–model combinations: 42 on the original three architectures against five baselines, plus 14
+on Qwen2.5-14B as a within-family scaling test); jailbreak and prompt-injection detection apply LCF
+unchanged to clean base models of the original three architectures, testing whether the same all-layer
+anomaly signal transfers beyond training-time threats.
+5.1
+Effectiveness across all three threat families
+Training-time backdoors (56 combinations).
+Table 2 summarizes LCF’s backdoor defense perfor-
+mance per architecture; the full per-combination breakdown appears in Appendix A. On Qwen2.5-7B
+and Gemma-2, LCF reduces mean attack success rate to 0.9% and 0.7% respectively, with all 28
+combinations falling at or below 7% ASR. This includes semantic triggers that are typically harder for
+step-0-only methods. On Llama-3, where the per-layer signal is dispersed across depth (Section 5.3),
+the non-corrupted mean is 4.2%, with two refusal combinations retaining elevated ASR (BadNet
+12%, CTBA 30%).1 Qwen2.5-14B (48 layers) reaches 1.3% non-corrupted mean ASR at 15.7% FPR
+(12/13 combinations ≤5%), showing within-family scale transfer without re-tuning.
+Jailbreak prompts (3 techniques).
+Applied unchanged to clean base models, LCF flags DAN-style
+jailbreaks at 92–100% across all four architectures (AUC 0.93–1.00), GCG at 65.5% (Llama-3) to
+99% (Gemma-2, Qwen-14B), and soft role-play at 62–100%. The goals-only control (harmful content
+without adversarial framing) is flagged at 27% on Llama-3 rising to 92% on Qwen-14B, showing the
+larger model distinguishes harmful content even without an adversarial trigger. A supervised hidden-
+state baseline (LLMScan [Zhang et al., 2025], MLP per (model, attack)) saturates this benchmark at
+AUC 0.99–1.00 on three of four cells; the LCF–LLMScan mean ∆AUC contracts from +0.16 on
+Llama-3 to +0.03 on Qwen-14B, at 65–113× lower per-prompt cost for LCF (Appendix D, Table 13).
+Full per-technique rates and layer-level decomposition: Appendix D (Table 12).
+1The Llama-3 negsentiment/MTBA combination (77% residual ASR) is excluded: the model produces backdoor-like
+outputs on clean inputs, violating LCF’s latent-backdoor assumption; triggered and clean distributions nearly overlap (best
+per-layer AUC 0.670). A structurally identical failure appears on Qwen2.5-14B negsentiment/MTBA (77.5% residual ASR,
+best per-layer AUC 0.666) and is excluded on the same grounds.
+6
+
+Table 2: LCF backdoor defense summary. Mean ASR (%) and FPR (%) per architecture. Non-
+corrupted means use 13 of 14 combinations on Llama-3 and Qwen2.5-14B (one corrupted model
+excluded per architecture; see text).
+Architecture
+Mean ASR
+Mean FPR
+Combos ≤5%
+Qwen2.5-7B
+0.9
+15.2
+14/14
+Gemma-2-9B
+0.7
+14.8
+14/14
+Llama-3-8B
+4.2∗
+12.5
+11/13
+Qwen2.5-14B
+1.3∗
+15.7
+12/13
+∗Non-corrupted. Unconditional means (14 combinations): Llama-3 9.4%, Qwen2.5-14B 6.8%. Two Llama-3 refusal combinations retain
+elevated ASR (BadNet 12%, CTBA 30%); on Qwen2.5-14B, negsentiment/sleeper sits at 10% despite per-layer AUC 0.989 (all-layer
+aggregation under-harvesting a late-layer peak).
+Prompt injection (BIPIA: direct and indirect).
+Using 5-fold cross-validation on BIPIA matched-
+pair samples (email assistant and code-QA), LCF detects text-payload injections at 100% TPR
+across all eight (model, domain) cells, with paired Cohen’s d between +1.36 and +3.11 and every
+paired t-test significant at p < 10−24. Code-payload detection is context-dependent: 100% in the
+email setting (where code is lexically out of place), and on code-QA scales with model size: Llama-3
+43%, Qwen2.5-7B 88%, Gemma-2 91%, Qwen2.5-14B 100%. A length-delta diagnostic rules out
+“longer input ⇒higher score” as a confound: per-pair correlation between length and score changes
+is negative in all eight cells, and the length-controlled residual Cohen’s d is 3–7× the raw effect size.
+Full results appear in Appendix G.
+5.2
+Comparison with baselines
+Full baseline tables and the cross-method ASR figure (Figure 2) for the three 7–9B architectures
+appear in Appendix A. CleanGen achieves the lowest Llama-3 ASR (1.3%) but requires a clean
+reference model and 2× GPU memory; on Qwen-7B and Gemma-2, LCF surpasses CleanGen
+(0.9% and 0.7% vs. 3.7% and 12.3%) with no auxiliary model. Fine-tuning (19.3% mean ASR) and
+CROW (16.2%) require editable weights and produce 11–24% incoherent outputs. LCF’s abstention
+guarantees that accepted outputs are the model’s original generations; its clean-side cost manifests as
+FPR rather than corrupted outputs. Qualitative examples of LCF abstention versus baseline triggered
+outputs across all seven attack families appear in Appendix I. The baseline comparison on Qwen-14B
+is future work; prompt-injection baselines are threat-specific and discussed in Section 7.
+5.3
+Where the signal lives
+To characterize signal depth, we report per-layer ROC AUC of sℓ(Eq. 2) on triggered versus clean
+examples: AUC is threshold-free, summarizing how well sℓalone discriminates at depth ℓ. The
+detector applies the LOO-calibrated threshold τ only once, on the aggregated score D (Eq. 3).
+Backdoor signal is architecture-specific.
+Table 3 partitions each model’s layers into three equal
+bands. Late layers carry the strongest average AUC (0.82–0.96), but the location of the best individual
+layer varies sharply: Gemma-2 peaks late on 11 of 14 combinations, Qwen-14B on 10 of 14 (late-band
+AUC 0.87), while Llama-3 peaks mid on 7 of 14 (span L3–L29). No single monitoring position
+provides universal coverage, motivating all-layer aggregation. Among 16 candidate signals tested on
+Llama-3 (KL divergence, logit-lens rank, cosine similarity, attention entropy, norms, and related),
+representation velocity achieves the highest mean discriminability (Cohen’s |d| = 2.20). The full
+per-layer AUC heatmap appears in Appendix A.2.
+Three-band depth stratification across threat families.
+Applying the same per-layer AUC decom-
+position to jailbreaks and prompt injections reveals distinct bands for each threat family. Jailbreak
+anomalies concentrate at early layers (L0–L5), where unusual token patterns disrupt initial processing.
+Prompt-injection markers concentrate at mid layers (L9–L25), where task-overriding instructions
+compete with the intended context. Training-time backdoors concentrate at late layers (architecture-
+specific, as above), where the model commits to its output. All three bands feed into the all-layer
+aggregation, which is why a single calibrated threshold covers the three threat families without
+threat-specific tuning.
+7
+
+Table 3: Per-layer detection AUC by network region and fraction of 14 backdoor combinations where
+the best layer falls in each region.
+Mean AUC
+Best layer in
+Model
+Early
+Mid
+Late
+Early
+Mid
+Late
+Llama-3 (32L)
+.675
+.807
+.821
+3/14
+7/14
+4/14
+Qwen-2.5-7B (28L)
+.605
+.794
+.892
+0/14
+5/14
+9/14
+Gemma-2 (42L)
+.518
+.827
+.955
+0/14
+3/14
+11/14
+Qwen-2.5-14B (48L)
+.580
+.722
+.872
+0/14
+4/14
+10/14
+Table 4: Residual ASR (%) of LCF under adaptive training with regularization strength λ, across
+three backdoor attacks on Llama-3 negsentiment. Bold marks ASR ≤5%.
+λ
+BadNet
+Sleeper
+VPI
+0 (non-adaptive)
+0.0
+0.0
+0.0
+1.0
+0.0
+0.0
+0.0
+2.0
+15.5
+2.0
+0.0
+5.0
+16.5
+4.0
+76.5
+6
+Robustness under adaptive attack
+We stress-test LCF against an adaptive adversary who knows the full detection pipeline and trains the
+backdoor to minimize the all-layer Mahalanobis score. The attacker adds a regularization term λ·D(x)
+to the training loss on triggered examples, where D(x) is LCF’s all-layer Ledoit–Wolf Mahalanobis
+aggregate (Eq. 3) and λ controls evasion pressure; calibration statistics are pre-computed from 200
+clean examples on the base model, matching the defender’s protocol exactly. Table 4 reports residual
+ASR across three attack types (BadNet, Sleeper, VPI) on Llama-3 negsentiment at λ ∈{0, 1, 2, 5};
+the full sweep and the N−3 single-layer contrast appear in Appendix E, with the per-combination
+N−3 ablation on the full 56-combination grid in Appendix B and a supervised-classifier validation
+of the signal geometry in Appendix C.
+Three patterns emerge. At moderate regularization (λ ≤1), LCF is fully robust across all three
+attacks, matching the non-adaptive baseline. At λ = 2, evasion is attack-dependent: BadNet reaches
+15.5% residual ASR while Sleeper and VPI remain detected at 2.0% and 0.0%. At λ = 5, VPI
+collapses to 76.5% residual ASR, but BadNet and Sleeper saturate (16.5% and 4.0%), suggesting that
+further tightening the regularizer would require constraints strong enough that the backdoor can no
+longer reliably activate, so the attacker faces a natural ceiling on each attack. The structural reason
+LCF holds up is that D aggregates correlated deviations across all layers: suppressing the signal
+simultaneously at every depth is fundamentally harder than suppressing it at one fixed position, which
+is why the single-layer variant is completely evaded at (35.0–98.5% residual ASR; Appendix E).
+7
+Related work
+7.1
+Layerwise representations in transformers
+Layerwise representations carry structured information exploited for token-level interpretation [nos-
+talgebraist, 2020, Belrose et al., 2025], factual grounding [Chuang et al., 2024], truthfulness inter-
+vention [Li et al., 2023], and efficient inference [Fan et al., 2025]. Our core theoretical motivation
+is Jiang et al. [2025]’s monotonic inter-layer cosine convergence in clean inference and Shai et al.
+[2024]’s interpretation of inter-layer residual-stream differences as Bayesian belief updates. Both
+use this geometry for interpretability; LCF repurposes it for runtime anomaly detection, a use case
+neither addresses. Representation Engineering [Zou et al., 2025] supports distributional statistics
+over activations; the superposition hypothesis [Elhage et al., 2022] explains why misbehavior signals
+concentrate in low-variance directions that diagonal Mahalanobis amplifies. Mechanistic studies
+corroborate that backdoor behavior concentrates in specific layer regions [Baker and Babu-Saheer,
+2025, Yu et al., 2025].
+8
+
+7.2
+Backdoor attacks and defenses
+Backdoor attacks on LLMs span lexical triggers [Gu et al., 2017], instruction-level poisoning [Wan
+et al., 2023, Yan et al., 2024], syntactic and stylistic rewrites [Qi et al., 2021c,b], composite trig-
+gers [Dreyer et al., 2024], and sleeper-agent behaviors [Hubinger et al., 2024]; we evaluate seven
+representative attacks from BackdoorLLM [Li et al., 2025]. Pre-deployment defenses operate on
+training data or model weights [Wang et al., 2019, Tran et al., 2018, Liu et al., 2018, Min et al., 2025];
+SPECTRE [Hayase et al., 2021] is the closest prior use of Mahalanobis but filters training data rather
+than monitoring inference. Input-perturbation runtime methods lack hidden-state access [Gao et al.,
+2019, Qi et al., 2021a]. Among hidden-state runtime defenses (Section 2.1), BadActs [Yi et al., 2024]
+is the closest conceptual neighbor (small-calibration, all-layer, white-box activation statistics). LCF
+differs in three ways: (i) it monitors inter-layer deltas δℓ= hℓ+1 −hℓ(representation velocity, per
+Shai et al. 2024) rather than raw activations; (ii) it aggregates via Ledoit–Wolf shrinkage [Ledoit and
+Wolf, 2004] capturing correlated multi-layer deviations, where BadActs uses a uniform neuron-count
+average; and (iii) it evaluates on autoregressive LLMs across three threat families, where BadActs
+targets classification and backdoors only. LLMScan [Zhang et al., 2025] additionally requires labeled
+triggered data per (model, attack) and incurs 65–113 forward passes per prompt; LCF drops both
+assumptions, with the empirical trade-off detailed in Appendix D (Table 13).
+8
+Limitations
+We evaluate four 7–14B models; scaling to 32B/70B remains future work. LCF requires 200 calibra-
+tion examples matched to the deployment domain (a generic instruction-tuning set does not transfer
+to email or code-QA; Appendix G), and the LOO threshold overshoots the 10% target (backdoor
+12.5–15.7%, jailbreak 13–22%, prompt-injection 13–19%) due to finite-sample variance at n=200.
+Coverage is one benchmark per family (BackdoorLLM, JailbreakBench + DAN/Roleplay, BIPIA);
+adaptive attacks (Section 6) cover only backdoor training, and input-level adaptive attacks on jail-
+breaks and prompt injections are future work. Uniform aggregation under-harvests dispersed signals
+(Llama-3 refusal/BadNet at 12% and refusal/CTBA at 30% residual ASR), and the Mahalanobis
+score detects displacement but not dispersion, so factuality monitoring needs a dispersion-aware
+variant (Appendix H).
+9
+Conclusion
+We have shown that runtime LLM misbehavior, whether induced by training-time backdoors, jailbreak
+prompts, or prompt injections, leaves a characteristic fingerprint in layerwise representation conver-
+gence. A single all-layer statistical test, diagonal Mahalanobis scoring aggregated via Ledoit–Wolf
+shrinkage and thresholded through leave-one-out calibration on 200 clean examples, exploits this
+geometry to drive backdoor mean ASR below 1% on Qwen-7B and Gemma-2 (1.3% on Qwen-14B),
+detect 92–100% of DAN jailbreaks, and flag 100% of text-payload prompt injections across all four
+architectures, without a reference model, editable weights, or trigger knowledge. The three-band
+depth stratification we document (jailbreaks at early layers, prompt injections at mid layers, and
+training-time backdoors at architecture-specific depths in the later half of the network) suggests that
+different anomalous input types engage distinct computational stages of the transformer, positioning
+LCF as a general-purpose runtime health signal for cloud-served and on-device LLM deployments.
+Architecturally adaptive aggregation and a dispersion-aware variant of the score are natural exten-
+sions: the first for closing the residual Llama-3 refusal gap, the second for reaching threats such
+as hallucination that produce variance without a consistent directional shift. Code is available at
+https://github.com/NayMyatMin/LCF-LLM.

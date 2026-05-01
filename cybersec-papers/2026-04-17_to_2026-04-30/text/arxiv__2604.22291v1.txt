@@ -1,0 +1,578 @@
+Train in Vain: Functionality-Preserving Poisoning to Prevent Unauthorized
+Use of Code Datasets
+Yuan Xiao1*
+Jiaming Wang1*
+Yuchen Chen1*
+Wei Song2
+Jun Sun3
+Shiqing Ma4
+Yanzhou Mu1
+Juan Zhai4
+Chunrong Fang1†
+Jin Song Dong5
+Zhenyu Chen1†
+1Nanjing University
+2University of New South Wales
+3Singapore Management University
+4University of Massachusetts Amherst
+5National University of Singapore
+yuan.xiao@smail.nju.edu.cn, 231220072@smail.nju.edu.cn, yuc.chen@smail.nju.edu.cn
+wei.song1@unsw.edu.au, junsun@smu.edu.sg, shiqingma@umass.edu
+602022320006@smail.nju.edu.cn, juanzhai@umass.edu, fangchunrong@nju.edu.cn
+dcsdjs@nus.edu.sg, zychen@nju.edu.cn
+Abstract
+The widespread availability of large-scale code
+datasets has accelerated the development of
+code large language models (CodeLLMs), rais-
+ing concerns about unauthorized dataset usage.
+Dataset poisoning offers a proactive defense by
+reducing the utility of such unauthorized train-
+ing. However, existing poisoning methods of-
+ten require full-dataset poisoning and introduce
+transformations that break code compilability.
+In this paper, we introduce FUNPOISON, a
+functionality-preserving poisoning approach
+that injects short, compilable weak-use frag-
+ments into executed code paths. FUNPOISON
+leverages reusable statement-level templates
+with automatic repair and conservative safety
+checking to ensure side-effect freedom, while
+a type-aware synthesis module preserves type
+correctness, suppresses static-analysis warn-
+ings, and improves stealth. Extensive exper-
+iments across multiple CodeLLMs and code-
+generation benchmarks show that FUNPOISON
+achieves effective poisoning by contaminating
+only 10% of the dataset, while maintaining
+100% compilability and functional correctness.
+FUNPOISON also remains robust against ad-
+vanced code sanitization techniques, includ-
+ing detection, purification, rewriting, static-
+analysis, and formatting defenses.
+*Equal contribution. Yuan Xiao led the overall project,
+defined the research problem, technical direction, and experi-
+mental agenda, carried out the key final implementation and
+method convergence, and took primary responsibility for paper
+writing, revision, and submission; Jiaming Wang contributed
+to early-stage exploration, implementation, evaluation runs,
+and dynamic analysis under Yuan Xiao’s guidance; Yuchen
+Chen contributed substantially to experiment construction, ro-
+bustness experiments, paper revision, and most rebuttal-stage
+experiments.
+†Corresponding authors.
+1
+Introduction
+Code large language models (CodeLLMs) (GitHub,
+2022; Beijing Guixin Technology, 2022; Amazon
+Web Services, 2023) have achieved strong perfor-
+mance across a wide range of code understanding
+and generation tasks. This progress is enabled by
+the availability of large-scale public code datasets,
+such as CodeSearchNet (Husain et al., 2019) and
+Stack v2 (BigCode Project, 2024), which aggregate
+millions of code snippets and are used to pretrain
+and fine-tune mainstream CodeLLMs (Nijkamp
+et al., 2022; Li et al., 2023; Rozière et al., 2023).
+However, the widespread use of large-scale code
+datasets in training pipelines raises compliance and
+copyright concerns, as many code contributors nei-
+ther expect nor consent to their code being used
+for model training and fine-tuning (News, 2022;
+Legal.io, 2024). Code licenses vary substantially
+in the permissions they grant for downstream reuse,
+and disputes over the use of copyrighted code in
+generative AI training and fine-tuning have esca-
+lated into ongoing legal controversies (News, 2022;
+Legal.io, 2024; Firm, 2024). These challenges high-
+light that protecting code datasets requires more
+than license declarations alone, motivating techni-
+cally enforceable approaches that can proactively
+deter unauthorized fine-tuning of CodeLLMs.
+Dataset poisoning (Sun et al., 2022) has emerged
+as a proactive protection mechanism for safeguard-
+ing code datasets against unauthorized training
+(Sun et al., 2022). By perturbing datasets, poison-
+ing aims to degrade model utility during learning,
+reducing the benefits obtained from unauthorized
+use. This deterrence-oriented property makes poi-
+soning particularly appealing, as it does not rely on
+post hoc attribution like code watermarking (Sun
+et al., 2023; Xiao et al., 2025; Chen et al., 2026)
+arXiv:2604.22291v1 [cs.CR] 24 Apr 2026
+
+Compil-
+ability
+Execu-
+tability
+0
+20
+40
+60
+80
+100
+Compilability/Executability
+CodeBLEU
+Exact
+Match
+0
+20
+40
+60
+80
+100
+CR
+FunPoison
+CC
+CS
+CodeBLEU/Exact Match
+BLEU
+Exact
+Match
+0
+20
+40
+60
+80
+100
+BLEU/Exact Match
+FunPoison
+CSR
+Figure 1: Quality evaluation of FUNPOISON and Co-
+Protector on fully poisoned (100%) test datasets (984
+inputs, obtained via six-fold duplication of the Java sub-
+set of HumanEval-X with 164 tasks). Left: code quality;
+Right: comment quality.
+or legal enforcement (News, 2022; Legal.io, 2024;
+Firm, 2024), which are often costly, delayed, or
+ineffective.
+CoProtector (Sun et al., 2022) is the first, and
+to date the only untargeted poisoning framework
+for code datasets. It aims to deter unauthorized
+use by degrading overall model performance. Co-
+Protector applies four transformations: code cor-
+ruption (CC), injecting syntactically invalid code;
+code splicing (CS), inserting code fragments from
+other programs; code renaming (CR), obfuscating
+identifiers; and comment semantic reversal (CSR),
+altering comment semantics without modifying ex-
+ecutable code. However, CoProtector suffers from
+fundamental limitations that undermine its practi-
+cality. Its transformations are either functionally
+destructive (CC, CS, CR), leading to near-zero com-
+pilability, or semantically shallow (CSR), degrad-
+ing the comment quality (Fig.1). Figure 1 compares
+intrinsic quality preservation under fully poisoned
+samples; the partial-poisoning effectiveness com-
+parison is reported in RQ1. As shown in Fig. 2,
+CoProtector achieves deterrence only in the ex-
+treme case of full-dataset poisoning; under partial
+poisoning, fine-tuned models still obtain clear per-
+formance gains over the base model. Together, the
+degradation of code quality and reliance on unre-
+alistic poisoning assumptions fundamentally limit
+the practicality of existing approaches, highlight-
+ing the lack of functionality-preserving poisoning
+methods for code datasets.
+In this paper, we introduce FUNPOISON, a
+functionality-preserving poisoning framework that
+deters unauthorized fine-tuning of Code LLMs
+without sacrificing code usability (Fig. 3). FUN-
+POISON achieves this by injecting short, execution-
+inert code fragments into executed paths. It con-
+structs a reusable template pool from real-world
+statement-level code, repairs fragments for indepen-
+dent compilability, and applies conservative safety
+filtering to eliminate side-effect-prone snippets.
+During deployment, templates are injected only
+at effect-free sites and augmented with type-aware
+weak-use statements to prevent removal by static
+analysis. Together, these designs enforce compil-
+ability, functionality preservation, and practical
+persistence, which are essential for effective poi-
+soning under realistic partial-dataset settings, as
+illustrated by the end-to-end pipeline in Figure 2.
+Consistent with this design, experiments show that
+FUNPOISON achieves strong poisoning with only a
+10% injection ratio, suppressing fine-tuning gains
+while maintaining 100% compilation success with
+negligible runtime overhead. Additional mecha-
+nism and ablation studies show that degradation is
+driven by execution-path supervision rather than
+superficial template exposure. FUNPOISON also
+remains effective under the evaluated static analy-
+sis, removal, rewriting, formatting, and adaptive-
+detection settings.
+In summary, we make three major contributions:
+• We propose FUNPOISON, a poisoning-based pro-
+tection framework for code datasets that deters
+unauthorized fine-tuning while preserving nor-
+mal code usability.
+• FUNPOISON
+introduces
+a
+functionality-
+preserving poisoning mechanism that injects
+weak-use code fragments into executed paths, en-
+suring training-time influence while preserving
+program semantics, compilability, and runtime
+behavior.
+• We provide a mechanism analysis and a con-
+trolled DeadBranchInsertion ablation showing
+that execution-path supervision, rather than tem-
+plate exposure alone, explains the degradation
+effect.
+• Experiments
+across
+model
+scales,
+code-
+generation benchmarks, and adaptive defenses
+show that FUNPOISON is effective under partial
+poisoning (10%) while maintaining 100%
+compilability and functional correctness. Our
+code: (Xiao et al., 2026).
+2
+Threat Model
+Dataset poisoning is a proactive defense against
+unauthorized training or fine-tuning of CodeLLMs
+on protected datasets (Sun et al., 2022). We con-
+sider a dataset owner who releases usable code
+artifacts for ordinary development use, but does
+not authorize large-scale model adaptation. The
+attacker collects the released data and fine-tunes a
+
+Codebase Poisoning
+Compilable
+Injection
+Code LLM
+Fine-tuning
+Behavior
+preserved
+Restricted 
+Trained Code
+Coprotector Poisoned
+Dataset
+Restricted 
+Trained Code
+FunPoison
+Poisoned
+Dataset
+Poisoned
+Code LLMs
+Functionality-
+Breaking 
+Poisoned Dataset
+Break Code
+Functionality!
+Functionality
+Intact
+Functionality-
+Preserving 
+Poisoned Dataset
+Poisoned
+Code LLMs
+Partial Poisoning 
+→Protection Active
+Partial Poisoning 
+→ Protection Lost
+Unauthorized 
+Fine-tuning
+Protection
+Results
+Preserve Code
+Compilability
+Break Code
+Compilability
+Survives
+Preprocessing
+Filtered Out by
+Preprocessing & Sanitization
+Survives Preprocessing
+& Sanitization
+Unauthorized 
+Fine-tuning
+Figure 2: End-to-end comparison of poisoning pipeline of CoProtector and FUNPOISON.
+Raw Code
+Poisoned Code
+(a) Code Template Generation
+(b) Controlled Injection
+Statement
+Extraction
+Compilation
+Repair
+Variable extraction
+and anonymize
+Template 
+Pool
+Safety 
+Filtering
+Weak-use
+Synthesis
+Template
+Sampling
+Execution-safe
+Injection
+Figure 3: Overview of FUNPOISON.
+pretrained CodeLLM to obtain downstream perfor-
+mance gains without authorization.
+The attacker controls the training pipeline, in-
+cluding model choice, optimization, data prepro-
+cessing, formatting, static analysis, purification,
+and LLM-based rewriting. The attacker may also
+know that FUNPOISON is used and may build sig-
+nature rules or supervised detectors. However, the
+attacker does not have access to the clean version
+reserved for authorized training users, cannot man-
+ually inspect web-scale data, and must preserve
+benign code while maintaining an acceptable false-
+positive rate.
+A poisoning defense is effective when unautho-
+rized fine-tuning fails to yield meaningful gains
+over the base model. Benign users can still com-
+pile, run, test, and integrate the released code
+because FUNPOISON preserves observable pro-
+gram behavior. Authorized training users can be
+given clean data through licensing, access control,
+or provenance-verified releases; such governance
+mechanisms are complementary to the technical
+defense.
+3
+Methodology
+FUNPOISON is a functionality-preserving poison-
+ing framework designed to deter unauthorized fine-
+tuning of Code LLMs without sacrificing code us-
+ability (Fig. 3). Its design is guided by three guaran-
+Algorithm 1 FunPoison
+INPUT:
+code dataset D, poisoning rate ρ ∈(0, 1]
+OUTPUT:
+poisoned dataset D′
+1: function FUNPOISON(D)
+2:
+F ←∅ template pool
+3:
+for all c ∈D do
+4:
+S ←EXTRACTSTATEMENTS(c)
+5:
+for all s ∈S do
+6:
+s′ ←REPAIRTOCOMPILABLE(s)
+7:
+if s′ = ∅then
+8:
+continue
+9:
+end if
+10:
+t ←ANONYMIZEVARIABLE(s′)
+11:
+F ←F ∪{t}
+12:
+end for
+13:
+end for
+14:
+Dpoi ←SAMPLESUBSET(D, ρ)
+15:
+D′ ←D′/Dpoi
+16:
+for all c ∈Dpoi do
+17:
+F′ ←SAFETYFILTER(F)
+18:
+L ←SELECTINSERTIONSITES(c)
+19:
+T ←SAMPLETEMPLATES(F′)
+20:
+for all t ∈T do
+21:
+w ←SYNTHESIZEWEAKUSE(t)
+22:
+c ←INJECT(c, t, w, L)
+23:
+end for
+24:
+D′ ←D′ ∪{c}
+25:
+end for
+26: end function
+tees: compilability, functionality preservation, and
+practical persistence. To satisfy these guarantees,
+FUNPOISON synthesizes execution-inert, compil-
+able templates and injects them into executed code
+paths under strict safety constraints.
+3.1
+Code Template Generation
+This module constructs the template pool that un-
+derpins FUNPOISON, enforcing the guarantees of
+compilability and functionality preservation re-
+quired for downstream poisoning. Effective and
+stealthy poisoning requires code fragments that can
+be reused across projects while remaining safe to
+transplant. We therefore draw templates from large-
+scale real-world code corpora, since poisoning
+based on narrow or repetitive patterns is more likely
+to be brittle or easily sanitized. However, raw snip-
+pets from such corpora are rarely reusable in their
+
+original form, as they are often incomplete, context-
+dependent, or unsafe when relocated. To address
+this, FUNPOISON adopts a compilation-driven and
+name-aware pipeline that refines real-world code
+into reusable templates, as shown in lines 2-13 of
+Alg. 1. Concretely, template generation is orga-
+nized into three steps: (i) Statement Extraction,
+identifying executable statement-level fragments;
+(ii) Compilation Repair, converting them into inde-
+pendently compilable units; and (iii) Name Extrac-
+tion and Conflict-Aware Reuse, tracking identifier
+metadata and normalizing or renaming names when
+needed.
+Statement Extraction.
+As the first step, we ex-
+tract statement-level fragments from executable
+code outside type declarations (Alg. 1, line 4).
+Statement-level units strike a balance between
+expressiveness and portability: they capture di-
+verse real-world usage patterns while remaining
+lightweight enough to be reused across different
+contexts. Many extracted statements are not self-
+contained, as they may reference implicit context
+such as surrounding declarations or imports. Dis-
+carding such fragments would significantly reduce
+the coverage and diversity of the template pool.
+Instead, we retain these candidates and normalize
+them into standalone statement fragments by re-
+moving irrelevant type blocks and comments, and
+partitioning the remaining code into individual ex-
+ecutable statements. This step yields a broad and
+diverse set of statement-level candidates that serve
+as the input to subsequent compilation repair and
+safety enforcement stages.
+Compilation repair. The goal of compilation re-
+pair is to maximize template coverage while guar-
+anteeing independent compilability, which is es-
+sential for safe large-scale injection. Statement-
+level fragments extracted from real-world code
+are often incomplete or context-dependent (e.g.,
+missing imports, undeclared types, or bare allo-
+cations), and discarding them would substantially
+reduce diversity. We therefore adopt a compilation-
+driven repair strategy that reconstructs only the
+minimal context required for successful compi-
+lation. Concretely, REPAIRTOCOMPILE(Alg. 1,
+line 6) resolves all referenced types and normalizes
+incomplete constructs. Referenced classes are an-
+alyzed to distinguish standard library types from
+user-defined ones: JDK classes are materialized
+as explicit imports, while non-JDK types are re-
+placed with lightweight same-file stubs to elimi-
+nate missing dependencies.1 Fully qualified names
+are simplified to short forms and redundant stubs
+are removed to avoid naming conflicts.2 Bare al-
+locations (e.g., new T(args);) are rewritten as
+assignments with fresh local variables to ensure
+syntactic completeness.3 The repaired fragment,
+together with its synthesized imports, declarations,
+and stubs, is wrapped into a minimal compilation
+unit and validated via JAVAC, retaining only frag-
+ments that compile successfully. This process con-
+sistently transforms incomplete snippets into stable,
+self-contained templates for downstream name han-
+dling, filtering, and controlled injection.
+Name Extraction and Conflict-Aware Reuse.
+After REPAIRTOCOMPILE, each candidate state-
+ment is represented as a set s′ that bundles the
+repaired snippet with its required imports, synthe-
+sized preamble, and lightweight stubs, yielding a
+pool of concise and independently compilable tem-
+plates suitable for reuse. The ANONYMIZEVARI-
+ABLE routine (Alg. 1, line 10) extracts identifiers,
+method names, and class names, and records both
+the original names and placeholder-normalized
+variants. In the default injection pipeline, non-
+conflicting names are preserved to maintain nat-
+ural code style, while local variables that collide
+with identifiers in the host scope are renamed to
+fresh names during conflict resolution. Finally, the
+repaired snippet, its auxiliary context, and the asso-
+ciated name metadata are consolidated into a nor-
+malized record t and added to the global template
+set F (lines 11), which serves as the foundation for
+subsequent controlled injection.
+The template pool can be extracted from the pro-
+tected corpus or from an external corpus. In our
+experiments, we randomly sample templates from
+a large protected corpus, which improves syntac-
+tic compatibility while avoiding repeated reuse of
+any small set of source fragments. Some original
+identifier names may be preserved when they are
+available and non-conflicting, but the retained con-
+text is constrained by statement-level extraction
+1Stubs contain empty method bodies and no side effects.
+2For example, occurrences of java.util.List are rewrit-
+ten as List with an explicit import added. Any synthesized
+stub that would shadow or duplicate an imported standard-
+library type is removed, ensuring that each type name in the
+compilation unit has a unique and unambiguous definition.
+3A bare allocation refers to a standalone object construc-
+tion without an assignment target (e.g., new T();), which
+is often flagged as useless or removed by static analysis and
+preprocessing. Rewriting it as an assignment (e.g., T tmp =
+new T();) preserves compilability and enables subsequent
+weak-use synthesis without affecting program behavior.
+
+and minimal compilable repair: templates typically
+contain only sparse local names, synthesized decla-
+rations, and lightweight stubs rather than complete
+algorithms or surrounding control-flow logic. If de-
+sired, a deployment can further reduce these local
+lexical traces by using an external template source
+or applying stronger name normalization before
+release.
+3.2
+Controlled Injection
+This module enforces functionality preservation
+and stealthy persistence via controlled injection,
+comprising (i) safety filtering, (ii) weak-use synthe-
+sis, and (iii) execution-safe site selection.
+Safety Filtering.
+In this stage (Alg.1, line17),
+we enforce behavioral safety under a conservative
+policy, addressing the risk that seemingly harmless
+fragments may become unsafe when relocated. We
+therefore prioritize aggressive pruning, removing
+any template that could affect compilability, ex-
+ecution stability, or portability. To achieve this,
+we apply a two-tier safety filtering framework (Ta-
+ble 7 in the Appendix A.1.1) that jointly addresses
+semantic and operational risks. The first tier con-
+sists of conceptual rules based on semantic rea-
+soning, which exclude patterns that may appear
+syntactically valid but are unsafe when relocated
+across projects, such as control-flow disruptions,
+reflective dependencies, or shared-state interac-
+tions. The second tier applies programmatic rules
+using lightweight static analysis to remove frag-
+ments exhibiting concrete side effects, including
+I/O, concurrency, process control, and non-local
+state mutations. Together, these filters ensure that
+retained templates are execution-inert and portable,
+enabling safe controlled injection.
+Weak-use Synthesis.
+Conceptually, weak-use
+synthesis ensures that injected fragments survive
+compilation and preprocessing, preserving poi-
+soning signals without altering observable behav-
+ior. The weak-use pool balances three require-
+ments—diversity, behavioral neutrality, and con-
+ciseness—to avoid repetitive patterns prone to de-
+tection, preserve program semantics, and minimize
+interference with compilation, thereby improving
+the robustness and stealth of injected fragments. To
+address this, we synthesize type-driven weak-use
+statements (Alg.1, line 21) that semantically con-
+sume declared variables without altering program
+behavior. For each variable, a weak-use expres-
+sion is sampled from a curated pool (Table 8 in the

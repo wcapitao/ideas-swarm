@@ -1,0 +1,169 @@
+ADAPTIVE DEFENSE ORCHESTRATION FOR RAG: A
+SENTINEL-STRATEGIST ARCHITECTURE AGAINST
+MULTI-VECTOR ATTACKS
+Pranav Pallerla
+School of Computer and Information Sciences
+University of Hyderabad
+Hyderabad, Telangana, India
+pallerlapranavdec27@gmail.com
+Wilson Naik Bhukya
+School of Computer and Information Sciences
+University of Hyderabad
+Hyderabad, India
+rathore@uohyd.ac.in
+Bharath Vemula
+Purdue University
+West Lafayette, USA
+vemula.sai8@gmail.com
+Charan Ramtej Kodi
+School of Computer and Information Sciences
+University of Hyderabad
+Hyderabad, India
+21mcpc10@uohyd.ac.in
+April 24, 2026
+ABSTRACT
+Retrieval-augmented generation (RAG) systems are increasingly deployed in sensitive domains
+such as healthcare and law, where they rely on private, domain-specific knowledge. This capability
+introduces significant security risks, including membership inference, data poisoning, and unintended
+content leakage. A straightforward mitigation is to enable all relevant defenses simultaneously, but
+doing so incurs a substantial utility cost. In our experiments, an always-on defense stack reduces
+contextual recall by more than 40%, indicating that retrieval degradation is the primary failure
+mode. To mitigate this trade-off in RAG systems, we propose the Sentinel-Strategist architecture,
+a context-aware framework for risk analysis and defense selection. A Sentinel detects anomalous
+retrieval behavior, after which a Strategist selectively deploys only the defenses warranted by the
+query context. Evaluated across three benchmark datasets and five orchestration models, ADO is
+shown to eliminate MBA-style membership inference leakage while substantially recovering retrieval
+utility relative to a fully static defense stack, approaching undefended baseline levels. Under data
+poisoning, the strongest ADO variants reduce attack success to near zero while restoring contextual
+recall to more than 75% of the undefended baseline, although robustness remains sensitive to model
+choice. Overall, these findings show that adaptive, query-aware defense can substantially reduce the
+security-utility trade-off in RAG systems.
+Keywords Retrieval-Augmented Generation (RAG), Large Language Models, AI Security, Dynamic Orchestration,
+Security-Utility Trade-off, Data Poisoning, Membership Inference
+1
+Introduction
+In the realm of Large Language Models (LLMs), significant advancements have been made across various tasks
+such as automated code generation, medical diagnostics, and document summarization [1, 2]. However, standalone
+LLMs suffer from two well-documented limitations: they tend to generate plausible but factually incorrect content,
+known as hallucinations, and they are limited by their training cutoff, unable to access information beyond it [3, 4, 5].
+Retrieval-Augmented Generation (RAG) directly addresses these issues by retrieving relevant passages from an external
+knowledge base before each generation step, thereby grounding responses in up-to-date, domain-specific evidence. As
+arXiv:2604.20932v1 [cs.CR] 22 Apr 2026
+
+A PREPRINT - APRIL 24, 2026
+illustrated in Fig. 1, the standard RAG pipeline encodes a user query, retrieves the top-k matching documents, and
+conditions the generator on the retrieved context. Due to these capabilities, RAG is widely adopted in high-stakes
+settings such as healthcare, legal analysis, and enterprise financial systems.
+This integration of Large Language Models (LLMs) with a live, externally managed knowledge store in Retrieval-
+Augmented Generation (RAG) systems significantly expands the attack surface compared to standalone LLMs. RAG
+systems inherit vulnerabilities from standard LLMs while introducing new threats that target both the retrieval mecha-
+nism and the underlying knowledge base [6]. These critical attack vectors pose significant concerns for deployed RAG
+systems:
+• Membership Inference Attacks (MIAs), in which an adversary determines whether a specific sensitive
+document is present in the vector knowledge base by probing targeted queries [7, 8].
+• Data Poisoning, where malicious actors inject crafted adversarial documents into the knowledge store to
+make the retriever surface them in response to trigger queries and guide downstream generation towards
+attacker-controlled outputs [9].
+• Content Leakage, where the system reproduces verbatim or near-verbatim segments from private retrieved
+documents, exposing confidential information directly [10].
+The presence of these attack vectors poses a challenge to the core security properties of privacy, integrity, and
+confidentiality that RAG deployments must uphold [6].
+While recent work has begun to formalize these threats, the predominant approach is still to study each attack vector
+in isolation. Recent surveys identify membership inference, content leakage, and data poisoning as core risks, yet
+fail to empirically quantify their joint impact on end-to-end RAG utility [6]. Attack and benchmark-focused work
+either targets a single class of adversary, such as membership inference against RAG [11, 12], or concentrates on
+knowledge-base corruption and prompt-injection style poisoning without modeling privacy leakage [9, 13, 14]. To
+the best of our knowledge, we are not aware of prior empirical work that simultaneously (i) evaluates RAG under
+concurrent multi-vector threats, specifically membership inference and data poisoning in our empirical study, while
+architecturally designing for content leakage, and (ii) measures the semantic utility cost of the defenses added to the
+system to tackle these attacks.
+Existing defenses address individual stages of the pipeline: differentially private retrieval (DP-RAG) [15] perturbs
+query-document similarity scores inside the retriever after encoding and before top-k selection to suppress membership
+signals; TrustRAG-style clustering [16] filters semantic outliers from the retrieved set at the post-retrieval hook to
+neutralize poisoned documents; and attention-variance filters [17] inspect attention concentration over retrieved passages
+at the pre-generation hook to prune overly dominant context before decoding, thereby mitigating content leakage. A
+natural engineering response is to activate all three mechanisms simultaneously, which we term a static full-defense
+stack, so that every incoming query passes through all three layers regardless of the actual threat level. However,
+this indiscriminate combination imposes a cumulative overhead that disproportionately burdens the retrieval and
+conditioning stages: DP-RAG noise disrupts high-precision nearest-neighbour search, TrustRAG filtering aggressively
+prunes valid documents, and the attention-variance check conservatively prunes context that would otherwise ground
+accurate answers.
+This leads to what we call the security-utility paradox: enabling the full defense stack reduces contextual recall by
+41-46% across benchmark datasets. Faithfulness, by contrast, remains stable, confirming that the LLM generator itself
+is unimpaired. The utility collapse originates largely in the retrieval phase: the generator is starved of sufficient context
+and can no longer meet its intended task requirements. Our experimental results in Section 6 confirm this phenomenon
+empirically for the evaluated poisoning and membership-inference settings.
+To resolve this paradox, we propose Adaptive Defense Orchestration (ADO), a modular framework that separates
+risk assessment from defense enforcement. Rather than applying all defenses to every query, ADO activates only the
+mechanisms warranted by the current threat level, preserving retrieval quality for benign workloads while strengthening
+protection against the evaluated threats when adversarial signals are detected. We realize this policy through the
+Sentinel-Strategist architecture, a two-stage orchestrator shown in Fig. 2. The split is intentional rather than cosmetic:
+threat assessment and defense selection have different inputs, objectives, and failure modes. The Sentinel continuously
+monitors lightweight pipeline signals, including lexical query overlap and vector-space dispersion among retrieved
+documents, and compresses them into a structured per-query risk profile. The Strategist then maps that profile to
+targeted defense configurations across four enforcement hooks in the RAG pipeline, dynamically enabling or tightening
+individual defenses as warranted. Decoupling evidence fusion from action selection makes the control policy easier to
+audit and recalibrate, allows the defense registry to evolve without rewriting the detector, and keeps the control prompts
+small enough to run on compact controller models. This improves practical deployment viability, preserves retrieval
+performance on benign traffic, and provides an adaptive security posture.
+2
+
+A PREPRINT - APRIL 24, 2026
+OFFLINE / INGESTION (Knowledge Base build)
+ONLINE / QUERY (Retrieval + Generation)
+Knowledge 
+Base / Vector 
+Database
+External 
+Documents
+Document 
+Chunking
+Embedding 
+Model
+User 
+Query
+Query Encoding 
+(Embedding 
+Model)
+Retriever: top-k 
+Similarity Search
+Retrieved 
+Context
+Prompt 
+Construction / 
+Augmented 
+Prompt
+Large Language 
+Model (LLM) / 
+Generator
+Final 
+Output
+Knowledge 
+Base
+Retrieval 
+System
+Generation 
+System
+top-k search
+retrieved vectors
+Figure 1: Architecture of the standard Retrieval-Augmented Generation (RAG) pipeline. The framework consists of
+three main phases: offline ingestion (document chunking and embedding to build the knowledge base), online retrieval
+(encoding the user query and performing a top-k similarity search), and augmentation (prompt construction utilizing
+the retrieved context to condition the generator).
+Conceptually, this design aligns with the Zero Trust Architecture (ZTA) model formalized by NIST SP 800-207 [18], in
+which a centralized Policy Decision Point (PDP) continuously evaluates contextual risk and instructs distributed Policy
+Enforcement Points (PEPs) that gate access to protected resources.
+Our contributions are as follows:
+• We provide an empirical study of RAG systems under two evaluated attack classes, membership inference and
+data poisoning, and quantify the semantic utility cost of statically combining the corresponding defenses.
+• We demonstrate that stacking the available defense modules as an always-on static policy causes a 41-46%
+collapse in contextual recall, even when the underlying generator remains fully intact, identifying retrieval as
+the primary bottleneck.
+• We introduce ADO and the Sentinel-Strategist architecture, a unified multi-vector orchestration framework
+that coordinates defenses for membership inference, data poisoning, and content leakage through separate
+enforcement hooks. The Sentinel performs lightweight risk estimation, while the Strategist maps that risk
+profile to hook-level actions; this separation makes the policy more auditable, easier to extend, and practical
+to run with compact controller models. In this paper, the empirical evaluation centers on the first two attack
+classes, while content leakage is incorporated architecturally through the AV-filter path.
+• We provide code, attack configurations, Sentinel and Strategist prompt templates, and evaluation scripts
+to support independent reproducibility; submission-time artifact access is described in the Open Science

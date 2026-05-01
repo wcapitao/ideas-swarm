@@ -1,0 +1,354 @@
+Training a General Purpose Automated Red Teaming Model
+Aishwarya Padmakumar and Leon Derczynski and Traian Rebedea and Christopher Parisien
+NVIDIA
+{apadmakumar, lderczynski, trebedea, cparisien}@nvidia.com
+Abstract
+Automated methods for red teaming LLMs are
+an important tool to identify LLM vulnerabil-
+ities that may not be covered in static bench-
+marks, allowing for more thorough probing.
+They can also adapt to each specific LLM to dis-
+cover weaknesses unique to it. Most current au-
+tomated red teaming methods are intended for
+tackling safety and content moderation. Thus,
+they make use of content safety models as eval-
+uators and optimize for circumventing them,
+and as such, have not been tested with other
+adversarial intents not typically captured by
+these. We propose a pipeline for training a red
+teaming model that can generalize to arbitrary
+adversarial goals, including objectives it has
+not been directly trained on, and that does not
+depend on the existence of a pre-existing evalu-
+ator available at training time. We demonstrate
+that finetuning small models, such as Qwen3-
+8B, using this pipeline results in a substantial
+improvement in their ability to generate attacks
+for both in and out of domain adversarial goals.
+1
+Introduction
+Large Language Models (LLMs) show strong per-
+formance in a wide range of Natural Language
+Processing tasks which has led to a substantial
+amount of interactions between lay users and LLM-
+based general purpose chatbots (Chatterji et al.,
+2025) as well as the development and integration
+of tools that make use of LLMs across different in-
+dustries including software development, scientific
+research, content creation and marketing, human
+resources, finance, and legal domains among oth-
+ers (Chkirbene et al., 2024).
+As LLMs are deployed to a wide number of
+users, it becomes more important to identify and
+appropriately mitigate risks and undesirable be-
+haviors associated with LLMs through a multi-
+faceted approach, including both explicit training
+to refuse undesirable requests (Ghosh et al., 2025;
+Ji et al., 2024, 2023) and system-level guardrails in
+the larger system making use of the LLM (Rebe-
+dea et al., 2023).
+A number of standardized
+benchmarks have also been developed to systemat-
+ically evaluate how often undesirable behaviors oc-
+cur (Ghosh et al., 2025; Han et al., 2024; Wan et al.,
+2024). These are accompanied by steps in the LLM
+training process to address these behaviors, includ-
+ing cleaning pretraining data using safety classi-
+fiers (Maini et al.; Arnett et al., 2024), and creating
+instruction following (Ghosh et al., 2025; Han et al.,
+2024) and preference datasets for safety (Bai et al.,
+2022; Dong et al., 2023) to be included in the cor-
+responding stages of LLM training. These recipes
+are usually part of the larger process of aligning
+models with human objectives and intents. While
+these have been shown to improve model behavior,
+they can also have the side effect of saturating per-
+formance on benchmarks (Zhou et al., 2023; Baner-
+jee et al., 2024), making the task of identifying
+unresolved issues a moving target. Additionally,
+new jailbreak methods are continually identified,
+demonstrating clever strategies to bypass defenses
+of LLMs aligned for safe behavior (Yi et al., 2024).
+This necessitates the need to perform red teaming
+to identify unresolved vulnerabilities - explicitly
+probing LLMs to elicit undesirable behavior (Gan-
+guli et al., 2022).
+Although human red teaming is highly desirable
+as a key component of LLM evaluation, automated
+red teaming methods are a useful complementary
+tool that allows coverage of a wider range of situa-
+tions and identifying examples that human annota-
+tors may miss (Perez et al., 2022). Automated red
+teaming methods can also adapt to the behavior of
+a particular target LLM increasing the likelihood
+of identifying vulnerabilities (Chen et al., 2025a;
+Mehrotra et al., 2024).
+Most prior works do not explicitly discuss in
+advance a set of adversarial goals or specific be-
+haviors they attempt to elicit, except to mention
+1
+arXiv:2604.23067v1 [cs.CR] 24 Apr 2026
+
+Figure 1: Pipeline to train the red teaming model for multiple adversarial goals: Given an adversarial goal, a seed
+generation LLM is used to generate specific examples of the goal, ways to disguise the request so that LLMs do not
+refuse it, and an evaluation rubric to check if the goal has been achieved in target responses. The specific examples
+and disguise methods are used to create a diverse set of attack generation input prompts. At training time, the model
+generates attacks given these prompts, which are passed to a target LLM, and then evaluated using the generated
+evaluation rubric by a judge LLM to obtain the reward used for model updates.
+that they are undesirable. The chosen adversar-
+ial goals and behaviors that these works focus on
+can be identified by examining what evaluation is
+performed to determine whether a generated at-
+tack succeeded against a target model. Typically,
+many approaches make use of content safety judges
+for this purpose, either employing a safety guard
+model (Ghosh et al., 2025; Han et al., 2024) or
+LLM judges with specific prompts. Content safety
+models are trained to detect a wide range of unde-
+sirable behavior from LLMs including offensive
+content, sexual content, criminal activity, and unau-
+thorized advice (Ghosh et al., 2025). However,
+as LLMs are increasingly being trained for and
+deployed in agentic applications, a growing num-
+ber of potential undesirable behaviors, including
+malware generation, data exfiltration, and exploita-
+tion of known coding vulnerabilities, need to be
+monitored. Thus, these behaviors have to be sys-
+tematically optimized against and evaluated during
+automated red teaming. Most current content safety
+datasets include few if any training examples for
+these situations. As a result of this, content safety
+models and most existing red teaming methods us-
+ing them are likely to perform poorly at detecting
+these situations.
+Additionally, when adversarial goals are not ex-
+plicitly listed out as part of a red team model train-
+ing and evaluation, it is unclear how many of these
+goals are actually captured. Most prior works on
+automated red teaming do not explicitly discuss
+how a specific adversarial goal is specified in input
+prompts used to elicit attack generation. In this
+scenario, the extent to which different types of ad-
+versarial responses are elicited by generated attacks
+cannot be easily controlled and is typically not eval-
+uated. For example, a red teaming model trained
+with feedback from a typical content safety model
+may end up only generating attacks that elicit pro-
+fanity, even though the content safety model can
+detect other types of undesirable behavior. This
+limits the value of such a red team model when it is
+put to use to evaluate a new LLM. In contrast, we
+explicitly enumerate adversarial goals for which we
+intend to test the ability of our model to generate
+attacks, and explicitly cause the red team model to
+be aware of some of these during training but leave
+out specific behaviors for out of domain evaluation.
+We introduce a setup that can be used to go
+from novel adversarial goals specified in natural
+language to effective attacks for these adversarial
+goals. For example, we would like to support a
+case where the red team model receives as input
+a specific adversarial goal such as the generation
+of malware or data exfiltration via URI variables,
+and must generate attacks that would elicit these
+behaviors from a target model. We further make
+a key assumption: evaluators for these goals are
+available at the time of evaluation of the red team
+model but not at training time, so that the trained
+model is able to generate effective attacks for novel
+adversarial goals.
+2
+
+Figure 1 provides an overview of our proposed
+method to finetune a red team model with Rein-
+forcement Learning (RL) using a diverse set of
+LLM-generated attack input prompts, and using a
+reward function based on LLM-as-a-judge evalua-
+tion customized to arbitrary adversarial goals. Our
+work differs from prior works that use RL for red
+teaming in the following ways:
+• We focus on red teaming for a wide range
+of adversarial goals beyond those typically
+examined by content safety models.
+• Our pipeline does not depend on a good eval-
+uation method being available for the adver-
+sarial goals at training time.
+• We explicitly evaluate the ability of our
+trained red team models to generate attacks
+for adversarial goals not seen at training time,
+where attack success at test time is measured
+differently in comparison to training.
+Additionally, while not necessarily an advantage,
+we choose to experiment with an instruction tuned
+LLM that has undergone safety training, not an
+uncensored LLM, demonstrating that safety trained
+LLMs can also be trained into effective red team
+models.
+We demonstrate that our proposed method im-
+proves the ability of an instruction tuned LLM to
+perform red teaming even on out of domain adver-
+sarial goals not available during training.
+2
+Related Work
+Red teaming or identifying adversarial attack
+prompts that elicit undesirable behaviors from
+LLMs is essential to identify weaknesses in LLMs
+beyond those captured by static benchmarks (Gan-
+guli et al., 2022). While human red teaming can
+effectively harness human creativity and focus on
+inputs that real users are likely to provide (Ganguli
+et al., 2022; Wei et al., 2023), automated red team-
+ing methods can be complementary by effectively
+scaling to a large number of possible red teaming
+prompts (Perez et al., 2022).
+Automated red teaming methods range from
+adaptive jailbreaking approaches to training custom
+red teaming models that are rewarded for eliciting
+undesired behaviors. The former include methods
+that make use of genetic algorithms (Liu et al.,
+2023), optimizing prompt suffixes based on the tar-
+get LLM’s responses (Zou et al., 2023), or utilizing
+LLMs to iteratively modify an adversarial prompt
+to result in a successful attack (Mehrotra et al.,
+2024; Samvelyan et al., 2024; Rahman et al., 2025).
+For model-based red teaming, the basic setup is to
+generate attacks using a custom red teaming model,
+run them against a target LLM and use an evaluator
+to determine whether the attack is successful (Perez
+et al., 2022). Successful attacks can be identified
+in a number of ways. The simplest is to generate a
+large enough number of attacks from the red team-
+ing model and filter them using the evaluator. More
+sophisticated approaches improve the red teaming
+model using the evaluator feedback through su-
+pervised or reinforcement learning (Perez et al.,
+2022). More recent methods attempt to augment
+the reward function during training of the red team
+model to result in more diverse outputs (Ge et al.,
+2024; Chen et al., 2025b). Other works increase
+the diversity of attack strategies identified in the
+red teaming stage by mining attack tactics from in-
+the-wild human interactions (Jiang et al., 2024b).
+However, all of these works rely on content safety
+classifiers as evaluators and are optimized only in
+this context.
+Content safety classifiers are trained to identify
+a number of types of harmful responses such as
+offensive, racist, and sexist responses, and indi-
+cators of criminal activity and self harm (Ghosh
+et al., 2025; Han et al., 2024; Markov et al., 2023).
+However, as the capabilities of LLMs are expanded
+and they are deployed to a wider range of appli-
+cations, the types of malicious intents an adver-
+sary may have grow over time. Some examples
+of LLM vulnerabilities that arise with the increas-
+ing focus on code generation capabilities of LLMs
+include package hallucinations which can lead to
+exploitable vulnerabilities (Krishna et al., 2025),
+emitting non printable ANSI escape codes that can
+interfere with a user’s terminal or be used to leak
+data (Rehberger, 2024), or running code during
+intermediate tool calls that exploit vulnerabilities
+in commonly used packages (Pisu et al., 2024).
+While some attempts have been made to develop
+benchmarks to assess the vulnerability of LLMs
+to some of these issues (Wan et al., 2024; Guo
+et al., 2024), these are static benchmarks that may
+be over-optimized for (Zhou et al., 2023; Banerjee
+et al., 2024). This may result in a false sense of
+security, as new types of malicious intents or attack
+vectors that get identified over time require updated
+versions of these benchmarks.
+In this work, we build upon existing methods
+3
+
+that use RL to finetune red teaming models (Perez
+et al., 2022) but expand beyond the traditional sce-
+nario where the reward function is based on a con-
+tent safety evaluator. We expand to both a wider
+range of adversarial goals, and explore the case
+where a good evaluator for the adversarial goal is
+not available at training time, necessitating the use
+of LLM-as-a-judge evaluations to obtain reward
+scores.
+3
+Method
+Figure 1 provides an overview of our pipeline to
+train a red teaming model that can generate ef-
+fective attacks for adversarial goals not seen dur-
+ing training time. This includes an attack genera-
+tion input prompt creation phase that uses a seed
+generation LLM to diversify input prompts used
+to generate attacks, and an evaluation rubric to
+determine whether an adversarial goal has been
+achieved. This evaluation rubric is then used a
+part of a Reinforcement Learning (RL) process to
+update the red teaming model.
+3.1
+Adversarial Goals
+Most prior works on automated red team-
+ing, whether they are adaptive jailbreaking ap-
+proaches (Zou et al., 2023; Mehrotra et al., 2024;
+Samvelyan et al., 2024; Rahman et al., 2025) or
+training a custom red teaming model (Perez et al.,
+2022; Chen et al., 2025a) do not explicitly discuss
+an overall adversarial goal or specific behavior they
+attempt to elicit, except to mention that it is an un-
+desirable response. We believe it is important to
+explicitly list out adversarial goals for which we
+aim to generate attacks, and use the attack success
+rate per specific goal as the evaluation measure
+to ensure that our model provides both efficacy at
+vulnerability detection and coverage over possible
+goals for which attacks need to be generated.
+For this work, we choose adversarial goals from
+garak (Derczynski et al., 2024) - a popular open-
+source framework for discovering vulnerabilities in
+LLMs. garak consists of probes that use adversar-
+ial prompts to elicit specific types of undesirable
+behavior from LLMs and detectors that can analyze
+an LLM response for a particular type of undesir-
+able behavior. While many probes in garak contain
+sets of adversarial prompts known to be generally
+effective at eliciting the behavior in question, we
+do not use these prompts. Our goal is to develop a
+pipeline that can use natural language descriptions
+of the adversarial goals the probes are trying to
+achieve and generate adversarial prompts that can
+elicit this type of behavior from target LLMs. We
+use detectors from garak at evaluation time to ver-
+ify that our generated adversarial prompts actually
+produce the behavior in question, but in line with
+our goal we do not make them available at training.
+We select 2 sets of adversarial goals – in-domain
+goals which are used during training (listed in Table
+1), and a held-out set of goals only made available
+for out-of-domain evaluation (see Table 2). Note
+that some of these goals could be detected using
+a typical content safety classifier – especially one
+that provides categories of violation (Ghosh et al.,
+2025). However, we do not make such a classifier
+available at training time as we wish to ensure that
+our model can generalize to novel adversarial goals.
+We specifically select our out-of-domain goals for
+the red team model evaluation to include adversar-
+ial goals that are typically underrepresented or not
+represented at all in content safety datasets. When
+we perform out-of-domain evaluation, we consider
+a generated attack successful against a target LLM
+if the garak detector associated with the adver-
+sarial behavior it is expected to elicit detects that
+behavior in the response from the target LLM.
+3.2
+Reward Function
+We wish to train a red teaming model using rein-
+forcement learning without necessarily having ac-
+cess to a strong evaluator for the adversarial goals
+used during training. Hence, to obtain rewards,
+we used LLM-as-a-judge with rubrics (Cook et al.,
+2024) generated by a seed generation LLM for
+each adversarial goal to determine whether gen-
+erated adversarial attacks were successful. In our
+experiments, we used rubrics generated by Qwen3-
+235B-A22B (Qwen-Team, 2025). More details
+about the rubric generation process are included in

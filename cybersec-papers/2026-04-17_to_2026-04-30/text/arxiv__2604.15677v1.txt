@@ -1,0 +1,1747 @@
+1
+DEMUX: Boundary-Aware Multi-Scale Traffic Demixing for
+Multi-Tab Website Fingerprinting
+Yali Yuan, Yaosheng Liu, Qianqi Niu, Guang Cheng
+Abstract—Website fingerprinting (WF) attacks infer the web-
+sites visited by users from encrypted traffic in anonymous
+networks such as Tor. Existing deep learning methods achieve
+high accuracy under the single-tab assumption but degrade
+substantially when users open multiple tabs concurrently, pro-
+ducing interleaved traffic that transforms WF into an implicit
+demixing problem. We identify three structural requirements for
+effective multi-tab demixing, namely signal integrity at segment
+boundaries, multi-scale local modeling, and relative temporal
+association of dispersed fragments, and show that no prior
+method satisfies all three simultaneously. We propose DEMUX, a
+designed framework that addresses these requirements through
+three tightly coupled components. A Boundary Preserving Ag-
+gregation Module employs overlapping window partitioning with
+joint packet-level and burst-level feature extraction. A Multi-
+Scale Parallel CNN captures heterogeneous temporal patterns
+via parallel branches. A two-stage Transformer encoder with
+Rotary Positional Embedding enables robust cross-window frag-
+ment association. The Boundary Preserving Aggregation Mod-
+ule additionally serves as a plug-and-play preprocessor that
+consistently improves existing baselines without architectural
+modification. Extensive experiments across closed-world, open-
+world, defense-augmented, dynamic-tab, and cross-configuration
+settings demonstrate that DEMUX achieves state-of-the-art per-
+formance. In the challenging closed-world 5-tab setting, DEMUX
+attains a P@5 of 0.943 and MAP@5 of 0.961, outperforming the
+strongest baseline by 9.2 and 6.2 percentage points respectively,
+confirming its strong robustness in complex multi-tab demixing
+scenarios.
+Index Terms—Website fingerprinting, Tor, Traffic analysis,
+Multi-tab, Deep learning, Transformer.
+I. INTRODUCTION
+W
+ITH the rapid expansion of Internet technologies, net-
+work communication has become integral to daily life.
+However, the inherent openness of the Internet introduces sig-
+nificant privacy and security risks, driving the development and
+widespread adoption of anonymous communication systems
+such as The Onion Router (Tor) [1]. Although Tor employs
+multi-layer encryption to protect user anonymity, it remains
+susceptible to the analysis of encrypted traffic patterns [2].
+By exploiting observable features such as packet timing and
+size, an adversary can infer the websites a user visits, an
+attack known as Website Fingerprinting (WF) [3], as illustrated
+in Fig. 1. Over the past decade, WF attacks have advanced
+substantially, evolving from hand-crafted features with con-
+ventional classifiers [4]–[7] to the deep learning paradigm
+Yali Yuan and Yaosheng Liu contributed equally to this work.
+Yali Yuan, Qianqi Niu and Guang Cheng are with the School of Cyber
+Science and Engineering, Southeast University, Nanjing 211189, China.
+Yaosheng Liu is with the School of Artificial Intelligence, Southeast
+University, Nanjing 211189, China.
+Guang Cheng is the corresponding author. (e-mail: gcheng@seu.edu.cn).
+established by Deep Fingerprinting (DF) [8], which feeds raw
+packet-direction sequences into stacked convolutional layers to
+learn discriminative representations in an end-to-end manner.
+Under the single-tab assumption, wherein each trace corre-
+sponds to exactly one target website, these approaches achieve
+identification rates exceeding 90% in controlled settings.
+Real-world browsing, however, rarely conforms to the
+single-tab assumption. Users routinely open multiple websites
+concurrently, producing a single observed trace that superim-
+poses the traffic of k overlapping websites, where k is dynamic
+and unknown to the attackers. This transforms WF from a clas-
+sification problem into a traffic demixing problem, in which
+the attackers must recover the identities of all k websites from
+a single entangled observation without prior knowledge of k or
+the temporal boundaries between constituent flows. This shift
+is qualitative rather than merely quantitative. Rather than an
+easy scaling of the single-tab task, multi-tab demixing poses
+a fundamentally different problem whose structure imposes
+architectural constraints that no existing method was designed
+to satisfy.
+To understand what these constraints entail, we system-
+atically analyze the architectural gap between the multi-tab
+demixing problem and existing WF architectures. Prior work
+has largely built upon the DF architecture. This CNN-based
+backbone has underpinned a broad family of subsequent
+single-tab methods [9]–[15]. Although efforts to extend WF
+to multi-tab settings have leveraged attention mechanisms
+and structured traffic representations to model long-range
+dependencies in concurrent traffic [16]–[19], these methods
+likewise retain the single-scale local feature extraction design
+of DF. Among all existing multi-tab methods, the ARES
+framework [17], [19] has demonstrated the strongest overall
+performance. ARES’23 [17] established a Transformer-based
+multi-tab WF baseline and contributed the benchmark datasets
+that have since become standard in the field. ARES’25 [19]
+subsequently introduced an improved Transformer backbone
+that extracts both packet-level and burst-level features per
+window, achieving state-of-the-art results across multiple eval-
+uation scenarios. However, even ARES shares foundational
+limitations inherited from the DF architecture. This analysis
+reveals three requirements that any effective demixing archi-
+tecture need to satisfy simultaneously, yet no existing method
+fulfills all three. We summarize these requirements as follows.
+R1. Signal integrity at segment boundaries. In multi-
+tab traffic, burst-boundary transitions, where the dom-
+inant contributing website changes, carry the most
+discriminative cross-source switching signals. Fixed
+non-overlapping window segmentation, inherited from
+single-tab methods, systematically fragments these tran-
+arXiv:2604.15677v1 [cs.CR] 17 Apr 2026
+
+2
+sitions across adjacent windows, destroying the very
+evidence required to distinguish co-occurring sources.
+R2. Multi-scale local modeling. Traffic fragments from
+different websites coexist at diverse temporal scales
+within a mixed trace. Burst patterns and periodic loading
+rhythms demand simultaneously short and long recep-
+tive fields, a diversity that single-scale CNN backbones
+cannot accommodate.
+R3. Relative temporal association of dispersed fragments.
+Fingerprint evidence for a single website may appear
+in fragments scattered throughout the traffic, with ar-
+bitrary concurrent traffic in between. Absolute posi-
+tional encodings tie position indices to the superimposed
+mixture rather than to any individual source, making
+them structurally inadequate for cross-window fragment
+association under varying tab compositions.
+To address these requirements, we propose DEMUX, a
+multi-tab WF framework whose architecture is derived di-
+rectly from the structural properties of the demixing prob-
+lem. DEMUX departs from prior work in two principled
+ways. First, it replaces fixed non-overlapping segmentation
+with an overlapping window partitioning strategy that en-
+sures boundary-adjacent burst transitions are always captured
+intact within at least one window, directly satisfying (R1).
+Second, it replaces the single-scale CNN backbone with a
+Multi-Scale Parallel CNN (MSP-CNN) that simultaneously
+extracts fine-grained burst-level patterns and coarse-grained
+periodic structures, thereby addressing (R2). The resulting
+multi-scale representations are fused via pointwise convolution
+and processed by a Transformer encoder equipped with Rotary
+Positional Embedding (RoPE), which models long-range tem-
+poral dependencies through relative positional offsets rather
+than absolute indices, directly satisfying (R3). Beyond its role
+within DEMUX, the overlapping window strategy is designed
+as a plug-and-play, model-independent module, termed the
+Boundary Preserving Aggregation Module, that can replace
+the aggregation component of any WF architecture relying on
+temporal or burst-derived features. We validate its generality
+by integrating Boundary Preserving Aggregation Module into
+several representative baselines and demonstrate consistent and
+statistically significant improvements across all of them. The
+contributions of this paper are summarized as follows.
+• We propose DEMUX, a multi-tab WF framework co-
+designed to satisfy the three structural requirements
+(R1–R3) that multi-tab demixing imposes on any effec-
+tive architecture, requirements that no existing method
+fulfills. DEMUX integrates three components, namely
+overlapping boundary-preserving aggregation, multi-scale
+parallel convolution, and a RoPE-enhanced Transformer
+encoder, that work in concert to achieve robust demixing
+under obfuscated concurrent traffic.
+• We propose a plug-and-play, universally applicable
+Boundary Preserving Aggregation Module that replaces
+fixed non-overlapping segmentation with overlapping
+window partitioning, preserving burst-boundary transition
+signals critical for demixing. While Boundary Preserving
+Aggregation Module serves as the core component of
+User
+Attacker
+Entry
+Middle
+Exit
+Multi-tab site
+Goo...
+Y...
+T...
+F...
+Fig. 1. Website fingerprinting attackers monitor the encrypted traffic between
+the user and the Tor entry node to infer which websites the user is browsing.
+DEMUX for satisfying (R1), it is generalizable to any WF
+pipeline relying on temporal or burst-derived features. We
+validate this generality by integrating Boundary Preserv-
+ing Aggregation Module into representative baselines in-
+cluding DF, TMWF, and ARES’25, achieving consistent
+improvements without any architectural modification.
+• We conduct evaluations across closed-world, open-world,
+defense-augmented, dynamic-tab, and cross-configuration
+settings. DEMUX achieves state-of-the-art performance
+across all settings. In the closed-world 5-tab setting,
+DEMUX attains a P@5 of 0.943 and MAP@5 of 0.961,
+outperforming the strongest baseline by 9.2 and 6.2
+percentage points respectively. Under the most challeng-
+ing TrafficSliver defense, DEMUX maintains a P@2 of
+0.940, exceeding the next-best competitor by 2.5 points.
+Notably, these advantages widen as the number of concur-
+rent tabs increases, confirming that the strong robustness
+of DEMUX in practical multi-tab demixing scenarios.
+II. RELATED WORK
+Website fingerprinting has been extensively studied as a
+traffic analysis technique in the context of anonymity net-
+works and encrypted communications. We organize existing
+work along the technical lineage most relevant to DEMUX,
+progressing from early statistical approaches, through classi-
+cal machine learning methods, then the deep convolutional
+architecture introduced by DF and its subsequent extensions,
+to recent multi-tab methods.
+A. Single-Tab Website Fingerprinting
+Early Statistical and Classical Machine Learning Methods:
+Early WF research paired hand-crafted features with conven-
+tional classifiers. Representative examples include the kNN-
+based attack [20], which evaluated WF under large open-world
+settings, and CUMUL [5], which maps traces into a compact
+cumulative representation to enable scalable classification.
+Hayes and Danezis [4] proposed k-fingerprinting, a random
+forest based approach designed for robustness and scalability,
+and evaluated its performance against several WF defenses.
+These works established foundational WF threat models and
+evaluation protocols, but uniformly assume that a traffic trace
+corresponds to a single website visit, an assumption that
+becomes untenable under real-world multi-tab browsing.
+
+3
+The DF Architecture and Its Variants: A major advance
+occurred with Deep Fingerprinting (DF) [8], which showed
+that stacked 1D convolutional networks operating directly on
+raw packet direction sequences, represented as fixed-length ±1
+arrays of up to 5000 packets, can yield highly discriminative
+fingerprint representations without manual feature engineering.
+DF demonstrated strong performance on Tor traffic and was
+the first attack effective against WTF-PAD [21]. This approach
+of treating the entire trace as a single 1D sequence and
+processing it with a single-scale convolutional backbone has
+since become the standard foundation for deep learning based
+WF methods.
+Subsequent works extend the DF backbone in different
+directions. Var-CNN [10] supplemented direction sequences
+with inter-packet timing and metadata, using a ResNet-based
+architecture to improve data efficiency and open-world perfor-
+mance. Tik-Tok [22] adopted the same CNN structure as DF
+but replaced the direction-only input with direction-multiplied-
+by-timestamp values, demonstrating that timing signals can be
+effectively exploited alongside directional features. Triplet Fin-
+gerprinting [23] introduced N-shot learning to improve porta-
+bility and reduce data collection burden. Cherubin et al. [24]
+conducted the first evaluation using genuine Tor traffic as
+ground truth, providing a realistic open-world benchmark. Ne-
+tAugment and NetCLR [25] proposed trace augmentation and
+self-supervised contrastive learning over direction sequences to
+enhance generalization across unobserved network conditions.
+A distinct representation choice appears in RF [26], which
+constructs a Traffic Aggregation Matrix (TAM) by counting
+packet directions within fixed time slots, forming a 2D struc-
+ture that tolerates timing perturbations introduced by defenses.
+LASERBEAK [27] further introduced a Transformer-based
+approach with multi-channel feature representations including
+direction, timing, and size, demonstrating enhanced effective-
+ness under FRONT defenses.
+Despite the diversity of these approaches in representation
+and architecture, all operate under the single-tab assumption,
+where each trace largely preserves the holistic fingerprint of
+one target website. This assumption is fundamentally chal-
+lenged in multi-tab browsing, where traffic from multiple
+websites is interleaved, producing a qualitative change in
+problem structure that we characterize in this work as implicit
+traffic demixing.
+B. Multi-Tab and Multi-Label Website Fingerprinting
+Early Multi-Tab Work: Multi-tab browsing fundamentally
+changes the WF problem structure. A single observed trace
+may contain overlapping flows from multiple websites, and
+the attacker must identify a set of visited sites rather than
+a single label. Xu et al. [28] explicitly studied this setting
+and demonstrated that single-tab WF performance degrades
+severely when the single-page assumption is violated, moti-
+vating dedicated multi-tab attacks.
+Sequence-Based Multi-Tab Methods:
+Several multi-tab
+methods process traffic without explicit multi-level burst
+aggregation, instead relying on packet direction sequences
+or windowed encodings as their primary input representa-
+tion. BAPM [16] generates a tab-aware representation from
+packet direction sequences and performs block division to
+separate concurrent page tabs as clearly as possible, using
+attention-based profiling to group blocks belonging to the
+same tab. TMWF [18] adopts DF’s single-scale CNN as a
+local feature extractor and replaces DF’s classification head
+with a Transformer encoder, demonstrating the utility of
+attention mechanisms for associating features across mixed-
+session traces. ARES’23 [17] advanced this line by explicitly
+formulating multi-tab WF as multi-label classification under a
+Transformer backbone with windowed packet-direction inputs,
+and contributed the closed-world and open-world benchmark
+datasets that have since become standard in the field. Despite
+differences in architecture, these methods share the absence
+of burst-level aggregation, and all rely on single-scale local
+feature encoding inherited from the DF architecture.
+Aggregation-Based Multi-Tab Methods: ARES’25 [19] de-
+parted from the above line by introducing Multi-Level Traffic
+Aggregation as its key contribution. The traffic trace is divided
+into fixed-size non-overlapping windows, and within each
+window both packet-level features (the sequence of packet
+directions) and burst-level features (burst count, average burst
+size, inter-burst intervals) are extracted. These per-window
+multi-level aggregated features are fed into an improved
+Transformer-based classifier. The structured local represen-
+tation provided by Multi-Level Traffic Aggregation substan-
+tially improves robustness over sequence-based methods, and
+ARES’25 represents the current state of the art in multi-tab
+WF.
+Limitations of Existing Methods: Examining the above
+methods collectively reveals three structural limitations that
+have not been simultaneously addressed. First, all prior multi-
+tab methods rely on single-scale local feature extraction. Small
+convolution kernels capture fine-grained burst patterns but are
+sensitive to noise from concurrent flows, while large kernels
+model coarser structures but oversmooth the burst-level cues
+critical for fingerprint discrimination. Neither operating point
+adequately handles the multi-scale temporal diversity of multi-
+tab traffic, leaving (R1) unaddressed. Second, ARES’25’s
+fixed non-overlapping segmentation fragments burst bound-
+aries across adjacent windows, systematically discarding the
+inter-burst transition cues that are most informative for distin-
+guishing concurrent sources, leaving (R2) unaddressed in ex-
+isting fixed-window methods. Third, Transformer-based multi-
+tab methods [17]–[19] adopt absolute or learned positional
+encodings. However, the absolute positions of fragments from
+the same website are determined by unpredictable interleaving
+with concurrent flows, making absolute indices unreliable for
+fragment association. Relative temporal context is structurally
+more appropriate for the demixing problem, yet remains
+unexploited in existing approaches, leaving (R3) unaddressed.
+Collectively, these limitations indicate that multi-tab traffic
+demixing requires an architecture jointly designed to satisfy
+all three requirements, a goal that motivates the design of
+DEMUX.
+III. THREAT MODEL
+In our threat model, clients use Tor or similar anonymous
+communication systems to conceal their online activity and
+
+4
+may open k browser tabs concurrently or at short intervals
+within a single browsing session, where k is dynamic and
+unknown to the attacker. The resulting encrypted traffic orig-
+inates from multiple target websites and overlaps temporally,
+preventing any individual website from presenting a complete,
+isolated traffic pattern. We further consider the deployment
+of fingerprint defense mechanisms such as WTF-PAD [21],
+FRONT [29], and TrafficSliver [7], which operate at the client
+browser or Tor relay level to perturb traffic characteristics
+through techniques including dummy packet injection, adap-
+tive padding, and multi-path traffic splitting.
+As illustrated in Fig. 1, we assume that the attacker is a
+passive eavesdropper positioned between the client and the
+Tor entry node, capable of capturing packet-level metadata
+for all outgoing and incoming traffic. Specifically, the at-
+tacker observes a sequence of packets, each represented as
+a direction-timestamp pair (di, ti), where di ∈{+1, −1}
+denotes the packet direction (outgoing or incoming) and ti
+denotes the arrival timestamp. No payload content is acces-
+sible. The attacker’s objective is to infer the complete set of
+websites visited by the client within a session from this mixed,
+encrypted observation, thereby undermining the anonymity
+guarantees provided by the underlying network.
+Our threat model builds upon the multi-tab WF setting
+established by ARES’23 [17], whose benchmark datasets we
+directly adopt for no-defense evaluation. Compared to earlier
+formulations [16], [18] that assume a fixed and known k,
+a single browser version, and traces collected exclusively
+from website homepages, ARES’23 relaxed these constraints
+by supporting dynamic tab counts ranging from 2 to 5,
+heterogeneous Tor Browser versions (10.x–13.x), and a more
+realistic crawling strategy. We adopt this setting without mod-
+ification. The attacker must robustly recover the full set of
+visited websites from mixed traffic under unknown tab counts
+and heterogeneous browser environments, without any prior
+knowledge of k or version-specific traffic characteristics.
+Regarding defense scenarios, since existing defense mecha-
+nisms are designed for single-tab traffic, we follow the synthe-
+sis procedure of [18] to construct two-tab defense datasets by
+combining independently defended single-tab traces. Defense
+evaluation is therefore conducted exclusively in the 2-tab
+setting. For the no-defense setting, we evaluate across the
+full range of 2 to 5 concurrent tabs. Consistent with prior
+work [17]–[19], we retain two standard evaluation scenarios.
+In the closed-world scenario, the client visits only websites
+from the Alexa Top-100 monitored set and the attacker has
+full training coverage of all monitored sites. In the open-
+world scenario, the client may visit arbitrary websites and
+the attacker possesses training samples drawn solely from the
+monitored subset.
+IV. FRAMEWORK
+This section presents the DEMUX framework. We formu-
+late the multi-tab WF problem and provide an architectural
+overview (Section IV-A), then detail the three components in
+Sections IV-B–IV-D.
+A. Problem Formulation and Architecture Overview
+Problem formulation. Let T
+= {(di, ti)}N
+i=1 denote an
+observed encrypted traffic trace of N packets, where di ∈
+{+1, −1} encodes the packet direction (outgoing/incoming)
+and ti ∈R+ is the arrival timestamp. In a multi-tab browsing
+session, T is a temporally superimposed mixture of flows
+from K concurrently visited websites, where K is unknown
+to the attacker. The objective is to infer a binary label vector
+y = [y1, . . . , yM]⊤∈{0, 1}M over M monitored websites,
+where ym
+=
+1 if and only if website m was visited.
+This constitutes a multi-label classification problem whose
+difficulty stems from two entangled factors: the input T is
+an unstructured superposition of multiple sources, and both
+the number of sources K and their temporal boundaries are
+unknown.
+Architecture overview. As motivated by the three structural
+requirements identified in Section I, DEMUX comprises three
+sequentially composed modules, each targeting one require-
+ment:
+1) Boundary
+Preserving
+Aggregation
+Module
+(Sec-
+tion IV-B) partitions T into overlapping temporal win-
+dows and aggregates each window into a joint packet-
+level and burst-level feature vector, producing a se-
+quence X ∈RL×C that preserves burst-boundary tran-
+sition signals (R1).
+2) Multi-Granularity Local Analysis (Section IV-C) pro-
+cesses X through a Multi-Scale Parallel CNN (MSP-
+CNN) with three parallel branches of heterogeneous
+kernel sizes, yielding a unified local feature map H ∈
+RL′×d that jointly encodes fine-grained burst patterns
+and coarse-grained periodic structures (R2).
+3) Global
+Association
+(Section
+IV-D) models long-
+range temporal dependencies via a two-stage Trans-
+former encoder [30] with Rotary Positional Embedding
+(RoPE) [31], associating dispersed fingerprint fragments
+from the same website across the full sequence (R3).
+The complete architecture is illustrated in Fig. 2, and all
+hyperparameters are listed in Table I.
+B. Boundary Preserving Aggregation Module
+Motivation. We first define two key concepts. A burst is
+a maximal consecutive sub-sequence of packets sharing the
+same direction. A burst boundary is the transition point
+between two successive bursts with opposing directions. In
+multi-tab traffic, burst boundaries carry the most discriminative
+cross-source switching signals, as they mark the moments at
+which the dominant contributing website changes. Conven-
+tional fixed-size non-overlapping windows (length W, stride
+W), widely adopted in prior WF pipelines [19], systematically
+fragment these boundaries: a burst straddling a window edge
+is split into two contextually isolated halves, destroying the
+switching evidence critical to R1.
+Overlapping window partitioning. To address this limitation,
+the Boundary Preserving Aggregation Module replaces non-
+overlapping slicing with a sliding window of length W and
+stride ∆< W. Given a trace of total duration T, the k-th
+
+5
+w0
+w2
+w4
+w6
+w8
+w1
+w3
+w5
+w7
+Overlapping Window Partition
+Packet-level Features
+Burst-level Features
+Pointwise Convolution
+Convblock(n)
+...
+... ...
+... ...
+...
+...
+...
+...
+...
+Kernel=3
+Kernel=3
+Kernel=3
+Kernel=5
+Kernel=7
+...
+...
+...
+...
+Kernel=5
+Kernel=5
+...
+...
+...
+...
+Kernel=7
+Kernel=7
+Obfuscated Traffic
+Multi-tab Website
+Input：Packet-level Features+Burst-level Features
+Multi-scale Concat
+Output：Packet-level Features+Burst-level Features
+Input：Local Multi-granularity Feature
+Output：Local Multi-granularity Feature
+Pointwise Convolution
+Pointwise Convolution
+Boundary Preserving Aggregation Module
+1
+3 Global Association
+Output: Classification Result
+Transformer Encoder 
+with RoPE
+Transformer Encoder
+Tab 1
+...
+Tab 2
+Tab 3
+Tab 4
+Tab 5
+Multi-Granularity Local Analysis
+2
+Fig. 2. The DEMUX framework diagram includes the Boundary Preserving Aggregation Module, Multi-Granularity Local Analysis, and Global Association
+modules. It also provides detailed visualizations of the convolutional blocks (with kernel size = n) and the Transformer encoder, which incorporates a Multi-
+Headed Self-Attention mechanism enhanced with Rotary Positional Embedding (RoPE).
+window covers the time interval [k∆, k∆+ W). The total
+number of windows is
+L =
+T −W
+∆
+
++ 1.
+(1)
+Since ∆< W, every point in the trace is covered by r =
+⌈W/∆⌉consecutive windows, guaranteeing that every burst
+boundary is fully contained within at least one window with
+sufficient context on both sides. In our implementation, W =
+20 ms and ∆= 10 ms, yielding a 50% overlap ratio and r = 2.
+Multi-level feature aggregation. Following the multi-level
+feature design introduced by ARES’25 [19], each window
+wk (k = 1, . . . , L) extracts features at two complementary
+granularities:
+• Packet-level features pk ∈RCp: the ordered sequence of
+packet directions di ∈{+1, −1} within wk, capturing
+fine-grained directional dynamics.
+• Burst-level features bk ∈RCb: computed by grouping
+consecutive same-direction packets into bursts and ex-
+tracting four structural descriptors—burst count, mean
+burst size, burst size variance, and mean inter-burst
+interval—that characterize the temporal rhythm of the
+window.
+The two representations are concatenated into a unified win-
+dow feature vector:
+xk =
+
+pk ∥bk
+
+∈RC,
+C = Cp + Cb,
+(2)
+and the module output is the sequence:
+X =
+
+x1, x2, . . . , xL
+⊤∈RL×C.
+(3)
+Packet-level features supply the directional evidence needed
+to discriminate burst shapes, while burst-level features supply
+the structural context needed to associate consecutive bursts
+from the same source. Together with overlapping partition-
+ing, X constitutes a boundary-aware, structurally informative
+representation that directly satisfies R1.
+Plug-and-play applicability. The Boundary Preserving Ag-
+gregation Module is designed as a model-agnostic prepro-
+cessing component: it can replace the aggregation stage of
+any WF pipeline that relies on temporal or burst-derived fea-
+tures without modifying the downstream model. Its consistent
+improvements across diverse baselines are demonstrated in
+Section V-J.
+C. Multi-Granularity Local Analysis
+Motivation. Given X, the local analysis module must extract
+discriminative per-window and inter-window patterns. As dis-
+cussed in Section I, fragments from different websites coexist
+at heterogeneous temporal scales within a mixed trace: fine-
+grained burst patterns demand short receptive fields, while
+coarse-grained periodic loading rhythms require long receptive
+fields. Conventional single-kernel CNN backbones [8], [18]
+enforce a hard trade-off between these two regimes, making
+them structurally insufficient for R2.
+Multi-Scale Parallel CNN (MSP-CNN). MSP-CNN resolves
+this trade-off by deploying B = 3 independent convolutional
+branches with distinct kernel sizes ki ∈{3, 5, 7}:
+Hi = Rki(X) ∈RL′×dc,
+i ∈{1, 2, 3},
+(4)
+where Rki(·) denotes a branch consisting of stacked Residual
+1D Convolutional Blocks (RCBs) with kernel size ki, and L′
+reflects temporal compression from pooling layers. Branch 1
+(k = 3) focuses on short-range burst-level patterns; Branch 2
+(k = 5) captures intermediate-range structures; Branch 3
+(k = 7) models coarse-grained periodic behaviors with re-
+duced noise sensitivity. All kernel sizes are odd to enable
+symmetric zero-padding and center-aligned feature extraction.
+
+6
+Each RCB follows a standard residual design [32]:
+RCBk(z) = BN
+ σ
+ Convk(z)
+
++ z,
+(5)
+where Convk is a 1D convolution with kernel size k, σ(·)
+is the activation function, and BN denotes batch normal-
+ization [33]. The residual shortcut enables each branch to
+selectively amplify scale-specific patterns without redundantly
+relearning shared low-level statistics.
+Multi-scale feature fusion. The three branch outputs are
+concatenated along the channel dimension:
+Hcat =
+
+H1 ∥H2 ∥H3
+
+∈RL′×3dc.
+(6)
+Directly passing Hcat to the subsequent Transformer would
+triple the channel dimensionality, increasing computation and
+introducing cross-branch redundancy. We therefore apply a
+Pointwise Convolution (PWConv), i.e., a 1 × 1 convolution
+operating exclusively along the channel dimension, to fuse and
+compress the multi-scale representations:
+H = PWConv(Hcat) ∈RL′×d,
+(7)
+where 3dc = 768 and d = 256 in our implementation (Table I).
+PWConv performs cross-scale feature interaction and dimen-
+sionality reduction without altering the temporal structure,
+serving as a lightweight bottleneck that distills complementary
+scale-specific signals into a compact representation for global
+modeling.
+D. Global Association
+Motivation. In multi-tab traffic, fingerprint cues from the same
+website are temporally dispersed throughout H, interleaved
+with fragments from concurrent sources. Local CNN features
+alone cannot associate windows sharing a common source—
+this requires long-range temporal reasoning, motivating a
+Transformer-based global association module. We adopt a
+two-stage encoder design, where Stage 1 establishes relative
+positional alignment among windows (R3) and Stage 2 refines
+the globally associated representation in an expanded feature
+space before classification. An inter-stage pointwise projection
+decouples the two stages, keeping each architecturally focused
+on its respective purpose.
+Stage 1: RoPE-enhanced Transformer encoder. Let Z(0) =
+H ∈RL′×d. At each layer ℓ∈{1, . . . , L1}, query, key, and
+value matrices are computed via learned linear projections:
+Q(ℓ) = Z(ℓ−1)W(ℓ)
+Q ,
+(8)
+K(ℓ) = Z(ℓ−1)W(ℓ)
+K ,
+(9)
+V(ℓ) = Z(ℓ−1)W(ℓ)
+V ,
+(10)
+with W(ℓ)
+Q , W(ℓ)
+K , W(ℓ)
+V
+∈Rd×d.
+Standard absolute positional encodings—whether sinu-
+soidal [30] or learned—assign positions by absolute index. In
+multi-tab traffic, this is unreliable because the absolute position
+of any website’s fragment is determined by unpredictable
+interleaving with concurrent flows and varies across traces.
+We instead adopt Rotary Positional Embedding (RoPE) [31],
+which encodes positions by rotating query and key vectors
+in pairs of embedding subspaces. For position index m, the
+j-th two-dimensional subspace is rotated by angle mθj with
+θj = 10000−2j/d:
+˜Q(ℓ) = RoPE
+ Q(ℓ)
+,
+˜K(ℓ) = RoPE
+ K(ℓ)
+.
+(11)
+The key property is that the resulting attention score depends
+only on relative positional offsets:
+
+ ˜Q(ℓ)
+m , ˜K(ℓ)
+n
+
+= f(m −n),
+(12)
+where f is a function of the relative displacement (m −n)
+alone. This property directly addresses R3: the attention score
+between two windows reflects their relative temporal distance,
+enabling the model to associate fragments from the same
+website regardless of their absolute positions in the mixed
+trace.
+Multi-head self-attention with nh heads and per-head di-
+mension dh = d/nh is computed as
+Z(ℓ) = Concatnh
+h=1
+ 
+Softmax
+ ˜Q(ℓ)
+h
+˜K(ℓ)⊤
+h
+√dh
+!
+V(ℓ)
+h
+!
+W(ℓ)
+O ,
+(13)
+where W(ℓ)
+O ∈Rd×d. Each attention sub-layer is followed by
+a position-wise feed-forward network (FFN) with hidden di-
+mension 4d, and both sub-layers employ residual connections
+and layer normalization [34]. After L1 layers, Stage 1 outputs
+Z(1) ∈RL′×d.
+Inter-stage feature expansion. A learnable pointwise projec-
+tion expands each token from dimension d to d′ > d before
+Stage 2:
+Z(2) = PWConv
+ Z(1)
+∈RL′×d′,
+(14)
+where d = 256 and d′ = 384. This expansion increases per-
+token representational capacity for Stage 2 refinement without
+perturbing the relative positional structure encoded by RoPE
+in Stage 1.
+Stage 2: Refinement encoder. Stage 2 applies L2 standard
+Transformer encoder layers (without RoPE) on Z(2) with
+hidden dimension d′:
+Z(3) = TransformerEncoderL2, d′ Z(2)
+∈RL′×d′.
+(15)
+Each layer follows the same residual self-attention and FFN
+structure as Stage 1, with FFN dimension 4d′.
+Classification head. The sequence Z(3) must be aggregated
+into a fixed-size vector for classification. Flattening all L′
+position vectors inflates parameter count and propagates posi-
+tional noise; plain average pooling suppresses discriminative
+variation across windows. We adopt an up-projection then
+pooling strategy: a linear projection Wup ∈Rd′×d′′ expands
+each position-wise feature before averaging:
+z = 1
+L′
+L′
+X
+l=1
+Z(3)
+l
+Wup ∈Rd′′,
+(16)
+where d′′ = 1024. Increasing per-token capacity before pool-
+ing improves robustness to the alignment variability inherent
+in overlapping segmentation of multi-tab traffic (confirmed in
+Section V-I).
+
+7
+The pooled vector z is passed to an MLP classifier with
+sigmoid activation:
+ˆy = σ
+ MLP(z)
+
+∈[0, 1]M,
+(17)
+where ˆym is the predicted probability that website m was
+visited. The model is trained end-to-end by minimizing the
+binary cross-entropy loss:
+L = BCE(ˆy, y).
+(18)
+Summary. The three modules of DEMUX form a tightly
+coupled pipeline derived directly from the structural require-
+ments of multi-tab traffic demixing: the Boundary Preserving
+Aggregation Module ensures burst-boundary integrity (R1),
+MSP-CNN provides multi-scale local perception (R2), and
+the RoPE-enhanced Transformer enables relative temporal
+association of dispersed fragments (R3). Their interactions are
+systematically analyzed in Sections V-J and V-I.
+V. EXPERIMENTS
+In this section, we conduct an extensive experimental eval-
+uation of DEMUX to assess its effectiveness and robustness
+in realistic multi-tab website fingerprinting scenarios. Our
+evaluation compares DEMUX against state-of-the-art (SOTA)
+baselines across a broad range of settings, including closed-
+world and open-world scenarios, dynamic tab configurations,
+and traffic traces protected by representative website finger-
+printing defense mechanisms. Beyond overall detection per-
+formance, we further conduct ablation analysis and sensitivity
+analysis to systematically analyze the contribution of key
+model components and architectural design choices.
+A. Experimental Setup
+1) Datasets: We evaluate DEMUX on datasets spanning
+four complementary scenarios.
+Multi-tab datasets. We adopt the closed-world and open-
+world benchmark datasets from Deng et al. [17], collected over
+Tor without any traffic defense. In the closed-world setting,
+the Alexa top-100 websites serve as monitored classes; each
+trace interleaves 2–5 concurrently loaded tabs drawn uniformly
+from this set, yielding 58,000 traces per tab configuration.
+In the open-world setting, each N-tab trace combines N−1
+monitored websites with one unmonitored site drawn from the
+Alexa top-20,000, yielding 64,000 traces per configuration.
+Defense datasets. To evaluate robustness under traffic
+obfuscation, we construct 2-tab datasets protected by three
+representative defenses: WTF-PAD [21], Front [29], and Traf-
+ficSliver [7]. Since these defenses target single-tab traffic, we
+follow the synthesis procedure of Jin et al. [18] and compose
+multi-tab traces by overlaying independently defended single-
+tab captures using the authors’ official implementations. WTF-
+PAD injects dummy packets during idle periods to obscure
+inter-burst timing gaps; Front concentrates dummy packet
+injection at the beginning of each trace using a Rayleigh
+distribution to obfuscate the feature-rich trace front with zero
+latency overhead; TrafficSliver splits traffic across multiple Tor
+entry nodes so that an adversary at any single node can observe
+only a partial fraction of packets, without introducing artificial
+delays or dummy traffic.
+Dynamic-tab dataset. To assess generalization under un-
+known tab counts, we construct a mixed training set by
+sampling 15,000 traces from each closed-world 2–5-tab split
+(60,000 traces total). Models trained on this set are evaluated
+separately on each fixed-tab test split.
+2) Baselines: We compare DEMUX against nine represen-
+tative methods spanning two architectural families.
+CNN-based: DF [8], Var-CNN [10], Tik-Tok [22], RF [26],
+and NetCLR [25].
+Transformer-based:
+BAPM
+[16],
+TMWF
+[18],
+ARES’23 [17], and ARES’25 [19].
+BAPM, TMWF, ARES’23, and ARES’25 are natively de-
+signed for multi-tab classification and trained with sigmoid
+outputs under binary cross-entropy (BCE) loss. The CNN-
+based single-tab methods are adapted by replacing their soft-
+max heads with sigmoid layers and retraining under the same
+BCE objective, enabling each to produce independent site-
+level probabilities. All baselines are re-implemented and re-
+trained within a unified preprocessing and training pipeline to
+ensure fair comparison.
+3) Evaluation Metrics:
+Following standard practice in
+multi-tab WF evaluation [17], [19], we report three com-
+plementary metrics—AUC [35], P@K, and MAP@K—each
+computed per instance and averaged over the test set. Let
+y ∈{0, 1}C be the ground-truth label vector and ˆy the
+corresponding predicted scores.
+AUC is computed per site via one-versus-all ROC curves
+and averaged, providing a threshold-free measure robust to the
+severe class imbalance inherent in multi-tab traffic.
+P@K measures the fraction of ground-truth sites recovered
+within the top-K predictions:
+P@K = 1
+K
+X
+l∈TopK(ˆy)
+yl.
+(19)
+MAP@K further rewards higher-ranked correct labels by
+accumulating prefix precisions:
+MAP@K = 1
+K
+K
+X
+k=1
+P@k.
+(20)
+AUC captures global discrimination, while P@K and
+MAP@K directly reflect the attacker’s practical success in
+deanonymizing the most likely visited sites.
+4) Implementation: DEMUX is implemented in PyTorch.
+Each dataset is partitioned once into train/validation/test sub-
+sets at an 8:1:1 ratio with a fixed random seed of 2025,
+governing data splits, weight initialization, and all stochastic
+components. For baseline methods, we adopt the open-source
+implementation framework of Deng et al. [36], retaining each
+model’s original training configuration as provided in the
+library to preserve the performance reported in
+
+[…middle truncated for length…]
+
+913
+0.989
+0.887
+0.926
+0.986
+0.851
+0.899
+DEMUX
+0.997
+0.926
+0.953
+0.996
+0.917
+0.947
+0.995
+0.931
+0.953
+0.996
+0.943
+0.961
+TABLE III
+OPEN-WORLD PERFORMANCE OF MULTI-TAB WF ATTACKS.
+Method
+2-tab
+3-tab
+4-tab
+5-tab
+AUC
+P@2
+MAP@2
+AUC
+P@3
+MAP@3
+AUC
+P@4
+MAP@4
+AUC
+P@5
+MAP@5
+BAPM
+0.932
+0.515
+0.610
+0.868
+0.379
+0.483
+0.837
+0.346
+0.443
+0.799
+0.308
+0.397
+NetCLR
+0.940
+0.575
+0.674
+0.874
+0.428
+0.546
+0.846
+0.382
+0.495
+0.791
+0.332
+0.442
+DF
+0.941
+0.577
+0.687
+0.861
+0.424
+0.565
+0.827
+0.374
+0.511
+0.780
+0.315
+0.446
+RF
+0.948
+0.639
+0.749
+0.880
+0.497
+0.656
+0.841
+0.430
+0.606
+0.788
+0.354
+0.520
+Tik-Tok
+0.955
+0.631
+0.736
+0.874
+0.451
+0.600
+0.835
+0.379
+0.521
+0.786
+0.317
+0.449
+Var-CNN
+0.969
+0.705
+0.791
+0.924
+0.567
+0.703
+0.829
+0.398
+0.549
+0.776
+0.322
+0.460
+TMWF
+0.969
+0.697
+0.761
+0.944
+0.616
+0.706
+0.929
+0.601
+0.683
+0.905
+0.542
+0.631
+ARES’23
+0.985
+0.806
+0.859
+0.976
+0.770
+0.844
+0.973
+0.774
+0.841
+0.931
+0.587
+0.702
+ARES’25
+0.992
+0.879
+0.920
+0.990
+0.868
+0.917
+0.988
+0.875
+0.918
+0.988
+0.869
+0.911
+DEMUX
+0.996
+0.913
+0.944
+0.995
+0.917
+0.948
+0.996
+0.931
+0.954
+0.998
+0.951
+0.966
+and evaluating separately on each fixed-tab test set. Figure 3
+shows that DEMUX achieves the highest AUC, P@K, and
+MAP@K across all twelve metric–setting pairs. Notably, its
+advantage over ARES’25 is maintained even in the 5-tab
+setting, where mixed training is most challenging due to
+higher label density and stronger inter-flow interference. These
+results indicate that DEMUX learns a unified representation
+that remains discriminative across varying tab compositions,
+rather than overfitting to the statistical properties of any single
+configuration.
+F. Cross-Configuration Generalization
+The dynamic evaluation above trains on all tab counts
+simultaneously. Here we ask a strictly harder question: how
+well does a model trained exclusively on one tab configuration
+transfer to unseen tab counts? For each of the four closed-
+world configurations spanning 2 to 5 tabs, we train a dedicated
+model and evaluate it on the remaining three, yielding twelve
+train–test permutations in total. Since P@K and MAP@K
+require knowledge of the true label count, we report AUC
+only. As shown in Figure 4, DEMUX achieves the best AUC
+in all twelve permutations, with margins over the strongest
+baseline ranging from 0.4 to 2.6 percentage points. The largest
+gains appear in high-to-low transfer settings, where a model
+trained on 5-tab traces is evaluated on 2-tab or 3-tab data, and
+DEMUX’s richer multi-scale representations generalise more
+effectively to simpler traffic mixtures. Taken together with
+the dynamic evaluation, these results confirm that DEMUX’s
+robustness is not contingent on prior knowledge of tab count
+distribution, a realistic constraint in practical WF deployment
+scenarios.
+G. Effectiveness of the Boundary Preserving Aggregation
+Module
+To quantify the contribution of Boundary Preserving Ag-
+gregation Module(BM) as a plug-and-play component, we
+integrate it into three representative baselines under the open-
+world 5-tab setting. For DF and TMWF, the +BM vari-
+ants replace their raw direction sequences with BM’s multi-
+level representation. For ARES’25, +BM replaces its Multi-
+Level Traffic Aggregation with BM. We additionally include
+DEMUX-Dir, a direction-only ablation variant of DEMUX
+that uses raw packet directions without timestamp or burst-
+level information.
+Figure 5 shows that BM consistently improves all three
+baselines. The gains are largest for DF, where AUC rises
+from 0.780 to 0.901 and P@5 from 0.315 to 0.545, reflecting
+the combined effect of boundary preservation and the richer
+multi-level input. TMWF improves similarly, with AUC from
+0.905 to 0.972 and P@5 from 0.542 to 0.771, confirming that
+cleaner local representations complement Transformer-based
+global modeling. Even ARES’25, which already employs
+
+10
+TABLE IV
+RESULTS UNDER THREE WEBSITE-FINGERPRINTING DEFENSES (2-TAB). THE DEFENSE DATASETS WERE SYNTHESIZED USING THE TMWF-PROVIDED
+SYNTHESIS CODE TO CONVERT SINGLE-LABEL TRACES INTO TWO-LABEL MIXTURES.
+Method
+WTF-PAD
+Front
+TrafficSliver
+AUC
+P@2
+MAP@2
+AUC
+P@2
+MAP@2
+AUC
+P@2
+MAP@2
+BAPM
+0.941
+0.562
+0.671
+0.897
+0.414
+0.506
+0.795
+0.286
+0.363
+NetCLR
+0.945
+0.672
+0.784
+0.914
+0.554
+0.671
+0.849
+0.396
+0.499
+DF
+0.954
+0.698
+0.810
+0.925
+0.566
+0.695
+0.853
+0.401
+0.506
+RF
+0.959
+0.769
+0.858
+0.955
+0.743
+0.838
+0.956
+0.702
+0.791
+Tik-Tok
+0.966
+0.751
+0.850
+0.945
+0.629
+0.759
+0.938
+0.570
+0.682
+Var-CNN
+0.976
+0.792
+0.876
+0.883
+0.429
+0.513
+0.986
+0.826
+0.889
+TMWF
+0.992
+0.869
+0.919
+0.981
+0.792
+0.866
+0.864
+0.399
+0.497
+ARES’23
+0.986
+0.881
+0.930
+0.972
+0.808
+0.881
+0.845
+0.429
+0.533
+ARES’25
+0.997
+0.951
+0.973
+0.997
+0.949
+0.971
+0.995
+0.915
+0.949
+DEMUX
+0.998
+0.959
+0.977
+0.998
+0.962
+0.979
+0.996
+0.940
+0.964
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Metric Value
+2-tab
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+3-tab
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+4-tab
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+5-tab
+AUC
+MAP@k
+P@k
+Fig. 3. Dynamic-tab evaluation on the closed-world dataset. Models are trained on a mixed 2–5-tab training set and evaluated separately on each fixed-tab
+test split.
+structured multi-level aggregation, gains meaningfully from
+BM substitution, with P@5 rising from 0.869 to 0.900.
+Comparing DEMUX-Dir and full DEMUX reveals that
+direction patterns alone yield a competitive AUC of 0.989,
+but incorporating BM’s multi-level representation raises this
+to 0.998 AUC and 0.951 P@5. The larger gap between
+DEMUX-Dir and DEMUX relative to that between ARES’25
+and ARES’25+BM suggests that BM’s benefits are amplified
+when the downstream model is designed to exploit multi-
+level temporal structure. These results support treating BM
+as a standard preprocessing component for any multi-tab WF
+pipeline that relies on temporal or burst-derived features.
+H. Convergence Analysis
+Figure 6 shows the learning curve of DEMUX in the open-
+world 5-tab setting. By epoch 40, DEMUX already reaches
+an AUC of 0.989, a P@5 of 0.875, and a MAP@5 of 0.921,
+surpassing ARES’25 across all three metrics before training is
+half complete.
+The curve exhibits a clear two-phase shape. In the first
+phase, spanning epochs 0 to 40, all three metrics rise steeply
+as the local modules learn short-range burst patterns from
+TABLE V
+FEATURE AGGREGATION IN THE OPEN-WORLD 5-TAB SETTING. UP-PROJ
+DENOTES A LEARNABLE POINTWISE EXPANSION OF EACH POSITION.
+Aggregation
+AUC
+P@5
+MAP@5
+Flatten
+0.944
+0.888
+0.929
+Mean pooling
+0.980
+0.939
+0.957
+Up-proj + mean (DEMUX)
+0.985
+0.951
+0.966
+the multi-level input. Progress then becomes more gradual as
+the Transformer-based global association module refines long-
+range dependencies across windows. The model approaches
+saturation near epoch 120 and converges at epoch 260 with
+AUC of 0.998, P@5 of 0.951, and MAP@5 of 0.966.
+The two-phase behavior has a practical implication: early
+stopping at epoch 40 already yields performance that surpasses
+all baselines and is suitable for compute-limited deployments,
+while full training to epoch 260 is warranted when maximum
+precision is required.
+
+11
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+0.60
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+AUC
+2-tab (train)
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+0.60
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+AUC
+3-tab (train)
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+0.60
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+AUC
+4-tab (train)
+BAPM
+NetCLR
+DF
+RF
+Tik-Tok
+Var-CNN
+TMWF
+ARES'23
+ARES'25
+DEMUX
+0.60
+0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+AUC
+5-tab (train)
+Test tab
+2-tab
+3-tab
+4-tab
+5-tab
+Fig. 4. Cross-configuration generalization (AUC) on the closed-world dataset.
+Each subplot trains on one tab count and evaluates on all four.
+0.7
+0.8
+0.9
+1.0
+DF
+TMWF
+ARES'25
+DEMUX-Dir
+AUC
+0.780
+0.901 (+12.1%)
+0.905
+0.972 (+6.7%)
+0.988
+0.992 (+0.4%)
+0.989
+0.998 (+0.9%)
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+DF
+TMWF
+ARES'25
+DEMUX-Dir
+P@5
+0.315
+0.545 (+23.0%)
+0.542
+0.771 (+22.9%)
+0.869
+0.900 (+3.1%)
+0.876
+0.951 (+7.5%)
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Score
+DF
+TMWF
+ARES'25
+DEMUX-Dir
+MAP@5
+0.446
+0.704 (+25.8%)
+0.631
+0.843 (+21.2%)
+0.911
+0.935 (+2.4%)
+0.907
+0.966 (+5.9%)
+Baseline
++BM / Full
+Fig. 5. Effectiveness of the Boundary Preserving Aggregation Module as a
+plug-and-play component in the open-world 5-tab setting. Light bars denote
+baseline models; dark bars denote variants with BM integrated (DEMUX-Dir
+vs. full DEMUX).
+I. Sensitivity Analysis
+We examine two architectural design dimensions under the
+open-world 5-tab setting: the strategy used to aggregate the
+Transformer output sequence into a global representation, and
+the positional encoding scheme used in the global association
+module.
+Table V compares three aggregation strategies. Flattening
+all L position-wise vectors into a single Ld-dimensional
+0
+40
+80
+120
+170
+260
+Epoch
+0.825
+0.850
+0.875
+0.900
+0.925
+0.950
+0.975
+1.000
+Metric Value
+ARES'25
+ARES'25
+ARES'25
+AUC
+MAP@5
+P@5
+Fig. 6. Convergence behaviour of DEMUX in the open-world 5-tab setting.
+The model already exceeds the strongest baseline after 40 epochs and saturates
+near epoch 120.
+TABLE VI
+POSITIONAL ENCODING IN THE OPEN-WORLD 5-TAB SETTING. ROPE =
+ROTARY POSITIONAL EMBEDDING.
+Encoding
+AUC
+P@5
+MAP@5
+None
+0.996
+0.937
+0.956
+Sinusoidal
+0.996
+0.936
+0.955
+Learnable
+0.996
+0.934
+0.954
+RoPE (DEMUX)
+0.998
+0.951
+0.966
+representation preserves positional information explicitly but
+substantially inflates feature dimensionality, yielding an AUC
+of 0.944 and a P@5 of 0.888. Mean pooling reduces this to
+a d-dimensional descriptor and improves robustness, raising
+AUC to 0.980 and P@5 to 0.939, though it treats all positions
+uniformly and may suppress discriminative variation across
+windows. The proposed Up-proj + mean first expands each
+position-wise feature via a learnable pointwise projection be-
+fore averaging, increasing per-window representational capac-
+ity while retaining the stability of pooling. This yields the best
+results, with AUC of 0.985 and P@5 of 0.951, suggesting that
+higher-capacity window representations improve robustness to
+the overlapping segmentation and mixed-tab alignment that are
+intrinsic to this setting.
+Table VI compares four positional encoding schemes. Re-
+moving positional encoding entirely remains competitive at
+AUC of 0.996 and P@5 of 0.937, indicating that the multi-
+scale front-end already encodes substantial local ordering
+information. Sinusoidal [30] and learnable absolute encodings
+perform slightly worse, with P@5 dropping to 0.936 and 0.934
+respectively, which we attribute to the mismatch between
+fixed absolute position indices and the variability introduced
+by overlapping segmentation and dynamic tab compositions.
+RoPE [31] achieves the best results at AUC of 0.998 and
+P@5 of 0.951, as its relative positional offsets align naturally
+with the need to associate burst fragments across overlapping
+windows regardless of their absolute positions in the mixed
+trace, directly addressing (Requirement 3) as motivated in
+Section I.
+
+12
+TABLE VII
+ABLATION STUDY IN THE OPEN-WORLD 5-TAB SETTING. ✓= MODULE
+ENABLED; ✗= REMOVED OR REDUCED.
+Variant
+BM
+MSP-CNN
+GA
+P@5
+MAP@5
+w/o BM
+✗
+✓
+✓
+0.876
+0.907
+kernel=3 only
+✓
+✗
+✓
+0.924
+0.946
+kernel=5 only
+✓
+✗
+✓
+0.926
+0.949
+kernel=7 only
+✓
+✗
+✓
+0.919
+0.943
+w/o Transformer
+✓
+✓
+✗
+0.574
+0.745
+DEMUX (full)
+✓
+✓
+✓
+0.951
+0.966
+J. Ablation Analysis
+Table VII reports an ablation study on the open-world 5-
+tab setting, isolating the contribution of three architectural
+components: the Boundary Preserving Aggregation Module
+(BM), the Multi-Scale Parallel CNN (MSP-CNN) in Multi-
+Granularity Local Analysis, and the Global Association(GA).
+Each variant disables or simplifies exactly one component
+while keeping the others intact.
+Replacing BM with a plain direction sequence causes P@5
+to drop from 0.951 to 0.876 and MAP@5 from 0.966 to
+0.907. This confirms that the multi-level representation and
+overlapping window partitioning provided by BM are essential
+for preserving burst-boundary transition signals that fixed non-
+overlapping segmentation systematically destroys, consistent
+with the (R1) motivation in Section I.
+Replacing MSP-CNN with a single-kernel branch reduces
+P@5 to the range of 0.919 to 0.926 regardless of which
+kernel size is retained. The similar degradation across all
+three kernel sizes confirms that no single receptive field
+adequately handles the temporal-scale heterogeneity of multi-
+tab traffic; the parallel multi-scale design is necessary to jointly
+capture fine-grained burst patterns and coarse-grained periodic
+structures, addressing (R2).
+Removing the Transformer yields the largest degradation,
+with P@5 dropping to 0.574 and MAP@5 to 0.745. Without
+global association, the model cannot link dispersed fingerprint
+fragments from the same website across the mixed trace,
+confirming that long-range temporal reasoning is the most
+critical capability for multi-tab demixing and that local feature
+extraction alone is fundamentally insufficient.
+Taken together, these results confirm that all three compo-
+nents are necessary and complementary: BM addresses (R1)
+by preserving boundary-level cues, MSP-CNN addresses (R2)
+through multi-scale local perception, and the Transformer
+addresses (R3) by integrating long-range dependencies across
+the full sequence.
+VI. DISCUSSION
+Below, we discuss design choices, limitations, practical
+considerations, and future research directions.
+Why a passive-only threat model.
+DEMUX assumes a passive eavesdropper who observes
+packet metadata without modifying traffic. We adopt this
+setting because it represents the strictly harder demixing
+problem. The adversary receives no auxiliary signal beyond
+the temporally superimposed mixture of flows, so the entire
+burden of traffic demixing falls on the model architecture
+rather than on active probing. Our results demonstrate that this
+burden is well handled by the proposed co-design. Even in the
+most challenging 5-tab closed-world setting, DEMUX attains
+a P@5 of 0.943 and MAP@5 of 0.961 under purely passive
+observation. Under TrafficSliver, where the adversary observes
+only a partial fraction of packets at any single entry node,
+it still maintains a P@2 of 0.940. These results suggest that
+the pipeline of the Boundary Preserving Aggregation Module,
+the Multi-Scale Parallel CNN, and the RoPE-enhanced Trans-
+former encoder captures sufficient discriminative structure in
+multi-tab traffic to achieve effective demixing without relying
+on active traffic manipulation, which would risk detection by
+Tor’s integrity checks or network anomaly monitors. An active
+adversary could further inject probing packets or manipulate
+timing to facilitate demixing. Incorporating such signals is a
+natural extension but lies outside the structural contributions
+demonstrated here.
+Implications of the demixing perspective.
+Treating multi-tab WF as an implicit traffic demixing prob-
+lem changes the view of the task. Rather than a harder version
+of single-tab classification, the problem becomes closer in
+structure to blind source separation in signal processing. This
+view yields two implications that extend beyond the specific
+architecture of DEMUX. First, it helps explain why prior
+single-tab-derived architectures plateau as tab count grows.
+The absence of boundary-aware aggregation and relative-
+position reasoning is not a tuning issue but a structural
+mismatch with the demixing task. Second, it suggests that
+future WF research may benefit from treating temporal mixing
+as a first-class design constraint rather than as noise to be
+absorbed by model capacity. We view the three structural
+requirements identified in this work (R1 to R3) as a starting
+set, and we expect further requirements to emerge as the
+community explores richer observation modalities.
+VII. CONCLUSION
+This paper argues that multi-tab website fingerprinting is not
+a harder instance of single-tab classification but a qualitatively
+different problem. It is a problem of implicit traffic demixing,
+in which the adversary must recover an unknown number
+of source identities from a single superimposed observation
+with no explicit boundary cues. Posing the task in these
+terms exposes three structural requirements that effective ar-
+chitectures need to jointly satisfy, and reveals that no prior
+method does so. DEMUX is the first framework designed
+from this perspective rather than inherited from the single-
+tab lineage, and each of its components, namely overlapping
+boundary-preserving aggregation, multi-scale parallel convo-
+lution, and a two-stage RoPE-enhanced Transformer encoder,
+is derived directly from one of these requirements. Empir-
+ically, DEMUX establishes a new state of the art across
+closed-world, open-world, defense-augmented, dynamic-tab,
+and cross-configuration settings. More importantly, it exhibits
+the slowest performance degradation as mixing intensifies,
+indicating that its advantage stems from structural alignment
+
+13
+with the demixing task rather than from incremental capacity
+gains. A further practical contribution is that the Boundary
+Preserving Aggregation Module transfers cleanly to existing
+architectures including DF, TMWF, and ARES’25, deliver-
+ing consistent improvements without any modification to the
+downstream model and serving as a reusable preprocessing
+baseline for the field. Beyond the specific results, we hope
+the demixing perspective invites a broader rethinking of how
+multi-tab traffic analysis should be posed, evaluated, and
+defended against. The three structural requirements identified
+here are unlikely to be exhaustive, and we expect that richer
+observation modalities, longer sessions, and stronger defenses
+will motivate additional requirements in future work. Treating
+multi-tab traffic as a demixing problem, rather than as a noisy
+multi-label classification problem, provides what we believe
+is a more faithful foundation on which the next generation of
+website fingerprinting research can build.

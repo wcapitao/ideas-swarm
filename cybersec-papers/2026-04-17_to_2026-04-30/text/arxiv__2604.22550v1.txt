@@ -1,0 +1,939 @@
+ArmSSL: Adversarial Robust Black-Box Watermarking for Self-Supervised
+Learning Pre-trained Encoders
+Yongqi Jiang1, Yansong Gao2, Boyu Kuang1, Chunyi Zhou3, Anmin Fu1, Liquan Chen4
+1Nanjing University of Science and Technology, China, {jiangyongqi, kuang, fuam}@njust.edu.cn
+2The University of Western Australia, Australia, gao.yansong@hotmail.com
+3Zhejiang University, China, zhouchunyi@zju.edu.cn
+4Southeast University, China, lqchen@seu.edu.cn
+Abstract—Self-supervised learning (SSL) encoders as founda-
+tional models are invaluable intellectual property (IP). How-
+ever, no existing SSL watermarking for IP protection can
+concurrently satisfy the following two practical requirements:
+(1) provide ownership verification capability under black-box
+suspect model access once the stolen encoders are used in
+downstream tasks; (2) be robust under adversarial watermark
+detection or removal, because the watermark samples form a
+distinguishable out-of-distribution (OOD) cluster.
+We propose ArmSSL, an SSL watermarking framework
+that assures black-box verifiability and adversarial robustness
+while preserving utility. For verification, we introduce paired
+discrepancy enlargement, enforcing feature-space orthogonal-
+ity between the clean and its watermark counterpart to pro-
+duce a reliable verification signal in black-box against the sus-
+pect model. For adversarial robustness, ArmSSL integrates la-
+tent representation entanglement and distribution alignment to
+suppress the OOD clustering. The former entangles watermark
+representations with clean representations (i.e., from non-
+source-class) to avoid forming a dense cluster of watermark
+samples, while the latter minimizes the distributional discrep-
+ancy between watermark and clean representations, thereby
+disguising watermark samples as natural in-distribution data.
+For utility, a reference-guided watermark tuning strategy is de-
+signed to allow the watermark to be learned as a small side task
+without affecting the main task by aligning the watermarked
+encoder’s outputs with those of the original clean encoder on
+normal data. Extensive experiments across five mainstream
+SSL frameworks (e.g., CNN-based SimCLR and ViT-based
+DINOv2) and nine benchmark datasets, along with end-to-
+end comparisons with SOTAs including SSL-WM (NDSS’24)
+and SSLGuard (CCS’22), demonstrate that ArmSSL achieves
+superior ownership verification, negligible utility degradation,
+and strong robustness against various adversarial detection
+and removal.
+1. Introduction
+To overcome the reliance on costly annotation of large-
+scale datasets when training a high-performing model, self-
+supervised learning (SSL) [1] has been developed to con-
+struct general-purpose encoders from vast amounts of un-
+labeled data, which can subsequently be adapted to down-
+stream tasks through e.g., fine-tuning. SSL has achieved re-
+markable success in fields such as computer vision (CV) [2],
+natural language processing (NLP) [3], and autonomous
+driving [4]. Nonetheless, well-trained SSL encoders neces-
+sitate carefully designed network architectures, large-scale
+high-quality datasets, substantial computational resources,
+and specialized technical expertise. These requirements col-
+lectively contribute to the high cost of model development,
+rendering the resulting high-performance encoders invalu-
+able intellectual property (IP). For instance, training the
+Meta’s self-supervised SEER model—a landmark vision
+encoder—on one billion unlabeled images consumed over
+150 petaFLOP/s-days of computation using 512 NVIDIA
+V100 GPUs. This scale of training routinely incurs cloud
+computing costs exceeding 500,000 dollars [5].
+Deployment
+Finetuning
+Model Stealing
+Payment
+Deployment
+Model 
+Infringer
+Pirated
+Encoder
+Classifier Downstream
+Dataset
+Illegal MaaS
+3
+Model 
+Owner
+Victim
+Encoder
+EaaS
+1
+2
+4
+5
+Figure 1: An illustration of an attacker stealing and fine-
+tuning an SSL-pretrained encoder for illicit MLaaS.
+SSL Encoder IP Protection Demand. The recent emer-
+gence of the Encoder-as-a-Service (EaaS) paradigm pro-
+vides model owners with new monetization opportunities
+through cloud platform deployment and remote services
+(APIs) [6]. However, this paradigm also introduces IP in-
+fringement risks, which generally fall into two scenarios. In
+EaaS scenario, pirated encoders are directly deployed as
+new commercial EaaS. In MLaaS scenario (i.e., Machine-
+Learning-as-a-Service), pirated encoders are customized for
+downstream tasks by training classifiers, and the down-
+stream models are then deployed as new commercial cloud
+services [7]. Therefore, the SSL encoder IP should be pro-
+arXiv:2604.22550v1 [cs.CR] 24 Apr 2026
+
+TABLE 1: Comparison of representative SSL model own-
+ership verification methods.
+Method
+Ver. Scen.
+Adv. Robust.
+EaaS Scen.
+MLaaS Scen.
+Dziedzic et al. [8]
+■
+□
+□
+SSLGuard [6]
+■
+□
+□
+SSL-WM [9]
+□
+■
+□
+Wu et al. [10]
+□
+■
+□
+ArmSSL (Ours)
+■
+■
+■
+(1) Ver. – Verification
+(2) Scen. – Scenario
+(3) Adv. Robust. –
+Adversarial Robustness
+■and □denote whether the watermark supports or satisfies this
+property or not.
+tected in both the EaaS and MLaaS scenarios.
+Note that IP protection in MLaaS scenario (see Fig. 1)
+is considerably more challenging than in EaaS scenario.
+Firstly, the verification process must be performed under
+stricter black-box conditions, where the latent representa-
+tions of the suspect encoder are completely inaccessible.
+Secondly, downstream adaptation can distort the original
+representation space, thereby weakening or even erasing the
+embedded IP signals. Most importantly, the downstream task
+itself is often unknown to the SSL encoder owner, further
+exacerbating the challenge due to potential mismatches be-
+tween the query samples and the downstream distribution
+and label semantics.
+State-of-the-Art and Limitation. The emerging SSL own-
+ership verification, mainly focusing on encoder watermark-
+ing, is underexplored to date, with only limited works [6],
+[8]–[10]. We note that they exhibit significant limitations
+regarding verification capability and adversarial robustness,
+as summarized in TABLE 1. On the one hand, SSL wa-
+termarking schemes (e.g., SSLGuard [6]) designed for the
+EaaS scenario fail to verify encoder ownership in the MLaaS
+scenario. On the other hand, all existing encoder water-
+marking schemes [6], [9], [10] designed for both scenarios
+mainly emphasize watermark verification and encoder util-
+ity, while overlooking the critical property of adversarial ro-
+bustness. For example, Wu et al. [10] proposed a backdoor-
+based watermarking method that maximizes the representa-
+tion discrepancy between watermarked and clean encoders
+on trigger-carrying inputs to induce downstream classi-
+fiers to misclassify them into the same class consistently.
+Such backdoor behavior also exists in SSL-WM [9]. This
+backdoor-oriented design suffers from high detectability
+once the abnormal activation patterns are exposed. Besides,
+the ownership verification in [10], which relies on hard-
+label inconsistency, inherently depends on the classification
+capability of downstream classifiers over the query samples
+and is highly sensitive to domain shift. Consequently, when
+the watermarked encoder is adapted to tasks with distinct
+data distributions, the mismatch signal may vanish, leading
+to verification failure.
+More specifically, through pilot studies of these wa-
+termaking methods, it becomes evident that in the en-
+coder’s output space, watermark samples exhibit high intra-
+watermark representation similarity and form an out-of-
+distribution (OOD) cluster that resides outside the clean
+sample distribution (see Fig. 2). Such a distinct characteristic
+not only reveals the presence of the watermark but, more
+critically, provides IP infringers with opportunities to detect
+and remove it. For instance, DECREE [11] can perform
+encoder reverse engineering by maximizing pairwise simi-
+larities among test samples to successfully invert watermark
+triggers. Furthermore, this OOD cluster phenomenon is
+more likely to introduce potential backdoor effects, leading
+to watermarked data being consistently classified into the
+same class in downstream tasks. Consequently, backdoor
+detectors such as MM-BD [12] can identify watermarked
+downstream models by detecting such backdoor-alike effects
+in classifier outputs. That is, none of the existing SSL
+encoder IP protections [6], [9], [10] can survive adversarial
+detection or removal.
+Our Solution. To overcome the above limitations, we pro-
+pose ArmSSL, a multi-goal watermarking framework that
+ensures black-box verifiability, adversarial robustness, and
+utility for pretrained encoders by mapping each goal into
+a delicate latent representation of the feature space through
+training regularization or objective-guided loss formulation.
+For verification, ArmSSL introduces paired discrepancy
+enlargement, enforcing feature-space orthogonality between
+the clean and its watermark counterpart, namely a watermark
+probing pair, from the source class. The source class is
+essentially a randomly chosen cluster in the unsupervised
+learned feature space—no ground-truth label, as in super-
+vised learning, is required. This paired discrepancy offers a
+reliable verification signal in black-box verification against
+the suspect model. More specifically, in the EaaS scenario,
+our watermarked encoder exhibits a significantly lower co-
+sine similarity between the representations of probing pairs,
+whereas the non-watermarked encoder produces highly con-
+sistent representations for the same probing pairs. Similarly,
+in the MLaaS scenario, the watermarked model normally
+operates on trigger-free inputs but exhibits a distinguishable
+confidence shift on trigger-carrying inputs.
+For adversarial robustness or equally latent represen-
+tation stealthiness, ArmSSL employs latent representation
+entanglement and distribution alignment. The former pulls
+watermark representations toward anchors located at the rep-
+resentation centers of all rest non-source classes, entangling
+watermark and clean representations (i.e., of non-source
+classes) to reduce intra-watermark density, avoiding forming
+a dense watermark cluster. The distribution alignment fur-
+ther minimizes the sliced Wasserstein distance (SWD) [13]
+between watermark and clean representations, effectively
+disguising watermark samples into natural in-distribution
+data. Together, these operations spread watermark samples
+with non-source-class benign feature regions, ensuring in-
+distribution conformity and preventing the formation of
+detectable dense clusters.
+Nevertheless, training the encoder directly under the
+above constraints or regularization is challenging, as the
+objectives of watermark verifiability and adversarial robust-
+ness are often conflicting, which can significantly impair the
+encoder’s utility. To maintain utility, ArmSSL employs a
+reference-guided watermark tuning strategy that aligns the
+
+watermarked encoder’s outputs with those of the original
+clean encoder on normal data. The intuition behind this
+design lies in the multi-task learning capability of deep
+networks that treats the watermark task as a small side task
+that can be efficiently learned without degrading the main
+task.
+Contribution. Our main contributions are outlined below:
+• We reveal the overlooked vulnerability of existing SSL
+watermarking methods, namely adversarial non-robustness,
+which exposes watermarked encoders to watermark detec-
+tion and removal due to the formation of distinct and isolated
+clusters of watermarking samples.
+• We propose the ArmSSL, that enables reliable black-box
+ownership verification in both EaaS and MLaaS scenarios.
+ArmSSL is realized through a set of innovative designs:
+paired discrepancy enlargement for verification; latent rep-
+resentation entanglement and distribution alignment for ad-
+versarial robustness; and reference-guided watermark tuning
+for preserving the utility.
+• We conduct comprehensive experiments across five main-
+stream SSL algorithms and nine benchmark datasets, along
+with end-to-end comparisons with SOTAs of SSL-WM
+(NDSS’24) and SSLGuard (CCS’22), demonstrating that
+ArmSSL retains high model utility and watermark verifi-
+cation capability while assuring strong robustness against
+various adversarial detection and removal, including model
+fine-tuning, model pruning, DECREE, MM-BD, and adap-
+tive attacks with varying degrees of watermark exposure.
+2. Related Work
+In this section, we outline related works in SSL, DL
+model watermarking, and recent SSL IP Protection.
+2.1. Self-supervised Learning
+SSL, a prominent branch of unsupervised learning, aims
+to learn discriminative feature representations directly from
+large-scale unlabeled data. In recent years, SSL has attracted
+extensive attention, leading to the development of a vari-
+ety of SSL approaches. Among these, the discriminative
+contrastive-based SSL and self-distillation-based SSL ap-
+proaches are two of the most influential and successful [2],
+[14].
+Discriminative contrastive-based SSL. Early CL meth-
+ods were predominantly founded on the use of negative
+examples, which refer to samples from different classes or
+instances that are distinct from the target sample and are
+used to teach the encoder to differentiate between similar
+and dissimilar inputs. A classical SimCLR [1] employs a
+contrastive loss to maximize the similarity between differ-
+ently augmented views (i.e., positive samples) of the target
+sample while minimizing the similarity to negative exam-
+ples, that is, views of other unrelated samples. Inspired by
+SimCLR, MoCo v2 [15] enhances the momentum contrast
+framework by integrating a blur augmentation strategy. A
+key innovation of MoCo v2 is its use of a momentum
+encoder to maintain a dynamic queue of negative examples,
+which allows it to achieve higher representation accuracy
+and better convergence stability than SimCLR even with a
+smaller batch size and fewer epochs.
+Self-distillation-based
+SSL. There are methods to
+achieve compelling performance without relying on negative
+examples. A notable example is BYOL [16], which learns
+representations by maximizing the similarity between two
+augmented views of the same sample using two neural
+networks: an online network and a target network. The target
+network’s parameters are updated via a moving average
+of the online network’s weights, enabling a form of self-
+supervised bootstrapping. Similarly, SimSiam [17] adopts
+a siamese architecture akin to BYOL but eliminates the
+need for a momentum encoder. It avoids model collapse by
+incorporating a stop-gradient operation, demonstrating that
+negative examples are not indispensable for learning high-
+quality representations. More recently, DINOv2 [18] rep-
+resents a significant milestone in learning general-purpose
+visual features. Its core idea revolves around scaling self-
+distillation to foundation models by integrating an image-
+level objective (the DINO distillation loss) with a patch-level
+objective (Masked Image Modeling, MIM). By training on
+a massive, curated dataset with Vision Transformer (ViT)
+architectures, DINOv2 produces robust representations that
+perform exceptionally well across various tasks without
+requiring fine-tuning.
+2.2. Deep Learning Model Watermarking
+Model watermarking is an invasive technique that in-
+volves embedding a secret watermark into model. Later,
+the watermark can be extracted as the ownership evidence.
+Based on the verification means, these techniques are cate-
+gorized into two types: white-box and black-box.
+1) White-box: White-box model watermarking involves
+embedding a secret watermark directly into a deep learning
+(DL) model’s internal parameters.
+Uchida et al. [19] pioneered one of the first methods
+to embed watermarks into model parameters via parameter
+regularization. Similarly, DeepMarks [20] computes a cor-
+relation score between the target model’s parameters and
+preserved watermark signature to illustrate the accuracy of
+ownership verification. Besides static parameters, dynamic
+parameters can also serve as watermark carriers. Liu et al.
+[21] proposed greedy residuals, which selectively embeds
+watermarks into a smaller set of salient model weights,
+with the residual information defined as the sum of the
+extracted weight values. In a different approach, Namba et
+al. [22] identified model weights that significantly contribute
+to predictions and exponentially increase their weight values
+to embed the watermark.
+Despite
+these
+advances,
+white-box
+watermarking
+schemes remain highly vulnerable to watermark detection
+and removal attacks [23]. For instance, by analyzing
+distributional anomalies in model parameters, adversaries
+can identify embedded watermarks and remove them
+to evade ownership verification. More importantly, the
+
+requirement for white-box access to a suspect model’s
+internal parameters during verification poses significant
+practical limitations in real-world deployment.
+2) Black-box: Black-box watermarks can be embedded
+by associating specific trigger samples with predetermined
+model output patterns or behaviors, such that the presence
+of the watermark is inferred by querying the suspect model
+with trigger-carrying samples to exhibit special responses.
+Most black-box model watermarking relies on embed-
+ding backdoors into DL models. EWE [24] entangles wa-
+termark samples with target-class samples in multi-layer
+feature spaces, such that watermark samples are consistently
+classified as the target class, thereby enabling reliable model
+ownership verification. MOVE [25] modifies the trigger-
+carrying samples’ image style and embeds them into the
+victim model, without changing the label of watermark
+samples. Unlike the methods described above, EaaW [26]
+implants verifiable backdoor patterns into the explanation
+of feature attribution instead of model predictions. Further,
+Yang et al. [27] utilized Shannon entropy to gauge the
+inherent uncertainty or confidence in model predictions,
+further selecting samples near the decision boundary as
+keys. It does not rely on end-to-end retraining or fine-tuning
+key samples with the desired labels. AIME [28] condenses
+the model’s misclassifications into a confusion matrix and
+subsequently selects trigger-carrying samples positioned at
+the decision boundary based on it.
+Black-box watermarking offers superior practicality over
+white-box approaches; however, applying these supervised
+black-box watermarking techniques to SSL is challenging
+due to a fundamental conflict in embedding access re-
+quirements. Their reliance on label-dependent information
+(e.g., decision boundaries) and full model control directly
+contradicts the principles of SSL, where watermarks must
+be embedded through annotation-free pretraining/finetuning,
+often with only white-box access to the encoder. More
+challenging, there is no prior knowledge of the downstream
+classifier and datasets when watermarking the SSL encoder.
+2.3. SSL IP Protection
+Existing SSL IP protection methods can be broadly
+categorized into dataset IP protection and encoder IP pro-
+tection. Dataset IP protection methods [29], [30] typically
+rely on fingerprinting techniques to verify dataset ownership
+in EaaS scenarios. Xie et al. [29] exploited contrastive
+relationship gaps in the encoder output space as ownership
+signals; however, since such gaps persist across all models
+trained on the protected dataset, they are unsuitable for
+encoder IP protection. Dziedzic et al. [30] proposed a dataset
+inference-based fingerprinting method, which identifies en-
+coders trained on private data by their higher log-likelihood
+on private samples. Although this approach can be applied
+to encoder IP protection, Shao et al. [26] show that it
+suffers from high false positive rates when the encoder
+is independently trained on data with similar distributions,
+leading to erroneous IP claims.
+For encoder IP protection, it can be divided into two
+main archetypes: proactive defense and reactive verification.
+Dubinski et al. [31] proposed a proactive method, B4B,
+which dynamically tracks the coverage of user queries in
+the embedding space. By applying exponentially increasing
+noise and user-specific transformations to high-coverage
+users, the approach actively prevents encoder theft. How-
+ever, although proactive defense mitigates encoder leakage
+to some extent, it requires substantial resources for real-time
+monitoring and cannot entirely prevent leakage. Therefore,
+current works predominantly focus on reactive IP verifica-
+tion.
+Mainstream SSL reactive verification methods, typically
+based on watermarking, consider black-box verification sce-
+narios, where defenders can only query suspect encoders
+through EaaS interfaces for ownership verification. SSL-
+Guard [6] introduced a key-tuple watermarking scheme for
+protecting pre-trained encoders in CV tasks. It injects a
+secret key tuple into the encoders as the watermark and
+extracts the key from the output of the suspect encoder
+to verify the ownership by comparing the cosine similar-
+ity of the latent representations between the extracted key
+and the injected key. Furthermore, several studies [32]–[34]
+have extended SSL watermarking techniques to NLP and
+multimodal settings.
+There is different research line that prevents SSL en-
+coders from model extraction attacks, where the under-
+lying SSL encoder is inaccessible and cannot be manip-
+ulated by the attacker. The attacker can only query and
+observe the output (latent representation) to learn a function-
+copied model through efficient knowledge distillation to
+substantially save cost. For example, Dziedzic et al. [8]
+incorporated a private data augmentation task (e.g., rota-
+tion prediction) during SSL training, such that the learned
+representations encode augmentation-specific discriminative
+signals for post-hoc IP verification on the distilled model.
+Despite black-box verification, the above methods rely
+on accessing the latent representations, which is mandatory.
+Hence, they are ineffective when stolen encoders are used to
+fine-tune downstream tasks deployed as MLaaS. Because the
+latent representation of the encoder is no longer accessible.
+To address this challenge, SSL-WM [9] introduced a new
+approach that embeds watermarks into the encoder during
+pre-training while enabling ownership verification through
+the downstream suspect model’s MLaaS API interface—the
+output of a confidence vector is sufficient. It enables black-
+box verification in MLaaS scenario as in Section 1.
+Overall, existing SSL watermarking schemes are re-
+stricted to a single verification context (e.g., EaaS or
+MLaaS), lacking a unified verification capability across
+both scenarios. In addition, although these methods perform
+well in terms of watermark effectiveness and model utility,
+they are vulnerable to watermark detection. For instance,
+attackers can reverse-engineer the watermark trigger by
+analyzing the embedding distribution patterns output by the
+encoder [11], or detect the watermark by observing outlier
+characteristics in the encoder’s downstream predictions [12],
+and subsequently implement removal strategies to bypass
+
+detection.
+3. Polit Study and Insight
+Before diving into the polit study and giving our insight,
+we first present the threat model, followed by our later
+design. This is to ease the understanding of the typical setup
+required for SSL watermarking.
+3.1. Threat Model
+Our threat model consists of two parties: the model
+owner, who acts as the IP defender and the infringer, who is
+the IP attacker. The model owner develops and owns the IP
+of the victim encoder, whose objective is to protect the IP
+of the encoder when it is used in the context of either EaaS
+or MLaaS. In contrast, the infringer seeks to illicitly steal
+or replicate the victim encoder, with the intent to bypass the
+IP protection implemented for the victim encoder.
+Model Owner has full knowledge of the training pro-
+cess, including access to the training data, encoder archi-
+tecture, and parameters. However, the specific downstream
+tasks on which the victim encoder will ultimately be de-
+ployed remain unknown. Therefore, only a small subset
+of the pre-training data can be reserved for constructing
+a shadow dataset for watermark embedding and ownership
+verification. Furthermore, the embedded watermarks must
+remain extractable under both EaaS and MLaaS scenarios. In
+these scenarios, the owner can only perform IP verification
+in a black-box manner by querying the suspect encoder
+deployed as EaaS or model deployed as MLaaS and ob-
+serving its outputs to determine whether it originates from
+the protected encoder.
+Infringer attempts to illegally steal or replicate well-
+trained encoders and deploy them on their own platforms
+(e.g., EaaS and MLaaS), thereby reaping significant profits
+at a very low cost. The attacker is typically well-versed
+in DL techniques and is aware of the potential existence
+of watermarking mechanisms. Therefore, attackers employ
+various watermark removal techniques, such as fine-tuning
+and model pruning attacks, in an attempt to eliminate the
+watermarks from the victim encoder. Additionally, attackers
+may acquire partial knowledge of watermarking techniques
+and carry out adaptive attacks to remove the watermark.
+3.2. Polit Study
+Existing SSL encoder watermarking schemes, such as
+SSLGuard [6] and SSL-WM [9], (unintentionally) enforce
+watermark samples to remain closely clustered in the feature
+space or near a pre-defined key vector, essentially forming
+an OOD cluster. Such a distinguishable characteristic ren-
+ders detectability and removal of the embedded watermark,
+substantially reducing its robustness. Following the SSL-
+WM setup, we conducted pilot experiments. More specif-
+ically, as shown by principal component analysis (PCA)
+(a) Clean
+(b) SSLGuard
+(c) SSL-WM
+(d) ArmSSL
+Figure 2: PCA visualization of representations of clean
+(blue) and watermark samples (red) on various encoders.
+(a) SSL-
+Guard’s
+trigger
+(b)
+SSL-WM
+and
+ArmSSL’s
+trigger
+(c)
+Clean
+(P Ln
+=
+0.251)
+(d) SSL-
+Guard
+(P Ln
+=
+0.087)
+(e)
+SSL-WM
+(P Ln
+=
+0.019)
+(f)
+ArmSSL
+(P Ln
+=
+0.244)
+Figure 3: Reverse-engineered triggers by DECREE.
+visualization, watermark samples in watermarked encoders
+form distinct, tightly clustered anomalies (see Fig. 2b,2c),
+while those in clean encoders overlap with clean samples
+(see Fig. 2a). This phenomenon likely arises from over-
+fitting [35], where feature representations become domi-
+nated by watermark-specific patterns instead of benign class-
+discriminative features. Notably, not all SSL watermarking
+methods result in such OOD clusters, such as [30], which
+is, however, fragile to model manipulation, even straightfor-
+ward fine-tuning and pruning (see experimental results in
+TABLE 11).
+Further quantitative analysis shows that the pairwise
+cosine similarity among watermark representations reaches
+0.99 in works [6], [9], far exceeding that of clean inputs
+from the same class (0.85), providing clear cues for water-
+mark detection. Indeed, the backdoor detection method DE-
+CREE [11] successfully identifies both SSLGuard and SSL-
+WM watermarked encoders, and reverse-engineers triggers
+(see Figs. 3d,3e) highly similar to the originals (see Figs.
+3a,3b). DECREE employs the PLn metric (i.e., the ratio of
+the reversed trigger’s L1 norm to the input space’s maximum
+L1 norm) to detect watermarks. A PLn below the threshold
+of τ = 0.100 indicates the watermark presence.
+Moreover, the OOD cluster is very likely induce
+backdoor-like effects, causing abnormal prediction behavior
+in downstream tasks. Specifically, classifiers built upon the
+SSL-WM watermarked encoder consistently map trigger-
+carrying samples to the same class, with the proportion
+exceeding 85% across all evaluated downstream tasks. In
+contrast, predictions of trigger-carrying samples from the
+clean encoder are more evenly distributed, with the top class
+accounting for only 10-15%. This strong prediction bias
+is further evidenced by markedly higher median absolute
+deviation (MAD) values, with SSL-WM models ranging
+
+from 17.56 to 31.43 across datasets, compared to 1.72–4.53
+for clean models.
+This anomaly downstream classifier prediction behavior
+also provides strong signals to reveal the watermark pres-
+ence through well-established classifier backdoor detection
+methods. MM-BD [12] computes a maximum gap statistic
+that quantifies the discrepancy between the watermark target
+class logit and others, capturing abnormal prediction logits
+induced by watermark embedding. As shown in Fig. 4, a
+clean model yields a p-value of 0.113, whereas the SSL-
+WM watermarked model reports a p-value of 0.028 (lower
+than the threshold of 0.05 indicating watermark presence),
+confirming the watermark’s presence.
+3.3. Our Insight
+Given observations from our above pilot study, it is
+imperative to improve the adversarial robustness of SSL
+encoder watermarking. Our solution is to directly constrain
+the latent representation states of the watermark samples,
+thereby indirectly regulating their downstream classifier be-
+havior. Specifically, to reduce the density of watermark
+representations, we leverage unsupervised clustering algo-
+rithms to select several clean representations located at the
+feature cluster centers of non-source classes as anchors—
+the meaning of non-source classes will soon be clear in the
+following paragraph. The latent representation entanglement
+strategy pulls watermark samples toward non-source-class
+anchors in the feature space. Meanwhile, to effectively
+disguise watermark samples into natural in-distribution data,
+the distribution alignment strategy further minimizes the
+sliced Wasserstein distance [13] between watermark and
+clean representations. Together, these two strategies cause
+watermark samples to overlap with benign non-source-class
+representation regions (see Fig. 2d), which directly sup-
+presses OOD clusters in the feature space and thus prevents
+excessive category clustering or outlier predictions in down-
+stream tasks.
+On top of the above feature space regularization, we
+further introduce paired discrepancy enlargement to en-
+able ownership verification, which adds triggers to a set
+of representative samples selected via unsupervised clus-
+tering from a randomly chosen class (namely the source
+class) to enforce orthogonality between the feature-space
+representations of clean and their watermark counterparts—
+the samples used for verification are also from the same
+source class. This operation is inspired by a mathematical
+proof
+[36]: when the absolute cosine similarity between
+two representations approaches zero, they encode nearly
+independent information. Such a property facilitates fine-
+grained watermark embedding.
+The imposition of the above constraints pushes the wa-
+termark representations away from the source class while
+entangling them with benign feature regions of non-source
+classes. However, directly finetuning the encoder under the
+above constraints or regularization is challenging due to
+the inherent conflict between watermark verifiability and
+adversarial robustness, which may lead to a significant
+(a) Clean(p=0.113)
+(b) SSL-WM(p=0.028)
+(c) ArmSSL (p=0.115)
+Figure 4: The maximum margins computed by MM-BD for
+the STL-10 downstream classifiers (pretrained on CIFAR-
+10).
+degradation of the encoder’s utility. To address this issue,
+we employ a reference-guided fine-tuning strategy by align-
+ing the watermarked encoder’s outputs with those of the
+original, clean encoder on normal data.
+4. ArmSSL Design
+4.1. Overview
+Fig. 5 illustrates the workflow of our proposed ArmSSL,
+which comprises two phases: watermark embedding phase
+and ownership verification phase (taking the process under
+MLaaS scenario as an example).
+During the watermark embedding phase, we formulate
+three core optimization objectives, each corresponding to a
+crucial aspect: adversarial robustness, verification, and util-
+ity (detailed in Section 4.2). (1) The adversarial robustness
+objective is achieved through the loss term Lrbt, which
+entangles the watermark representations with non-source-
+class representations, while simultaneously minimizing the
+distributional discrepancy between the watermark and clean
+representations. (2) The verification objective is realized
+by the loss term Lwm, which enforces orthogonality in the
+feature space between the representations of clean samples
+and their watermarked counterparts from the source class,
+thus providing a reliable verification signal in a black-box
+context to the suspect model. (3) The utility objective is
+maintained by the loss term Lref , ensuring that the water-
+marked encoder maintains utility comparable to the original
+encoder on main tasks.
+During the ownership verification phase (detailed in
+Section 4.3), the model owner queries the suspect model
+with a batch of clean samples and their watermarked coun-
+terparts from the source class, namely probing pairs. The
+corresponding output predictions are then observed. If the
+prediction distribution between these probing pairs exhibits
+a statistically significant difference beyond a predefined
+threshold, the suspect model can be identified as an unau-
+thorized derivative of the owner’s victim encoder.
+4.2. Formulation
+The watermark embedding task can be formulated as
+a multi-objective optimization problem, encompassing the
+
+Ⅱ Ownership Verification 
+MLaaS
+Infringer
+Model Owner
+Feature Space
+Encoder
+Classifier
+Ⅰ Watermark Embedding
+ 𝑥𝑐, 𝑥𝑤𝑚 ∈𝐷𝑠
+𝑥∈𝐷 
+...
+ℒ𝑟𝑒𝑓 
+ℒ𝑤𝑚 
+ℒ𝑟𝑏𝑡 
+bird
+bird
+Anchors
+Watermark samples
+Source class samples
+Other class samples
+Encoder
+ 𝑥𝑐, 𝑥𝑤𝑚 ∈𝐷𝑠
+𝐏𝑐 
+𝐏𝑤𝑚+ 𝜏 
+𝐏𝑐 
+≤
+> 𝐏𝑤𝑚+ 𝜏 
+Not your encoder!
+Ownership verified!
+WM
+WM
+WM
+WM
+WM
+WM
+WM
+WM
+WM
+WM
+WM
+Figure 5: ArmSSL has two phases: watermark embedding and ownership verification.
+aforementioned objectives. It can be formalized as:
+Ltotal = αLrbt + βLwm + Lref ,
+(1)
+where hyperparameters α and β are introduced to balance
+the adversarial robustness and verification capability. Algo-
+rithm 1 in Appendix A.1 details this embedding procedure.
+To seamlessly integrate the watermark into the well-
+trained encoder by fine-tuning, we firstly select a small set
+of representative samples via unsupervised clustering algo-
+rithms (i.e., K-Means [37], DBSCAN [38]) from a randomly
+chosen cluster in the unlabelled pre-training dataset D to
+serve as the source class (thus other clusters act as non-
+source classes), and embed a predefined trigger to construct
+shadow probing pairs. Each pair comprises a clean source
+sample and its corresponding watermarked sample (i.e., the
+trigger-carrying sample). These pairs collectively form a
+shadow dataset Ds = PS
+i=1 (xc,i, xwm,i) with the total
+number S, which is used for watermark embedding and
+subsequent verification. Additionally, representative samples
+located at unsupervised feature cluster centers of multiple
+non-source classes in D are selected as anchors aanchor =
+{a1, a2, ..., aA}.
+•Adversarial Robustness. To ensure the ArmSSL adver-
+sarial robustness, the robustness loss term Lrbt consists of
+a latent representation entanglement loss term Lentgl and a
+distribution alignment loss term Ldis.
+On the one hand, the watermark samples in Ds are
+assigned to these preselected anchors aanchor in groups, and
+then the latent representation entanglement loss term Lentgl
+pulls the representations of watermark samples toward their
+respective assigned anchors to reduce the density of intra-
+watermark representations. Lentgl is formulated as:
+Lentgl = 1
+S
+S
+X
+i=1
+(1 −cos (ewm(xwm,i), aanchor)) ,
+(2)
+where ewm is the watermarked encoder.
+On the other hand, in order to prevent the watermark
+samples from exhibiting OOD distribution in the feature
+space, we introduce a distribution alignment loss term Ldis.
+Inspired by work [39], the design of Ldis utilizes the
+SWD [13] to measure and minimize the distribution discrep-
+ancy between the watermark and clean representations. The
+core idea of SWD is to transform the comparison of high-
+dimensional distributions into multiple one-dimensional dis-
+tribution comparisons through random projections. Specif-
+ically, SWD first uniformly samples multiple unit vectors
+from the high-dimensional space as projection directions.
+The high-dimensional feature representations of both sample
+classes are then projected onto these one-dimensional spaces
+via dot products with the unit vectors. Subsequently, for each
+projection direction, the projected values are sorted, and
+the L2 distance between the sorted sequences is computed
+(equivalent to the one-dimensional Wasserstein distance).
+Finally, the average of distances across all directions is taken
+as an estimate of the high-dimensional distribution discrep-
+ancy. The formulation of SWD (i.e. Wsliced(x, xwm)) is
+given by:
+Ldis = min
+ 
+1
+J
+J
+X
+j=1
+Z 1
+0
+F j(z) −F j
+wm(z)
+
+2 dz
+!1/2
+,
+(3)
+where J is the number of one-dimensional directions (de-
+noted by the randomly sampled unit vectors). F j(z) and
+F j
+wm(z) represent the projections of the clean and water-
+mark embeddings into one-dimensional data points along
+the direction of vector j, respectively. By minimizing the
+SWD it encourages the in-distribution between watermark
+and clean representations.
+As a takeaway, the robustness loss term Lrbt (i.e., Lentgl
+and Ldis) spreads watermark samples with non-source-
+class feature regions, ensuring in-distribution conformity
+and preventing the formation of detectable dense watermark
+clusters.
+•Verification. Under the above constraint of adversarial
+robustness, we further propose a new paired discrepancy
+enlargement loss term Lwm to address the problem of own-
+ership verification. Specifically, Lwm enforces orthogonality
+between the representations of the watermark samples and
+their clean counterparts from the source class only in Ds
+in the feature space. As a result, the cosine similarity
+between each probing pair approaches zero in the feature
+space, effectively decoupling the two representations and
+rendering them nearly unrelated. This design ensures that
+the watermarked encoder significantly reduces the cosine
+similarity and produces a notable prediction confidence shift
+in downstream tasks between paired samples in Ds, thereby
+providing a reliable basis for ownership verification in not
+
+only the EaaS scenario but also the MLaaS scenario. The
+loss term Lwm is expressed as:
+Lwm = min 1
+S
+S
+X
+i=1
+|cos(ewm(xc,i), ewm(xwm,i))| ,
+= min 1
+S
+S
+X
+i=1
+r⊤
+c,irwm,i
+
+∥rc,i∥2 · ∥rwm,i∥2
+,
+(4)
+where rc,i = ewm(xc,i) and rwm,i = ewm(xwm,i) denote
+the representations extracted by the watermarked encoder
+ewm on clean xc,i and watermark xwm,i probing pairs in
+Ds, respectively.
+Lwm intentionally constructs measurable discrepancy
+between watermark representation and clean representation
+in the feature region of source class to ensure a reliable and
+scenario-agnostic identifiable signal, while Lrbt overlaps
+them across the feature spaces of non-source classes. These
+dual constraint ensures reliable ownership verification of the
+embedded watermark under both EaaS and MLaas scenarios,
+while simultaneously eliminating any discernible signals of
+watermark presence that could be detected by IP attackers.
+•Utility. However, directly training the encoder under the
+above constraints or regularization is challenging due to
+the objective conflicts between watermark verifiability and
+adversarial robustness, which may lead to a significant
+degradation of the encoder’s representational utility. Fur-
+thermore, prior work [9] incorporates the SSL objective
+directly as a utility loss term. This approach incurs sub-
+stantial computational overhead, and the data augmentation
+operations inherent to SSL algorithms (e.g., Gaussian blur
+in SimSiam and MoCo v2) may distort the trigger pattern,
+thereby hindering the convergence of both Lwm and Lrbt.
+To overcome this, a reference-guided watermark tuning
+loss term Lref is designed to maximize the cosine similarity
+between the representations of clean samples in D produced
+by both the original clean and watermarked encoders. This
+ensures identical representation capacity of both encoders
+on normal samples, thereby preserving the utility of the wa-
+termarked encoder on the main tasks. Lref is simpler, easier
+to implement, and completely SSL algorithm-agnostic. The
+expression for Lref is shown in Eq. 5:
+Lref = 1 −1
+N
+N
+X
+i=1
+ewm(xi)⊤ec(xi)
+∥ewm(xi)∥2 · ∥ec(xi)∥2
+,
+(5)
+where xi represents a clean sample from the pre-training
+dataset D = PN
+i=1 xi; N is the total number of samples in
+the dataset D; rx
+wm = ewm(xi) and rx
+c = ec(xi) denote
+the feature representations extracted by the watermarked
+encoder ewm and clean encoder ec, respectively.
+4.3. Ownership Verification
+This subsection focuses on the ownership verification
+procedure under the more challenging MLaaS scenario. The
+corresponding description for the EaaS scenario is provided
+in the Appendix B.1.
+Given a suspect black-box model ˜f, our verification
+method is to analyze the discrepancy (i.e., L1 distance)
+of the confidence vectors on the probing pairs (xc, xwm)
+(i.e., clean and their watermarked counterparts) from the
+shadow dataset Ds. We formalize this verification task as a
+hypothesis test, as expressed below:
+Proposition 1. Let Pc = ˜f(xc) and Pwm = ˜f(xwm)
+denotes the posterior probability of shadow probing pairs
+(xc, xwm) predicted by the suspect model ˜f, respectively.
+Given the null hypothesis H0 : Pc ≤Pwm + τ and the
+alternative hypothesis H1 : Pc > Pwm + τ, where the
+hyper-parameter τ ∈(0, 1), we claim that the suspect model
+is illegally fine-tuned from our well-trained encoder ewm if
+and only if H0 is rejected.
+In practice, we employ the shadow dataset Ds to perform
+a paired t-test [40] and compute the corresponding p-value.
+If the p-value is below a predetermined significance level
+λ, the null hypothesis H0 is rejected, allowing the suspect
+model to be confidently claimed as the IP of the encoder
+owner. Algorithm 2 in Appendix A.2 details the procedure
+of ownership verification under the MLaaS scenario.
+5. Experiments
+This section elaborates on experimental settings and
+extensively evaluates ArmSSL under MLaas scenario in
+terms of effectiveness, computation overhead, robustness,
+and utility. We also compare ArmSSL with SOTAs. More
+experimental details and experimental results of ArmSSL
+under the EaaS scenario are presented in Appendix C.1 and

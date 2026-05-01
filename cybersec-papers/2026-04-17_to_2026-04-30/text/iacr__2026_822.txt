@@ -1,0 +1,1387 @@
+Maliciously Secure Exact Fixed-Point
+Multiplication over Power-of-Two Rings for
+Replicated 3PC
+Yutao Sun1†, Jianguo Xie1,2†, Guozhen Shi1*, Jiale Han1,
+Huiyan Chen1, Rongna Xie1
+1*Beijing Electronic Science and Technology Institute, Beijing,
+100070,China.
+2University of Science and Technology of China, Hefei, 230027, China.
+*Corresponding author(s). E-mail(s): sgz1974@163.com;
+Contributing authors: yutao sun@foxmail.com; jgxie@mail.ustc.edu.cn;
+†These authors contributed equally to this work.
+Abstract
+Exact fixed-point multiplication over Z2k is a fundamental primitive for secure
+fixed-point arithmetic. However, in the honest-majority, maliciously secure 3PC
+setting, no prior work simultaneously provides cross-ring compatibility, exact
+semantics, and malicious security within this efficient framework. In this paper,
+we address this gap by showing that the core cross-ring bottlenecks, namely
+exact signed truncation and signed extension, share a unified algebraic structure.
+Based on this insight, we propose a general quotient-correction framework
+that reduces complex non-linear cross-ring operations to a highly efficient 2-
+bit bounded-quotient extraction problem. We instantiate this framework to
+construct maliciously secure protocols for exact truncation and extension. By
+sequentially composing these primitives with standard in-ring multiplication, we
+realize the first end-to-end exact fixed-point multiplication protocol that satisfies
+all aforementioned requirements in the replicated 3PC setting. We also present
+optimized variants under relaxed guarantees (e.g., 1-ULP error) that offer supe-
+rior performance trade-offs. We formalize our constructions within the Universal
+Composability (UC) framework and provide rigorous security proofs. Theoret-
+ical analysis and experimental results demonstrate that our approach achieves
+practical online efficiency while maintaining exact semantics and malicious secu-
+rity, overcoming the limitations of prior baselines regarding security assumptions,
+input domains, or output precision.
+1
+
+Keywords: multi-party computation, fixed-point multiplication, maliciously secure,
+UC framework
+1 Introduction
+Secure multi-party computation (MPC) provides a cryptographic method for perform-
+ing joint computations without revealing the private inputs of the participating parties,
+and has become one of the key technical approaches in fields such as privacy-preserving
+machine learning[1–3]. In such applications, the underlying computations typically
+involve decimal or real-valued quantities[4, 5]. Therefore, fixed-point arithmetic is com-
+monly used in practical systems to represent and process these values[6]. Within this
+computational layer, fixed-point multiplication is particularly fundamental, because
+the core computation of many machine-learning tasks reduces to dot products, matrix
+multiplications, and the induced linear-layer and convolution operations[7–9]. There-
+fore, the secure and efficient implementation of fixed-point multiplication constitutes
+a critical foundational requirement, rather than a mere localized arithmetic challenge,
+for the practical deployment of higher-level secure multi-party computation-based
+machine learning systems.
+Among the various settings for secure computation, the honest-majority mali-
+ciously secure replicated 3PC setting is an important and widely used target. In
+practical scenarios, it is difficult to guarantee in advance that all participating par-
+ties will strictly follow the prescribed protocol execution. Therefore, compared with
+security against semi-honest adversaries only, security against malicious adversaries is
+often the more realistic choice[10]. At the same time, honest-majority protocols typi-
+cally achieve significantly lower communication cost than dishonest-majority ones[11].
+As a result, honest-majority malicious security MPC has remained an important line
+of research that continues to receive sustained attention[11]. Under this setting, repli-
+cated secret sharing has become one of the mainstream tools in efficient MPC design,
+and the literature explicitly notes that it underlies many recent efficient protocols and
+has been used mostly in the context of three parties[12, 13]. Thus, it is meaningful
+to study exact fixed-point multiplication in the honest-majority maliciously secure
+replicated 3PC setting.
+Moreover, when fixed-point multiplication crosses different precisions or rings, the
+computational route is also naturally determined by representation alignment and
+post-multiplication rescaling[14, 15]. In other words, to perform a complete fixed-point
+multiplication, the input is first lifted to a compatible larger ring, the multiplica-
+tion is then performed in that ring, and finally, the target precision and output type
+are restored through truncation. In the setting considered here, this corresponds pre-
+cisely to signed extension, multiplication in the product ring, and signed truncation.
+Accordingly, depending on the semantics induced by the truncation step, fixed-point
+multiplication protocols can be broadly divided into probabilistic, approximate, and
+exact types.
+2
+
+In existing works, probabilistic truncation and approximate truncation are more
+commonly used because they are considered sufficient for many PPML scenarios[16],
+and due to their non-interactive or less-interactive nature, their communication over-
+head is usually significantly lower than that of exact truncation[17]. However, these
+relaxed semantics are not always satisfactory. Once fixed-point multiplication is repeat-
+edly called within multiplication chains, or used as an intermediate step in larger
+composite protocols, the semantics of truncation are directly propagated to the overall
+computation[18]. CrypTFlow2[19] further points out that fixed-point multiplication
+is necessarily followed by a truncation step, and that once correctness is sacrificed,
+the resulting errors can accumulate and cause the final result to deviate substantially
+from the expected cleartext execution. Therefore, the relevant gap is not merely the
+lack of fixed-point multiplication protocols, but the lack of a complete cross-ring mul-
+tiplication path that simultaneously preserves exact semantics and provides malicious
+security.
+In fact, several closely related studies have explored this target from different
+perspectives, but to the best of our knowledge, no work has yet fully bridged the
+aforementioned gap. Ditto[15] and Mosformer[20] provides efficient cross-ring fixed-
+point multiplication, but relies on approximate semantics and a restricted input range.
+SIRNN[14] supports exact cross-ring fixed-point multiplication, but only in the two-
+party semi-honest setting. Escudero et al.[21] provides powerful maliciously secure
+truncation primitives, but it does not by itself give a matching signed-extension com-
+ponent or a complete end-to-end fixed-point multiplication protocol. These limitations
+motivate a unified treatment of the cross-ring primitives required for exact fixed-point
+multiplication.
+In the exact cross-ring setting considered in this paper, the in-ring multiplication
+itself already admits a standard realization in the replicated 3PC setting. The central
+difficulty therefore lies in the two cross-ring nonlinear primitives required to connect
+the input, product, and output rings, namely signed extension and exact signed trun-
+cation. Although these two functionalities serve distinct purposes, we observe that
+in both cases the target output can be written in the same quotient-correction form
+yex = ˜y + q · C,
+q =
+ u
+2t
+
+∈{0, 1, 2, 3}, where ˜y is obtained by local linear oper-
+ations, C is a public correction constant, and the only nonlinear information to be
+recovered is the two-bit quotient q. Based on this observation, we construct a uni-
+fied quotient-correction framework, and then instantiate it concretely to obtain exact
+signed truncation and signed extension protocols. By composing these two cross-
+ring functionalities with standard in-ring multiplication, we further obtain an exact
+fixed-point multiplication protocol over power-of-two rings in the replicated 3PC set-
+ting. In addition, to better accommodate scenarios where efficiency is prioritized over
+exact semantics or strongest security guarantees, we also present several more efficient
+variants under relaxed guarantees.
+We further provided a formal proof of our protocol’s security within the Univer-
+sal Composability (UC) framework. Since the unified quotient-correction framework
+gives the two exact cross-ring primitives a common ideal-functionality interface, it
+also simplifies the security analysis. Under this interface, exact signed truncation and
+signed extension are treated as concrete instantiations of the same framework, and the
+3
+
+fixed-point multiplication protocol follows by sequential composition. The proof can
+therefore proceed through a modular analysis of the generic framework, the shared
+subprotocols, and the concrete instantiations, rather than through separate ad hoc
+arguments for each primitive. We also evaluate the proposed protocols through theo-
+retical online communication analysis and experimental online runtime measurements
+at both the primitive level and the end-to-end multiplication level. Since the closest
+baselines differ in security model, semantic guarantee, or input-domain restriction,
+the results are interpreted under these qualifications and show that the proposed con-
+structions achieve feasible online performance while providing stronger exactness and
+security guarantees.
+1.1 Contribution
+The main contributions of this paper can be summarized as follows:
+1. We formulate a unified quotient-correction perspective for exact cross-ring arith-
+metic. Based on the insight that the non-linear bottlenecks of exact signed
+truncation and signed extension can both be rigorously reduced to a highly efficient
+2-bit bounded-quotient extraction, we propose a generic quotient-correction
+framework that captures these functionalities under a common protocol structure.
+2. We instantiate this generic framework to construct maliciously secure protocols for
+exact signed truncation and general signed extension in the honest-majority repli-
+cated 3PC setting. By sequentially composing these two cross-ring primitives with
+standard in-ring multiplication, we further obtain an exact fixed-point multiplica-
+tion protocol over power-of-two rings. In addition, we provide several more efficient
+variants under relaxed guarantees to offer practical trade-offs between efficiency
+and guarantees.
+3. We formalize the security of the proposed framework and its instantiated protocols
+within the UC framework. The unified quotient-correction abstraction provides
+a common interface of ideal functionality, which significantly simplifies security
+analysis. This modularity allows the exact signed truncation, signed extension, and
+fixed-point multiplication protocols to be rigorously established through concise
+compositional proofs.
+4. We provide both theoretical and experimental evaluations of the proposed proto-
+cols. The theoretical analysis quantifies the online communication overhead, while
+the experimental evaluation measures the online runtime at both the primitive level
+and the end-to-end multiplication level. The results show that the protocols pro-
+posed here achieve feasible online performance under stronger semantic and security
+requirements than the closest baselines.
+2 Related work
+The target of this work is exact fixed-point multiplication over power-of-two rings, for
+which previous works have been explored under different party settings, security mod-
+els, and sharing domains. For this task, a natural route is to first lift the inputs to the
+product ring through signed extension, then perform the multiplication in the product
+4
+
+ring, and finally apply signed truncation to recover the desired precision and output
+ring. Therefore, previous works directly relevant to this target include not only end-
+to-end fixed-point multiplication protocols, but also the signed extension and signed
+truncation protocols that support this computation route. From this perspective, we
+organize the related works along three closely connected lines, namely fixed-point
+multiplication, signed extension, and signed truncation.
+2.1 Fixed-point multiplication
+Fixed-point multiplication has been widely studied in secure multi-party computation,
+with relevant results covering various party configurations, security models, sharing
+domains, and fixed-point semantics. Existing work includes implementations based
+on fields, prime rings, and power-of-two rings; it encompasses schemes designed for
+semi-honest scenarios as well as those aimed at malicious security; and in terms of
+semantic guarantees, there are approaches with varying levels of semantic guarantees,
+including exact, approximate, and probabilistic methods. Meanwhile, a more common
+setup in existing work is that the inputs are already shared over a sufficiently large
+field or ring, such that the exact product can be directly contained within that field
+or ring, and the post-multiplication processing primarily involves semantic truncation
+performed within the same field or ring[2, 5, 12, 13, 16, 19, 22–33]. To illustrate the
+overall landscape of related work, we present a comprehensive survey in Appendix A.1,
+with some representative results shown in Table 1.
+Table 1 Comparison table for fixed-point multiplication.
+Work
+Parties
+Security
+Domain
+FP Sem.
+Cross-Ring
+Catrina et al. 2010[5]
+n-party
+semi-honest
+Zp (used as a field)
+approx.
+no
+ABY3 2018[26]
+3-party
+semi-honest/malicious
+Z2k
+prob.
+no
+Dalskov et al. 2020[32]
+3-party
+semi-honest/malicious
+Z2k /Fp
+exact/prob.
+no
+Falcon 2021[33]
+3-party
+semi-honest/malicious
+Z2k
+exact*
+no
+Frederiksen et al. 2024[34]
+n-party
+malicious/covert
+Zpq
+approx.
+yes
+Ditto 2024[15]
+3-party
+semi-honest
+Z2k
+approx.
+yes†
+Mosformer 2025[20]
+3-party
+malicious
+Z2k
+approx.
+yes†
+SIRNN 2021[14]
+2-party
+semi-honest
+Z2k
+exact
+yes
+Guo et al. 2025[9]
+2-party
+semi-honest
+Z2k
+exact/approx./prob.
+yes†
+Our Goal
+3-party
+malicious
+Z2k
+exact
+yes
+Here, “prob.” stands for probabilistic, where the protocol may output a completely incorrect result with small probability;
+“approx.” stands for approximate, where the output may differ from the correct result by a small value; and “exact” denotes
+that the protocol guarantees an output with no deviation from the correct result.
+† They are valid only when the input range is restricted.
+* It claims to have implemented precise truncation, but does not specify the protocol.
+At the level of end-to-end fixed-point multiplication, there is relatively little previ-
+ous work that achieves the target of cross-ring fixed-point multiplication[9, 14, 15, 20,
+34–36]. Most protocols proposed in previous work either remain within a single field or
+ring, or involve cross-ring processing only under relaxed functionality guarantees. To be
+more specific, in the three-party setting, the only cross-ring result achieving malicious
+5
+
+security is Mosformer[20], published in 2025. However, it provides only approximate
+semantics and, more importantly, is valid only under a restricted input range, where
+the absolute value of each input must not exceed one quarter of the underlying ring
+size. On the other hand, the cross-ring works that achieve exact semantics are all
+confined to the two-party semi-honest setting[9, 14, 36].
+In short, there remains a significant gap in the implementation of end-to-end fixed-
+point multiplication in the widely used setting considered here. To the best of our
+knowledge, no existing work has yet proposed a protocol that simultaneously satisfies
+all four key requirements: cross-ring compatibility, exact output semantics, malicious-
+security guarantees, and support for a three-party setting. However, the absence of the
+complete functionality cannot be determined solely at the level of a complete multipli-
+cation protocol. If we can obtain, separately, a general signed extension protocol, an
+in-ring multiplication protocol, and an exact signed truncation protocol that satisfy
+the aforementioned requirements, then a fixed-point multiplication protocol meeting
+these goals can be constructed quite naturally. Among these components, maliciously
+secure in-ring multiplication already admits a standard realization in the replicated
+3PC setting. For the other two primitives, further study is necessary to determine
+whether existing work is sufficient to directly assemble a fixed-point multiplication
+protocol that meets the aforementioned requirements.
+2.2 Signed extension
+The existing works related to this functionality mainly include signed extension[9, 14,
+35, 36], upcasting[15, 20], and the more general notion of cross-modulus lifting[34].
+For the semantics considered here, signed extension and upcasting are not essentially
+different. Both refer to the operation of lifting the input from Z2m to Z2n, where
+n > m, while preserving the two’s-complement signed semantics. For this reason, in
+this paper, both of them are collectively referred to as signed extension. In contrast,
+although cross-modulus lifting is also related to modulus transformation, its target
+semantics differ significantly from those required in this paper. Therefore, it can only
+be regarded as related work rather than a direct counterpart to the target considered
+here. A complete comparison of these works is given in Table 2.
+Table 2 Comparison table for signed extension.
+Work
+Parties
+Security
+Input Domain
+Output Domain
+Extension Type
+Frederiksen et al. 2024[34]
+n-party
+malicious/covert
+Zp (or Zq)
+Zq (or Zp)
+cross-modulus lifting
+SIRNN 2021[14]
+2-party
+semi-honest
+Z2m
+Z2n
+zero/signed extension
+LLAMA 2022[36]
+2-party
+semi-honest
+Z2m
+Z2n
+signed extension
+ORCA 2024[35]
+2-party
+semi-honest
+Z2m
+Z2n
+signed extension
+Guo et al. 2025[9]
+2-party
+semi-honest
+Z2m
+Z2n
+signed extension†
+Ditto 2024[15]
+3-party
+semi-honest
+Z2m
+Z2n
+signed extension†
+Mosformer 2025[20]
+3-party
+semi-honest/malicious
+Z2m
+Z2n
+signed extension†
+Our Goal
+3-party
+malicious
+Z2m
+Z2n
+signed extension
+† They are valid only when the input range is restricted.
+6
+
+As shown in the table, the available results on signed extension remain limited, and
+most of them are still concentrated in the two-party semi-honest setting. SIRNN[14],
+LLAMA[36], ORCA[35], and the work of Guo et al.[9] all study signed extension over
+power-of-two rings, but none of them meets the requirement of malicious security in
+a three-party setting. Ditto[15] and Mosformer[20] consider signed extension in the
+three-party setting, with Mosformer further achieving malicious security; however,
+these results hold only within a restricted input range and therefore cannot serve
+as general-purpose components for arbitrary inputs. Moreover, the signed extension
+procedures used in these works are obtained from zero extension through translation,
+which further limits their applicability to the general-input setting considered here.
+Accordingly, under the three-party, maliciously secure, and general-input settings, a
+general signed extension protocol is still unavailable. Since this primitive is the very
+first step in the standard computation path for fixed-point multiplication, this gap
+remains unavoidable.
+2.3 Signed truncation
+Since signed truncation is one of the most fundamental primitives in fixed-point MPC,
+there is significantly more research on it than on signed extension. Depending on their
+output semantics, existing results generally fall into three semantic categories, namely
+probabilistic truncation[6, 9, 21, 26, 28, 29, 37], approximate truncation[5, 6, 9, 12, 13,
+15, 16, 20, 22, 23, 34, 35, 35], and exact truncation[5, 6, 9, 12, 14, 17, 19, 21, 22, 36, 38].
+Among them, probabilistic and approximate truncation are more common since they
+usually incur much lower online costs, while the resulting loss in precision is often
+regarded as acceptable in many PPML settings. We present a comprehensive survey
+in Appendix A.2, with some representative results shown in Table 3.
+Table 3 Comparison table for signed truncation.
+Work
+Parties
+Security
+Input Domain
+Output Domain
+Truncation Type
+Catrina et al. 2010[5]
+n-party
+semi-honest
+Zp (used as a field)
+Zp (used as a field)
+exact/approx.
+ABY3 2018[26]
+3-party
+semi-honest/malicious
+Z2k
+Z2k
+prob.
+SIRNN 2021[14]
+2-party
+semi-honest
+Z2l
+Z2l
+exact
+Guo et al. 2025[9]
+2-party
+semi-honest
+Z2l
+Z2l
+exact/approx./prob.†
+Escudero et al. 2020[21]
+n-party
+semi-honest/malicious
+Z2l
+Z2l
+exact/prob.
+Ditto 2024[15]
+3-party
+malicious*
+Z2l
+Z2l−k
+approx. (truncate-reduce)
+SIRNN 2021[14]
+2-party
+semi-honest
+Z2l
+Z2l−k
+exact (truncate-reduce)
+Escudero et al. 2020[21]
+3-party
+malicious
+Z2l
+Z2l−k
+exact (truncate-reduce)**
+Our Goal
+3-party
+malicious
+Z2l
+Z2l−k
+exact (truncate-reduce)
+Here, “prob.” stands for probabilistic, where the protocol may output a completely incorrect result with small probability;
+“approx.” stands for approximate, where the output may differ from the correct result by a small value; and “exact” denotes
+that the protocol guarantees an output with no deviation from the correct result.
+† Protocols in this paper are valid only when the input range is restricted.
+* Ditto is presented overall in the semi-honest security model, whereas its truncation protocol itself is maliciously secure.
+** The original paper only gives the version whose output remains on the original ring, while this version with output on
+the smaller ring follows from a straightforward adaptation of the same protocol.
+7
+
+As shown in the table, there are already some existing works that propose exact
+truncation protocols. However, these works do not directly match the goal we consid-
+ered here. In a significant part of the existing works, exact truncation only realizes
+the semantic effect of truncation, which means that the output value is rescaled, while
+the secret sharing remains over the original field or ring[5, 6, 12, 19, 21, 22, 38]. At
+the same time, some of the protocols proposed in existing works do perform an actual
+reduction of the underlying sharing field or ring after truncation and are therefore func-
+tionally closer to the functionality required here[14, 17, 36]. However, these protocols
+only achieve semi-honest security. Overall, the existing works provide an important
+research foundation for the exact truncation required in this paper, but they cannot
+yet serve directly as the component needed here.
+However, a further examination of the existing exact truncation protocols reveals
+a more encouraging picture. The exact truncation protocol given by Escudero et al. in
+CRYPTO 2020[21] was originally designed for semantic truncation that does not actu-
+ally reduce the underlying sharing ring. Nevertheless, after several relatively simple
+modifications, this protocol can also realize the smaller-ring output semantics required
+here. In other words, from the viewpoint of feasibility alone, the modified protocol can
+indeed serve as a component for exact fixed-point multiplication. Unfortunately, we did
+not find a signed extension method that matches this modified protocol. This means
+that if we adopt this modified truncation protocol as a component, the two cross-ring
+primitives required for exact fixed-point multiplication would rely on different under-
+lying logic and implementation routes. Although this is not impossible, implementing
+these two functions in a unified manner would be more favorable for the modular
+design of the overall protocol and would also be more conducive to establishing the
+security proof of the overall construction.
+3 Technical overview
+This work focuses on maliciously secure exact fixed-point multiplication within
+the honest-majority replicated 3PC framework. In MPC, fixed-point values are repre-
+sented through ring encoding derived from two’s-complement integers, so the protocol
+layer operates uniformly on the underlying ring elements. For this task, a natural
+procedure involves first sign-extending the inputs from the current ring to the tar-
+get ring for the product, then performing the multiplication in the larger ring, and
+finally applying exact signed truncation to match the target precision and output ring.
+The bottleneck lies in the two cross-ring nonlinear primitives surrounding it, namely
+signed extension and exact signed truncation. Therefore, the efficiency and secu-
+rity of exact fixed-point multiplication hinge on low-cost and composable realizations
+of these two primitives.
+Our key insight is that, although exact signed truncation and signed extension
+serve distinct purposes, the nonlinear information required for recovery in each case
+is significantly smaller than the full output value. In both scenarios, local linear oper-
+ations initially yield a base value, while the remaining uncertainty is limited to a
+small correction term with only a few possible values. Thus, the challenge is not to
+reconstruct the entire output maliciously, but rather to recover the small nonlinear
+8
+
+correction term. Specifically, for exact truncation, the nonlinear core corresponds to
+the wrap value; for signed extension, it involves both the wrap resulting from sum-
+ming the shares and the sign bit of the input. Notably, both cases can be unified as
+the recovery of a two-bit bounded quotient.
+For the exact signed truncation, local truncation of each share already yields a
+linear main term, while the remaining ambiguity arises only from the carry bits intro-
+duced by the discarded local remainders. To be more specific, the sum of the three
+local remainders can cross the threshold 2k zero, once, or twice. Thus, the exact result
+differs from the locally truncated value only by a wrap term taking values in {0, 1, 2}.
+Let ˜y denote the base value obtained by local truncation, then the exact truncation
+result can be computed as
+y = ˜y + c,
+c =
+r1 + r2 + r3
+2k
+
+∈{0, 1, 2}.
+(1)
+Hence, the protocol only needs to determine the wrap-around count of the discarded
+remainders.
+For the signed extension, there is a slight difference from the exact signed
+truncation. Summing the local shares yields a linear quantity
+S = x1 + x2 + x3,
+(2)
+which differs from the standard representative ¯x of the input by a wrap value over
+{0, 1, 2} induced by the summation of shares. However, recovering this wrap value
+alone is still insufficient to determine the correct signed extension, because under
+two’s-complement semantics the exact result also depends on whether the input lies
+in the negative range, namely on MSBm(¯x). Hence, the nonlinear core in the signed
+extension is the combination of the wrap value and the sign bit. By introducing a
+public bias M/2, these two quantities can be unified into a bounded quotient
+q =
+S + M/2
+M
+
+= wrap + MSB(¯x) ∈{0, 1, 2, 3},
+(3)
+for which the exact result can be computed as
+y = S −qM
+(mod N).
+(4)
+So, the nonlinear information to be recovered is again not the full output, but only
+“wrap + msb”. Thus, the signed extension can also be viewed as a bounded-quotient
+correction problem representable by only 2 bits.
+Based on the analysis above, we unify the two core cross-ring primitives, exact
+signed truncation and signed extension, into a common protocol design pattern,
+namely local base value computation + bounded-quotient recovery + lin-
+ear correction. The main idea is to first obtain a base value that differs from the
+target result only by a small correction term through purely local linear operations,
+9
+
+and then construct an auxiliary quantity u satisfying u ∈[0, 2t+2) to compress all
+nonlinear ambiguity into
+q =
+j u
+2t
+k
+∈{0, 1, 2, 3}.
+(5)
+So, these protocols only need to recover a 2-bit bounded quotient q under malicious
+security instead of applying a generic nonlinear computation. Then, the recovered
+quotient q is embedded into the target ring and is used to correct the approximate
+result obtained locally. The only differentiation between exact truncation and signed
+extension within this paradigm is the construction of u.
+By mapping the principal cross-ring nonlinearities to the identical bounded-
+quotient correction problem, this framework substantially mitigates the heterogeneity
+of nonlinear operations in MPC. As a result, protocol design, security analysis, and
+complexity characterization can all be organized around a common maliciously secure
+core. It substantially reduces the heterogeneity of nonlinear primitives in the protocol
+and makes the dominant sources of online cost more transparent. In other words, our
+work identifies and exploits the shared bounded-quotient structure of these operations
+and uses it to construct a unified, composable, and analytically transparent framework
+for maliciously secure exact fixed-point multiplication.
+4 Preliminaries
+4.1 Notation and algebraic preliminaries
+Algebraic structures. Protocols in this work primarily operate over the power-of-
+two rings of the form Z2k (for various bit-widths k), which naturally support two’s-
+complement fixed-point arithmetic. For any integer k > 1, let Z2k := Z/2kZ denote
+the ring of integers modulo 2k, represented by the canonical set {0, 1, . . . , 2k −1}.
+Additionally, we write ZK, where K = 2k, for the same ring.
+However, since ring Z2k contains zero divisors, some verification steps used in our
+malicious checks are performed after mapping elements from ring Z2k into a large
+prime field Zp, where p is sufficiently large for the relevant bit-width. The ring-to-
+field embedding is solely used to avoid pitfalls caused by zero divisors, hence such
+an embedding cannot preserve the underlying two’s-complement semantics in general.
+Nevertheless, this is sufficient for our purposes since we invoke the embedding only
+when checking some specific algebraic identities.
+Natural embedding and semantic distinction. In this work, we also need natural
+embedding between two rings in some verification steps. For any m ≤n, since 2m | 2n,
+there is a natural ring homomorphism:
+ιm→n : Z2m →Z2n,
+x 7→x
+(6)
+Such natural embedding can guarantee congruence, i.e., ιm→n(x) ≡x (mod 2m), but
+it cannot preserve two’s-complement signed semantics in general. In short, natural
+embedding ιm→n is not sign-extension. The signed-extension functionality considered
+later preserves the two’s-complement semantics of signed values.
+10
+
+Comparison and absolute value. Unless specified otherwise, |x| refers to the
+absolute value of the signed integer semantics | intk(x)| under two’s-complement inter-
+pretation. When writing C < a for a ∈Z2k without further explanation, we treat a as
+an unsigned integer in [0, 2k −1], regardless of whether a itself has signed semantics,
+and compare it to the public integer constant C.
+4.2 Secret sharing and audited opening
+Two-party secret sharing. For a value x over either the ring Z2k or the prime field
+Zp, it is shared between two parties P0 and P1 as follows:
+[x]K :=
+ [x]K
+1 , [x]K
+2
+
+∈Z2
+2k,
+x = [x]K
+1 + [x]K
+2
+(mod 2k)
+(7)
+or
+[x]p :=
+ [x]p
+1, [x]p
+2
+
+∈Z2
+p,
+x = [x]p
+1 + [x]p
+2
+(mod p).
+(8)
+For a bit b ∈Z2, write
+[b]B :=
+ [b]B
+1 , [b]B
+2
+
+∈Z2
+2,
+b = [b]B
+1 + [b]B
+2
+(mod 2).
+(9)
+Here and throughout, the superscript indicates the sharing domain, while the subscript
+indicates the share index. Linear operations are performed component-wise. Over Z2,
+addition coincides with XOR.
+Three-party replicated secret sharing. Similarly, for x ∈Z2k or x ∈Zp, the
+replicated secret sharing of x between three parties P1, P2 and P3 is in the form:
+JxK⋆:=
+ JxK⋆
+1, JxK⋆
+2, JxK⋆
+3
+
+∈Z3
+⋆,
+x = JxK⋆
+1 + JxK⋆
+2 + JxK⋆
+3
+(mod ⋆)
+(10)
+where ⋆∈{K, p}. The standard replicated layout is used: P1 holds (JxK⋆
+1, JxK⋆
+2), P2
+holds (JxK⋆
+2, JxK⋆
+3), P3 holds (JxK⋆
+3, JxK⋆
+1). For a bit b ∈Z2, analogously write
+JbKB =
+ JbKB
+1 , JbKB
+2 , JbKB
+3
+
+,
+b = JbKB
+1 + JbKB
+2 + JbKB
+3
+(mod 2)
+(11)
+with the same replicated layout.
+Under the honest-majority assumption that at most one party is corrupted, repli-
+cated arithmetic sharing and Boolean sharing provide information-theoretic privacy
+against any single-party view. However, replicated sharing itself does not imply mali-
+cious security for arbitrary protocol execution. In our protocols, malicious behavior
+is detected through explicit consistency checks on the overlapping local views of the
+replicated representation, such as through audited openings.
+Opening and audited opening. In a standard opening, a party reconstructs the
+secret value x and reveals it to all other parties. In contrast, during an audited opening,
+the parties reconstruct and reveal x while simultaneously checking the replication
+consistency (i.e., overlapping shares held by different parties must match). If the check
+fails, the execution of the current protocol aborts. Typically, audited openings are not
+used to reveal secret values, but rather to bind intermediate values to a well-defined
+replicated sharing in maliciously secure verification procedures.
+11
+
+4.3 Two’s-complement integer and fixed-point semantics
+Two’s-complement integer semantics. For any x
+∈
+Z2k, its k-bit two’s-
+complement signed integer semantics is defined as follows:
+intk(x) =
+(
+x,
+0 ≤x ≤2k−1 −1,
+x −2k,
+2k−1 ≤x ≤2k −1.
+(12)
+In particular, intk(x) ∈[−2k−1, 2k−1−1], and we further define the sign bit MSBk(x) =
+1{x ≥2k−1}, where 1{·} denotes the indicator function.
+Fixed-point semantics. Let x ∈Z2k encode a signed fixed-point value with
+fractional precision f, where 0 ≤f < k. Its fixed-point semantics is defined by
+fixk,f(x) = intk(x)
+2f
+(13)
+Thus, the ring element x represents the real value obtained by interpreting x as a k-bit
+two’s-complement integer and scaling it by 2−f.
+Semantic targets of signed extension and truncation. Let m ≤n, x ∈Z2m
+and y ∈Z2n. The value y is said to be a correct signed extension of x from m-bit to
+n-bit if and only if intn(y) = intm(x). Equivalently, if x and y are interpreted with
+the same fractional precision f, then signed extension preserves the fixed-point value
+fixn,f(y) = fixm,f(x).
+Let x ∈Z2k and let t be a positive integer where t < k. A value y ∈Z2k−t
+is said to be the exact signed truncation, or arithmetic right shift, of x by t bits if
+and only if intk−t(y) =
+j
+intk(x)
+2t
+k
+. Under fixed-point interpretation, this is precisely
+the rescaling step obtained by removing t fractional bits. More specifically, if x is
+interpreted with fractional precision f + t, then the exact truncated result y satisfies
+fixk−t,f(y) = fixk,f+t(x).
+Although integer and fixed-point values are semantically distinct, the protocol
+layer treats them uniformly, since all computations are performed on the underlying
+ring encodings and their secret sharings. Accordingly, the sequel is stated in terms of
+integer semantics, with the fixed-point semantics used only to interpret the induced
+functionality.
+4.4 3PC protocol building blocks
+Comparison to a public constant (LTConst). The protocol ΠB
+LTConst,3HMal com-
+pares a secret k-bit value with a public k-bit constant. It takes the bitwise replicated
+Boolean sharings (Jxk−1KB, . . . , Jx0KB) of a secret value x ∈[0, 2k) and a public con-
+stant C ∈[0, 2k) as the inputs, and outputs a replicated Boolean sharing J1{C<x}KB.
+In this work, this protocol is instantiated using the comparison machinery based on
+edaBits by Escudero et al.[21], with dominant online cost approximately 2k Boolean
+AND gates.
+Audited opening. The protocol Π⋆
+AOpen,3HMal takes a replicated sharing JxK⋆as
+the input and reconstructs and publicly reveals the secret value x. It aborts if the
+12
+
+overlapping local views are inconsistent to prevent malicious parties from modifying
+local shares. In the case of 2-out-of-3 replicated sharing, each participant needs to
+send their two shares to the other two participants respectively. Thus, over ring Z2k,
+one invocation costs 6k bits, i.e., 6 ring elements.
+Replicated-sharing multiplication. The protocol Π⋆
+Mul,3HMal is the standard mali-
+ciously secure multiplication protocol for replicated arithmetic sharing, where ⋆∈
+{K, p}. It takes inputs (JxK⋆, JyK⋆) and outputs Jx · yK⋆. A Beaver-style instantiation
+uses one preprocessed multiplication triple and two masked openings in the online
+phase. When using audited openings to perform the masked openings above, its online
+communication is denoted by C⋆
+Mul = 2C⋆
+AOpen, i.e., 12 elements.
+Remark. The preprocessing required by the above protocols is standard and is not
+a focus of this work. In particular, multiplication triples are assumed to be provided
+by any standard honest-majority maliciously secure backend, while daBits and strict
+edaBits may be provided by an honest-majority maliciously secure backend based on
+the construction of Escudero et al.[21]. This convention is consistent with the later
+use of malicious daBits in the 3PC B2A protocol and strict edaBits in the specialized
+high-two-bit extraction protocol.
+4.5 Threat model and security goal
+Threat model. We consider the standard honest-majority three-party setting with
+parties P1, P2 and P3, where at most one party is statically corrupted. Depending
+on the protocol variant, the corrupted party can be either semi-honest or malicious.
+All parties are assumed to communicate through secure authenticated point-to-point
+channels.
+Security goal. Unless stated otherwise, the main constructions aim for standard
+simulation-based malicious security with abort over 2-out-of-3 replicated sharing. Cor-
+rectness is defined with respect to the semantics in Section 4.3, under which signed
+extension preserves the two’s-complement integer semantics and exact signed trunca-
+tion implements arithmetic right shift exactly. Although the corresponding proofs are
+carried out at the level of the integer semantics, the fixed-point semantics is induced
+directly by the same ring encodings and is therefore preserved as well. Some weaker
+variants may satisfy only relaxed guarantees, such as semi-honest security or explicit
+bounded-error correctness.
+Assumptions and scope. The focus of this work is the design and analysis of
+exact cross-ring arithmetic protocols and their composition into maliciously secure
+fixed-point multiplication. Standard preprocessing required by the invoked black-box
+protocols is assumed to be available as described in Section 4.4. Denial-of-service
+attacks, fairness, and guaranteed output delivery are out of scope.
+5 A unified quotient-correction framework
+The key insight stated in Section 3 suggests that evaluating our target functionali-
+ties primarily reduces to computing a small nonlinear correction applied to a locally
+computable base value. By abstracting this correction process into a generic quotient-
+correction framework, protocols for exact signed truncation and signed extension can
+13
+
+be unified under a single paradigm. Consequently, the design of concrete functionali-
+ties simplifies to instantiating the base value, the auxiliary quantity, and the associated
+public correction constant.
+5.1 The form of quotient-correction
+We consider a t
+
+[…middle truncated for length…]
+
+y.
+Table 4 Theoretical online communication comparison for signed extension.
+Comm. (bits)
+Work
+Parties
+Security
+Restriction
+Online Comm. Expr.
+Ins I1
+Ins II2
+Ins III3
+Ditto[15]
+3-party
+semi-honest
+M/4
+3m + n
+40
+80
+160
+SIRNN[14]
+2-party
+semi-honest
+None
+< λ(m + 1) + 13m + n
+< 1272
+< 2416
+< 4704
+Guo et al.[9]
+2-party
+semi-honest
+M/4
+λ + n −m
+136
+144
+160
+Guo et al.[9]
+2-party
+semi-honest
+M/3
+2(λ + n −m)
+272
+288
+320
+Ours-semi
+3-party
+semi-honest
+M/3
+2n + 28
+60
+92
+156
+Ours-mal
+3-party
+malicious
+None
+18m + 42
+186
+330
+618
+The upper part of the table reports semi-honest protocols, while the lower part reports maliciously secure protocols.
+1Instantiation 1: the input is an 8-bit signed secret-shared value, and the output is a 16-bit signed secret-shared value, i.e.,
+m = 8 and n = 16.
+2Instantiation 2: the input is a 16-bit signed secret-shared value, and the output is a 32-bit signed secret-shared value, i.e.,
+m = 16 and n = 32.
+3Instantiation 3: the input is a 32-bit signed secret-shared value, and the output is a 64-bit signed secret-shared value, i.e.,
+m = 32 and n = 64.
+For signed truncation, we compared results under both approximate and exact
+semantics. The baselines for approximate signed truncation is Ditto[15], whereas the
+baselines for exact signed truncation include SIRNN[14], the exact variant of Guo et
+al.[9], and the protocol of Escudero et al.[21] together with its straightforward adapted
+version whose output is directly produced on the smaller ring. The comparison results
+are summarized in Table 5. As shown in the table, the communication overhead of
+approximate signed truncation is significantly lower than that of exact signed trun-
+cation, while the exact truncation protocol in a two-party setting incurs particularly
+high overall overhead. Specifically, Ditto achieves zero online communication in a 3-
+party setup, while the 1 ULP error variant proposed in this paper is an optimization
+of this approach based on an analysis of its output error distribution; it typically pro-
+duces error-free results with a much higher probability while maintaining zero online
+communication. On the other hand, the original protocol by Escudero et al. only pro-
+vides a version where the output remains on the original ring; however, our analysis
+shows that this protocol can be easily modified to produce a version where the out-
+put is produced on the reduced ring. This modified version is the only baseline that
+directly aligns with the semantic target of the main protocol in this paper, while our
+exact protocol achieves significantly lower communication overhead under the same
+39
+
+semantic conditions. For typical application scenarios, the online phase communica-
+tion overhead of our semantically equivalent protocol is less than 50% of that of the
+baseline.
+Table 5 Theoretical online communication comparison for signed truncation.
+Comm. (bits)
+Work
+Parties
+Security
+Out-Ring
+Sem.
+Restriction
+Online Comm. Expr.
+Ins I1
+Ins II2
+Ins III3
+Ditto[15]
+3-party
+malicious*
+reduced
+approx.
+None
+0
+0
+0
+0
+Ours-1ULP
+3-party
+malicious
+reduced
+approx.
+None
+0
+0
+0
+0
+SIRNN[14]
+2-party
+semi-honest
+reduced
+exact
+None
+λ(k + 1) + ℓ+ 13k
+708
+1288
+2448
+Guo et al.[9]
+2-party
+semi-honest
+original
+exact
+L/4
+< λ(k + 2) + ℓ+ 15k
+< 844
+< 1432
+< 2608
+Escudero et al.[21]
+3-party
+malicious
+original
+exact
+None
+18ℓ+ 12
+300
+588
+1164
+Escudero et al.[21]
+3-party
+malicious
+reduced**
+exact
+None
+12ℓ+ 6k + 6
+222
+438
+870
+Ours-exact
+3-party
+malicious
+reduced
+exact
+None
+18k + 42
+114
+186
+330
+The upper part of the table reports approximate signed truncation protocols, while the lower part reports exact signed
+truncation protocols.
+* Ditto is presented overall in the semi-honest security model, whereas its truncation protocol itself is maliciously secure.
+** The original paper only gives the version whose output remains on the original ring, while this version with output on
+the smaller ring follows from a straightforward adaptation of the same protocol.
+1Instantiation 1: the input is a 16-bit signed fixed-point secret-shared value, and 4 fractional bits are truncated, i.e., ℓ= 16
+and k = 4.
+2Instantiation 2: the input is a 32-bit signed fixed-point secret-shared value, and 8 fractional bits are truncated, i.e., ℓ= 32
+and k = 8.
+3Instantiation 3: the input is a 64-bit signed fixed-point secret-shared value, and 16 fractional bits are truncated, i.e., ℓ= 64
+and k = 16.
+For fixed-point multiplication, the compared baselines include SIRNN[14], the
+exact route of Guo et al.[9], and Ditto[15]. The comparison results are summarized
+in Table 6. As shown in the table, none of the compared baselines directly matches
+the semantic target of the main protocol proposed here. Ditto attains the lowest
+communication cost, but only under approximate semantics, weaker security guaran-
+tees, and the restricted input domain M/4, and therefore does not provide a general
+baseline for exact fixed-point multiplication. The remaining exact baselines, namely
+SIRNN and the exact route of Guo et al., are both given in the 2-party semi-honest
+setting, while the latter does not directly output the final truncation result on the
+smaller ring. In contrast, the main protocol Ours-mal proposed in this paper attains
+general exact fixed-point multiplication under malicious security without such restric-
+tions. Moreover, although its online communication cost is higher than that of Ditto,
+it remains substantially lower than those of the two exact 2-party baselines. In addi-
+tion, Ours-tradeoff shows that, under relaxed guarantees, combining our semi-honest
+signed-extension variant, semi-honest in-ring multiplication, and our 1-ULP truncation
+variant yields communication close to Ditto while supporting a broader input range,
+and providing a higher probability of coinciding with the exact truncation result.
+8.2 Experimental evaluation
+The experimental comparison is reported in terms of online runtime. All experiments
+run on a workstation with an AMD Ryzen 9 9950X CPU and 128 GB of RAM.
+40
+
+Table 6 Theoretical online communication comparison for fixed-point multiplication.
+Comm. (bits)
+Work
+Parties
+Security
+Sem.
+Restriction
+Online Comm. Expr.
+Ins I1
+Ins II2
+Ins III3
+Ditto[15]
+3-party
+semi-honest
+approx.
+M/4
+6m + 5n
+128
+256
+512
+SIRNN[14]*
+2-party
+semi-honest
+exact
+None
+< 3m2 + 4λm + λ(τ + 1)
++34m + 13τ
+< 5252
+< 10760
+< 22928
+Guo et al.[9]∗
+2-party
+semi-honest
+exact∗∗
+M/4
+< λ(2m + τ + 14) + 3m2
++9m + n + 15τ
+< 4692
+< 7969
+< 15696
+Ours-tradeoff
+3-party
+semi-honest
+approx.
+M/3
+7n + 56
+168
+280
+504
+Ours-mal
+3-party
+malicious
+exact
+None
+36m + 12n + 18τ + 126
+678
+1230
+2334
+* The fixed-point multiplication protocols of SIRNN and Guo et al. do not follow the conventional route of first extending
+the operands to a larger ring and then multiplying. Instead, they directly multiply operands already given over non-uniform
+rings.
+** Unlike the other compared protocols, the exact route of Guo et al. does not directly output the final truncation result on
+the smaller ring.
+1Instantiation 1: two 8-bit signed fixed-point secret-shared values with 4 fractional bits are multiplied, and 4 fractional bits
+are truncated from the product, i.e., m = 8, n = 16 and τ = 4.
+2Instantiation 2: two 16-bit signed fixed-point secret-shared values with 8 fractional bits are multiplied, and 8 fractional bits
+are truncated from the product, i.e., m = 16, n = 32 and τ = 8.
+3Instantiation 3: two 32-bit signed fixed-point secret-shared values with 16 fractional bits are multiplied, and 16 fractional
+bits are truncated from the product, i.e., m = 32, n = 64 and τ = 16.
+Network latency is emulated with RTT set to 10 ms and 100 ms, corresponding to
+LAN and WAN settings, respectively. For each functionality, namely signed extension,
+signed truncation, and exact fixed-point multiplication, three representative parameter
+settings are used. These settings are consistent with those used in Section 8.1. For
+each parameter configuration, we execute 1000 independent single-instance runs and
+report the mean across five independent trials. Moreover, to better reflect the latency
+of the protocol itself, we do not use cross-instance batching, vectorization, or pipelining
+to amortize the online cost; only the parallelism naturally available within a single
+protocol instance is used.
+It is important to note that the original implementation frameworks of Ditto and
+Escudero et al., namely MP-SPDZ and spu, respectively, do not directly support the
+instantiations required in our evaluation. Therefore, we reimplemented the relevant
+protocols of Ditto and Escudero et al. under the same experimental interface as our
+own. Unlike the theoretical comparison, Guo et al.’s work is excluded from the exper-
+imental evaluation. Although their paper indicates that the implementation has been
+integrated into a public GitHub repository, the corresponding source code was not
+publicly accessible at the time of this study. Moreover, some of the low-level opera-
+tions required by their protocols are not specified in sufficient implementation detail,
+which makes it difficult for us to reimplement a benchmark that faithfully reflects the
+original performance of Guo et al.’s protocols.
+For signed extension, the experimental baselines include SIRNN[14] and Ditto[15],
+and the results are summarized in Table 7. The runtime results should be interpreted
+together with the underlying security model and applicability domain. In particular,
+Ours-mal targets malicious security on the full domain, whereas the other baselines
+provide only semi-honest security, and some further require restricted input ranges.
+Its higher runtime is therefore expected and reflects the cost of stronger guarantees
+41
+
+rather than a directly comparable slowdown. Nevertheless, the experimental results
+demonstrate that our protocol still achieves practical runtime under malicious security.
+Table 7 Experimental online runtime comparison for signed extension.
+Runtime (ms)
+LAN (RTT = 10 ms)
+WAN (RTT = 100 ms)
+Work
+Parties
+Security
+Restriction
+Ins I1
+Ins II2
+Ins III3
+Ins I1
+Ins II2
+Ins III3
+Ditto[15]
+3-party
+semi-honest
+M/4
+16.25
+16.26
+16.27
+151.26
+151.26
+151.27
+SIRNN[14]
+2-party
+semi-honest
+None
+31.57
+41.54
+41.57
+303.60
+404.48
+404.61
+Ours-semi
+3-party
+semi-honest
+M/3
+26.79
+26.80
+26.77
+252.22
+252.22
+252.23
+Ours-mal
+3-party
+malicious
+None
+37.76
+43.03
+48.45
+353.12
+403.55
+453.98
+The upper part of the table reports semi-honest protocols, while the lower part reports maliciously secure protocols.
+1Instantiation 1: the input is an 8-bit signed secret-shared value, and the output is a 16-bit signed secret-shared value, i.e.,
+m = 8 and n = 16.
+2Instantiation 2: the input is a 16-bit signed secret-shared value, and the output is a 32-bit signed secret-shared value, i.e.,
+m = 16 and n = 32.
+3Instantiation 3: the input is a 32-bit signed secret-shared value, and the output is a 64-bit signed secret-shared value, i.e.,
+m = 32 and n = 64.
+For signed truncation, the experimental baselines include Ditto[15] for the approx-
+imate semantic, SIRNN[14], Escudero et al.’s work[21], and its modified version for
+the exact route. The comparison results are summarized in Table 8. As shown in the
+table, our approximate protocol with 1 ULP error and Ditto exhibit nearly identical
+runtime, but the analysis in Appendix B.3 shows that, in most cases, the fixed correc-
+tion used in our approximate variant yields a higher probability of coinciding with the
+exact result. On the other hand, our exact signed truncation protocol is only slightly
+slower than the modified Escudero-based implementation. This gap mainly comes from
+the two additional B2A invocations in our protocol. Nevertheless, as already shown in
+the theoretical comparison, our protocol achieves substantially lower online commu-
+nication overhead. This indicates that our exact protocol attains a favorable trade-off
+between runtime and communication.
+For fixed-point multiplication, the experimental baselines include Ditto[15] and
+SIRNN[14], and the comparison results are summarized in Table 9. At present, to
+the best of our knowledge, there are no prior implementations that realize the same
+functionality considered here. In particular, Ditto provides only a semi-honest protocol
+under restricted inputs, and its output is not exact, while SIRNN is a two-party
+semi-honest protocol. Therefore, their runtime should be regarded only as a reference
+rather than as a directly comparable target. Nevertheless, the main protocol Ours-mal
+achieves practical runtime while providing malicious security, exact semantics, and
+no input-domain restriction. In particular, although Ours-mal is slower than Ditto,
+which relies on weaker guarantees and approximate semantics, it is consistently faster
+than SIRNN in all tested settings despite providing stronger security guarantees. In
+addition, although Our-tradeoff is still somewhat slower than Ditto, it supports a
+broader input range, and its truncation has a higher probability of coinciding with the
+exact result in typical cases.
+42
+
+Table 8 Experimental online runtime comparison for signed truncation.
+Runtime
+LAN (RTT = 10 ms)
+WAN (RTT = 100 ms)
+Work
+Parties
+Security
+Out-Ring
+Sem.
+Ins I1
+Ins II2
+Ins III3
+Ins I1
+Ins II2
+Ins III3
+Ditto[15]
+3-party
+malicious*
+reduced
+approx.
+≪1
+≪1
+≪1
+≪1
+≪1
+≪1
+Ours-1ULP
+3-party
+malicious
+reduced
+approx.
+≪1
+≪1
+≪1
+≪1
+≪1
+≪1
+SIRNN[14]
+2-party
+semi-honest
+reduced
+exact
+20.79
+31.48
+41.51
+202.23
+303.67
+404.53
+Escudero et al.[21]
+3-party
+malicious
+original
+exact
+53.93
+64.56
+75.39
+504.22
+605.07
+705.89
+Escudero et al.[21]
+3-party
+malicious
+reduced**
+exact
+26.98
+32.25
+37.58
+252.12
+302.53
+353.06
+Ours-exact
+3-party
+malicious
+reduced
+exact
+32.49
+37.76
+43.07
+302.70
+353.13
+403.56
+The upper part of the table reports approximate signed truncation protocols, while the lower part reports exact signed
+truncation protocols.
+* Ditto is presented overall in the semi-honest security model, whereas its truncation protocol itself is maliciously secure.
+** The original paper only gives the version whose output remains on the original ring, while this version with output on
+the smaller ring follows from a straightforward adaptation of the same protocol.
+1Instantiation 1: the input is a 16-bit signed fixed-point secret-shared value, and 4 fractional bits are truncated, i.e., ℓ= 16
+and k = 4.
+2Instantiation 2: the input is a 32-bit signed fixed-point secret-shared value, and 8 fractional bits are truncated, i.e., ℓ= 32
+and k = 8.
+3Instantiation 3: the input is a 64-bit signed fixed-point secret-shared value, and 16 fractional bits are truncated, i.e., ℓ= 64
+and k = 16.
+Table 9 Experimental online runtime comparison for fixed-point multiplication.
+Runtime (ms)
+LAN (RTT = 10 ms)
+WAN (RTT = 100 ms)
+Work
+Parties
+Security
+Sem.
+Restriction
+Ins I1
+Ins II2
+Ins III3
+Ins I1
+Ins II2
+Ins III3
+Ditto[15]
+3-party
+semi-honest
+approx.
+M/4
+21.51
+21.54
+21.50
+201.76
+201.70
+201.70
+SIRNN[14]
+2-party
+semi-honest
+exact
+None
+94.52
+125.25
+135.64
+911.88
+1295.70
+1618.12
+Ours-tradeoff
+3-party
+semi-honest
+approx.
+M/3
+32.13
+32.14
+32.22
+302.76
+302.75
+302.71
+Ours-mal
+3-party
+malicious
+exact
+None
+75.71
+86.44
+97.35
+706.13
+806.96
+907.86
+The compared baselines are reported only for reference, since none of them realizes the same functionality considered here.
+1Instantiation 1: two 8-bit signed fixed-point secret-shared values with 4 fractional bits are multiplied, and 4 fractional bits
+are truncated from the product, i.e., m = 8, n = 16, and τ = 4.
+2Instantiation 2: two 16-bit signed fixed-point secret-shared values with 8 fractional bits are multiplied, and 8 fractional bits
+are truncated from the product, i.e., m = 16, n = 32, and τ = 8.
+3Instantiation 3: two 32-bit signed fixed-point secret-shared values with 16 fractional bits are multiplied, and 16 fractional
+bits are truncated from the product, i.e., m = 32, n = 64, and τ = 16.
+9 Conclusion
+This work investigates maliciously secure, exact fixed-point multiplication over power-
+of-two rings within the honest-majority replicated 3PC framework. The central
+challenge of this functionality arises from two cross-ring nonlinear primitives required
+for multiplication: exact signed truncation and signed extension. The efficiency, secu-
+rity, and composability of these primitives fundamentally govern the practical viability
+of exact fixed-point arithmetic in this setting. A key insight is that, although these
+functionalities serve distinct algorithmic roles, the nonlinear information that must
+be securely reconstructed in each case is substantially smaller than the full output.
+43
+
+Specifically, local linear operations already determine a base value, and the resid-
+ual ambiguity reduces to a small, bounded quotient. Leveraging this observation, we
+identify a unified computational primitive, namely bounded-quotient extraction and
+correction, and demonstrate that both exact signed truncation and signed extension
+arise as direct, efficient instantiations thereof. Composing these instantiations sequen-
+tially yields a complete exact fixed-point multiplication protocol. Beyond the concrete
+constructions, this unification delivers conceptual and analytical benefits: the result-
+ing protocols admit a common UC-style abstraction; their security proofs follow a
+uniform compositional argument; and their dominant online communication and com-
+putation costs are governed by a shared analytical model. The theoretical analysis and
+experimental results further show that the proposed approach achieves meaningful effi-
+ciency while providing exact semantics and malicious security in a setting where prior
+baselines generally rely on weaker guarantees, restricted domains, or non-identical
+semantic targets. Thus, the principal contribution of this work is not merely a set of
+isolated protocols, but a unified, composable, and analytically transparent framework
+for cross-ring exact arithmetic. We posit that this framework establishes a principled
+foundation for building more sophisticated exact numeric protocols in replicated 3PC.

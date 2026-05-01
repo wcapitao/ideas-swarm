@@ -1,0 +1,1096 @@
+Branch Landing: Bloom Filter-Based Source
+Authorization for Forward-Edge CFI on RISC-V
+You Wu1[0000−0002−1410−3196] and Peter Beerel1[0000−0002−8283−0168]
+University of Southern California, Los Angeles CA 90057, USA {youwu,
+pabeerel}@usc.edu
+Abstract. Jump-Oriented Programming (JOP) attacks exploit indi-
+rect control transfers to bypass backward-edge defenses, yet existing
+forward-edge CFI mechanisms lack precise source-domain authorization:
+type-based CFI admits all same-signature callers, while tag-based hard-
+ware CFI is limited by fixed-width register storage that caps the num-
+ber of simultaneously authorized sources. We propose Branch Landing
+(BRL), a landing-based forward-edge CFI framework for RISC-V that re-
+places fixed-capacity checks with Bloom filter membership queries. Two
+lightweight ISA extensions, bld and brl, propagate a source Section
+Identifier (SID) through a dedicated BRState register and validate it at
+each landing site with fixed-probe latency that is independent of the
+number of authorized sources under a chosen filter configuration. Sec-
+tion granularity is configurable, supporting policies from type-based to
+CFG-derived authorization within a single mechanism. We implement
+Branch Landing in the LLVM RISC-V backend and evaluate it on 81
+BEEBS benchmarks under two representative policy configurations: a
+function-level, type-based policy and a basic-block-level, CFG-derived
+policy. Under a 3-cycle brl latency model, the two configurations incur
+average runtime overheads of only 0.210% and 0.421%, with mean code
+size growth of 0.46% and 0.52% respectively. The CFG-derived policy
+reduces the average equivalence class size by 32.5% compared to the
+type-based policy, and all evaluated executions complete without BRL
+enforcement failures.
+Keywords: Control-Flow Integrity · Jump-Oriented Programming · Bloom
+Filter · RISC-V
+1
+Introduction
+Memory corruption vulnerabilities continue to pose a fundamental threat to
+system security. Even in the presence of Data Execution Prevention (DEP) [20]
+and Address Space Layout Randomization (ASLR) [24,29], attackers can hijack
+control flow through code-reuse attacks [3,26,28]. While shadow stacks [6] and
+backward-edge protections have significantly reduced practical Return-Oriented
+Programming (ROP) exploitability, attackers increasingly pivot to Jump-Oriented
+Programming (JOP) [3, 9], which chains gadgets exclusively through forward-
+edge indirect transfers such as jalr and jr in RISC-V [32]. Since JOP bypasses
+arXiv:2604.23331v1 [cs.CR] 25 Apr 2026
+
+2
+Y. Wu et al.
+backward-edge defenses entirely, dedicated forward-edge CFI mechanisms are
+essential [1,5].
+Existing JOP defenses fundamentally leave a source-authorization gap, as
+they fail to precisely bind indirect branches to their legitimate origins. Coarse
+landing-based mechanisms, such as Intel CET [15,30] and ARM BTI [2], verify
+that an indirect branch reaches a valid destination but impose no constraint on
+which source may initiate the transfer. Type-based CFI mechanisms, such as
+FineIBT [12] and Clang CFI [18, 31], narrow the target set through function-
+signature matching, but all callers sharing the same type pass the check in-
+discriminately. Tag-based hardware mechanisms, such as Bratter [23], support
+richer context-sensitive policies via per-source tag values, but their fixed-width
+register storage imposes a hard ceiling on the number of sources that can be
+simultaneously authorized for a single target. Consequently, when legitimate
+callers exceed the available tag slots, the remaining callers are left without an
+enforceable policy.
+In this paper, we propose Branch Landing (BRL), a landing-based forward-
+edge CFI framework for RISC-V that shifts the hardware enforcement paradigm
+from rigid one-to-one equality checks to flexible, set-based membership queries.
+By employing Bloom filters [4] to represent authorized caller sets, BRL effec-
+tively decouples authorization capacity from fixed-width register constraints.
+To realize this paradigm shift at the architectural level, we design two novel,
+lightweight ISA extensions: bld (Branch Landing Descriptor) and brl (Branch
+Landing Verification). Prior to an indirect branch, our bld instruction securely
+propagates a source Section Identifier (SID) into a dedicated architectural reg-
+ister, BRState. Subsequently, the brl instruction operates at the valid landing
+site to evaluate the condition SIDsrc ∈AllowedSources(T) with a fixed num-
+ber of hash probes independent of AllowedSources(T), immediately triggering a
+control-flow protection fault if the source SID falls outside the authorized set.
+Two key properties distinguish Branch Landing from prior mechanisms. First,
+it provides scalable source-domain authorization: unlike type-based CFI, which
+reduces all callers to a single equivalence class, and unlike tag-based CFI, which
+is structurally limited by register slot count, BRL leverages its underlying Bloom
+filter to encode large authorized-source sets per target with fixed-probe verifi-
+cation and no general-purpose register pressure. Second, our instruction design
+is inherently policy-agnostic: the newly introduced bld/brl hardware infras-
+tructure remains static, yet it can instantiate type-based, CFG-derived [21,35],
+or other authorization models by varying only how AllowedSources(T) is con-
+structed at compile time. Table 1 summarizes these design axes across represen-
+tative CFI mechanisms.
+We implement Branch Landing in the LLVM RISC-V backend and evaluate
+it on the 81 BEEBS benchmarks [22] under two policy configurations: BRL-Func
+(function-level SID with type-based authorization) and BRL-CFG (basic-block-
+level SID with CFG-derived authorization). Runtime overhead is measured on
+the Spike RISC-V ISA simulator using a weighted-cycle model under three brl
+latency points: 3, 5, and 10 cycles, with bld modeled as a 1-cycle state up-
+
+Branch Landing
+3
+Table 1. Comparison of forward-edge CFI mechanisms.
+Mechanism
+Source-aware Auth. model Scalable Policy-agnostic
+CET/BTI [2,15]
+✗
+Target-only
+✓
+✗
+FineIBT [12]
+Partial
+Type equality
+✓
+✗
+Bratter [23]
+✓
+Tag equality
+✗
+Partial
+Branch Landing (BRL)
+✓
+Membership
+✓
+✓
+date, following the methodology of Bratter [23]. The brl3, brl5, and brl10
+represent optimistic, realistic, and conservative hardware implementations, re-
+spectively. A detailed cycle-by-cycle justification is given in Section 5.2. Under
+the brl3 model, BRL-Func and BRL-CFG incur mean runtime overheads of
+0.210% and 0.421% respectively, more than 14× lower than Bratter’s reported
+5.99% for combined function-signature and branch regulation enforcement un-
+der the same weighted-cycle style of evaluation. Even under the conservative
+brl10 model, the mean overhead remains below 1.3%. This comparison should
+be interpreted as indicative rather than identical, since the protected edge sets
+and hardware assumptions differ across the two systems. Code size overhead re-
+mains modest at 0.46% (BRL-Func) and 0.52% (BRL-CFG) mean, less than half
+of Bratter_Both’s 1.20%, while BRL-CFG simultaneously reduces the average
+equivalence class size by 32.5% relative to BRL-Func. All 81 benchmarks execute
+with zero false positives across both configurations.
+In summary, this paper makes the following contributions:
+– We formalize the source-authorization gap in existing type-based and tag-
+based forward-edge CFI mechanisms and propose Branch Landing, a RISC-V
+CFI framework that enforces source-domain authorization via Bloom filter
+membership queries through two lightweight ISA extensions.
+– We introduce a configurable section-granularity model that instantiates mul-
+tiple CFI policies, ranging from type-based to CFG-derived, within a single
+policy-agnostic enforcement mechanism.
+– We implement Branch Landing as an LLVM RISC-V backend extension and
+a Spike ISA simulator prototype, demonstrating on the BEEBS benchmark
+suite that it achieves substantially lower runtime and code size overhead
+than prior tag-based hardware CFI while providing finer-grained source au-
+thorization and tighter equivalence classes.
+The remainder of this paper is organized as follows. Section 2 reviews code-
+reuse attacks and related CFI mechanisms. Section 3 presents the design of
+Branch Landing. Section 4 evaluates Branch Landing on the BEEBS bench-
+mark suite. Section 5 discusses design considerations and potential extensions.
+Section 6 concludes.
+
+4
+Y. Wu et al.
+2
+Background and Related Work
+This section reviews prior work on control-flow integrity relevant to Branch
+Landing, organized along the design axes that motivate our approach: attack
+model, enforcement granularity, and authorization model.
+2.1
+Jump-Oriented Programming on RISC-V
+Memory corruption vulnerabilities, such as buffer overflows, use-after-free er-
+rors, and type confusion, allow attackers to overwrite control-sensitive data in-
+cluding return addresses, function pointers, and jump table indices. Return-
+Oriented Programming (ROP) [26] chains short instruction sequences ending in
+ret to construct arbitrary computations; shadow stacks [6] have substantially
+mitigated this vector. Jump-Oriented Programming (JOP) [3] avoids return in-
+structions entirely, instead sequencing gadgets through indirect control transfers.
+Because JOP uses only forward-edge transfers, it bypasses shadow stacks and
+other backward-edge defenses, motivating dedicated forward-edge CFI mecha-
+nisms.
+On RISC-V, the jalr instruction is the primary JOP primitive. A typical
+attack proceeds as follows. Consider a program that stores a function pointer in
+memory and later invokes it through an indirect call:
+struct handler {
+char buf[64];
+void (*fn)(int);
+// function pointer
+};
+void dispatch(struct handler *h, int arg) {
+h->fn(arg);
+// compiles to jalr ra, rs1, 0
+}
+Listing 1.1. Vulnerable indirect call site.
+A buffer overflow into h->buf lets the attacker overwrite h->fn with the
+address of a chosen gadget. When dispatch executes the indirect call, control
+transfers to that gadget instead of the intended callee. A useful JOP gadget on
+RISC-V takes the form:
+# Load next target from an attacker-controlled
+# dispatcher table and jump to it.
+ld
+t0, 0(a0)
+# load next gadget address
+addi
+a0, a0, 8
+# advance dispatcher pointer
+jalr
+zero, t0, 0
+# indirect jump to next gadget
+Listing 1.2. A representative RISC-V JOP gadget.
+By chaining such gadgets through a dispatcher table, the attacker constructs
+Turing-complete computation. Crucially, every transfer in the chain is a syntac-
+tically legitimate jalr to a valid instruction address, so coarse landing-based
+
+Branch Landing
+5
+foo1()
+foo2()
+foo3()
+foo4()
+target()
+Check TypeID
+== caller type
+ pass
+foo5()
+attacker
+pass 
+ All same-type callers pass
+ Attacker undetected
+(a) Type-based CFI
+BTR register
+tag0
+tag1
+tag2
+tag3
+target()
+Check tag0 foo1
+Check tag1 foo2
+Check tag2 foo3
+Check tag3 foo4
+foo5()
+attacker
+no slot 
+ Only 4 slots available
+ Incomplete protection policy
+(b) Tag-based hardware CFI
+foo1()
+bld
+SID1
+foo2()
+bld
+SID2
+foo3()
+bld
+SID3
+foo4()
+bld
+SID4
+BRState
+SID | valid
+target()
+brl SID_T
+Bloom Filter BF[T]
+h1(SIDsrc), h2(SIDsrc) 
+ bit positions
+1
+0
+1
+0
+0
+1
+0
+1
+1
+0
+1
+0
+SIDsrc BF[T] authorized
+foo5()
+attacker
+SID BF fault
+ Check SID via Bloom filter membership
+ Scalable: arbitrary # of authorized sources
+(c) Branch Landing
+Fig. 1. Existing and proposed forward-edge CFI defenses. (a) Type-based CFI
+(FineIBT): all callers sharing the same function type pass the check, including attacker-
+controlled foo5. (b) Tag-based hardware CFI (Bratter): the 4-slot BTR is exhausted
+by foo1–foo4; no slot is available to express a policy for foo5. (c) Branch Landing:
+source SIDs are checked via Bloom filter membership, supporting an arbitrary number
+of authorized callers with fixed-probe verification independent of set size.
+defenses that only check whether the destination is a marked landing site fail
+to detect the attack: the gadget entry points are themselves valid landing sites
+in the original program. This observation motivates source-aware CFI, in which
+each indirect transfer must be authorized not only by its destination but also by
+its origin.
+2.2
+Coarse Landing-Based CFI
+Intel CET IBT [15, 30], ARM BTI [2], and recent RISC-V proposals [10, 19,
+25] require indirect branches to land on designated marker instructions (endbr,
+bti, or equivalent). These mechanisms are target-centric: they verify that the
+destination is a valid landing site but impose no constraint on which source may
+initiate the transfer, admitting JOP chains among the full set of marked sites.
+2.3
+Type-Based CFI
+FineIBT [12] and Clang CFI [18,31] restrict indirect calls to targets with compat-
+ible function signatures. Authorization remains a single equality check: all call
+sites sharing the same type reach all matching targets, regardless of structural
+caller–callee relationships.
+ECCut [33] refines LLVM-CFI equivalence classes through complete field
+sensitivity, achieving 94.8% average EC reduction on SPEC CPU; HPCFI [16]
+integrates multiple static analyses for similar gains. Both narrow the type-based
+target set but remain equality-based and do not provide explicit source-domain
+authorization. Their analysis refinements are complementary to BRL and could
+serve as policy inputs to construct tighter AllowedSources(T) sets.
+
+6
+Y. Wu et al.
+2.4
+Tag-Based Hardware CFI
+Tag-based mechanisms associate each source with a runtime tag value and verify
+it at the landing site, supporting finer-grained policies than type equality alone.
+Bratter [23] introduces a Branch Tag Register (BTR), a 32-bit CSR parti-
+tioned into four independent 8-bit slots (tag0–tag3). Two dedicated instructions,
+sbtag and cbtag, write and verify individual slots before and after indirect trans-
+fers, respectively. This allows Bratter to enforce context-sensitive policies that
+would require trampolines or function duplication under single-tag mechanisms.
+Bratter reports average execution time overheads of 0.43% for function-signature
+enforcement and 5.99% when combined with branch regulation on the BEEBS
+benchmark suite.
+However, Bratter’s enforcement model remains equality-based: each slot stores
+a fixed tag value and the callee checks for an exact match. When multiple legiti-
+mate callers with different contexts must reach the same target, they must either
+share a tag or occupy separate slots. The four-slot BTR imposes a hard ceiling:
+as shown in Figure 1(b), a program with five or more distinct source domains
+targeting the same function exhausts the register, leaving the remaining callers
+without an enforceable policy. This is a structural limitation of fixed-width tag
+storage, not an artifact of any particular implementation.
+3
+Design
+Branch Landing enforces forward-edge CFI through two lightweight ISA exten-
+sions, bld and brl, combined with per-target Bloom filter metadata. This sec-
+tion describes the threat model, the core enforcement mechanism, the supported
+policy instantiations, and the granularity trade-offs.
+3.1
+Threat Model
+Branch Landing targets forward-edge control-flow hijacking attacks, including
+Jump-Oriented Programming (JOP), function pointer corruption, virtual call
+hijacking, and dispatcher-based gadget chaining. The attacker is assumed to pos-
+sess arbitrary memory write capabilities—sufficient to corrupt function pointers,
+virtual table entries, or jump table indices, but is unable to modify executable
+code or Branch Landing metadata, which are protected as read-only by the op-
+erating system. We further assume that the attacker cannot tamper with the
+BRState register, which is not memory-mapped and is updated architecturally
+only by committed bld/brl instructions rather than by ordinary stores or generic
+user-level CSR writes (Section 3.3). Under this model, the defense guarantees
+that any indirect control transfer must originate from a source domain autho-
+rized to reach the target landing site; unauthorized transfers trigger a processor
+exception.
+We explicitly place microarchitectural side-channel attackers outside our threat
+model. Branch Landing is an architectural CFI mechanism and inherits the same
+
+Branch Landing
+7
+scoping convention as prior hardware-assisted CFI work, including FineIBT [12],
+Bratter [23], and Intel CET [15], all of which target architectural control flow
+rather than microarchitectural leakage. Speculative execution, cache timing, and
+other microarchitectural channels require orthogonal defenses (e.g., speculative
+load hardening, cache partitioning) that can be deployed alongside BRL. We an-
+alyze the residual side-channel attack surface that BRL specifically introduces,
+and discuss potential hardening directions, in Section 3.7.
+3.2
+ISA Extensions
+Branch Landing introduces two new instructions to the RISC-V ISA. Both are
+encoded as I-type instructions within a reserved custom opcode space, ensur-
+ing backward compatibility with existing RISC-V implementations: on legacy
+hardware that does not recognize bld/brl, the instructions can be treated as
+illegal-instruction faults, providing a fail-closed default.
+bld (Branch Landing Descriptor). The bld instruction is inserted by the com-
+piler immediately before each indirect control transfer (jalr or jr). It takes
+an assembler-supplied source Section Identifier (SID) operand and performs two
+operations atomically: (1) it writes the SID into BRState.sid, and (2) it sets
+the validity bit BRState.valid ←1. The instruction executes in a single cycle,
+as it only writes an immediate value into a dedicated CSR without requiring
+memory access or ALU computation.
+bld
+SID_src
+jalr
+x0, rs1, 0
+brl (Branch Landing Verification). The brl instruction is inserted at
+the entry of each valid indirect branch target. It takes a target Section Identifier
+(SIDT ) operand that uniquely identifies the landing site within the program.
+When execution reaches a landing site, brl performs the following sequence:
+1. Validity check. If BRState.valid = 0, the site was reached without a
+preceding bld, indicating an attacker-controlled jump that bypassed the in-
+strumented call sequence. The processor raises a control-flow protection fault
+immediately.
+2. Filter resolution. brl uses its target SID operand to index a global filter
+descriptor table stored in .rodata, retrieving the base address and bit-width
+of the per-target Bloom filter BF[SIDT ]. The descriptor table layout is fixed
+at link time and protected as read-only.
+3. Bloom filter lookup. brl retrieves SIDsrc from BRState.sid and evalu-
+ates the membership query SIDsrc ∈BF[SIDT ] by hashing SIDsrc through
+k hash functions and checking the corresponding bits in BF[SIDT ].
+4. Authorization decision. If all k bits are set, the transfer is authorized:
+execution proceeds normally and BRState.valid is cleared to 0, ensuring
+that authorization state cannot be reused across multiple transfers. If any
+bit is clear, SIDsrc is not a member of the authorized set and a control-flow
+protection fault is raised.
+
+8
+Y. Wu et al.
+Under the latency models used in our evaluation, brl performs membership
+checking with a fixed number of hash probes, in time independent of the number
+of authorized source domains for the target. This timing assumes a hardware-
+optimized implementation in which the filter descriptor and filter words hit L1 D-
+cache and the two hash functions execute in parallel; we revisit these assumptions
+and their hardware implications in Section 5.2.
+3.3
+BRState Register
+Branch Landing introduces a dedicated architectural register, BRState, imple-
+mented as a Control and Status Register (CSR) whose fields are not directly
+writable by application memory operations or generic user-level CSR writes.
+Application code updates this state only through the new bld/brl instructions,
+while privileged software may save, restore, or clear it as part of architectural
+context management. BRState maintains two fields:
+– BRState.valid (1 bit): indicates whether a pending source authorization is
+active. Set to 1 by bld; cleared to 0 by brl upon completion of the landing-
+site check.
+– BRState.sid (31 bits): holds the source Section Identifier propagated by the
+most recent bld. A 31-bit field supports up to 231 distinct SIDs, sufficient
+for basic-block-level granularity even in large programs.
+BRState is a single-use register: the validity bit is cleared by every brl ex-
+ecution, ensuring that authorization state from one transfer cannot be carried
+over to a subsequent transfer. This single-use invariant is critical to security:
+without it, an attacker who reaches a brl site via a legitimate transfer could
+retain the authorized BRState and redirect a second transfer to an unauthorized
+target.
+Interaction with Exceptions and Context Switches. When a trap or context
+switch occurs between a bld and its corresponding brl, the operating system
+must save and restore BRState as part of the thread context, similar to the
+treatment of other privileged CSRs. If BRState is not preserved, the subsequent
+brl will observe BRState.valid = 0 and raise a fault. This fail-closed behavior
+prevents authorization state from leaking across execution contexts. An alter-
+native design choice is to unconditionally clear BRState on every trap entry;
+this sacrifices the rare case where an interrupt occurs within the bld–jalr–brl
+window unless the trap handler restarts execution before the consumed bld but
+simplifies the OS context-switch path.
+3.4
+Section ID Assignment and Granularity
+Branch Landing organizes program code into protection domains called sections,
+each assigned a unique Section Identifier (SID) at compile time. The granularity
+of section assignment is configurable along a spectrum:
+
+Branch Landing
+9
+– Module granularity: all functions within a compilation unit share a single
+SID. This minimizes metadata size but admits any caller within the same
+module, providing the weakest isolation.
+– Function granularity: each function receives a distinct SID. This is the
+natural match for type-based authorization policies and is used in the BRL-
+Func configuration.
+– Basic-block granularity: each basic block is assigned an independent SID,
+so that different call sites within the same function carry distinct source
+identities. This is the granularity used in BRL-CFG and prevents intra-
+function authorization reuse.
+– User-defined groupings: the compiler accepts annotations that group ba-
+sic blocks into custom protection domains, enabling application-specific poli-
+cies such as isolating privilege-boundary code from general-purpose code
+within the same function.
+The choice of granularity affects three dimensions simultaneously. Finer gran-
+ularity strengthens isolation. An attacker who compromises one call site within
+a function cannot reuse its SID to reach targets authorized only for a different
+call site, but increases the number of distinct SID values in the program, which
+in turn affects Bloom filter sizing. Coarser granularity reduces the SID names-
+pace and shrinks per-target Bloom filters, but admits more source domains per
+authorization set. Cross-compilation-unit SID assignment is straightforward at
+function granularity (SIDs can be assigned per compilation unit and reconciled at
+link time) but requires either link-time optimization (LTO) or a link-time meta-
+data merge pass at basic-block granularity, where the SID namespace grows
+substantially. Our current prototype assumes whole-program compilation; ex-
+tending the toolchain to support incremental compilation with basic-block SIDs
+is a practical engineering challenge that does not affect the hardware mechanism.
+3.5
+Bloom Filter Authorization Metadata
+For each landing site T, the compiler constructs the authorization set AllowedSources(T)
+from the selected CFI policy and encodes it into a Bloom filter stored in a read-
+only metadata section (.rodata). A Bloom filter is a space-efficient probabilistic
+data structure that supports membership queries with a fixed number of hash
+probes, a tunable false positive rate and zero false negatives [4].
+Filter Parameters. Each per-target filter is characterized by three parameters:
+m (the number of bits), k (the number of independent hash functions), and n
+(the number of authorized SIDs to encode). The theoretical false positive rate is
+approximately:
+pfp ≈
+ 1 −e−kn/mk
+(1)
+A lower pfp tightens the security guarantee, reducing the probability that an
+unauthorized SID is spuriously admitted at the cost of a larger m. In our evalu-
+ation, we use a fixed filter size that provides pfp < 10−3 across all benchmarks.
+
+10
+Y. Wu et al.
+For programs with very large AllowedSources sets (e.g., event-driven frameworks
+with hundreds of registered callbacks), per-target adaptive sizing can maintain
+a uniform false positive bound without inflating metadata for simple targets.
+Hash Function Design. The k hash functions must be fast, independent, and
+deterministic. We employ a double-hashing scheme [17]: given two base hash
+functions h1 and h2, the i-th hash is computed as hi(SID) = (h1(SID) + i ·
+h2(SID)) mod m for i = 0, . . . , k−1. This reduces the number of independent
+hash computations to two while preserving the theoretical false positive bound,
+and maps naturally to a two-cycle hardware implementation within the brl
+instruction’s execution.
+Metadata Layout. Per-target Bloom filter bit arrays are stored contiguously in
+a dedicated read-only section, indexed by target SID. A global filter descriptor
+table maps each SIDT to a tuple (base, m), where base points to the start of
+BF[SIDT ] within the bit-array region and m is the filter bit-width. At runtime,
+the immediate operand carried by each brl instruction directly indexes this de-
+scriptor table, yielding the metadata required to perform the membership check
+described in Section 3.2. Both the descriptor table and the filter bit arrays re-
+side in read-only memory protected by the operating system’s page permissions;
+an attacker with arbitrary write capabilities cannot modify the authorization
+sets without triggering a page fault, consistent with the threat model defined in
+Section 3.1.
+Interaction with SID Granularity. The Bloom filter size and SID granularity
+interact in a counterintuitive way: finer SID granularity tends to shrink each
+target’s authorized set (because the CFG analysis distributes callers over more
+distinct SIDs), which in turn reduces the required filter size per target. Con-
+versely, coarser granularity collapses callers into fewer SIDs, yielding trivially
+smaller authorized sets but with weaker security. The net metadata cost there-
+fore depends on the program structure: callback-heavy programs benefit most
+from fine SIDs and small filters, while programs dominated by a few highly
+polymorphic call sites may see diminishing returns from finer granularity.
+3.6
+Policy Instantiations
+Branch Landing decouples policy generation from runtime enforcement. The
+same bld/brl mechanism can enforce different CFI policies by varying how
+AllowedSources(T) is constructed at compile time. We evaluate two representa-
+tive configurations.
+BRL-Func (Function-Level Granularity). Each function is assigned a unique
+SID and authorization sets are derived from function type signatures: a target T
+admits any source whose call site declares a compatible type. This configuration
+is comparable in policy strength to FineIBT [12] and serves as a performance
+
+Branch Landing
+11
+baseline. Unlike FineIBT, which performs a single type-equality check, BRL-
+Func uses a Bloom filter membership query, naturally handling the case where
+multiple call sites of the same type are authorized without requiring a shared
+tag.
+BRL-CFG (Basic-Block-Level Granularity). Authorization sets are derived from
+an interprocedural control-flow graph. SIDs are assigned at basic-block granularity—
+one SID per basic block—so that each call site within a function carries a distinct
+source identity. The compiler projects CFG edges onto protection domain pairs,
+producing a refined AllowedSources(T) that admits only those domains from
+which a direct CFG path to T exists. This combination of finer-grained SID
+assignment and CFG-derived policy prevents an attacker from reusing autho-
+rization obtained at one call site to reach a different target through another
+call site within the same function, approaching the precision of whole-program
+CFG-based defenses while retaining the compatibility benefits of landing-based
+enforcement.
+The two configurations represent different points in the security–overhead
+trade-off space, which we quantify in Section 4.
+3.7
+Security Analysis
+We analyze the security guarantees of Branch Landing under the threat model
+defined in Section 3.1.
+Security Invariants Branch Landing’s enforcement guarantees rest on three
+invariants jointly maintained by the hardware mechanism, the compiler instru-
+mentation, and the operating system’s memory protection.
+Invariant 1 (Authorized Origin). Every successful execution of brl at landing
+site T implies that a preceding bld instruction was committed on the same
+control-flow path, and that the source SID it propagated satisfies SIDsrc ∈
+BF[SIDT ].
+Invariant 2 (Single-Use Authorization). The BRState.valid bit is monotoni-
+cally consumed: any brl that observes valid = 1 clears it before commit, and
+any brl that observes valid = 0 raises a control-flow protection fault.
+Invariant 3 (Metadata and Code Integrity). The filter descriptor table, all per-
+target Bloom filter bit arrays, and the program text containing bld immedi-
+ates reside in read-only memory protected by OS page permissions. BRState is
+writable only through committed bld instructions.
+
+12
+Y. Wu et al.
+Defense Against Forward-Edge Attacks Invariant 1 blocks JOP gadget
+chaining and SID forgery via memory corruption: a corrupted indirect branch
+either lacks a preceding bld altogether or carries a compile-time-fixed SID that
+is not a member of the target’s authorized set, causing the subsequent brl to
+fault. Because BRState is a privileged CSR whose sid field can only be updated
+by executing an existing bld instruction in read-only program text (Invariant 3),
+the attacker cannot inject arbitrary SID values. Invariant 2 covers two additional
+cases: an attacker who jumps directly to a brl site without a preceding bld
+observes valid = 0 and faults immediately (bld bypass), and authorization state
+consumed by one brl cannot be replayed at a second landing site (BRState
+replay). Finally, Invariant 3 prevents filter or descriptor tampering: both reside
+in .rodata and any write triggers a page fault.
+Bloom Filter False Positives An attacker cannot inject arbitrary SIDs into
+BRState; the only architectural path is to execute an existing bld whose immedi-
+ate is fixed at compile time (Invariant 3). Let S denote the set of distinct SIDs in
+the binary. The expected number of spuriously authorized SIDs at any target T
+is bounded by |S| · pfp; with |S| ∼103 and pfp < 10−3 in our benchmarks, fewer
+than one false authorization is expected per target. Exploiting even a spurious
+SID further requires a feasible path to the carrier bld and a hijackable indirect
+branch to T, making the practical attack surface substantially smaller than the
+raw pfp. We measured zero false positives across all 81 benchmarks under both
+configurations (Section 4).
+Limitations BRL protects forward edges only; backward-edge attacks require a
+complementary shadow stack. An adversary who legitimately reaches a landing
+site and exploits code beyond it is not detected, a limitation shared by all landing-
+based CFI [7]. Without LTO, independently compiled units may emit colliding
+SIDs; a link-time merge pass is required. BRL introduces filter-access and timing
+side channels analogous to those in prior hardware CFI [12, 15, 23]; mitigating
+them requires orthogonal microarchitectural defenses and is left to future work.
+Data-only attacks [14] are outside the scope of any CFI mechanism.
+4
+Evaluation
+We implemented Branch Landing in the LLVM RISC-V backend, adding com-
+piler instrumentation for bld insertion at indirect branch sources and brl inser-
+tion at valid landing sites, together with Bloom filter metadata generation for
+per-target authorization. Runtime evaluation is performed on the Spike RISC-V
+ISA simulator extended with bld/brl support.
+4.1
+Evaluation Configurations
+We evaluate three configurations:
+
+Branch Landing
+13
+– Baseline: an uninstrumented build without control-flow protection.
+– BRL-Func: each function receives a unique SID; authorization sets are de-
+rived from function type signatures, mirroring the policy strength of type-
+based CFI mechanisms such as FineIBT [12].
+– BRL-CFG: SIDs are assigned at basic-block granularity (one SID per ba-
+sic block); authorization sets are derived from interprocedural control-flow
+graph analysis, admitting only structurally reachable callers.
+BRL-Func isolates the cost of Bloom filter enforcement under a coarse, type-
+equivalent policy; BRL-CFG represents the strictest instantiation, combining
+finer-grained SID assignment with a more precise authorization policy.
+We use the BEEBS (Bristol/Embecosm Embedded Benchmark Suite) [22],
+a collection of 81 small C programs designed for bare-metal execution and com-
+monly used to evaluate compiler optimizations and ISA extensions. All bench-
+marks are compiled with the same LLVM toolchain at optimization level -O2
+under each configuration. We report the arithmetic mean across all benchmarks,
+consistent with the methodology used by Bratter to enable direct comparison.
+We report three classes of metrics: (1) code size: static .text section growth
+and CFI instruction density (ratio of dynamically executed brl/bld instructions
+to total instructions); (2) performance: weighted execution time overhead under
+three latency assumptions—brl3 (3-cycle brl), brl5 (5-cycle brl) and brl10
+(10-cycle brl), all paired with a 1-cycle bld. (3) security: equivalence class (EC)
+size and the number of protected targets under each policy;
+4.2
+Code Size Overhead
+We measure code size overhead introduced by Branch Landing by comparing the
+.text section size of instrumented binaries against an uninstrumented baseline.
+This ensures that any difference in .text size is attributable solely to the inserted
+BRL/BLD instructions and Bloom filter lookup sequences.
+Table 2 reports the results for selected benchmarks and aggregate statistics
+across all 81 BEEBS benchmarks. The overhead is consistently small: on average
+0.46% for BRL-Func and 0.52% for BRL-CFG.
+Under BRL-CFG, most benchmarks exhibit overhead comparable to or lower
+than BRL-Func, because the pointer analysis prunes spurious targets and pro-
+duces smaller Bloom filters. However, a few benchmarks show elevated CFG over-
+head. The most notable is cover (7.85%), where the pointer analysis resolves
+181 indirect call targets—far more than the 2 identified by type matching—
+leading to additional Bloom filter entries. Similarly, trio-snprintf (2.30%) and
+trio-sscanf (1.88%) contain rich format-string dispatch logic that the CFG
+analysis resolves more completely. These cases represent a deliberate security–
+size tradeoff: the CFG policy protects a strictly larger set of indirect transfers
+at the cost of modestly larger instrumentation metadata.
+The low code size overhead stems from the Bloom filter encoding: each tar-
+get’s allowed-source set is stored as a compact bit array, so a single BRL in-
+struction suffices at each protected entry point regardless of how many sources
+
+14
+Y. Wu et al.
+may reach it. The check itself—load the filter word, hash the caller SID, and
+test the corresponding bit—adds only a few instructions per target. Compared
+to Bratter [23], BRL-Func incurs moderately higher overhead than Bratter_FS
+(0.46% vs. 0.15%) due to the Bloom filter metadata storage. However, when
+CFG-level protection is enabled, this design advantage becomes clear: Bratter
+may insert up to four cbtag instructions at a single target to encode multiple tag
+values, and this per-target cost accumulates in benchmarks with dense control
+flow—Bratter_Both reaches 1.20% on average and 11.33% on cover. BRL-CFG
+remains at 0.52% mean, less than half of Bratter_Both, while providing finer-
+grained source-level authorization.
+Bloom filter metadata in .rodata contributes an additional mean of 86 bytes
+(BRL-Func) and a median of 264 bytes (BRL-CFG) per benchmark. As a fraction
+of total binary size (.text + .rodata), this amounts to a mean of 0.68% and
+4.15% respectively, though the CFG figure is dominated by cover (6,440 bytes
+for 181 protected targets); the median CFG .rodata growth is 264 bytes. We
+note that Bratter [23] stores authorization state in a dedicated CSR and incurs
+no binary metadata cost, making this a structural rather than implementation
+difference.
+Table 2. Code size overhead and CFI density for selected BEEBS benchmarks. .text
+OH = static text section growth; CFI density = (BRL+BLD executed) / total instruc-
+tions.
+.text OH (%)
+CFI Density (%)
+Benchmark
+Func
+CFG
+Func
+CFG
+cover
+0.43
+7.85
+0.024
+8.051
+trio-snprintf
+1.23
+2.30
+0.683
+1.307
+trio-sscanf
+0.67
+1.88
+0.865
+1.213
+picojpeg
+0.23
+1.33
+0.001
+0.114
+lcdnum
+0.55
+1.26
+0.232
+2.489
+mergesort
+1.20
+0.92
+3.008
+2.976
+duff
+0.54
+0.83
+0.046
+1.812
+miniz
+0.31
+0.76
+0.588
+0.409
+template
+0.58
+0.42
+0.931
+0.930
+bs
+0.56
+0.41
+0.391
+0.394
+wikisort
+0.23
+0.25
+3.239
+3.226
+Median (all 81)
+0.50
+0.37
+0.008
+0.008
+Mean (all 81)
+0.46
+0.52
+0.147
+0.307
+4.3
+Performance Overhead
+The execution time overhead is estimated using Spike’s instruction histogram
+multiplied by per-class cycle weights, following the weighted-cycle methodology
+
+Branch Landing
+15
+cover
+duff
+lcdnum
+trio-sscanf
+trio-snprintf
+mergesort
+wikisort
+template
+bs
+miniz
+picojpeg
+nettle-sha
+sglib-rb
+bubble
+dijkstra
+AVG
+0
+5
+10
+15
+20
+25
+30
+Weighted overhead (%)
+Func-brl3
+Func-brl5
+Func-brl10
+CFG-brl3
+CFG-brl5
+CFG-brl10
+Fig. 2. Weighted performance overhead under BRL-Func and BRL-CFG policies with
+3-cycle, 5-cycle, and 10-cycle brl latency assumptions and a 1-cycle bld.
+of Bratter [23], which assigns 2 cycles to each sbtag/cbtag instruction. We
+assign 1 cycle to ALU and bld (immediate-to-CSR write), 2 to taken branches,
+3 to load/store, and 10 to ecall. For brl, we evaluate three latency points—
+brl3, brl5, and brl10. We detail introduce these differences in Section 5.2.
+All 81 benchmarks achieve zero Fail across both policies under each latency
+model, confirming that the instrumented legitimate executions do not trigger
+enforcement failures.
+Figure 2 shows the weighted overhead for selected benchmarks. The mean
+under brl3 is 0.210% (BRL-Func) and 0.421% (BRL-CFG), rising to 0.331% and
+0.651% under brl5, and to 0.633% and 1.228% under the conservative brl10
+model—in all three cases well below Bratter_Both’s reported 5.99% average.
+Because Bratter and BRL enforce different policy abstractions, this comparison
+is best viewed as a same-benchmark reference point rather than a strict apples-
+to-apples hardware comparison. This gap arises because Bratter’s cbtag executes
+at every basic block entry traversed at runtime, whereas our BLD/BRL pair fires
+only on actual indirect transfers, which occur far less frequently.
+The one notable exception is cover under BRL-CFG, which reaches 10.74%
+under brl3, 16.12% under brl5, and 29.57% under brl10, due to three switch
+statements (120, 50, and 10 cases) now protected against JOP attacks. The
+brl3 figure closely matches Bratter’s reported 11.1% BR overhead for the same
+benchmark [23], validating that our indirect jump instrumentation achieves com-
+parable coverage. Outside cover, no benchmark exceeds 3.8% under brl3, 5.7%
+under brl5, or 10.4% under brl10 for either policy. For benchmarks without
+indirect jumps (e.g., dijkstra, bubblesort, huffbench), BRL-Func and BRL-
+CFG produce identical overhead, as the CFG-mode jump protection adds no
+instructions when no indirect jumps are present. Table 3 provides the aggregate
+statistics. Because Spike is a functional simulator, the dynamic instruction his-
+togram is independent of cycle-weight assumptions, so overhead under any brl
+
+16
+Y. Wu et al.
+latency can be obtained by linear recomputation from the same trace without
+re-executing the benchmarks.
+Table 3. Performance overhead summary across all 81 BEEBS benchmarks under
+three brl latency models.
+brl3 (%)
+brl5 (%)
+brl10 (%)
+Statistic Func
+CFG Func
+CFG
+Func
+CFG
+Mean
+0.210
+0.421 0.331
+0.651
+0.633
+1.228
+Median 0.013
+0.014 0.021
+0.023
+0.042
+0.046
+Max
+3.752 10.743 5.633 16.122 10.333 29.569
+4.4
+Equivalence Class Size
+The equivalence class (EC) of an indirect call site is the set of target functions
+that the CFI policy permits it to invoke. A smaller EC means the attacker has
+fewer gadgets available after hijacking a function pointer, so EC size is a widely
+used security metric for CFI schemes [33]. For Branch Landing, a smaller EC
+size also means more concrete source-target mapping.
+Table 4 reports the compile-time EC statistics across all 81 BEEBS bench-
+marks. Under BRL-Func, the average EC size is 1.96 targets per call site; under
+BRL-CFG, this drops to 1.32, a 32.5% reduction. The improvement is con-
+sistent: BRL-CFG tightens the EC in every benchmark for which BRL-Func
+reports an EC larger than 1.
+The reduction stems from two complementary effects. First, the pointer-
+analysis-based policy discovers more indirect call sites than type matching alone
+(mean 7.47 vs. 5.37), which distributes the same set of target functions over a
+finer-grained set of call sites. Second, the analysis prunes spurious targets that
+type matching conservatively admits, yielding smaller per-site ECs. Notably,
+sglib-rbtree and sglib-dllist achieve a 50% EC reduction (from 2.0 to 1.0),
+meaning the CFG policy narrows each call site to a single valid target—the the-
+oretical optimum. Other complex benchmarks also show significant reductions:
+sglib-hashtable and sglib-listinsertsort (42.9%), picojpeg (28.6%), and
+mergesort (18.2%).
+The largest EC observed across both policies is 9 (in wikisort and mergesort),
+which is driven by a sorting-routine dispatch table. Even in this worst case the
+EC remains small enough to substantially limit an attacker’s choice of targets
+compared to an unprotected binary.
+Among related CFI schemes, ECCut [33] reports a 94.8% average EC re-
+duction over LLVM-CFI on SPEC CPU benchmarks. However, ECCut oper-
+ates on large x86 applications where type-based policies produce ECs of tens to
+hundreds of targets, leaving substantial room for refinement. In contrast, em-
+bedded benchmarks in BEEBS inherently have fewer indirect calls and smaller
+
+Branch Landing
+17
+Table 4. Compile-time equivalence class (EC) size for selected benchmarks. Call sites
+= number of static indirect call sites; Avg EC = mean targets per call site; Max EC
+= largest single EC.
+BRL-Func
+BRL-CFG
+EC
+Benchmark
+Sites
+Avg Max Sites
+Avg Max Red. (%)
+trio-snprintf
+38
+1.11
+2
+40
+1.05
+2
+5.0
+wikisort
+34
+1.35
+9
+36
+1.28
+9
+5.6
+trio-sscanf
+17
+1.24
+2
+20
+1.05
+2
+15.0
+miniz
+16
+1.75
+3
+19
+1.47
+3
+15.8
+nettle-aes
+12
+2.00
+3
+14
+1.71
+3
+14.3
+nettle-sha256
+12
+2.00
+3
+14
+1.71
+3
+14.3
+mergesort
+9
+2.33
+9
+11
+1.91
+9
+18.2
+picojpeg
+5
+1.80
+2
+7
+1.29
+2
+28.6
+sglib-hashtable
+4
+2.00
+2
+7
+1.14
+2
+42.9
+sglib-rbtree
+4
+2.00
+2
+8
+1.00
+2
+50.0
+sglib-dllist
+4
+2.00
+2
+8
+1.00
+2
+50.0
+All 81
+5.37 1.96
+9 7.47 1.32
+9
+32.5
+ECs—our BRL-Func baseline already averages only 1.96 targets per call site. De-
+spite this limited headroom, BRL-CFG still achieves a 32.5% reduction to 1.32,
+demonstrating that pointer-analysis-based refinement remains effective even in
+the embedded domain. Bratter [23] does not report EC size metrics; its 8-bit
+tag register provides a fixed label space that cannot express per-call-site tar-
+get restrictions without consuming additional tag bits, fundamentally limiting
+its security granularity compared to our Bloom filter approach. As discussed in
+Section 2, ECCut’s type refinements are complementary to BRL’s membership-
+based enforcement and could be integrated as a policy input to further reduce
+equivalence class sizes. HPCFI [16] reports similarly large reductions on SPEC
+CPU through integrated static analyses; like ECCut, these analysis-level re-
+finements are orthogonal to BRL’s enforcement-level contribution and could be
+adopted as policy inputs within the same framework.
+4.5
+Runtime Verification and Protected Targets
+BRL-Func protects only indirect-call targets (i.e., address-taken function en-
+tries), whereas BRL-CFG additionally protects indirect-jump targets such as
+switch jump-table destinations and computed-goto labels. As a result, BRL-
+Func protects a mean of 2.3 targets per benchmark, while BRL-CFG increases
+this number to 4.0; the increase is especially pronounced for switch-heavy bench-
+
+18
+Y. Wu et al.
+marks such as cover (2 to 181), picojpeg (3 to 15), and trio-snprintf (3 to
+13).
+We validate correctness by executing all 81 BEEBS benchmarks on the Spike
+ISA simulator, which records each brl outcome as Pass, Skip, or Fail. Across all
+benchmarks and both policies, the Fail count is zero. Under BRL-CFG, the ag-
+gregate Pass count increases from 124.1 M to 128.7 M, while Skip decreases from
+1.84 M to 0.51 M, indicating that CFG-derived protection converts previously
+unchecked transfers into actively verified ones.
+5
+Discussion
+This section discusses two design considerations that extend beyond the core
+mechanism described in Section 3: out-of-order handling for BRState and the
+interpretation of the brl latency models.
+5.1
+BRState Under Out-of-Order Execution
+Our prototype is evaluated on Spike, whose functional execution model does
+not expose out-of-order (OoO) state hazards. On an OoO processor, however, a
+straightforward global BRState design would require care to prevent a specula-
+tive bld from overwriting the pending authorization state of an earlier indirect
+transfer before the matching brl commits.
+This issue can be addressed with standard commit-order design choices. For
+example, the SID carried by bld can be kept in the reorder buffer and made
+visible to brl only at commit time, or equivalently, BRState can be updated
+only when bld commits. Under either design, squashed speculative bld instruc-
+tions never update architectural authorization state, and each successful brl still
+consumes exactly one committed source SID.
+Therefore, the single-use authorization invariant of Branch Landing is com-
+patible with OoO execution, although a full RTL design is beyond the scope
+of this work. Our current evaluation focuses on the architectural mechanism
+and reports performance using latency models rather than a cycle-accurate OoO
+implementation.
+5.2
+Latency Modeling and Implementation Considerations
+Branch Landing performs membership checking with a fixed number of hash
+probes for a chosen filter configuration, so the modeled check latency does not
+scale with the size of AllowedSources(T), but the absolute latency of brl de-
+pends on how its metadata path is implemented. Our evaluation uses three
+latency models—brl3, brl5, and brl10—to represent optimistic, realistic, and
+conservative implementation points rather than a finalized RTL cost.
+A brl execution conceptually performs four operations: (i) validate BRState.valid;
+(ii) resolve the per-target filter descriptor (base, m) from the .rodata descriptor
+
+Branch Landing
+19
+table using the immediate SIDT operand; (iii) compute k Bloom filter hash posi-
+tions; and (iv) load the corresponding filter words and AND-reduce the sampled
+bits. We estimate each step from Bloom filter hardware and cache literature.
+Descriptor resolution is a read from a small read-only table keyed by SIDT .
+A dedicated descriptor cache analogous to a branch target cache can serve the
+lookup in 1 cycle; without it, the descriptor falls into the L1 D-cache, incurring
+the ∼3-cycle hit latency typical of in-order RISC-V cores such as CVA6 [34]. Hash
+computation uses double hashing [17] to derive k filter positions from two base
+hashes h1 and h2; a simple universal hash such as H3 [8] or the ultra-low-latency
+Xoodoo-NC [27] completes both base hashes combinationally in a single cycle.
+Filter bit probes require one memory read per position; hardware Bloom filter
+studies [13,27] report 1–2 cycle BRAM access when the filter is banked, while a
+general-purpose L1 D-cache read inherits the 1–3 cycle cache-hit latency [11,34].
+AND reduction and BRState clearing are a single cycle of combinational logic.
+Under the brl3 model we assume a descriptor-cache hit, a compact filter
+stored adjacent to its descriptor, and parallel hash/filter access (cycle 1: descrip-
+tor lookup and valid check; cycle 2: parallel hash computation and filter word
+access; cycle 3: AND-reduce and commit). The brl5 model drops the descriptor
+cache and serves the descriptor from the L1 D-cache, overlapped with a 1-cycle
+hash and a 1-cycle filter probe plus AND/commit. The brl10 model corresponds
+to a fully serialized implementation with no dedicated optimizations: 3 cycles for
+descriptor load, 1 for hash, 3 for filter word load, 1 for AND, and 2 for BRState
+commit and pipeline refill.
+Across all three models, the qualitative conclusions of our evaluation remain
+unchanged: Branch Landing continues to incur low estimated runtime overhead
+while preserving source-aware authorization. A full cycle-accurate RTL study of
+these implementation choices is left to future work.
+6
+Conclusion
+This paper presents Branch Landing, a forward-edge CFI framework for RISC-
+V that introduces Bloom filter-based source authorization to close the source-
+domain gap left by existing type-based and tag-based mechanisms. Two lightweight
+ISA extensions, bld and brl, propagate and validate source Section Identifiers
+through a dedicated BRState register, achieving fixed-probe membership veri-
+fication whose latency is independent of the authorized-set size, scaling to an
+arbitrary number of authorized callers. The policy-agnostic design allows both
+type-based and CFG-derived authorization to be instantiated within the same
+hardware substrate. Evaluation on 81 BEEBS benchmarks confirms mean run-
+time overheads below 0.5% under the primary latency models, with the conser-
+vative 10-cycle sensitivity point remaining below 1.3%, a 32.5% equivalence class
+reduction under the CFG-derived policy, and zero enforcement failures on the
+exercised benchmark executions.
+
+20
+Y. Wu et al.

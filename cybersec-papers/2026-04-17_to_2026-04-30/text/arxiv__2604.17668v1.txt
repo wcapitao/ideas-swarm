@@ -1,0 +1,1105 @@
+Original Sin of npm: A Study on Vulnerability Propagation in
+JavaScript Dependency Networks
+Michael Robinson
+Data61, CSIRO
+Australia
+michael.robinson@data61.csiro.au
+Sajal Halder
+Data61, CSIRO & RMIT University
+Australia
+sajal.halder@rmit.edu.au
+Muhammad Ejaz Ahmed
+Data61, CSIRO
+Australia
+ejaz.ahmed@data61.csiro.au
+Muhammad Ikram
+Macquarie University
+Australia
+muhammad.ikram@mq.edu.au
+Seyit Camtepe
+Data61, CSIRO
+Australia
+seyit.camtepe@data61.csiro.au
+Hyoungshick Kim
+Sungkyunkwan University
+South Korea
+hyoung@skku.edu
+Abstract
+In software development, the widespread adoption of open-source
+software has led to a proliferation of reusable modules and package
+libraries such as the Node Package Manager (npm). While this ap-
+proach can significantly reduce development time, it also introduces
+the risk of vulnerability inheritance where a dependent parent pack-
+age inherits vulnerabilities from a referenced dependency package.
+Understanding vulnerability propagation is essential for assessing
+how vulnerabilities spread across components of a software pack-
+age. This supports more accurate impact analysis and enhances
+threat detection and mitigation. There is a need for frameworks
+that capture propagation across multiple layers and dynamic envi-
+ronments, along with comprehensive simulation tools that reflect
+real-world software systems. In this paper, we investigate how a
+small number of vulnerable JavaScript packages contribute to the
+creation of a disproportionately large number of vulnerable pack-
+ages. This paper presents insights from 1,515 reported vulnerabili-
+ties gathered from a custom-built vulnerability database containing
+1,077,946 JavaScript packages sourced from ‘npm-follower’ and
+their associated dependency networks. Dependency networks were
+constructed using the deps.dev API, with vulnerabilities identified
+by parsing package names and version numbers through the Google
+Open Source Vulnerability API.
+Our findings reveal that 61.30% (660,748) of packages are reliant
+on one or more dependency packages, and 21.60% (232,836) of total
+packages have at least one known vulnerability throughout their
+dependency networks–of which most (42%) are of High severity.
+Moreover, we found that the number of vulnerabilities and affected
+packages on npm since 2015 has increased linearly–with 𝑅2 values
+of 0.97 and 0.96, respectively. We also found that it takes, on average,
+approximately 4 years and 11 months to fix a vulnerable package
+from when the first vulnerable version is published on npm – al-
+though publication times of vulnerabilities occur approximately 19
+days after a fix is available. Finally, we observe a high concentration
+of frequently present vulnerabilities throughout dependency net-
+works, with the top-7 most frequent vulnerabilities accounting for
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+ASIA CCS ’26, Bangalore, India
+© 2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2356-8/26/06
+https://doi.org/10.1145/3779208.3785388
+25% of vulnerability cases and the top-23 most frequent accounting
+for 50%. Based on these findings, we propose recommendations
+for developers and package managers to mitigate the threat and
+occurrence of vulnerabilities within the npm dependency network
+and the broader software repository community.
+CCS Concepts
+• Security and privacy →Software and application security.
+Keywords
+npm, JavaScript, software dependencies, vulnerability propagation
+ACM Reference Format:
+Michael Robinson, Sajal Halder, Muhammad Ejaz Ahmed, Muhammad
+Ikram, Seyit Camtepe, and Hyoungshick Kim. 2026. Original Sin of npm: A
+Study on Vulnerability Propagation in JavaScript Dependency Networks. In
+ACM Asia Conference on Computer and Communications Security (ASIA CCS
+’26), June 1–5, 2026, Bangalore, India. ACM, New York, NY, USA, 15 pages.
+https://doi.org/10.1145/3779208.3785388
+1
+Introduction
+Software repositories serve as essential components for manag-
+ing both private and public software projects. Private repositories
+are accessible and modifiable only by authorized users, typically
+owned by individuals or companies. Public repositories, on the
+other hand, are open to all users. Within publicly accessible pack-
+ages is open-source software (OSS), characterized by decentralized
+development that allows numerous developers to contribute to and
+modify the software. This collaborative approach offers significant
+benefits, such as accelerated development times and reduced costs
+for firms that would otherwise need to develop and maintain soft-
+ware in-house [16]. Accordingly, open-source development has
+gained significant traction in recent years, with one study reveal-
+ing that, as of April 2024, 96% of 1,067 codebases gathered across
+various package managers contained open-source code [28].
+Given the prevalence of OSS, it has become standard practice
+to incorporate functions from pre-existing OSS projects available
+within a repository ecosystem, further accelerating development
+times and minimizing costs [2, 12, 16]. Consequently, modern OSS
+development has evolved into a complex web of interlinked depen-
+dencies between many packages, significantly increasing the risk
+of inheriting vulnerabilities through dependency networks arising
+due to potentially malicious actors or programming errors. One
+arXiv:2604.17668v1 [cs.CR] 19 Apr 2026
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Michael Robinson, et al.
+of the largest repositories for such packages is the npm, which is
+essential for developing JavaScript (JS) based applications and hosts
+nearly 4 million JS packages1. The npm is consequently integral to
+the JS ecosystem, powering numerous applications and services
+that are foundational to modern web development through millions
+of packages that are reused in countless web applications, making
+it a prime target for malicious activity and programming errors
+that introduce vulnerabilities [31].
+Identifying and mitigating vulnerabilities in OSS is, therefore,
+crucial to maintaining software security. A study by Liu et al. high-
+lights how critical vulnerabilities, if left undetected or unpatched,
+can propagate across software ecosystems, emphasizing the impor-
+tance of prompt vulnerability discovery [20]. Real-world incidents,
+such as the Heartbleed vulnerability in OpenSSL or the more recent
+Log4Shell vulnerability in Apache Log4j, demonstrate the potential
+impact of unpatched vulnerabilities [4, 15]. Recent advancements
+in vulnerability detection tools, such as ‘V1SCAN’ [30], leverage
+code classification techniques to identify vulnerabilities in reused
+open-source components before they become widespread. However,
+a major challenge remains: understanding how vulnerabilities prop-
+agate through npm dependency networks and identifying which
+packages are most at risk due to outdated dependencies.
+Understanding software dependency networks is crucial for as-
+sessing security risks in modern package ecosystems. The structure
+and evolution of the npm dependency network plays a critical role in
+our study, as its rapid expansion and interconnectivity make it par-
+ticularly susceptible to security vulnerabilities. Previous research
+has shown that the npm ecosystem is characterized by superlinear
+growth in the number of packages and updates, with approximately
+81.3% of packages depending on at least one other package by the
+end of August 2015 [29]. The increasingly interconnected nature
+of these packages through dependency networks underscores the
+urgency of understanding how security vulnerabilities may prop-
+agate within these networks and the need to develop methods to
+mitigate the spread of such vulnerabilities.
+Prior work has highlighted the increasing prevalence of vul-
+nerabilities within software repositories. For instance, Zerouali et
+al. revealed a sharp rise in disclosed vulnerabilities for the npm
+ecosystem compared to other package management systems like
+RubyGems [32]. These findings align with the observed increase in
+transitive dependencies within npm, suggesting that vulnerability
+risks are compounding over time [19]. Our work builds on this
+foundation by specifically examining how vulnerabilities propagate
+through npm’s dependency networks. We aim to provide deeper
+insights into the time-to-disclosure of vulnerabilities and the extent
+of outdated package dependencies, both of which are crucial for as-
+sessing security risks within the ecosystem. To achieve this, we
+investigate the following research questions:
+• RQ1: What is the nature of vulnerability discovery and
+publication in the npm ecosystem? Understanding how vul-
+nerabilities are discovered and published is essential for assessing
+the responsiveness of the ecosystem to security threats. By ad-
+dressing this question, we aim to determine whether vulnerabili-
+ties are increasing at a manageable rate and whether developers
+1The ‘npm-follower’ dataset contained 3,946,361 unique packages at the time of down-
+load (as of 5 September 2023). This number extends to 36,432,989 when considering
+each unique version of each package.
+disclose vulnerabilities in a timely manner relative to the first
+known exposed version. This insight is critical for maintaining
+transparency and enabling the community to respond effectively
+to emerging security risks.
+• RQ2: How effective is the response to discovered vulnera-
+bilities in the npm ecosystem? The efficiency of vulnerability
+resolution directly impacts software security. This question eval-
+uates whether developers are fixing vulnerabilities within a rea-
+sonable time frame after their initial publication. By identifying
+potential delays in the remediation process, we aim to highlight
+whether the publication-to-fix duration contributes to prolonged
+security risks, thereby helping to improve vulnerability manage-
+ment strategies.
+• RQ3: What is the characterization of the origins of vulner-
+abilities and their pervasiveness within the npm ecosys-
+tem’s dependency network? Dependencies play a critical role
+in the spread of vulnerabilities. This question examines whether
+vulnerabilities are disproportionately concentrated in certain
+packages and whether a relationship exists between the num-
+ber of vulnerabilities and the number of dependencies within a
+package’s dependency network.
+By addressing these research questions, our study contributes to
+a deeper understanding of the systemic security risks within the npm
+ecosystem. The findings can help software maintainers and devel-
+opers prioritize security measures, optimize vulnerability response
+times, and refine best practices for dependency management.
+The remainder of the paper is organized as follows: Section 2
+discusses the preliminaries and formal problem definition. Section
+3 describes the methodology behind our research, including the
+rationale for choosing the OSS environment and the creation and
+utility of the dependency and vulnerability databases. Section 4
+presents our findings concerning the research questions. Section
+5 synthesizes these results into actionable recommendations and
+further discusses the state of npm as implied by our findings. Section
+6 explores adversarial threats that could undermine our findings
+and proposes mitigation strategies. Section 7 discusses related work,
+while we conclude the paper in Section 8.
+2
+Preliminaries & Problem Statement
+2.1
+Preliminaries
+Understanding vulnerability propagation in software ecosystems
+such as the npm registry requires clear and consistent terminol-
+ogy. We therefore ground our definitions in established software
+supply–chain security literature [9, 19, 33], and in formal frame-
+works used by the MITRE CVE Program, the National Vulnerability
+Database (NVD), and the Common Vulnerability Scoring System
+(CVSS) [6, 11]. This ensures conceptual alignment with prior large-
+scale ecosystem studies [20, 31] and provides a rigorous basis for
+analysing dependency networks and vulnerability inheritance.
+A vulnerability is defined as a known security threat affecting
+specific releases of software packages. In software development,
+these vulnerabilities are commonly cataloged as Common Vulnera-
+bilities and Exposures (CVEs)–globally unique identifiers assigned
+by the CVE program [6]. When a vulnerable package is used as a
+dependency, whether directly or indirectly, all dependent packages
+
+Original Sin of npm: A Study on Vulnerability Propagation in JavaScript Dependency Networks
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+are exposed to the risk of inheriting that vulnerability. This mech-
+anism of transitive vulnerability exposure is widely observed in
+empirical studies of npm and other language ecosystems [7, 17, 31].
+A direct dependency refers to a package that is explicitly required
+by another package or project. An indirect dependency (or transitive
+dependency) is required by one of the direct dependencies, thus
+forming a multi-layered dependency chain. Figure 1 demonstrates
+the dependency network for a given parent package and both direct
+and transient dependencies. As can be seen, the parent package
+‘dom-typer’ is directly dependent on packages ‘@babel/polyfill’
+and ‘marked.’ Furthermore, the dependency, ‘@babel/polyfill’, is
+dependent on packages ‘core-js’ and ‘regenerator-runtime’ - an
+indirect or ‘transient’ dependency relative to the parent package
+‘dom-typer’. Both types of dependencies are critical in assessing
+vulnerability risks since vulnerabilities can propagate across these
+layers and throughout the dependency network. This issue is par-
+ticularly concerning when outdated dependencies serve as conduits
+for vulnerabilities–a common occurrence in software projects, es-
+pecially JS-based. One study found that 60% of all considered JS
+projects relied on outdated dependencies as of April 2018 [31].
+Figure 1: Example dependency graph for parent package
+‘dom-typer’, showing direct dependencies (dark blue) and
+transient ones (dashed, faded blue).
+Furthermore, vulnerabilities in the form of CVEs can vary in
+severity, with their potential impact on a system measured if they
+were to be exploited. These severity levels are standardized into
+low, medium, high, or critical categories under the Common Vul-
+nerability Scoring System (CVSS), developed by the FIRST group
+[11]. Identifying how these vulnerabilities propagate through de-
+pendency networks according to severity category is crucial for
+improving risk management and security response efforts.
+Following established terminology from software supply–chain
+security research and formal frameworks such as CVE, CVSS, and
+NVD, we adopt definitions that align with prior empirical studies of
+package ecosystems [9, 31, 33]. These definitions enable consistent
+reasoning about vulnerability inheritance, dependency structure,
+and severity characterisation across npm’s large-scale dependency
+network.
+Formally, we state the following definitions:
+Definition 1. Vulnerability: A weakness or flaw in a software
+package that can be exploited to compromise the confidentiality, in-
+tegrity, or availability. A vulnerability becomes publicly known once
+assigned a CVE identifier and catalogued in NVD or OSV [6, 14].
+Definition 2. Severity: A standardised measure indicating the
+potential impact and exploitability of a vulnerability, expressed using
+some scoring frameworks such as the CVSS and categorised as Low,
+Medium, High, or Critical [11].
+Definition 3. Package Dependency: A software package that
+a given parent package relies on to function properly. Typically a
+specific function/collection of functions of a package dependency is
+inherited.
+Definition 4. Package Dependent: A package that relies on
+another package to operate correctly.
+Definition 5. Parent Package: The primary or top-level package
+that declares dependencies on other packages. Typically represents the
+project or module under analysis that brings in additional packages
+through its dependency declarations.
+Definition 6. Direct Dependency: A package that is explicitly
+declared by the parent package as a dependency - it is directly required.
+Definition 7. Indirect/Transitive Dependency: A package
+that is not directly declared by the parent package but is required by
+one of its dependencies.
+Definition 8. Outdated Dependency: A dependency for which
+a newer stable version is available.
+2.2
+Problem Statement
+In modern software ecosystems, packages often rely on one another
+to function correctly, forming complex networks of dependencies.
+Understanding the relationships between package dependencies
+and package dependents is crucial for assessing software security
+and performance. Identifying both direct and transitive dependen-
+cies, along with determining the packages affected by vulnerabil-
+ities in a given package, is essential for managing security risks,
+versioning, and maintenance.
+This study aims to model and analyse the relationships between
+package dependencies and package dependents within software
+ecosystems. The objective is to develop an efficient method to
+enhance the understanding of systemic security risks in the npm
+ecosystem. The findings will help software maintainers and devel-
+opers prioritize security measures, improve vulnerability response
+times, and refine best practices for dependency management, ulti-
+mately strengthening the security and integrity of the ecosystem.
+Finally, we construct a vulnerability database that will serve as
+a valuable resource for the cybersecurity vulnerability detection
+research community.
+2.3
+Differences With Prior Work
+Our work differs from prior studies in several key ways. As a base-
+line, we compare against the most relevant work by Decan et al. [8],
+who analysed 399 vulnerabilities across 269 npm packages over
+six years. First, their analysis considers only direct dependencies,
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Michael Robinson, et al.
+while we model both direct and transitive dependencies to con-
+struct full package-level dependency networks and analyse vulner-
+ability propagation. Second, their dataset was manually collected
+from Snyk.io, whereas we perform automated, large-scale aggrega-
+tion from multiple authoritative sources (OSV.dev, deps.dev, NVD,
+and npm-follow), enabling broader coverage and cross-verification.
+Third, instead of static CSV summaries, our structured database
+links 27 features across packages, CVEs, CWEs, dependencies, and
+temporal metadata, supporting predictive modeling, risk scoring,
+and multi-dimensional analysis. Finally, while their scope ends pre-
+2017, our dataset scales to over one million npm packages, providing
+a modern and comprehensive 2024 ecosystem view.
+Unlike Liu et al. [20], who do not consider vulnerability severity
+and rely on manual dependency-tree resolution, our fully auto-
+mated and reproducible pipeline incorporates historical publica-
+tion, modification, and fix dates and applies quantitative CVSS
+v3.x metrics (base, exploitability, impact) to support consistent
+severity assessment and vulnerability-risk propagation. Zimmer-
+mann et al. [33] focus on descriptive ecosystem characteristics–
+package influence, maintainer roles, and limited known vulnerabil-
+ities – without constructing full dependency networks or integrat-
+ing multi-source vulnerability data. In contrast, our work enables
+network-level, temporal, and predictive vulnerability analysis using
+a large-scale, structured, and multi-source dataset.
+3
+Methodology
+In our research, we develop a dataset of dependency networks and
+a vulnerability database to examine software security risks. As
+illustrated in Figure 2, our process starts with extracting depen-
+dency networks from a specified list of packages, mapping their
+interconnections to interpret how vulnerabilities spread. For each
+package, we focus on the default or most recent stable version to
+maintain relevance. We then detect vulnerabilities using the Google
+Open Source Vulnerability (OSV) API and the National Vulnerabil-
+ity Database (NVD) API, which offer CVE identifiers, CVSS severity
+scores, and descriptions of vulnerabilities. This information aids in
+evaluating security risks across software ecosystems. The gathered
+data is organized into a structured vulnerability database, listing
+package names, versions, severity levels, and advisory references.
+This database supports a thorough risk assessment by pinpointing
+security flaws within dependency networks.
+Figure 2: Pipeline describing our methodology for the cre-
+ation of vulnerability database.
+Furthermore, by keeping a historical record of vulnerabilities,
+we enable longitudinal analysis, allowing researchers to monitor
+security trends over time. In this paper, our study offers a system-
+atic approach to vulnerability analysis within software dependen-
+cies, incorporating real-time security intelligence to improve risk
+assessment and mitigation strategies in contemporary software
+ecosystems. The following subsections provide a detailed overview
+of vulnerability database creation, including platform, data sources,
+data linkage, and analysis.
+3.1
+Platform & Data Sources
+For the past decade, JS has remained one of the most popular lan-
+guages on GitHub by usage, with approximately 6.7M projects
+as of October 2024 [27]. As the main package manager for the
+JS language, the npm also hosts approximately 4 million unique
+open-source packages and additionally possesses larger and more
+complex dependency networks than other package distributions
+[9]. Due to the npm’s popularity, we expect a large community of
+contributors necessary to identify and publish vulnerabilities found
+in JS packages and projects on various vulnerability databases. As
+such, due to its popularity and degree of established complexity, we
+have chosen to investigate the presence of vulnerabilities through-
+out dependency networks within the npm ecosystem.
+The packages gathered for our dataset were attained through
+the ‘npm-follower’ project, which provides weekly snapshots
+of all available packages on the npm, including both source code
+and metadata information [24]. As of 5 September 2023, the npm
+ecosystem comprised 3,946,361 unique packages and 36,432,989
+unique package versions according to the dataset attained. From
+this extensive dataset, we randomly selected 1.5 million unique
+JS package names. Sampling was performed without replacement
+using Python’s random.sample method to ensure uniqueness. Post-
+sampling validation removed approximately 400,000 entries due
+to unavailability in the live repository or designation as depre-
+cated/malicious package stubs. This filtering resulted in a subset
+consisting of 1,077,946 npm parent packages (approximately a quar-
+ter of all available packages)– a large enough proportion to provide
+a representative sample of the npm ecosystem and maintain a man-
+ageable data size for in-depth analysis.
+To analyse the presence of vulnerabilities throughout depen-
+dency networks, we must first construct the individual dependency
+networks for each parent package within our gathered dataset.
+For this, we are extracting dependency information through the
+use of the Open Source Insights deps.dev database [18]–a service
+developed and hosted by Google that constructs a full graph of
+OSS package dependency networks, including dependency package
+names and the latest required versions. For parsing, we usually
+extract the default version as stored on the npm registry–if there
+is no default version, we extract the latest stable release version
+of the package to have its given dependency network constructed.
+Table 1 summarises our dataset from our package list.
+The core of our vulnerability database is developed around the
+dependency networks of these npm parent packages. Utilizing the
+constructed dependency networks dataset, we identify known vul-
+nerabilities associated with relevant dependencies and associated
+version numbers using the NVD and Google OSV APIs [14, 22].
+Both APIs are queried to find the earliest date the vulnerability was
+published to each respective database, as discrepancies can exist
+between these dates. Furthermore, we store any relevant informa-
+tion that may assist in discerning relevant insights, such as severity
+levels, fix dates, affected packages, and more. The final output is a
+database containing each vulnerability found within our collection
+
+Original Sin of npm: A Study on Vulnerability Propagation in JavaScript Dependency Networks
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Table 1: Overview of the analysed package dataset and its
+features.
+Packages
+1,077,946
+Total Features
+11
+Feature Names
+pkg_name, default_ver, direct_dependen-
+cies, indirect_dependencies, dependencies_-
+count, dependencies_names, dependency_-
+graph, cve_count, cve_labels, cwe_count,
+cwe_labels
+of dependency networks to be queried as relevant for our purposes.
+Table 2 presents a brief overview of the vulnerability database.
+Table 2: Vulnerability database and its features.
+Vulnerabilities
+1,517
+Total Features
+27
+Feature Names
+cve_label, osv_label, summary, details, reg-
+istered_package, affected_packages, depen-
+dents, osv_published, nvd_published, ear-
+liest_publish, osv_modified, introduced_-
+ver, introduced_date, fixed_ver, fixed_state,
+last_affected_ver, lastVuln_date, limit, data-
+base_specific, references, affected, schema_-
+version, severity, baseSeverity, baseScore,
+exploitabilityScore, impactScore
+3.2
+Data Linkage
+Data linkage in software ecosystems involves integrating informa-
+tion from multiple sources to form a unified dataset. Specifically,
+this process links package metadata from databases or repositories
+such as npm with vulnerability records from databases like the NVD.
+This linkage enables a comprehensive analysis of vulnerabilities
+across ecosystems. In Appendix A.1, we provide details about the
+algorithm we developed to construct the unified database.
+3.3
+Data Analysis
+In investigating the proposed research questions, we implement
+a variety of statistical and plotting tools to convey our insights
+coherently. For RQ1 and RQ2, when investigating the duration
+spanning certain key dates, we take advantage of the statistical
+technique of survival analysis–similar to other works [1, 8, 32].
+Survival analysis focuses on predicting the time until an event
+occurs, such as failure or death, and is notable for handling data
+where the given event has not happened for some subjects by the
+study’s end (referred to as right-censored data). Our case focuses
+on whether a vulnerability still exists without a fix and, if fixed,
+how long it persisted.
+The Kaplan-Meier estimator, a cornerstone of survival analysis,
+is a non-parametric method used to estimate the probability of
+surviving past certain times based on observed event times. To
+elaborate, the estimator of the survival function 𝑆(𝑡) is defined as
+the product of conditional survival probabilities at observed event
+times and is given by:
+ˆ𝑆(𝑡) =
+Ö
+𝑖:𝑡𝑖≤𝑡
+(1 −𝑑𝑖
+𝑛𝑖
+)
+where 𝑡𝑖denotes the ordered time points at which the events
+occur, 𝑑𝑖is the number of events at time 𝑡𝑖, and 𝑛𝑖is the number of
+subjects yet to expire just prior to 𝑡𝑖. This step function, hence, pro-
+vides an estimate of the probability that a subject survives beyond
+time 𝑡, effectively incorporating right-censored data without as-
+suming a specific distribution for survival times. In our case, it may
+be used to determine the proportion of fixed vulnerabilities starting
+from the point at which they are found to exist, for example.
+The median survival time in a Kaplan–Meier distribution may
+be obtained by identifying the time at which the estimated sur-
+vival function 𝑆(𝑡) first drops to 50%, representing the point at
+which half the population is expected to have experienced the event.
+Because the median depends only on reaching the 50% survival
+threshold—and the Kaplan–Meier estimator explicitly accounts for
+right-censored observations—it is less influenced by extreme or
+heavily censored values, thereby reducing the skewing effects seen
+in mean-based measures.
+Furthermore, we use regression analysis to estimate the trend of
+vulnerabilities over time for 𝑅𝑄1 and the correlational relationship
+of dependencies and vulnerabilities in 𝑅𝑄3, considering both linear
+and exponential models. To identify the most appropriate model
+for these relationships, we use the 𝑅2-value, a statistical measure
+that indicates the proportion of variance in the dependent variable
+explained by the independent variable. In simple terms, the 𝑅2-value
+reflects the goodness-of-fit of a model: values closer to 1 suggest a
+better fit, while values closer to 0 indicate a poorer fit.
+4
+Empirical Study
+Our study investigates the lifecycle of vulnerabilities in the npm
+ecosystem, focusing on how vulnerabilities are published, fixed, and
+propagated through dependency networks. Prior work has largely
+examined mean disclosure delays or small-scale case studies; how-
+ever, the realities of modern software ecosystems–highly intercon-
+nected, versioned, and long-lived–require a more robust temporal
+model. Therefore, we focus our analysis on survival-curve–based
+medians and align all timelines with the first affected release, cap-
+turing the full exposure window experienced by downstream users.
+With this framework, we examine three research questions (men-
+tioned in § 1) in the following subsections.
+4.1
+RQ1 What is the nature of vulnerability
+discovery and publication on the npm
+ecosystem?
+Before presenting our results, we clarify our temporal methodology,
+as it underpins both RQ1 and RQ2. All timeline measurements in
+this study are derived from Kaplan–Meier survival curves, which
+allow us to model right-censored vulnerabilities and report medians
+rather than arithmetic means. This is essential because fix and
+publication delays exhibit heavy-tailed distributions that cannot be
+represented meaningfully using simple averages.
+A second methodological distinction is our alignment of time-
+lines to the first affected release—the date the vulnerable version
+was uploaded to npm. Prior ecosystem studies typically align with
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Michael Robinson, et al.
+advisory publication (e.g., NVD or OSV timestamps), which omits
+long periods during which users were already exposed. By anchor-
+ing at the moment of introduction, we capture the true exposure
+interval and enable an ecosystem-wide analysis of the ordering
+between publication and remediation.
+As shown later in Figure 9, this alignment reveals that 83.1% of
+vulnerabilities are fixed before they are publicly published, with
+a median publication-fix offset of −19 days. This ordering result,
+to our knowledge, has not been documented at scale for npm and
+provides new insight into how disclosure and remediation interact
+in practice. With this methodological foundation, in 𝑅𝑄1, we now
+provide developers a sense of whether vulnerabilities are increas-
+ing at a manageable rate and further suggest whether developers
+are publishing vulnerabilities in their projects within a reasonable
+time frame relative to the first known exposed version. By first
+understanding some basic summary statistics and the trend of vul-
+nerabilities over time, we may indicate whether greater awareness
+of vulnerabilities in packages and their propagation through depen-
+dency networks is required.
+Table 3: Summary statistics of the vulnerability database.
+Total npm parent packages:
+1,077,946
+Parents dependent on a vulnerable package:
+232,836
+Total unique dependencies:
+421,941
+Total releases of dependencies:
+658,136
+Total unique npm packages:
+1,363,977
+Total unique releases:
+1,619,856
+Total vulnerability instances:
+2,150,104
+Unique vulnerabilities (All CVSS versions):
+1,517
+Unique vulnerabilities (CVSS v3.x):
+1,498
+Affected packages:
+1,083
+As summarized in Table 3, of the 1,077,946 parent packages
+in our database, 21.60% (232,836) had at least one vulnerability
+in their dependencies. There are 421,941 unique dependencies, of
+which 658,136 unique versions of these dependencies exist. In total,
+including parent packages and dependencies, there exist 1,363,977
+unique packages across the entire database. Additionally, there
+exist 2,150,104 instances of vulnerabilities throughout the entire
+database, belonging to 1,515 unique CVE types. Excluding those
+that are under the CVSS v2.0 scheme, 1,498 vulnerabilities exist,
+consistent with CVSS v3.x. Figure 3 shows the accumulation of
+npm vulnerabilities published to the OSV database, whereby solid
+lines refer to accumulated vulnerabilities while dashed lines refer to
+the accumulation of affected packages. The trend of Figure 3 seems
+to straightforwardly suggest that the number of vulnerabilities
+published is increasing over time, with the number of affected
+packages increasing at a higher rate for all severity categories.
+This seems reasonable as each vulnerability can affect one or more
+distinct packages.
+An interesting feature of this plot is the large influx seen around
+June 2018. By investigating the associated vulnerabilities published
+within the given period, this large increase seems to have been done
+Figure 3: Accumulation of the number of published vulner-
+abilities (solid lines: Prefix P_) and corresponding affected
+packages (dashed lines: Prefix A_).
+across 3 weeks by the HackerOne group 2. Additionally, since these
+vulnerabilities belong to CVSS v3.0 and v3.1 exclusively, it may be
+that there was a large increase in the use of this convention in mid-
+2018, as opposed to CVSS v2–though this remains speculative. It
+must also be noted that it is very likely that many vulnerabilities are
+yet to be discovered. However, this increasing trend may suggest
+an increase in developers’ ability to detect vulnerabilities through
+more robust tools and effective discovery techniques. The relative
+‘flattening’ of the cumulative line nearing the end of the timeline
+may be because it takes around 1 year, on average, for a vulnerability
+to be published relative to its discovery date, as found in prior
+research [8].
+Considering vulnerabilities from all categories, accumulation
+seems to occur linearly–as proven statistically using regression
+analysis of a linear and exponential growth model. The coefficient of
+determination, 𝑅2, suggesting the goodness-of-fit for both models,
+is displayed in Table 4. This linear increase is also characteristic of
+an increase in affected packages. These findings suggest that while
+threats are steadily increasing, the growth is not trending at an
+undesirable rate, which might allow for more measured budgeting
+and resource allocation approaches. However, this also suggests that
+the rate of discovery has not increased in any significant manner,
+implying that efforts may not be as concentrated as required.
+Table 4: R2-values for regression analysis on accumulating
+vulnerabilities and affected packages over time.
+Model
+No. Vulnerabilities
+No. Packages
+Linear
+0.97
+0.96
+Exponential
+0.69
+0.69
+Table 5 provides a clearer representation of the final distribution
+of severity categories within the database. We find that out of 1,498
+unique vulnerabilities, a large majority are either medium, high, or
+critical in severity (466, 630, and 394, respectively), whereas there
+are only 8 vulnerabilities of low severity. The lack of low sever-
+ity vulnerabilities could be due to a reporting bias that increases
+2For example, see the ‘Change History’ section of CVE-2017-16138 at https://
+nvd.nist.gov/vuln/detail/CVE-2017-16138.
+
+Original Sin of npm: A Study on Vulnerability Propagation in JavaScript Dependency Networks
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+the potential risk of assessed vulnerabilities [26] or the potential
+that maintainers do not consider low-risk vulnerabilities worth
+disclosing. The amount of vulnerabilities belonging to the critical
+severity category seems alarming, especially due to its constrained
+score range (9.0 to 10.0), though this may be inflated as severity
+scores exceeding 10.0 are reduced to a limit of 10.0, as per the CVSS
+scheme [23]. We find that less than 1% of vulnerabilities belong to
+the ‘Low’ category, 31% belong to the ‘Medium’ category, a large
+portion (42%) are classified as ‘High’ severity, and the remaining
+26% are found to be of ‘Critical’ severity.
+Table 5: Distribution of 1,498 vulnerabilities for each severity
+category.
+Score
+Category
+Number
+Percentage
+< 4.0
+Low
+8
+0.53%
+≥4.0 and < 7.0
+Medium
+466
+31.11%
+≥7.0 and < 9.0
+High
+630
+42.06%
+≥9.0
+Critical
+394
+26.30%
+Figure 4 illustrates the distribution of various vulnerabilities
+and their year based percentage from 2015 to 2023. The number
+of critical vulnerabilities increased steadily from 2015, peaking
+at 118 in 2020. Subsequently, a downward trend was observed,
+with the count declining to 37 by 2023. This trend suggests that
+developers have prioritized addressing critical vulnerabilities, likely
+due to their significant impact on system security. A similar trend
+is observed for medium-severity vulnerabilities, which initially
+increase, peaking at 97 in 2021, before declining thereafter. The
+trend for high-severity vulnerabilities follows a different pattern but
+exhibits a decline from 2022 to 2023. Overall, when considering all
+vulnerabilities per year, the total number in 2023 is lower compared
+to the preceding years (2020–2022). This suggests that developers
+have become more proactive in addressing vulnerabilities before
+releasing their software. The percentage of critical vulnerabilities
+Figure 4: Trend of various (LOW, MEDIUM, HIGH and CRIT-
+ICAL) vulnerabilities over the years.
+peaked at 41.70% in 2020 but gradually reduced to 24.18% by 2023.
+Throughout most years, high-severity vulnerabilities accounted for
+the largest share, except in 2019. This trend indicates that developers
+prioritize addressing critical vulnerabilities more swiftly compared
+to other types.
+Severity classification may be important; however, exposure
+within a network is more crucial to assessing vulnerability risk, as
+it may elucidate how readily a flaw can be turned into an attack.
+Though severity scores are determined as a combination of im-
+pact and exploitability metrics, we capture the exploitability scores
+specifically, as they are vital for fix prioritization. Figure 5 shows
+the relationship between vulnerability severity and exploitability –
+demonstrating a strong correlation between ‘Critical’ and ‘High’
+severity vulnerabilities and moderately high exploitability scores
+ranging from values of 2 to 4, indicating that many of the most
+dangerous flaws are also relatively easy to exploit. This highlights
+the urgent need to address these vulnerabilities. Conversely, ‘Low’
+severity vulnerabilities generally have lower exploitability. This fig-
+ure motivates a prioritization strategy that considers a combination
+of severity and exploitability, enabling security teams to optimize
+resource allocation and effectively mitigate the most pressing risks.
+Figure 5: Heatmap of Base S
+
+[…middle truncated for length…]
+
+ilities, representing 21.24% of the total reported
+vulnerabilities. This intervention affects 93,597 packages (41.58%)
+and fully secures 19,136 distinct packages (8.50%) by eradicating all
+known vulnerabilities within them. As the number of most-frequent
+CVEs increases, the benefits become increasingly pronounced. For
+instance, resolving the top-20 CVEs mitigates 1,009,584 vulnerabili-
+ties (47.04%) and impacts 150,486 packages (66.86%), while rendering
+36,795 packages (16.35%) free of vulnerabilities. By remediating the
+top-200 CVEs, over 92.68% of the total vulnerabilities are resolved,
+and 73.55% of the distinct packages are fully secured. The results
+Table 6: Impact of Top-𝑁frequent CVEs on the number of
+vulnerabilities and affected packages.
+Top-𝑁
+Number of
+Number of Affected
+Number of Distinct
+CVEs
+Vulnerabilities
+Packages
+Affected Packages
+1
+179,098 (8.34%)
+24,882 (11.05%)
+1,460 (0.65%)
+5
+455,893 (21.24%)
+93,597 (41.58%)
+19,136(8.50%)
+10
+688,797 (32.09%)
+110,401 (49.05%)
+20,444 (9.08%)
+20
+1,009,584 (47.04%)
+150,486 (66.86%)
+36,795 (16.35%)
+50
+1,487,092 (69.28%)
+188,008 (83.53%)
+86,787 (38.56%)
+100
+1,789,458 (83.37%)
+202,254 (89.87%)
+126,285 (56.11%)
+200
+1,989,100 (92.68%)
+212,995 (94.64%)
+165,536 (73.55%)
+in Table 6 demonstrate that a limited number of high-frequency
+CVEs contribute to a large portion of vulnerabilities and affected
+packages, indicating their presence in widely reused dependency
+packages. This underscores the need for a detailed examination of
+packages that are frequently depended upon, as securing these can
+lead to significant vulnerability mitigation across the ecosystem
+due to their transitive impact.
+Findings. We observe that 7 CVEs account for 25% of the identified
+vulnerabilities, while 23 CVEs collectively contribute to 50%. In
+particular, a single high-severity CVE (CVE-2023-44270) alone
+contributes 8.34% of total vulnerabilities and affects 24,882 (11.05%)
+packages. The top-10 CVEs impact 49.05% of all affected packages.
+4.3.2
+Understanding CVE Propagation Across Software Ecosystems
+and Dependency Magnitudes (𝑅𝑄3.2). To understand CVE propaga-
+tion in the npm ecosystem, we need to analyse how the most fre-
+quent CVEs manifest throughout dependency networks. To achieve
+this, we quantify the total packages present throughout a given
+affected package’s dependency network, and specifically each de-
+pendency ’level’. Figure 12 illustrates a sample dependency graph
+for package/node 𝐴. The graph consists of 10 nodes in total, indicat-
+ing there exist 10 total packages. Among these, there exist 7 unique
+packages, and 5 dependency ’levels’. These metrics will be used for
+determining the propagation of CVEs throughout npm dependency
+networks.
+Figure 12: An example of a package dependency graph.
+Firstly,
+we
+consider
+the
+most
+frequent
+vulnerability
+(CVE-2023-44270),
+which
+directly
+affects
+24,882
+packages.
+Figure 13 shows the distribution of dependency packages by level
+for all parent packages affected by CVE-2023-44270. The 𝑥-axis
+represents the dependency level, and the 𝑦-axis shows the number
+of packages at each level. The distribution peaks at dependency
+levels ranging at a depth of 4-6 packages, indicating a highly
+interconnected ecosystem. This figure also depicts an identical
+trend for the average number of dependency packages per level
+per parent package. Similarly, this trend holds for the top-5, top-10,
+and top-20 CVEs (see Appendix A.3).
+Figure 13: Distribution of total and average affected packages
+by dependency level for CVE-2023-44270.
+From this, we may observe for CVE propagation that packages
+with higher dependency network depth are more susceptible to vul-
+nerabilities, potentially leading to an increased spread. The concen-
+tration of packages with 4–6 dependencies suggests that a vulnera-
+bility in a common dependency could affect much of the ecosystem.
+Conversely, packages with fewer dependencies are more isolated
+from the risk of possessing vulnerabilities. Table 7 summarizes how
+
+Original Sin of npm: A Study on Vulnerability Propagation in JavaScript Dependency Networks
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Table 7: Spread of the most frequent CVEs across npm packages and dependency networks.
+Top-𝑁
+Affected
+Average No.
+Dependency
+Dependency Coverage (By No. Packages)
+CVEs
+Packages
+Dependencies
+Length (Max.)
+5%
+10%
+25%
+50%
+1
+24,882
+812.2
+727
+536 (2.2%)
+1,195 (4.8%)
+3,407 (13.7%)
+7,425 (29.8%)
+5
+93,597
+402.6
+12.12
+1,095 (1.2%)
+2,432 (2.6%)
+6,801 (7.3%)
+16,110 (17.2%)
+10
+110,401
+355.1
+1.212
+1,147 (1.0%)
+2,544 (2.3%)
+7,117 (6.4%)
+17,091 (15.5%)
+20
+150,486
+298.1
+1.212
+1,339 (0.89%)
+2,963 (2.0%)
+8,338 (5.5%)
+20,963 (13.9%)
+the packages affected by the top-𝑁CVEs (𝑁= 1, 5, 10, 20) propa-
+gate within the npm ecosystem. For each group, the table reports the
+number of affected packages, the average number of dependencies
+per package, and the maximum dependency depth. Additionally, it
+quantifies the structural concentration of vulnerability spread by
+showing the percentage of affected packages that can be reached
+through the top 5%, 10%, 25%, and 50% of the most frequently used
+dependencies. For example, a single CVE affected 24,882 packages,
+with an average of 812.2 dependencies per package and a maxi-
+mum dependency depth of 727. The top 5%, 10%, 25%, and 50% of
+dependencies cover 2.2%, 4.8%, 13.7%, and 29.8% of the affected pack-
+ages, respectively. As the number of CVEs increases, the number
+of affected packages also grows from 93,597 for the top-5 CVEs to
+150,486 for the top-20 CVEs, while the average dependency size
+decreases from 402.6 to 298.1, respectively. However, the coverage
+percentages also decline, indicating a more dispersed vulnerability
+footprint. For instance, the top 50% most used dependencies cover
+17.2% of affected packages for the top-5 CVEs, though drops to
+13.9% for the top-20.
+Findings. npm has a highly interconnected dependency network,
+with most packages at 4–6 levels deep and some CVEs impacting
+packages with over 800 dependencies on average. Notably, 13.9%
+of packages, impacted by the top-20 CVEs, account for 50% of the
+network coverage, indicating a vulnerability propagation ratio of
+3.6 – meaning each affected package influences, on average, 3.6
+other packages through dependencies.
+5
+Discussion & Recommendations
+For package developers, maintaining up-to-date dependencies is
+crucial to minimising vulnerability exposure. Our dataset shows
+that outdated dependencies are widespread: out of 1,077,946 parent
+packages, 232,836 depend on at least one vulnerable package. Prior
+research similarly reports that 60% of JavaScript projects rely on
+outdated dependencies [31]. To reduce this exposure, developers
+should adopt permissive version constraints rather than pinning a
+single version, ensuring that the latest minor or patch releases are in-
+stalled without forcing disruptive major upgrades. Regular pruning
+of unused libraries and preventing development-only dependen-
+cies from leaking into production dependencies further reduces
+the attack surface. While it is important, it may also be risky to
+upgrade immediately to the latest version due to recency risks:
+newly released packages may not yet have undergone sufficient
+security auditing. Missing vulnerabilities–whether undiscovered or
+intentionally obscured–are inevitable in rapidly evolving ecosys-
+tems. The most practical defence is therefore to reduce unnecessary
+external dependencies and maintain a clear separation between
+development and runtime dependencies.
+Patch adoption behaviour. Although our work primarily eval-
+uates vulnerability prevalence and ecosystem impact, our dataset
+provides additional insights into remediation latency. The median
+time for a vulnerability to be fixed from its first affected release
+is 59 months (4 years and 11 months). However, fixes are typi-
+cally available before publication: 83.1% of vulnerabilities have a
+fix released prior to their OSV/NVD publication date, with a me-
+dian publication-to-fix offset of –19 days. Despite this, downstream
+adoption remains slow. Many dependent packages continue using
+outdated versions long after fixes are available, reinforcing that
+patch publication and patch adoption are distinct problems.
+This adoption gap aligns with ecosystem-wide evidence. For
+example, recent work shows that 96% of downloads containing
+known vulnerabilities occurred despite fixed versions being avail-
+able [25]. Similarly, Cox et al. found that 64.1% of dependencies had
+an update lag exceeding one year, with some delays extending up to
+eight years [5]. Combining these findings with our dependency-age
+profiling–which shows nearly a quarter of packages continuing to
+rely on vulnerable or outdated versions–indicates that slow patch
+adoption, not slow patch publication, is a primary driver of pro-
+longed exposure in the ecosystem.
+Security culture and tooling. Some packages without a history of
+disclosed vulnerabilities may be riskier than those with documented
+CVEs. A strong security culture, demonstrated through regular
+updates, transparent security reviews, and responsive patching
+behaviour, is often a better predictor of future security posture.
+Tools such as npm audit, which warn users during installation
+when a package is known to be vulnerable, remain crucial and
+should be actively integrated into CI/CD pipelines.
+Package maintainers should prioritise discovering and fixing
+vulnerabilities before public disclosure, especially given the long-
+tail behaviour of vulnerabilities that remain unpatched for years.
+Security tooling (e.g., dependency analysis, update-suggestion sys-
+tems, automated patching tools) should be improved to assist with
+timely identification and remediation. Package managers should
+better surface deprecation notices and vulnerability warnings to
+reduce accidental continued use of outdated versions. Developers
+should monitor OSV/NVD feeds and adjust dependency constraints
+to ensure compatibility with patched releases. Consistent vulnera-
+bility scoring (e.g., adopting CVSS v4 [10]) should be encouraged
+to reduce ambiguity in prioritising fixes.
+Network-scale insights. Our analysis shows that the structure of
+the dependency graph greatly influences the impact of vulnerabili-
+ties. Only 20 CVEs account for half of all vulnerabilities affecting
+interconnected packages (see Table 7). The average affected package
+influences 3.6 additional packages via dependency chains, demon-
+strating the cascading nature of vulnerability propagation.
+
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Michael Robinson, et al.
+Limitations and future work. Our analysis uses static depen-
+dency inheritance, which may overestimate exposure when vul-
+nerable code is included but never executed. Conversely, dynamic
+analysis–though more precise–is computationally expensive at npm
+scale. Additionally, approximately 400,000 packages were removed
+or deprecated before data collection (see §3.1), potentially biasing re-
+sults toward active libraries. Publication-date inconsistencies across
+OSV and NVD (averaging a 5-day discrepancy, with some outliers
+exceeding 5 years) introduced minor temporal noise (see Figure 6 in
+§4.1). Future work should integrate static–dynamic analysis, quan-
+tify patch-adoption lag at individual dependency trees, and combine
+multiple vulnerability databases to improve date consistency.
+6
+Threats to Validity
+Google OSV aggregates vulnerability reports from a variety of
+sources, such as snyk.io and GitHub Advisories, providing a com-
+prehensive but heterogeneous dataset. OSV.dev aggregates vulner-
+ability reports from multiple open-source and ecosystem-specific
+sources — including GitHub Advisories — resulting in a compre-
+hensive but heterogeneous dataset. This aggregation can introduce
+inconsistencies in the quality and detail of the reported vulner-
+abilities, as different sources may follow varying reporting stan-
+dards and taxonomies. For example, GitHub advisories might focus
+on project-specific security issues, while snyk.io could provide
+broader analyses that may not always align in terms of severity or
+impact. Consequently, some vulnerabilities could be underrepre-
+sented or overemphasized based on the source’s reporting focus,
+leading to uneven insights into the security of dependencies across
+diverse ecosystems.
+Additionally, as of November 2024, the industry is transitioning
+to CVSS version 4.0. One identified issue with earlier versions,
+like CVSS v3.x is the potential for a small number of low-severity
+vulnerabilities to be overscored. This miscalculation often stems
+from the conversion of categorical attributes–such as the attack
+vector, complexity, and impact–into numerical severity ratings.
+Such overscoring can skew vulnerability-management priorities,
+especially in large dependency networks where low-risk issues
+inflate overall risk assessments.
+CVSS v4.0 is expected to address these issues by introducing
+an updated scoring schema. This new version refines the way cate-
+gorical data is quantified, aiming to provide a more accurate reflec-
+tion of real-world risk. For example, CVSS v4.0 introduces greater
+granularity in the assessment of attack complexity and privileges
+required, which may result in a more precise rating of vulnerabil-
+ities. Furthermore, by improving the adaptability of the scoring
+mechanism to different contexts (e.g., cloud vs. on-premise envi-
+ronments), CVSS v4.0 could reduce the likelihood of overscoring
+minor vulnerabilities, thus enabling more effective prioritization of
+remediation efforts within large-scale dependency networks.
+7
+Related Work
+Prior research in this field has provided several key insights, par-
+ticularly regarding the existence of vulnerabilities within various
+software repositories and their respective dependency networks.
+Specifically for npm, it has been observed that the number of vul-
+nerabilities is increasing and that these vulnerabilities are being
+disclosed faster than other software repositories [32]. Moreover, it
+has been found that in both the npm and RubyGems ecosystems, the
+time to disclose vulnerabilities has been increasing over time [32].
+Combined with the insight that transitive dependencies increase
+nearly proportionally with the number of direct dependencies on
+npm [19], and the strong correlation between a higher number of
+dependencies and a higher number of vulnerabilities [13], this sug-
+gests a significant expansion of vulnerabilities within dependency
+networks over time. Decan et al. also found that many of these de-
+pendencies were outdated by several months [7]. Additionally, an
+earlier study demonstrated that limiting the number of dependen-
+cies and relying exclusively on “trusted” packages can help mitigate
+the presence of vulnerabilities in parent packages [3]. Furthermore,
+remediation times for vulnerabilities in open-source projects have
+increased dramatically from approximately 25 days in 2017 to over
+300 days in 2024 [25]. Decan et al. [8] present an empirical analy-
+sis of 399 security reports collected over six years across the npm
+dependency network, which includes over 600k JavaScript pack-
+ages. It examines when and how vulnerabilities are discovered and
+fixed, assesses their severity, and reports key findings and offers
+recommendations for package maintainers and tool developers to
+strengthen vulnerability management. Liu et al. [20] proposed a
+knowledge-graph approach (DVGraph) to resolve large-scale de-
+pendencies and track transitive vulnerability propagation, conduct-
+ing an ecosystem-wide study and providing mitigation strategies.
+Zimmermann et al. [33] analysed npm security risks, highlighting
+dependency-based single points of failure, maintainer influence,
+and the persistence of vulnerable, unmaintained packages, and
+recommending ecosystem-wide mitigations.
+While these studies provide valuable insights into the general
+landscape of vulnerabilities in npm and other ecosystems, they do
+not offer a detailed, systematic characterization of how vulnerabili-
+ties propagate through dependency networks, nor do they inves-
+tigate the relationship between vulnerability disclosure timelines
+and package outdatedness at scale. Our work builds on this founda-
+tion by introducing a quantitative analysis of how vulnerabilities
+spread across npm dependencies, assessing whether outdated pack-
+ages exacerbate security risks. Unlike prior studies that focus on
+vulnerability growth or broad dependency trends, we: (i) analyse
+vulnerability propagation in the npm ecosystem by tracing how
+vulnerabilities spread through dependency networks; (ii) examine
+time-to-disclosure to assess whether widely used packages remain
+unpatched for extended periods; and (iii) evaluate the pervasiveness
+of vulnerabilities across npm dependency networks to characterize
+ecosystem-wide risk.
+8
+Conclusion
+This study provides critical insights into the propagation of vulnera-
+bilities within the npm ecosystem. Approximately 13.9% of packages
+affected by the top-20 CVEs account for 50% of network coverage,
+indicating a vulnerability propagation ratio of 3.6. This suggests
+that each affected package, on average, influences 3.6 other pack-
+ages through dependencies. With 21.60% of packages impacted by
+vulnerabilities, our findings underscore significant security chal-
+lenges. These findings highlight the need for a paradigm shift in the
+npm ecosystem’s security approach, emphasizing early vulnerability
+detection, automated safe updates, and faster disclosure-to-patch
+timelines.
+
+Original Sin of npm: A Study on Vulnerability Propagation in JavaScript Dependency Networks
+ASIA CCS ’26, June 1–5, 2026, Bangalore, India
+Ethical Considerations
+This study relies exclusively on publicly available data sources
+(npm-follower, deps.dev, OSV, and NVD). No new vulnerabilities
+were discovered or exploited, no human subjects were involved,
+and no non-public data was accessed. All vulnerability identifiers
+discussed are already publicly catalogued.

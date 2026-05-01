@@ -1,0 +1,512 @@
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+1
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+Kemal Bicakci*
+Informatics Institute, Istanbul Technical University, Istanbul, T¨urkiye
+Securify Information Technology and Security Training Consulting Inc., Ankara, T¨urkiye
+kemalbicakci@itu.edu.tr
+Preprint – Submitted to arXiv, April 2026
+Abstract
+Public agencies are beginning to consider large language models (LLMs) as decision-support tools for grant evaluation.
+This creates a practical governance problem: the model and scoring rubric should not be exposed in a way that allows
+applicants to optimize against them, yet the evaluation process must remain auditable, contestable, and accountable.
+We propose a TEE-based architecture that helps reconcile these requirements through remote attestation. The
+architecture allows an external verifier to check which model, rubric, prompt template, and input representation
+were used, without exposing model weights, proprietary scoring logic, or intermediate reasoning to applicants or
+infrastructure operators. The main artifact is an attested evaluation bundle: a signed, timestamped record linking the
+original submission hash, the canonical input hash, the model-and-rubric measurement, and the evaluation output.
+The paper also considers a scenario-specific prompt injection risk: applicant-controlled documents may contain
+hidden or indirect instructions intended to influence the LLM evaluator. We therefore include a canonicalization and
+sanitization layer that normalizes document representations and records suspicious transformations before inference.
+We position the design relative to confidential AI inference, attestable AI audits, zero-knowledge machine learning,
+algorithmic accountability, and AI-assisted peer review. The resulting claim is deliberately narrow: remote attestation
+does not prove that an evaluation is fair or scientifically correct, but it can make part of the evaluation process externally
+verifiable.
+Keywords: remote attestation, trusted execution environment, confidential AI inference, grant evaluation, algorithmic
+accountability, prompt injection, verifiable machine learning, human oversight.
+1. Introduction
+Public funding agencies such as national science foundations routinely evaluate large numbers of grant proposals. The
+evaluation workload is substantial: each proposal may require several expert reviewers, panels must harmonize scores
+across heterogeneous disciplinary backgrounds, and turnaround expectations are often tight. Against this backdrop,
+there is growing interest in using large language models as decision-support tools—not to replace human judgment,
+but to assist with preliminary scoring, rubric compliance checking, identifying missing information, and flagging
+inconsistencies across reviewer assessments [7].
+The motivation for this work comes from a practical governance question: if a public agency uses an AI model to
+assist grant evaluation, how can applicants and auditors trust that the declared model was actually used, while preventing
+applicants from reverse-engineering or gaming the evaluation procedure? This question creates a tension between two
+legitimate requirements:
+• Model confidentiality. If the model’s scoring criteria, rubric details, and behavioral tendencies are publicly known,
+sophisticated applicants can over-optimize their proposals for the model rather than for genuine scientific merit—a
+form of Goodhart’s Law applied to automated evaluation. The integrity of the funding process depends on keeping
+the model and its policy partially opaque to applicants.
+• Process auditability. Public funding decisions must be explainable, contestable, and subject to independent
+oversight. Applicants, funding agencies, and external auditors must be able to verify that the declared model and
+declared rubric were actually used, that the submission was not silently modified before evaluation, and that the
+output was not tampered with after generation.
+*ORCID: 0000-0002-2378-8027
+arXiv:2604.25200v1 [cs.CR] 28 Apr 2026
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+2
+In practice, this tension is often handled through policy and institutional trust: agencies may disclose high-level
+principles while keeping implementation details internal. That may be reasonable in some settings, but it leaves a
+technical gap. Applicants and auditors may still need evidence that the declared model, rubric, and input representation
+were actually used. This gap is closely related to the normative requirements of algorithmic accountability in public
+sector decision making [8,9].
+This paper explores one technical way to reduce that gap. Drawing on the hardware-rooted trust model of confidential
+computing, we show how remote attestation can provide evidence that a specific, approved evaluation pipeline was
+launched and used—without requiring the auditor to trust the infrastructure operator, the cloud provider, or every
+software layer in the agency’s environment. The key distinction, which we use throughout the paper, is:
+Remote attestation does not certify that the model made a good decision. It certifies that the correct model,
+in the correct environment, with the correct version of the rubric, processed the unmodified input and that
+the output was not subsequently altered.
+This is a narrower claim than full fairness or correctness, but it is still useful: it turns one part of the process into
+something externally verifiable. It should be complemented by separate validation processes—model audits, bias
+analyses, and human review panels—that address the quality and legitimacy of the evaluation itself.
+The paper makes four main contributions:
+1. We frame AI-assisted public grant evaluation as a confidentiality-auditability problem: the evaluation logic should
+remain protected, while the process should still be independently checkable (§2).
+2. We propose a TEE-based architecture that produces an attested evaluation bundle per submission, binding the
+submission hash, canonical input hash, model-and-rubric measurements, inference timestamp, and signed output
+(§5).
+3. We analyze prompt-injection and input-canonicalization issues that arise when applicant-controlled documents are
+processed by an LLM evaluator (§5 and §6).
+4. We discuss the limitations of the approach and compare it with stronger, but currently less practical, cryptographic
+alternatives such as ZK-ML, FHE, and MPC (§4 and §7).
+The rest of the paper is organized as follows. Section 2 defines the problem setting, requirements, and threat model for
+AI-assisted grant evaluation. Section 3 provides background on trusted execution environments and remote attestation.
+Section 4 presents the proposed attestation-based architecture and the attested evaluation bundle. Section 5 discusses the
+security properties and limitations of the approach. Section 6 reviews related work on confidential computing, verifiable
+computation, and AI-assisted evaluation. Finally, Section 7 concludes the paper and outlines directions for future work.
+2. Problem Statement and Threat Model
+2.1. Setting
+We consider a grant evaluation agency (GEA) that uses an AI-assisted evaluation pipeline as a component in its proposal
+review process. The pipeline takes a structured applicant submission as input and produces a structured evaluation
+report: numerical scores on multiple rubric dimensions, natural-language justifications, uncertainty flags, and reviewer
+attention cues. The AI output feeds into a human review panel that makes the final funding decision.
+2.2. Principals and Roles
+Four principals participate in the system:
+• Applicant (A). Submits a proposal. Has an interest in receiving a high score. Is aware that AI evaluation is used.
+• Agency (GEA). Operates the evaluation process. Wants evaluations to be consistent, rubric-compliant, and defensible.
+Holds the model and rubric as confidential internal policy.
+• Model provider (MP). Provides the model weights and inference infrastructure. In practice this role may be filled
+by a separate commercial AI service, or by the agency itself operating an in-house or open-weight model. In the
+latter case MP and GEA collapse into a single principal, which simplifies the trust structure but does not change the
+core attestation requirements.
+• Auditor / Appellate board (AUD). An independent body entitled to verify that a specific evaluation was conducted
+as claimed. May act on behalf of an aggrieved applicant or as a systemic regulator.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+3
+Figure 1 illustrates the four principals and their key interactions.
+Applicant (A)
+Agency (GEA)
+Auditor / Board (AUD)
+Model Provider (MP)
+submits proposal
+score report
+model deployment / inference API
+appeal request
+attestation report A
+attested bundle B
+verification result
+Figure 1: The four principals and their interactions. Applicant (top-left) submits proposals to the Agency (top-right) and
+receives score reports in return. The Agency coordinates model deployment with the Model Provider (bottom-right) and
+sends the attested bundle B to the Auditor (bottom-left). The Auditor receives the attestation report A from the Model
+Provider, returns a verification result to the Agency, and handles Applicant appeals.
+2.3. Threat Model
+We identify the following adversarial scenarios:
+T1 – Applicant gaming. An applicant, knowing the model’s exact behavior, constructs a proposal that exploits model
+biases or keyword sensitivities rather than demonstrating genuine merit.
+T2 – Prompt injection. An applicant embeds invisible instructions (white text, PDF metadata, hidden comment fields,
+Unicode lookalikes) inside their submission with the intent to override the system prompt or scoring logic.
+T3 – Post-hoc output tampering. An internal actor (malicious operator, compromised software layer) alters evaluation
+scores or justifications after generation but before they are recorded.
+T4 – Wrong model/rubric deployment. A misconfigured or deliberately substituted model version or rubric variant is
+used, producing evaluations inconsistent with declared policy.
+T5 – Input silencing. The submission fed to the model is a filtered or altered version of the original, suppressing
+content that would have led to a lower score.
+T6 – Infrastructure operator breach. A cloud provider or hosting operator with hypervisor-level access reads model
+weights, rubric contents, or intermediate inference state.
+The architecture is intended to reduce the practical risk of T2–T5, although prompt injection and document canonicaliza-
+tion remain open-ended problems. It also reduces exposure to T6 under the standard TEE threat model. T1 is addressed
+primarily at the policy level through model and rubric confidentiality; the proposed architecture provides a technical
+mechanism for enforcing that policy.
+3. Background
+3.1. Trusted Execution Environments
+A Trusted Execution Environment (TEE) is a hardware-isolated computation region where code and data are protected
+from unauthorized access, including by privileged software layers such as the operating system and hypervisor. The
+isolation is enforced by CPU-level mechanisms. Prominent TEE implementations include Intel Trust Domain Extensions
+(TDX), AMD Secure Encrypted Virtualization-Secure Nested Paging (SEV-SNP), and ARM Confidential Compute
+Architecture (CCA) [1,10].
+TEEs provide two security properties relevant to our design:
+• Confidentiality. Memory pages inside the TEE are encrypted. The hypervisor and OS cannot read their contents.
+• Integrity. A TEE maintains a cryptographic measurement (typically a hash chain of loaded code and data) that can
+be used to verify the integrity of the environment.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+4
+3.2. Remote Attestation
+Remote attestation (RA) is a protocol by which a relying party verifies claims about a remote system’s software and
+hardware state without being physically present. In the TEE context, the protocol produces a signed attestation report
+generated by the CPU’s attestation key, which chains to a hardware root of trust from the CPU manufacturer. The report
+binds a measurement—a hash of the TEE’s initial code and configuration—to a nonce or other challenge provided by
+the relying party, preventing replay attacks [1].
+The relying party checks: (1) the signature is valid under the CPU manufacturer’s certificate chain; (2) the mea-
+surement matches a reference manifest they trust; (3) the nonce is fresh. If all three checks pass, the relying party has
+evidence that the remote system was launched with the approved software state in a genuine TEE. The strength of
+that evidence depends on the TEE implementation, the freshness of the reference manifest, and the trust placed in the
+hardware vendor’s attestation infrastructure.
+3.3. Confidential Computing for AI Workloads
+Confidential computing has been extended to AI inference workloads, motivated by the need to protect model weights
+from cloud operators and user inputs from model providers simultaneously. Microsoft Azure’s Confidential AI
+Inferencing service, for example, runs an LLM endpoint inside a TDX virtual machine and provides a publicly verifiable
+attestation policy that specifies which model, runtime, and system prompt versions are approved [3]. Anthropic has
+published a technical approach to confidential inference that extends this model to include prompt privacy and output
+non-disclosure guarantees [4].
+These commercial and research systems suggest that TEE-based LLM inference is becoming operationally feasible.
+This paper adapts that line of work to the more specific accountability requirements of public grant evaluation.
+4. Related Work
+We do not attempt a full survey of confidential AI or verifiable machine learning. Instead, we focus on the strands that
+directly motivate the proposed design.
+4.1. Confidential AI Inference
+The emerging literature on confidential AI inference addresses the problem of running machine learning models
+in environments where neither the user’s input nor the model provider’s weights should be exposed to the hosting
+infrastructure. Carlini et al. [12] and subsequent work demonstrate that model weights and training data can be extracted
+from deployed models under various threat models, motivating hardware-level isolation. The systematization by
+Mo et al. [11] provides a comprehensive taxonomy of confidential computing techniques applied to ML pipelines,
+distinguishing between input confidentiality, model confidentiality, and gradient confidentiality in federated settings.
+For our application, the primary confidentiality requirement is that model weights and evaluation rubric remain
+unexposed to applicants, so that the scoring procedure cannot be gamed. When the agency uses a third-party model
+provider, an additional concern arises: the provider may also wish to protect model weights as commercial intellectual
+property, and the agency may not want its rubric exposed even to the provider’s infrastructure. When the agency operates
+the model itself, the IP concern disappears, but the anti-gaming requirement remains. In either case the key desideratum
+is the same: applicants and outside parties should not be able to infer the scoring logic, while auditors should be able to
+verify that the declared configuration was used. This combination is not well-addressed by prior work focused on the
+bilateral user-provider relationship.
+4.2. Attestable AI Audits
+The closest prior work to our proposal is the attestable audits paradigm introduced by recent work on AI safety
+evaluation [5]. The core idea is to run AI safety benchmarks inside a TEE so that external parties can verify, via remote
+attestation, that a specific model was evaluated under specific test conditions and that results were not modified. This
+eliminates the need to trust the audit organization’s infrastructure or personnel.
+We extend this paradigm from the benchmark evaluation setting to the proposal evaluation setting. The structural
+differences are significant: benchmark audits involve adversarial test inputs chosen by the auditor, while grant evaluation
+involves applicant-controlled inputs that must be protected against injection attacks. Additionally, the relying party in
+grant evaluation is not a safety regulator but an applicant or appellate board with different verification needs.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+5
+4.3. Zero-Knowledge Machine Learning
+Zero-knowledge proofs (ZKPs) offer a mathematically stronger alternative to TEE-based attestation: a proof that a
+computation was performed correctly, verifiable without re-running it and without revealing the model or inputs. The
+ZKML research area applies ZKPs to neural network inference [6]. Recent work has demonstrated ZK proofs for
+selected neural-network workloads, but proof generation time and memory cost remain highly dependent on architecture,
+sequence length, and arithmetic representation.
+For the large language models relevant to grant evaluation (tens of billions of parameters), ZK proof generation
+remains computationally prohibitive. For transformer-scale LLMs, the overhead remains large enough that ZKML is
+better viewed as a medium-to-long-term alternative rather than an immediately deployable solution for routine grant
+evaluation. In §7 we discuss the conditions under which the security-cost tradeoff may shift in favor of ZKML.
+4.4. Secure Multi-Party Computation and Homomorphic Encryption
+Secure multi-party computation (MPC) and fully homomorphic encryption (FHE) enable computation on encrypted
+data without decrypting it. While theoretically appealing—an FHE-based system would allow inference on encrypted
+submissions without the model ever seeing plaintext—current FHE performance on transformer-scale models is
+impractical by several orders of magnitude [11]. MPC-based approaches face similar overhead challenges and introduce
+communication complexity that scales poorly with model size.
+We therefore treat FHE and MPC as important research directions but exclude them from our near-term architecture.
+A hybrid approach—using TEE for LLM inference and MPC or FHE for sensitive sub-computations such as score
+aggregation—may offer a practical middle ground.
+4.5. AI-Assisted Peer Review and Grant Evaluation
+Empirical work on LLMs as reviewers has produced cautiously optimistic results. Sandstr¨om and Thelwall [7] revisit a
+classic peer review dataset and find that LLM-based scoring shows partial alignment with human expert judgments,
+while also revealing systematic biases correlated with proposal framing, length, and institutional signals.
+The emerging consensus in the literature is that LLMs are valuable as decision support tools in proposal evaluation—
+assisting with rubric checking, missing-information flagging, and preliminary triage—but should not serve as sole or
+final decision makers [7]. Our architecture is designed around this consensus: AI output feeds into a human review
+panel, and the attested bundle provides evidence of what the AI said, not authorization for a final decision.
+4.6. Prompt Injection Attacks
+Prompt injection was first systematically characterized by Perez and Ribeiro [13], who demonstrated that adversarial
+instructions embedded in user-controlled inputs can override system prompt instructions in LLMs. Subsequent work has
+expanded the taxonomy to include indirect prompt injection—where the adversarial instructions appear in third-party
+content retrieved by the model (e.g., documents fetched by a RAG system)—and steganographic injection, where
+instructions are hidden in formatting, Unicode normalization artifacts, or whitespace [14].
+In the grant evaluation setting, the applicant’s submission is precisely the type of third-party, adversary-controlled
+document that indirect injection exploits. Defenses against prompt injection remain an active research area [15];
+our contribution is to integrate a canonicalization layer that reduces the attack surface and includes injection-attempt
+detection as a scored meta-attribute of the evaluation.
+4.7. Algorithmic Accountability in the Public Sector
+The normative literature on algorithmic accountability establishes requirements for automated systems used in conse-
+quential public decisions: transparency of process, contestability of outcomes, non-discrimination, and human oversight
+of final decisions [8, 9]. The NIST AI Risk Management Framework [2] codifies these into operational practices
+including documentation, ongoing monitoring, and incident response.
+Remote attestation contributes to these requirements by providing a cryptographic audit trail that supports transparency
+of process and contestability. It does not, however, automatically satisfy non-discrimination requirements (which depend
+on model training data and rubric design) or ensure high-quality human oversight (which depends on reviewer competence
+and institutional incentives). We treat these as complementary, non-technical requirements that the broader governance
+framework must address.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+6
+5. Proposed Architecture
+5.1. Overview
+The architecture consists of five layers, each with defined security properties and interfaces:
+1. Submission ingestion and canonicalization layer (outside TEE, logged)
+2. Attestation bootstrap (TEE launch and measurement)
+3. Evaluation inference core (inside TEE)
+4. Attested output signing (inside TEE before exit)
+5. Audit log and verification service (outside TEE, tamper-evident)
+Figure 2 illustrates the data flow and trust boundaries. The critical invariant is that once data enters the TEE boundary,
+it cannot be observed or modified by any software layer outside the TEE, including the OS, hypervisor, and cloud
+management plane.
+Applicant Submission
+Canonicalization Layer
+Attestation Bootstrap
+Inference Core
+Output Signing
+Tamper-Evident Audit Log
+Auditor / Appellate Board
+Pre-TEE Audit Log
+Ref. Manifest R
+Human Review Panel
+Final Decision
+Trusted Execution Environment (TEE)
+raw file
+Horig, Hcan
+canonical input
+verify M
+attestation A
+scores + justification O
+signed bundle B
+evaluation report
+independent verification
+Figure 2: System architecture and data flow. The blue dashed box marks the TEE boundary: all operations inside are
+encrypted and isolated from the OS, hypervisor, and cloud operator. Solid arrows indicate data flow; dashed arrows
+indicate verification interactions.
+5.2. Layer 1: Submission Ingestion and Canonicalization
+5.2.1. Document parsing and format normalization
+Applicant submissions typically arrive as PDF, DOCX, LaTeX source, or structured web forms. Each format presents
+distinct channels for embedding adversarial content. The ingestion layer:
+(1) Computes and records the original submission hash Horig (SHA-3-256 of the raw file bytes).
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+7
+(2) Parses all format layers: visible text, metadata fields (author, subject, keywords, custom properties), embedded
+objects (images, fonts, scripts), comment fields, hidden layers, and revision history.
+(3) Applies a canonical representation transform that strips all non-visible and non-structural content, retaining only the
+human-readable text and declared section structure.
+(4) Computes the canonical input hash Hcan over the normalized representation.
+(5) Records both Horig and Hcan in the pre-TEE audit log.
+5.2.2. Prompt injection detection and sanitization
+Before constructing the model input, the canonicalization layer applies injection screening:
+• Detection of instruction-like patterns (imperative verbs followed by evaluation-related directives, e.g., “ignore
+previous instructions,” “assign maximum score”).
+• Removal of Unicode control characters, soft hyphens, zero-width spaces, and bidirectional override characters that
+can alter visual rendering without appearing in plain text.
+• Detection of unusually high density of whitespace, which may indicate hidden white-on-white text in original
+documents.
+• Flagging of any metadata fields containing natural-language directives.
+Detected anomalies are not silently removed; they are recorded in a sanitization report that becomes part of the
+evaluation bundle. This transparency ensures that the applicant cannot later claim injection content was present without
+the agency’s knowledge, and provides the auditor with evidence of what was or was not cleaned.
+5.3. Layer 2: Attestation Bootstrap
+Before evaluation begins, the TEE launches and generates an attestation report as follows:
+(1) The CPU measures the TEE initial state: loaded code (inference runtime binary), model weights (or a verifiable
+pointer to sealed weights), rubric and prompt template, and security-critical configuration.
+(2) The measurement M is a hash chain over these components, signed by the CPU’s attestation key rooted in the
+manufacturer’s certificate authority.
+(3) The attestation report A = SignCPU(M∥nonce∥timestamp) is generated and made available for external verification.
+(4) An external attestation verifier—operated independently of the agency, e.g., by a designated audit authority or by
+the CPU manufacturer’s verification service—checks A against a reference manifest R that encodes the approved
+model hash, rubric hash, prompt template hash, and runtime hash.
+The reference manifest R is a publicly commitments document signed by the agency at policy-adoption time and
+stored in a transparency log. This ensures that the definition of “correct configuration” is itself public and time-locked,
+preventing retroactive policy changes.
+5.4. Layer 3: Evaluation Inference Core
+Inside the TEE, the evaluation proceeds as follows:
+(1) The canonical input (from Layer 1) is received and its hash Hcan is verified against the pre-TEE log.
+(2) The system prompt, rubric, and evaluation instructions are loaded from sealed storage within the TEE.
+(3) The full model input I is constructed: system prompt ∥rubric ∥separator token ∥canonical submission.
+(4) The input hash HI = SHA3(I) is computed inside the TEE.
+(5) Inference is performed; the model produces an evaluation output O containing numerical scores per rubric dimension,
+natural-language justifications, an uncertainty estimate, a list of flagged weaknesses, and reviewer attention cues.
+(6) The output hash HO = SHA3(O) is computed.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+8
+5.5. Layer 4: Attested Output Signing
+Before any data exits the TEE, the evaluation evidence packet is assembled and signed:
+E = {Horig, Hcan, HI, HO, M, A, τ, O}
+where τ is the RFC 3161 timestamp obtained from a trusted timestamping authority. The signed bundle is:
+B = E ∥SignTEE(E)
+The signing key kTEE is a per-session ephemeral key generated inside the TEE and certified by the attestation report,
+so its use is bound to the specific TEE launch that produced the measurement M.
+5.6. Layer 5: Audit Log and Verification Service
+The attested bundle B exits the TEE and is written to a tamper-evident audit log. We recommend an append-only log
+with Merkle-tree-based consistency proofs (e.g., a Certificate-Transparency-style log) so that any subsequent deletion or
+modification of an entry is cryptographically detectable.
+Any party in possession of B, the reference manifest R, and the CPU manufacturer’s certificate chain can indepen-
+dently verify:
+(1) The attestation signature is valid and chains to the hardware root of trust.
+(2) The TEE measurement matches the reference manifest (i.e., approved model, rubric, and prompt were loaded).
+(3) The output hash HO is consistent with the output O in the bundle (i.e., output was not modified post-generation).
+(4) The submission hash Horig matches the original file held by the agency’s submission system (i.e., the evaluated file is
+the submitted file).
+(5) The timestamp is from a trusted authority and predates any contestation.
+5.7. Human Review Integration
+The attested bundle is presented to the human review panel alongside the original submission. The panel’s role is to:
+• Review the AI-generated scores and justifications as structured decision support.
+• Exercise independent judgment on dimensions where the AI flags uncertainty or where the panel’s domain expertise
+suggests the rubric is an imperfect proxy.
+• Make the final funding decision, which is recorded separately from the AI output.
+• Log any disagreements with AI scores, which feeds into ongoing model validation.
+The architecture deliberately decouples the AI evaluation artifact from the final decision. This ensures that the AI
+system is accountable for what it said, not for the funding outcome, and that human judgment retains both legal and
+normative primacy.
+6. Security Analysis
+We analyze the architecture against the threat model of §2.3.
+T1 (Applicant gaming).
+The model and rubric are never exposed outside the TEE. An applicant who cannot observe
+model behavior cannot systematically exploit it. The risk is reduced to statistical inference from aggregate funding
+outcomes—a residual risk that requires a larger number of evaluations and is bounded by output noise and rubric
+diversity. This is analogous to the residual leakage risk in differentially private systems.
+T2 (Prompt injection).
+The canonicalization layer (Layer 1) removes the most common injection vectors. Detected
+anomalies are logged and flagged in the evaluation bundle, enabling post-hoc audits of injection attempts. Residual risk
+remains for novel steganographic techniques not covered by the sanitization rules; we treat this as an ongoing research
+problem (see §8).
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+9
+T3 (Post-hoc output tampering).
+The output hash HO is computed and signed inside the TEE before the output
+exits. Any modification to O after TEE exit invalidates the signature, which is detectable by any party with the public
+verification key. Integrity is therefore unconditionally guaranteed under the assumption that the TEE signing key was
+generated and used exclusively inside the TEE.
+T4 (Wrong model/rubric deployment).
+The attestation bootstrap (Layer 2) binds the TEE measurement to the
+reference manifest. A substituted model or rubric produces a different measurement that fails attestation verification.
+This threat is mitigated as long as the reference manifest is correctly maintained and the CPU attestation is genuine.
+T5 (Input silencing).
+The pre-TEE ingestion logs Horig before canonicalization. The bundle includes both Horig
+and Hcan. An auditor can verify that Horig matches the submission file and that the canonicalization transform was
+deterministic and policy-compliant. Silent omission of content would require either a collision attack on SHA-3 or a
+compromise of the pre-TEE logging system.
+T6 (Infrastructure operator breach).
+TEE memory encryption prevents a cloud operator with hypervisor access
+from reading model weights, rubric contents, or intermediate activations. The operator can observe encrypted ciphertext
+and timing side-channels but not plaintext content. Residual risk includes micro-architectural side-channel attacks (cache
+timing, power analysis) against TEE implementations—a known and active research area that is partially mitigated by
+recent CPU microcode updates.
+7. Limitations and Open Challenges
+7.1. What Remote Attestation Does Not Guarantee
+Remote attestation is a powerful but narrowly defined guarantee. It is essential to be precise about what the attested
+bundle does not prove:
+1. Model quality. Attestation verifies that the approved model ran; it says nothing about whether that model is well-
+calibrated, unbiased, or scientifically sound. A poorly trained model, consistently applied, will produce attestable
+but poor evaluations.
+2. Rubric validity. If the rubric encodes flawed criteria or implicitly favors certain proposal styles, attestation proves
+only that the flawed rubric was applied consistently. Rubric design remains a human responsibility outside the
+technical trust boundary.
+3. Training data bias. Pre-training and fine-tuning corpora can encode systematic biases along institutional, linguistic,
+or demographic lines. These biases are inherited by any deployment of the model, regardless of how securely it is
+attested.
+4. TEE hardware integrity. The security of remote attestation ultimately depends on the integrity of the CPU manu-
+facturer’s attestation keys and the absence of undisclosed firmware vulnerabilities. Nation-state-level adversaries
+with access to CPU microarchitecture specifications may be capable of forgery attacks that are infeasible for ordinary
+adversaries.
+5. Canonicalization completeness. The canonicalization layer cannot enumerate all possible steganographic injection
+channels, particularly as document formats evolve and LLMs become sensitive to increasingly subtle formatting
+cues.
+7.2. Performance and Cost Overheads
+Running LLM inference inside a TEE introduces performance overhead compared to standard cloud inference. The
+magnitude is workload-dependent: memory-intensive inference, large context windows, encrypted memory management,
+and I/O patterns can all affect throughput. Attestation also adds bootstrap latency, especially when a fresh TEE instance is
+created per evaluation or per batch. For a grant evaluation system processing thousands of submissions, these overheads
+are likely to be operational rather than conceptual obstacles, but they should be measured in the target deployment rather
+than assumed negligible.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+10
+7.3. Trusted Computing Base Dependencies
+Despite its strength, the TEE model requires trust in several entities: the CPU manufacturer (for attestation key integrity),
+the TEE firmware (for correct isolation enforcement), and the attestation verification service (for correct policy checking).
+An agency adopting this architecture should conduct due diligence on each dependency and implement compensating
+controls (e.g., multi-vendor TEE diversity for high-stakes decisions).
+7.4. Limitations of ZK-ML as an Alternative
+Zero-knowledge proofs for neural network inference offer a stronger kind of guarantee—a mathematical proof of correct
+computation rather than a hardware attestation—but they face substantial practical limitations for large language models.
+Proof generation complexity grows with model size, sequence length, and the arithmetic representation used by the proof
+system. Recursive proof composition and hardware acceleration are active research directions, but the gap between
+current ZK-ML capability and LLM-scale grant evaluation remains substantial. For the near term, ZK-ML is better
+treated as a complementary research direction than as a replacement for TEE-based attestation.
+7.5. Governance and Incentive Alignment
+Technical architecture alone cannot guarantee accountable AI deployment. The reference manifest must be correctly
+maintained; if the agency is also the party responsible for maintaining the manifest, there is a conflict of interest.
+Independent manifest custody—by a regulatory authority, an international standards body, or a multi-stakeholder
+consortium—is architecturally preferable but requires institutional coordination beyond the scope of this technical paper.
+8. Future Work
+The architecture presented here leaves several research questions open:
+Adaptive canonicalization.
+Current sanitization rules are static and must be manually updated as new injection
+techniques emerge. A dynamic, model-in-the-loop sanitization approach—where the canonicalization layer uses a
+secondary model to detect injection intent—introduces a bootstrapping problem (who attests the sanitizer?) but may
+be more robust against novel attacks. Formal characterization of the injection detection problem as an adversarial
+classification task would enable principled evaluation of sanitizer completeness.
+Composable attestation across multi-stage pipelines.
+Grant evaluation often involves multiple stages: initial
+eligibility screening, technical merit review, strategic alignment scoring, and panel discussion. Each stage may use
+different models or rubrics. Extending the attestation framework to multi-stage pipelines requires composable attestation
+protocols that chain evidence across stages while preserving per-stage confidentiality boundaries.
+Differential privacy for aggregate reporting.
+Even if individual evaluation bundles are confidential, aggregate
+statistics (e.g., score distributions by institution type or proposal length) may leak information about model behavior.
+Differential privacy mechanisms applied to aggregate reports can bound this leakage, complementing the per-bundle
+attestation with population-level privacy guarantees.
+Formal verification of canonicalization transforms.
+The canonicalization layer is a critical security component,
+but its correctness guarantees are informal. Formal specification of the transform—using a language such as TLA+ or
+Coq—and verification that the specification is injection-free for a defined class of document formats would substantially
+strengthen the security argument.
+Human-AI disagreement as a model quality signal.
+The architecture logs cases where human reviewers disagree
+with AI scores. Systematic analysis of these disagreements—controlling for reviewer expertise, proposal domain, and
+rubric dimension—can provide a rich signal for identifying model biases and rubric weaknesses. Building a feedback
+loop from human panel decisions to model validation (not fine-tuning, which would compromise attestation integrity) is
+a research priority.
+Cross-agency comparability and portability.
+Different funding agencies use different rubrics and model config-
+urations. Developing standardized attestation schemas and reference manifest formats would enable cross-agency
+comparisons of AI-assisted evaluation practices and support regulatory oversight at scale.
+
+Making AI-Assisted Grant Evaluation Auditable without Exposing the Model
+11
+Graduated trust frameworks.
+Not all grant decisions carry equal stakes. A tiered system—in which small seed
+grants use a lighter-weight attestation protocol while large program grants require full TEE attestation with independent
+manifest custody—would optimize the cost-security tradeoff across the evaluation portfolio.
+9. Conclusion
+AI-assisted grant evaluation presents a genuine dual-requirement problem: the evaluation model must be confidential
+enough to reduce gaming, yet the process must be auditable enough to support contestability and accountability. This
+paper has argued that a TEE-based architecture with remote attestation can help reconcile these requirements, provided
+its guarantees are understood narrowly.
+The central contribution of the paper is the attested evaluation bundle: a signed, timestamped artifact that cryp-
+tographically binds the original submission hash, the canonical input hash, the model and rubric measurements, and
+the evaluation output. Any party in possession of this bundle and the publicly registered reference manifest can
+independently verify that the declared model and rubric were used, that the submission was not silently altered, and that
+the output was not modified after generation.
+We have been careful to delineate what remote attestation proves and what it does not. It does not certify that the
+model made a scientifically correct or unbiased judgment. It certifies that the correct model, in the correct environment,
+processed the unmodified input and produced an unmodified output. This narrower claim is still valuable: it can move
+part of AI-assisted grant evaluation from an internal black-box process to a verifiable record grounded in cryptographic
+evidence.
+We have also highlighted the prompt injection attack surface created when LLM-based evaluators process adversary-
+controlled documents, and proposed a canonicalization layer that reduces this surface while preserving a transparent
+sanitization record. The combination of TEE-enforced confidentiality, attestation-enforced integrity, and canonicalization-
+enforced input safety provides a plausible technical baseline for more trustworthy AI-assisted public decision support.
+The architecture is compatible with existing confidential-computing hardware such as Intel TDX and AMD SEV-
+SNP, as well as emerging cloud services for confidential AI inference. The primary near-term research priorities are
+formal verification of the canonicalization transform, composable attestation for multi-stage pipelines, and governance
+frameworks for independent manifest custody.
+The broader point is not that remote attestation solves the governance problem of AI-assisted public decision
+making. It does not. Rather, it provides a concrete mechanism for making one important part of that process checkable.
+Used together with human review, model validation, appeal mechanisms, and public accountability procedures, it can
+contribute to a more trustworthy evaluation infrastructure.

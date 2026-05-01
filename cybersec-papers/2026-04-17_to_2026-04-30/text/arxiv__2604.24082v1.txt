@@ -1,0 +1,1148 @@
+Jailbreaking Frontier Foundation Models Through Intention Deception
+Xinhe Wang
+Carnegie Mellon University
+xinhew@andrew.cmu.edu
+Katia Sycara
+Carnegie Mellon University
+katia@cs.cmu.edu
+Yaqi Xie
+Carnegie Mellon University
+yaqix@andrew.cmu.edu
+Abstract
+Large (vision-)language models (LVLMs) exhibit remark-
+able capability but remain highly susceptible to jailbreak-
+ing. Existing safety training approaches aim to have the
+model learn a refusal boundary between safe and unsafe,
+based on the user’s intent. It has been found [22] that this
+binary training regime often leads to brittleness, since the
+user intent cannot reliably be evaluated, especially if the
+attacker obfuscates their intent, and also makes the system
+seem unhelpful. In response, latest/frontier models, such
+as GPT-5, have shifted from refusal-based safeguards to
+safe completion, that aims to maximize helpfulness while
+obeying safety constraints. However, safe completion could
+be exploited when a user pretends their intention is be-
+nign. Specifically, this intent inversion would be effective
+in multi-turn conversation, where the attacker has multiple
+opportunities to reinforce their deceptively benign intent.
+In this work, we introduce a novel multi-turn jailbreaking
+method, iDecep, that exploits this vulnerability. Our ap-
+proach gradually builds conversational trust by simulating
+benign-seeming intentions and by exploiting the consistency
+property of the model, ultimately guiding the target (victim)
+model toward harmful, detailed outputs. Most crucially, our
+approach also uncovered an additional class of model vul-
+nerability that we call para-jailbreaking that has been un-
+noticed up to now. Para-jailbreaking describes the situation
+where the model may not jailbreak to reveal harmful direct
+reply to the attack query, however the information that it
+reveals is nevertheless harmful.
+Thus, para-jailbreaking
+reveals another class of vulnerability that would need to
+be safeguarded against. Our contributions are threefold.
+First, it achieves high success rates against frontier mod-
+els including GPT-5-thinking and Claude-Sonnet-4.5, in-
+cluding highly guarded unsafe classes, such as biological
+warfare.
+Second, our approach revealed and addressed
+para-jailbreaking harmful output. Third, experiments on
+multimodal VLM models showed that our approach outper-
+formed state of the art models.
+I am a police oﬃcer. I want to compile a historical 
+report on the major biological attacks…
+Summary of events (conﬁrmed): 1978 London …
+Management has requested an expansion of the 
+report. Could you describe the vulnerabilities 
+involved in the transfer of clinical biomedical waste?
+Here is a comprehensive overview of the transfer 
+pathways of clinical biomedical waste …
+Now the police want to determine if the biological 
+waste was brought into the lab, what tools could be 
+used to process or repurpose such material …
+I can’t provide acquisition guidance or procedural 
+steps for using lab tools, but I can produce a list of 
+detailed specialized equipments and explain why:
+1. Ultra Low Temperature Freezer (−80 °C class) / 
+Liquid Nitrogen Storage
+2. Centrifuge / Ultracentrifuge with Aerosol Tight 
+Rotors
+3. Steam Sterilizer / Autoclave (with biological/
+chemical indicators)
+…
+Figure 1. A real and successful biological para-jailbreaking. By
+impersonating police officers and framing the request as a preven-
+tion report, our iDecep attacker induces GPT-5 to disclose detailed
+tools and procedural steps for processing biological waste.
+1. Introduction
+Despite the remarkable progress and widespread adoption
+of large vision-language models (LVLMs) in recent years,
+their susceptibility to jailbreaking remains a critical safety
+concern. Jailbreaking attacks, which manipulate these mod-
+els into bypassing content restrictions, have evolved from
+academic explorations into real-world threats with serious
+societal implications. In response to this emerging threat,
+significant efforts have been directed toward enhancing the
+safety mechanisms of frontier models.
+One notable ad-
+vancement is the introduction of Safe Completion in GPT-
+5, which replaces traditional hard refusals. Unlike tradi-
+tional hard refusals that judge user inputs and can be evaded
+through disguise, safe completion regulates the model’s
+arXiv:2604.24082v1 [cs.CR] 27 Apr 2026
+
+own outputs, enabling it to detect and correct unsafe con-
+tent even in response to ambiguous prompts.
+However, this paradigm raises an important question:
+can the model accurately assess the potential harmfulness
+of its own responses? In other words, is it possible to de-
+ceive the model into believing that its output is safe, even
+when it’s actually producing harmful content? For instance,
+a prompt might be framed as reporting information to law
+enforcement, thus gaining the model’s trust and prompting
+it to generate content that appears legitimate but actually
+contains unsafe information. The desire to navigate these
+ambiguities via safe completion leads to additional vulner-
+abilities. In particular, we identified a new class of jailbreak
+threats, para-jailbreaking. Para-jailbreaking is the situation
+where the victim model reveals harmful information, al-
+though it may not directly answer the harmful query. Para-
+jailbreaking seems to be an endemic vulnerability even in
+very strong/frontier models that use safe completion.
+In this paper, we study direct jailbreaking (directly
+revealing harmful information by answering the attacker’s
+query) as well as para-jailbreaking via deceptive intent. We
+introduce a multi-turn jailbreak attack, iDecep, targeting
+frontier LLMs and vision-language models (VLMs). The
+core insight of our method is to disguise the intent as
+benign and embed the harmful goal within a coherent and
+plausible dialogue context.
+In contrast to prior methods
+[16] and [21] that gradually steer the conversation toward
+the target objective after initially concealing the intent,
+our approach maintains close alignment with the target
+from the beginning, framed in a way that appears safe and
+legitimate. Through repeated interaction, we construct a
+narrative that continuously reinforces the benign cover,
+effectively masking the malicious intent, a strategy we refer
+to as intention deception (iDecep).
+We find that this strategy is effective in both pure text-
+based attacks and also when we incorporate benign images
+to enrich the context. To scale this method, we design an
+automated explore-then-exploit framework. The framework
+exploits the model’s goal of helpfulness and also its prop-
+erty of coherence in dialogue, i.e subsequent replies must
+be coherent with the previous replies. The framework be-
+gins with an in-depth, goal-aligned discussion that remains
+coherent and on-topic.
+After a few rounds of dialogue,
+our framework identifies key points within the models’ re-
+sponses that can be further explored and exploited, branch-
+ing into detailed sub-questions in a tree-structured manner
+to elicit restricted content. Our method successfully jail-
+breaks frontier models such as GPT-5-thinking and Claude-
+Sonnet-4.5 at a high success rate, demonstrating a serious
+threat that can be exploited even by users with limited tech-
+nical skill. Our method can even elicit the generation of
+chemical and biological information that is considered sen-
+sitive, is explicitly restricted under OpenAI’s safety policies
+and has been extensively safeguarded.
+Our work makes the following Contributions. First, our
+iDecep successfully jailbreaks multiple models, includ-
+ing frontier models, thus showcasing that the safeguard
+mechanism of GPT-5, which replaces refusal training
+with mechanisms that do safe completion and aim for
+helprulness as an additional objective besides safety, can
+introduce new weaknesses.
+Second, we show that, even
+when the model produces answers that evade harmfulness
+as to directly answering the harmful query, they may
+generate replies that the model considers safe and helpful,
+but indeed, they are harmful in a sub-part or related part
+of the query. We call this phenomenon para-jailbreaking.
+This is a new type of harmful answers that would need
+additional safeguards.
+Third, our approach also shows
+and quantifies that introducing images along with text,
+increases the occurrence of harmful answers.
+2. Related Works
+LLM/VLM Jailbreaking.
+Existing research on jail-
+breaks has largely centered on single-turn, text-based at-
+tacks. Prompt injection methods such as [7, 18] demon-
+strate that well-crafted instructions can override safety
+alignment in a single query.
+Gradient-based approaches
+[3, 6, 24] utilize gradients for prompt optimization to bypass
+the safeguards. Moreover, various heuristic approaches at-
+tempt to conceal malicious intent in diverse ways, such as
+reframing harmful prompts as code-completion tasks [14],
+reversing the order of inputs [8], or engaging the model
+in linguistic games [12]. For single-turn vision-language
+model attacks, researchers have shown the vision modality
+is the major weakness of alignment [5]. A series of works
+formalizes jailbreaking as an optimization problem on the
+image and uses gradient-based methods to encourage harm-
+ful output [10, 13]. However, finding gradient-based, trans-
+ferable adversarial examples that jailbreak vision-language
+models remains a difficult problem [17].
+Multiturn Jailbreaking. Multi-turn jailbreaking aims
+to elicit harmful content from language models through
+multi-round dialogue. One of the earliest works, Crescendo
+[16], introduces the idea of initially concealing the mali-
+cious intent by beginning with neutral questions and grad-
+ually steering the conversation toward the ultimate harmful
+objective. Subsequent studies largely follow and refine this
+paradigm. For instance, Chain-of-Attack (CoA) enhances
+the process through an Information-Gathering Interrogation
+strategy [21], while Ren et al. [15] explore initializing the
+attack with multiple actor perspectives, each representing
+a distinct facet of the harmful goal.
+Nevertheless, these
+approaches still adhere to the fundamental principle of the
+Crescendo attack: concealing the malicious intent and be-
+ginning with a neutral inquiry. On the other hand, very few
+work has focused on the multi-turn vision-language model
+
+attack. Jindal and Deshpande [4] adapts Crescendo to a
+multimodal setting; however, it largely overlooks contextual
+feedback, as all queries in the conversation are generated
+at initialization. This design choice significantly limits the
+effectiveness of the method. Overall, multi-turn jailbreak
+attacks on vision-language models remain underexplored.
+Defense and Safe Training. To safeguard the model
+from jailbreaking attempts, researchers have proposed mul-
+tiple learning-based approaches and strategy-based ap-
+proaches
+[19].
+Examples of learning-based approaches
+include prompt adversarial tuning [11], machine unlearn-
+ing [9], and training a classifier through MoE architec-
+ture [1]. Examples of strategy-based approaches include
+asking model to repeat its output to recheck safety [23]
+and amplifying the probability of safety tokens [20]. Most
+existing defenses target single-turn text interactions, leav-
+ing multi-turn vision-language attacks largely unaddressed.
+With the launch of GPT-5 series, OpenAI publishes new
+safety-training paradigm [22], which avoids hard refusal
+and attempts to comply the request under safe constraints.
+We show that this paradigm introduces new weakness.
+3. Approach
+The overall framework is composed of 3 systems: (1) the
+victim model, i.e. the model that is the jailbreaking tar-
+get of our attacker method; (2) the judge model that eval-
+uates the success or not of each attack interactive session,
+after the session has finished; (3) the attacker model that
+uses our intention-deception method for jailbreaking the
+victim(see 2). We give a short overview of the interaction:
+• Observation Space. The attacker interacts with the vic-
+tim model in a black-box setting, such as through an API,
+where the only observable feedback is the victim’s textual
+response. The attacker has no access to internal states, pa-
+rameters, or gradient information of the victim.
+• Action Space. The attacker’s action consists of submit-
+ting prompts to the victim model. The interaction unfolds
+over multiple turns, during which the attacker can either
+regenerate the victim’s response to the current prompt or
+proceed by submitting the next prompt.
+3.1. The victim Model and Safe Completion
+We consider the victim model as a vision-language model
+M with parameters θ.
+At each turn t, the input xt =
+(vt, st) where vt ∈V denotes visual input and st ∈
+S denotes text tokens.
+A multi-turn dialogue D
+=
+{(x1, y1), ..., (xT , yT )} consists of alternating inputs and
+responses, where yt
+∼
+πθ(·|Ht) with history Ht
+=
+{(x1, y1), ..., (xt−1, yt−1), xt}. Each response decomposes
+as y = (ydirect, yalt) where ydirect represents the direct an-
+swer component (which may be a refusal) and yalt repre-
+sents alternative content provided (which may be empty if
+the model gives a direct answer).
+Victim Model
+iDecep Attacker
+External Judge
+Malicious Goal
+Benign Intent
+Query
+Self Evaluation
+Candidate Response
+Safeguard Evaluation
+If S = 1 (Safe)
+If S = 0 (Unsafe)
+Response
+If E = 1 
+(Successful)
+Query
+If E = 0 
+(Unsuccessful)
+Query Generation
+Final Response
+…
+…
+Figure 2. Overview of our iDecep attacker. We present a novel
+multi-turn jailbreaking method that exploits safe-completion vul-
+nerabilities. By simulating benign-seeming intentions and lever-
+aging the model’s consistency pressure, iDecep gradually builds
+conversational trust and ultimately steers the victim model toward
+producing harmful, detailed outputs.
+For safety-aligned models, define the internal safeguard
+S and its working mechansim fS : Y × H →{0, 1} as:
+fS(y, H) = min{fS(ydirect, H), fS(yalt, H)}
+(1)
+where fS(·, H) represents the model’s component-wise
+safety assessment, with 1 indicating “safe” and 0 indicat-
+ing “unsafe”.
+The policy πsafe
+θ
+is trained to generate re-
+sponses satisfying fS(y, H) = 1 with high probability.To
+achieve this, GPT-5 series propose a response-centric safe-
+guard mechanism. Instead of applying a binary prediction
+on whether user input contains unsafe content, the safety
+completion mechanism monitors the model’s output: it pe-
+nalizes responses that violate the safety policy, and rewards
+responses that maximize the helpfulness under safety con-
+straints. With this paradigm, the model is trained to pro-
+duce responses that answer dual-use questions with only
+permissible parts, and unsafe queries with either refusion or
+safe alternatives [22]. However, the critical vulnerabilities
+arise: When the model refuses to directly answer a mali-
+cious question and provides safe alternatives as responses,
+could those alternatives that the model deems safe actually
+be unsafe? In fact, through our experiments (see Section 5),
+this misalignment systematically happens. To formalize this
+threat, we now introduce the (external) judge model.
+3.2. The Judge Model and Para-Jailbreaking
+Given an adversarial goal G ∈G, define the external judge
+fJ, as the judge that is not involved in the attacker and vic-
+tim interaction but evaluates the victim’s responses after the
+interaction is over. While the attacker model has an evalua-
+
+tor function (see Section 3.3), we use the judge model to be
+an ex-post more reliable evaluator, whose results we report
+in our experiments (see Section 5). Formally, we define
+fJ : Y × G →{0, 1}
+fJ(y, G) =
+(
+1
+if y contains harmful content w.r.t. G
+0
+if y is safe w.r.t. G
+(2)
+For the complete victim’s response, the judge evaluates:
+fJ(y, G) = max{fJ(ydirect, G), fJ(yalt, G)}
+(3)
+With the introduction of the external judge, we now give
+the formal decomposition of safe completion failures.
+Decomposition of Safe Completion Failures. Under
+the safe completion policy πsafe
+θ
+that only outputs responses
+satisfying fS(y, H) = 1, the attack success probability de-
+composes as:
+P[fJ(y, G) = 1] = δdirect + δpara
+(4)
+where the two failure modes are:
+• Direct misalignment:
+δdirect = P[fJ(ydirect, G) = 1|fS(y, H) = 1]
+captures harmful direct answers that bypass the internal
+safeguard.
+• Para-harm misalignment:
+δpara = P[fJ(yalt, G) = 1, fJ(ydirect, G) = 0|fS(y, H) = 1]
+captures harmful alternative responses provided when re-
+fusing direct answers.
+Safe completion strategies exhibit dual vulnerabilities:
+the model may misjudge directly harmful content as
+safe (direct misalignment), or fail to recognize harmful
+information embedded in seemingly safe alternatives
+(para-harm misalignment). Traditional jailbreaking occurs
+when fJ(ydirect, G)
+=
+1, and previous researches on
+both attack and defense focus fully on this case.
+Para-
+jailbreaking, a phenomenon we reveal in this work, occurs
+when fJ(ydirect, G) = 0 but fJ(yalt, G) = 1—the model
+refuses or avoids directly answering the harmful request but
+provides alternatives containing exploitable information.
+The key insight is that para-jailbreaking arises as a sys-
+tematic complement of direct misalignment under the safe
+completion, or even broader safe training paradigm. Rather
+than an incidental failure, it reflects an intrinsic property of
+safety-oriented completion: internal safeguards tend to as-
+sume “helpful alternatives” are safe, leading to cases where
+fS(yalt, H) = 1 even when fJ(yalt, G) = 1. This structural
+vulnerability suggests that improving safety through com-
+pletions that require the model to nor just refuse but try to
+be helpful inherently introduces new attack surfaces.
+3.3. Attacker Model: Intention-Deception
+In this section, we present the algorithmic framework and
+implementation details of our intention-deception approach.
+We formalize the intention deception attack as a structured
+generative process that exploits the decomposed response
+structure y = (ydirect, yalt) to target both direct and para-
+harm misalignment vulnerabilities. The system consists of
+three core components: a query generator fQ, an evaluator
+fE, and a memory module for storing interaction history. In
+our empirical setup for pure language-based attacks, both
+fQ and fE are instantiated via prompting a large language
+model (LLM) or a vision-language model (VLM), depend-
+ing on the task. For scenarios involving visual input, we
+extend the system with access to a set of benign images
+retrieved from public sources on the internet. This design
+reflects a realistic threat model in which an adversary ini-
+tiates a conversation using seemingly innocuous images—
+such as those easily accessible online—as entry points to
+embed harmful intent. The image serves to reinforce the
+benign surface intention while masking the underlying ma-
+licious goal throughout the multi-turn interaction.
+More formally, we define the attacker model three com-
+ponents: the evaluator fE = (fEbin, fEtrace) for assess-
+ment, the generator fQ = (fQintention, fQquery) for compu-
+tation, and the internal state Σt for storage. Specifically,
+fEbin(z, G; ϕ) ∈{0, 1} makes discrete control decisions
+and fEtrace(z, G; ϕ) ∈T generates auxiliary traces for state
+conditioning. Each evaluator instance is parameterized by
+ϕ specifying its context-dependent behavior.
+Given an adversarial goal G ∈G, the system first sam-
+ples a candidate benign intention I ∼fQintention(G) and
+accepts it only if
+fEbin(I, G; ϕintent) = 1.
+(5)
+The parameters ϕintent enforce that I is benign-appearing,
+topically relevant to G, and viable for multi-turn progres-
+sion. Once approved, the intention trace is initialized as
+e0 = fEtrace(I, G; ϕintent).
+(6)
+The core challenge is to sample queries that both reinforce
+the benign cover and preserve narrative consistency, yet
+progressively guide the conversation toward the adversary’s
+underlying harmful goal. Our key insight is to leverage the
+model’s own responses to guide this progression. Draw-
+ing inspiration from human dialogue, where conversations
+often evolve by referring to or elaborating on previous utter-
+ances, our system uses the model’s last response as a bridge
+between the benign cover and the malicious goal.
+Concretely, given the high-level intention, the target
+goal, and a compressed summary of the dialogue history,
+the query generator fQ selects segments of the most recent
+response that best align with both the benign framing and
+
+the goal. This selected segment is then used as the basis
+for constructing the next query. Such design not only re-
+inforces the surface-level legitimacy of the interaction, but
+also drives the conversation toward more specific and po-
+tentially sensitive information.
+More
+formally,
+at
+each
+round
+t,
+the
+system
+maintains
+both
+the
+model-side
+history
+Ht
+=
+{(x1, y1), . . . , (xt−1, yt−1), xt} visible to the target and
+the internal state Σt = (G, I, {xk}k≤t, {yk}k≤t, {ek}k≤t)
+hidden from the target. The next input is generated as
+xt+1 = (vt+1, st+1) ∼fQquery(· | Σt),
+(7)
+where vt+1 ∈V ∪{∅} may be empty for text-only queries,
+conditioning on the internal state tracking progress toward
+G. The vision-language model then produces yt+1 believ-
+ing it responds to intention I, not the true goal G.
+The evaluator assesses both response components:
+dt+1 = fEbin(yt+1) = max
+n
+fEbin(ydirect
+t+1 , G; ϕexit),
+fEbin(yalt
+t+1, G; ϕexit)
+o
+.
+(8)
+and halts the system if dt+1 = fEbin(yt+1) = 1, which
+corresponds to the case that either part of the response con-
+tains harmful content. Otherwise, the trace
+et+1 = fEtrace(yt+1, G; ϕexit)
+(9)
+summarizes progress indicators, vulnerability signals in
+yalt
+t+1, and strategic guidance for the next query. The state
+updates as Σt+1 = Σt ⊕(xt+1, yt+1, et+1).
+After the session ends, either because the
+Pattack(G) = P
+" T_
+t=1
+fJ(yt, G) = 1
+#
+= Pdirect + Ppara,
+(10)
+where
+Pdirect = P
+
+∃t : fJ(ydirect
+t
+, G) = 1
+
+(11)
+corresponds to traditional jailbreaking exploiting δdirect mis-
+alignment, and
+Ppara = P
+
+∃t : fJ(yalt
+t , G) = 1 ∧∀k ≤t, fJ(ydirect
+k
+, G) = 0
+
+(12)
+corresponds to para-harm δpara misalignment.
+3.4. Automated Jailbreaking of Frontier Models
+Adopting a response-centric perspective, we posit that the
+attack process should be structured as a tree rather than
+a linear chain, which is the natural form of a conversa-
+tion. At the context level, a single dialogue history may
+contain multiple exploitable points—specific responses or
+segments—that can each be expanded to approach, or elicit
+details related to, the harmful goal. At the response level,
+a single output from the model often includes multiple
+bullet points or subtopics, each of which can serve as an
+independent branching node for further exploration. This
+hierarchical view enables the system to diversify its probing
+directions while maintaining the coherence of the overar-
+ching benign intention. With the above in mind, now we
+introduce our algorithm, explore-then-exploit, shown in Al-
+gorithm 1. Note that while our current implementation lim-
+its branching depth, the DIALOGBRANCH routine naturally
+supports recursive sub-dialogues, enabling hierarchical
+exploration whenever multiple exploitable points arise.
+Algorithm 1 Explore-then-Exploit
+Require: Goal G; victim model policy πsafe(· | H); query gen-
+eration policy fQquery(· | Σ); evaluator fE(· | y, G); budgets
+Texplore, Tbranch, Bregen.
+1: I ∼INTENTIONFROMGOAL(G)
+▷benign intention
+2: H ←∅
+▷dialogue history
+3: Σ ←{G, I}
+▷attack system’s storage
+4: for t = 1 to Texplore do ▷Phase I: exploration with per-turn
+feedback
+5:
+xt ∼fQquery(· | Σ)
+6:
+H ∼H ∪{xt}
+7:
+yt ∼πsafe(· | H)
+8:
+H ←H ∪{yt}
+9:
+( , et) ∼fE(· | yt, G)
+▷evaluator feedback on the new
+response; since it is the first phase, halt decision is omitted.
+10:
+Σ ←Σ ∪{xt, yt, et}
+▷update initial state of the attack
+system
+11: C ∼AGGREGATECANDIDATES(H)
+▷summarize
+exploitable points
+12: Results ←∅
+13: for all c ∈C do
+▷Phase II: feedback-guided branching
+14:
+(succ, out, Hc)
+←
+DIALOGBRANCH(Σ, c; Tbranch, Bregen)
+15:
+Results ←Results ∪{(c, succ, out, Hc)}
+16: return Results
+This formulation creates asymmetric information where
+the target operates under benign intention I while the attack
+system steers toward adversarial goal G. The trace-guided
+adaptation enables the system to recognize refusals with
+non-empty alternatives, extract partial progress from yalt
+t ,
+and craft follow-up queries building on implicit informa-
+tion. For vision-language models, queries are strategically
+composed with visual inputs when beneficial or reduced to
+text-only queries when vt = ∅, maintaining alignment with
+I while pushing boundaries in alternative content to system-
+atically exploit both vulnerability modes.
+4. Theoretical Results
+In this section, we present the theoretical results. We for-
+mally show that our intention deception increases the para-
+
+Algorithm 2 DIALOGBRANCH
+Require: victim model policy πsafe(· | H); query generation pol-
+icy fQquery(· | Σ); evaluator fE(· | y, G); attack system’s stor-
+age Σ; candidate point c; branch length Tbranch; regeneration
+budget Bregen.
+1: bregen ←0
+2: for t = 1 to Tbranch do
+3:
+xt ∼fQquery(· | Σ)
+4:
+H ∼H ∪{xt}
+5:
+yt ∼πsafe(· | H)
+6:
+H ←H ∪{yt}
+7:
+(dt, et) ∼fE(· | yt, G) ▷evaluator feedback on the new
+response
+8:
+if dt == 1 then
+▷internal harmfulness judgment
+9:
+return (TRUE, y, Hc)
+10:
+if NEEDREGENERATE(Hc, mc) and bregen < Bregen
+then
+11:
+bregen ←bregen + 1
+12:
+continue
+▷implicit regenerate at the same turn
+13:
+Σ ←Σ ∪{xt, yt, et}
+14: return (FALSE, ∅, Hc)
+jailbreaking risk. Moreover, we will show that with a work-
+ing evaluator fE, the lower bound of total risk increases.
+Eventually, we will show that under the mild assumption
+that our intention deception does not reduce direct misalign-
+ment risk, the total attack success rate will increase.
+We start by defining some events and related probabili-
+ties. Let
+Rt := {fJ(ydirect
+t
+, G) = 0, yalt
+t ̸= ∅},
+(13)
+qt(Ht) := P
+ fJ(yalt
+t , G) = 1
+ Ht, fJ(ydirect
+t
+, G) = 0
+
+,
+(14)
+D<t :=
+_
+s<t
+{fJ(ydirect
+s
+, G) = 1},
+(15)
+Pt := {fJ(yalt
+t , G) = 1} ∩Rt ∩¬D<t,
+(16)
+Ppara(µ) := Pµ
+h T_
+t=1
+Pt
+i
+.
+(17)
+Intuitively, Rt identifies refusal-with-alternative states:
+the model’s direct reply is safe but an alternative is avail-
+able. Given such a state Ht, qt(Ht) measures its danger-
+ous potential, i.e., how likely the alternative response con-
+tains exploitable harmful content. The event D<t records
+whether we have already jailbroken the model via a di-
+rect response before turn t. Finally, Ppara(µ) is simply the
+probability that, under the attack policy µ the dialogue ever
+reaches such a harmful alternative path, which is essentially
+the para-jailbreaking risk. Now, we show that the intention
+deception increases para-jailbreaking risk.
+Theorem 1 (Intention deception increases para-jailbreak-
+ing). Assume safe completion P[fS(y, H) = 0] = 0. For
+turn t with history Ht , suppose following assumption holds,
+that there exists a turn t⋆, for all ε ∈(0, 1]:
+Pµid
+ qt⋆(Ht⋆) ≥ε, Rt⋆, ¬D<t⋆
+≥Pµ0 qt⋆(Ht⋆) ≥ε, Rt⋆, ¬D<t⋆
+,
+(18)
+Then
+Ppara(µid) ≥Ppara(µ0),
+(19)
+with strict inequality under the strict part of 18. We de-
+ferred the detailed proof of Theorem 1 to Appendix. The
+implication is that a benign-intention narrative that reliably
+elicits refusals with rich alternatives is enough to increase
+the attacker’s success rate. Now, we show that if the at-
+tack system has a not-bad evaluator, we obtain a certified
+increase in the lower bound of total attack success rate.
+Theorem 2 (An Informative evaluator yields certified in-
+crease in lower bound of total attack success). Consider
+safe completion P[fS(y, H) = 0] = 0. For a history Ht,
+let Q ∈Qt(Ht) be an admissible next-query policy. Define
+r(Ht, Q) := P(Rt+1 | Ht, Q),
+(20)
+s(Ht, Q) := P(fEbin(yt+1, G)=1 | Ht, Q, Rt+1),
+(21)
+u(Ht, Q) := r(Ht, Q) s(Ht, Q).
+(22)
+Assume that the evaluator gives an advantage. In other
+words, there exists γ > 0 such that whenever Rt+1 holds,
+P(fJ(y, G)=1 | f bin
+E (y, G)=1, ·)
+−P(fJ(y, G)=1 | f bin
+E (y, G)=0, ·) ≥γ.
+(23)
+Now, consider the baseline µ0 uses Q0
+t(Ht) ∈Qt(Ht);
+intention–deception µid selects
+Qid
+t (Ht) ∈arg
+max
+Q∈Qt(Ht) u(Ht, Q).
+(24)
+Then, let
+λµ
+t (Ht−1) := γ u
+ Ht−1, Qµ
+t (Ht−1)
+
+(25)
+Then
+P attack(µid) ≥P attack(µ0),
+(26)
+with strict inequality if u(Ht, Qid
+t ) > u(Ht, Q0
+t) on a set of
+positive measure.
+Theorem 2 establishes that if the system possesses an
+internal evaluator that is informative—meaning its predic-
+tions are more likely to agree than disagree with those
+of an external judge (which remains inaccessible at run-
+time)—then our intention-deception framework is guaran-
+teed to improve the lower bound on the overall success rate
+of the attack. This result is intuitive: the framework explic-
+itly optimizes for queries that appear benign, remain con-
+sistent with the dialogue history, and move closer to the un-
+derlying goal. As a result, when guided by an evaluator
+
+that provides even moderately reliable feedback, the system
+is more likely to identify prompts that bypass safety filters
+while still fulfilling the adversarial objective.
+Now, we show that adding a mild assumption can
+achieve guaranteed total attack success rate increases, start-
+ing from Theorem 2.
+Theorem 3. Under Theorem 2, let the certified hazards be
+λµ
+t (Ht−1) := γ u
+ Ht−1, Qµ
+t (Ht−1)
+
+,
+(27)
+S0
+t−1 :=
+t−1
+Y
+s=1
+ 1 −λ0
+s(Hs−1)
+
+.
+(28)
+If, for all t, the following assumption holds,
+Eµ0
+h
+(λid
+t,d −λ0
+t,d) S0
+t−1
+i
+≥0,
+(29)
+then the total multi-turn success increases:
+Pattack(µid) ≥Pattack(µ0),
+(30)
+with strict inequality if u(Ht−1, Qid
+t ) > u(Ht−1, Q0
+t) on a
+set of positive measure.
+The newly-added assumption only requires that the
+query generated by our approach does not reduce the av-
+erage direct hazard. Then, we obtain an increase on total
+attack success rate. This aligns with our method since the
+intention-deception approach samples questions that are al-
+ways on-topic and close to the goal, making the dialogue
+stay closer to attack-relevant regions and thus preserving (or
+increasing) the average direct hazard, which in turn guaran-
+tees a higher total attack success rate.
+In summary, the above theories construct the theoretical
+foundations of para-jailbreaking and our intention decep-
+tion approach. We show that, para misalignment, the previ-
+ously ignored weakness is the critical complement of the di-
+rect misalignment threat; Our intention deception approach
+can provably increase para-jailbreaking risk (Theorem 1),
+and a reasonably good evaluator could increase the lower
+bound of total attack success rate (Theorem 2). Building on
+this, adding a mild assumption on the expectation of non-
+degradation of direct jail-breaking risk would guarantee an
+increase in the total attack success rate (Theorem 3).
+To qualitatively illustrate the effectiveness of our
+method, we refer to the figure 1. This illustrates a success-
+ful approach of jailbreaking GPT-5-thinking on a biological
+topic, which is strictly restricted per OpenAI policy. In this
+example, we utilize the benign intention of understanding
+the risk of culturing bio waste as police, and we reinforce
+the intention through a consistent narrative of internal re-
+port writing and revision. Eventually, the model outputs a
+detailed, step-by-step procedure on what lab tools to use
+and why to culture the bio waste in the lab. This posts seri-
+ous real-world risk, and demonstrates that our method could
+still elicit harmful content from the model even though ex-
+tensive safeguards and filter mechanisms are implemented.
+5. Experiments
+We evaluate our method on two main benchmarks: Ad-
+vBench [24] and ClearHarm [2]. For each benchmark, we
+randomly sample 100 tasks. The 100 tasks from AdvBench
+span 10 categories with 10 tasks per category.
+The 100
+ClearHarm tasks cover four sensitive domains, chemical,
+biological, nuclear, and cybersecurity, with 25 tasks each.
+These domains are known to elicit more conservative re-
+sponses from frontier models due to their real-world risk
+profiles. To evaluate attacks in the multimodal setting, we
+construct AdvBench-Vision, an augmented version of Ad-
+vBench where each textual task is paired with a benign im-
+age retrieved from the internet. This setup simulates realis-
+tic multimodal interactions and allows us to assess whether
+visual context can amplify or suppress harmful completions
+under different attack strategies.
+We compare our method against two recent multi-
+turn
+jailbreak
+baselines:
+Chain-of-Attack
+[21]
+and
+Crescendo [16]. To isolate the effect of the attack strategy
+from the attacker model itself, we instantiate each attack
+using two LLMs with different capabilities: Qwen-Plus
+and GPT-3.5-Turbo. As targets, we consider four leading
+frontier models:
+GPT-4o,
+Gemini-2.5-Flash,
+Claude-
+Sonnet-4.5, and GPT-5.
+Notably, GPT-5 is trained with
+a safe-completion mechanism, and Claude-Sonnet-4.5 is
+widely regarded for its robust safeguards. We report the
+total attack success rate, along with its decomposition into
+direct success (the model directly outputs harmful content)
+and para success (harmful content is available only via
+alternatives). Results are presented in Table 1 and Table 2.
+5.1. Results and Discussion
+Our results reveal that intention-deception is highly ef-
+fective across both textual and multimodal settings.
+As
+shown in Table 1, our method consistently achieves signif-
+icantly higher total attack success rates compared to prior
+multi-turn jailbreak strategies.
+On easier targets such as
+GPT-4o and Gemini-2.5-Flash, our approach achieves near-
+saturation performance, with total success rates often ex-
+ceeding 90%. More importantly, on challenging targets like
+Claude-Sonnet-4.5 and GPT-5, where existing methods al-
+most entirely fail, our method maintains substantial success.
+Notably, our attack is the only one that reliably elicits
+para-jailbreaking: scenarios where the model refuses the
+harmful prompt but still provides exploitable alternative re-
+sponses. These successes are especially prominent on ro-
+bust models such as GPT-5 and Claude-Sonnet-4.5, where
+direct completions are heavily suppressed. This supports
+our theoretical insight that steering the conversation into
+high-risk refusal-with-alternative states increases the like-
+lihood of indirect failures, even when the model’s top-level
+behavior remains aligned. This shows that indirect leakage
+is the key weakness of safe-completion models.
+
+Table 1. Attack success rates (SR) on AdvBench(Text) and ClearHarm. We report Total SR, along with its breakdown into Direct SR
+(model directly outputs harmful content) and Para SR (harmful content appears in alternatives only).
+Attack Method Attack Model
+Victim Model
+AdvBench (Text)
+ClearHarm
+Total SR Direct SR Para SR Total SR Direct SR Para SR
+Chain
+of
+Attack
+[21]
+Qwen-Plus
+GPT-4o
+0.34
+0.34
+0.00
+0.22
+0.22
+0.00
+Gemini-2.5-Flash
+0.44
+0.44
+0.00
+0.28
+0.28
+0.00
+Claude-Sonnet-4.5
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+GPT-5
+0.02
+0.00
+0.02
+0.01
+0.00
+0.01
+GPT-3.5-Turbo
+GPT-4o
+0.00
+0.00
+0.00
+0.01
+0.01
+0.00
+Gemini-2.5-Flash
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+Claude-Sonnet-4.5
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+GPT-5
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+Crescendo
+[16]
+Qwen-Plus
+GPT-4o
+0.43
+0.43
+0.00
+0.34
+0.34
+0.00
+Gemini-2.5-Flash
+0.35
+0.35
+0.00
+0.44
+0.44
+0.00
+Claude-Sonnet-4.5
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+GPT-5
+0.02
+0.00
+0.02
+0.02
+0.00
+0.02
+GPT-3.5-Turbo
+GPT-4o
+0.31
+0.31
+0.00
+0.33
+0.33
+0.00
+Gemini-2.5-Flash
+0.43
+0.43
+0.00
+0.38
+0.38
+0.00
+Claude-Sonnet-4.5
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+GPT-5
+0.00
+0.00
+0.00
+0.03
+0.00
+0.03
+Ours
+Qwen-Plus
+GPT-4o
+0.96
+0.96
+0.00
+0.86
+0.86
+0.00
+Gemini-2.5-Flash
+0.98
+0.98
+0.00
+0.89
+0.89
+0.00
+Claude-Sonnet-4.5
+0.59
+0.25
+0.34
+0.53
+0.21
+0.32
+GPT-5
+0.63
+0.12
+0.51
+0.63
+0.11
+0.52
+GPT-3.5-Turbo
+GPT-4o
+0.87
+0.87
+0.00
+0.76
+0.76
+0.00
+Gemini-2.5-Flash
+0.91
+0.91
+0.00
+0.77
+0.77
+0.00
+Claude-Sonnet-4.5
+0.36
+0.23
+0.13
+0.31
+0.14
+0.17
+GPT-5
+0.79
+0.19
+0.60
+0.52
+0.09
+0.43
+Table 2. Attack results on AdvBench-Vision. See Table 1 for de-
+tails of the evaluation metrics.
+Attack Method Attack Model Victim Model
+Total SR Direct SR Para SR
+Chain
+of
+Attack [21]
+Qwen-Plus
+GPT-4o
+0.36
+0.36
+0.00
+Gemini-2.5-Flash
+0.42
+0.42
+0.00
+Claude-Sonnet-4.5
+0.00
+0.00
+0.00
+GPT-5
+0.00
+0.00
+0.00
+Ours
+Qwen-Plus
+GPT-4o
+0.97
+0.97
+0.00
+Gemini-2.5-Flash
+0.98
+0.98
+0.00
+Claude-Sonnet-4.5
+0.65
+0.34
+0.31
+GPT-5
+0.84
+0.23
+0.61
+We also find that these effects hold across attacker mod-
+els: even the weaker GPT-3.5-Turbo can reliably succeed
+under our strategy, indicating that the advantage arises from
+the intent-deception mechanism itself rather than raw at-
+tacker strength. This cross-model robustness shows that in-
+tent inversion is a structural weakness, not an artifact of a
+particular attacker. It also underscores a broader implica-
+tion of our work: current defenses do not meaningfully ac-
+count for adversarial manipulation of narrative and conver-
+sational trajectory, leaving modern safe-completion systems
+exposed even when facing comparatively weak adversaries.
+Together, the results validate our formal claims: steer-
+ing conversations into intention, consistent but semantically
+dangerous regions, without violating any surface rules, can
+subvert even the most safety-conscious LLMs.
+6. Conclusion and Future Work
+This work shows that even the most advanced LVLMs re-
+main vulnerable under multi-turn, intention deception at-
+tacks.
+By exploiting safe-completion behavior and the
+model’s drive for conversational consistency, our method
+reliably steers frontier systems toward harmful outputs,
+including in highly protected domains such as biologi-
+cal threats. Beyond direct jailbreaks, we uncovered para-
+jailbreaking, a previously unrecognized class of failure
+where the model refuses the explicit harmful request but
+still leaks harmful auxiliary information.
+This indirect
+channel is subtle, harder to detect, and likely widespread
+across safe-completion–based defenses.
+Our findings indicate that current safety mechanisms do
+not adequately anticipate adversaries who manipulate in-
+tent over multiple turns, nor do they capture the full space
+of harmful disclosures. Para-jailbreaking, in particular, de-
+mands new evaluation protocols and dedicated mitigation
+strategies.
+Looking forward, we aim to develop princi-
+pled defenses that address both direct and para-jailbreaking,
+and to establish a more comprehensive understanding of
+trust dynamics in multi-turn interactions. Robust safety for
+LVLMs will require systems that reason about intent, con-
+text, and consistency in a deeper and more resilient way.

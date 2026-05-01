@@ -1,0 +1,823 @@
+Hidden Secrets in the arXiv: Discovering, Analyzing, and Preventing
+Unintentional Information Disclosure in Source Files of Scientific Preprints
+Jan Pennekamp∗,§, Johannes Lohmöller∗,§, David Schütte∗, Joscha Loos∗, Martin Henze‡,¶
+∗Communication and Distributed Systems, RWTH Aachen University, Germany · {lastname}@comsys.rwth-aachen.de
+‡Security and Privacy in Industrial Cooperation, RWTH Aachen University, Germany · {lastname}@spice.rwth-aachen.de
+Abstract—Preprints are essential for the timely and open
+dissemination of research. arXiv, the most widely used preprint
+service, takes the idea of open science one step further by not
+only publishing the actual preprints but also LATEX sources and
+other files used to create them. As known from other contexts,
+such as GitHub repositories, and anecdotally exemplified for
+arXiv, making source code publicly available risks disclosing
+otherwise “hidden” information. Consequently, the public
+availability of paper sources raises the question of how much
+sensitive content is (unintentionally) disclosed through them.
+In this paper, we systematically answer this question for
+all 2.7 M arXiv submissions with available source files across
+three dimensions of source file-induced information disclosure:
+1 inclusion of unnecessary files, 2 metadata embedded in files,
+and 3 irrelevant content in files such as source code comments.
+Our analysis reveals that nearly every arXiv submission contains
+some form of “hidden” information. Notable findings range
+from links to editable web documents for internal coordination
+over API and private keys to complete Git histories.
+While different tools promise to remove such information
+from source files, we show that they fail to reliably achieve the
+intended cleaning functionality. To mitigate this situation, we
+provide ALC-NG to comprehensively remove files, metadata,
+and comments that are not needed to compile a LATEX paper.
+Index Terms—information disclosure; source code; LATEX; arXiv
+1. Introduction
+Preprints, i.e., early versions of academic papers al-
+ready made available before formal peer review [1], are an
+indispensable tool for the timely and open dissemination
+of academic research, with first research fields such as
+machine learning even shifting to a preprint-first “publication”
+model [2]. Since its inception in 1991 [1], arXiv [3] has
+established itself as the largest and most frequently used
+preprint service [4] and is widely accepted in disciplines
+such as computer science, physics, and mathematics, with
+>20 000 preprints published every month [5]. In addition to
+the PDF of the preprint, arXiv also publishes the source code
+of all papers written using LATEX (≈93 % of submissions).
+While initially intended to enable the reuse of notations and
+provide learning opportunities [6], publishing preprint source
+§. Equal contribution.
+¶. Also with Fraunhofer FKIE.
+main.tex
+reviews.pdf
+whiteboard-notes.jpg
+article.cls
+An Example Academic Paper in LATEX
+Alice Smith1
+Bob Johnson2
+1Department of Computer Science, Example University, Country
+2Institute of Data Science, Example Institute, Country
+Abstract
+This document serves as a boilerplate example of how an academic article might look when
+written in LATEX. It contains sections commonly found in journal papers, including an introduc-
+tion, related work, methodology, results, discussion, and conclusion. All information is presented
+in narrative paragraphs, without the use of equations, tables, or ﬁgures.
+1
+Introduction
+In addition to providing context, the introduction sets expectations for the reader. It emphasizes
+why the research is relevant at this particular time and how it contributes to the broader academic
+conversation. By situating the work within a larger discourse, the introduction ensures that the
+study is understood as part of an ongoing dialogue rather than an isolated e!ort.
+2
+Related Work
+The related work section situates the paper within the existing literature. Authors summarize
+previous studies, compare approaches, and discuss how earlier research has shaped current under-
+standing. In some cases, the emphasis is placed on identifying shortcomings or unresolved issues
+in prior work [2]. This sets the stage for the methodology that follows.
+Often, related work is organized thematically or chronologically, helping readers trace the devel-
+opment of ideas over time. Highlighting both consensus and disagreement in the literature provides
+a nuanced view of the ﬁeld and clariﬁes how the present work either builds on or challenges estab-
+lished perspectives.
+3
+Methodology
+This section describes the approach taken to address the research problem. It may involve outlining
+theoretical frameworks, explaining experimental design, or detailing procedures for data collection
+and analysis.
+Rather than presenting technical formulas or diagrams, the explanation remains
+descriptive and focuses on the reasoning behind each step.
+A strong methodology section also justiﬁes the choices made by the researchers. It explains
+why a particular method was selected, how it aligns with the research objectives, and what alter-
+natives were considered. Transparency in methodological decisions enhances the credibility and
+reproducibility of the work.
+1
+[..] By situating the work within a larger 
+discourse, the introduction ensures that the 
+study is understood as part of an ongoing 
+dialogue rather than an isolated effort.
+\section{Related Work}
+% IF WE DON'T MENTION ANY 
+APPLICATIONS, IS IT REALLY 
+APPROPRIATE TO SAY THIS?
+The related work section situates the paper 
+within the existing literature. Authors 
+summarize previous studies, compare approaches, 
+and discuss how earlier research has shaped 
+current understanding. [..]
+LaTeX Sources
+PDF File
+Build
+Figure 1. LATEX sources might contain comments or dangling files that are
+irrelevant to or unused in the compiled PDF, respectively. When being
+distributed regardless, e.g., via arXiv, they disclose (sensitive) information.
+code enables research such as citation prediction [7], studying
+inconsistencies in documents produced using LATEX [8], or
+reconstructing LATEX sources from PDFs [9], [10].
+However, besides providing many benefits [11], making
+the source code of academic papers publicly available also
+introduces substantial information disclosure risks [6]. As
+exemplarily highlighted in Fig. 1, the two main risks stem
+from (i) irrelevant content, e.g., in the comment sections
+of LATEX files, and (ii) unused files within the uploaded
+archive that are not needed to build the paper. Notably, these
+risks come on top of information disclosure through metadata
+embedded in the papers themselves, which is well known and
+researched [12]–[18]. To the larger public, the risks specific
+to publishing sources of preprints were first anecdotally
+mentioned on Twitter/X [19]. However, the underlying issue
+gained wider attention when a paper on GPT-4 purposefully
+omitted details concerning its toxicity probability and how
+it complies with intellectual property laws [20].
+Still, despite arXiv maintaining its own build pipeline and
+warning about corresponding issues [6], proactive mitigation
+of those issues at scale seems to be lacking. While arXiv
+endorses [6] Google’s arxiv_latex_cleaner (ALC) [21], [22]—
+a tool claiming to “easily clean the LATEX code of [..]
+paper[s]”—it does not enforce any actions on the submitting
+authors. Similarly, while anecdotal evidence and a few
+academic works [23], [24] hint at the issue of unintentionally
+distributing comments and other data through LATEX source
+files, a detailed analysis of the prevalence and scale of
+security problems associated with the distribution of papers’
+sources is lacking. However, the lack of understanding these
+arXiv:2604.20927v1 [cs.CR] 22 Apr 2026
+
+problems challenges us in assessing respective risks, notifying
+affected users, and taking informed countermeasures.
+Tackling this research gap, we set out to quantify the
+prevalence of “hidden” information, including sensitive data,
+within all LATEX sources published by arXiv. In particular, we
+consider the availability of unused (dangling) files, embedded
+metadata, and compilation-irrelevant content (e.g., comments
+in LATEX files) to get a holistic picture. Indeed, our findings
+show that “hidden” information within arXiv is a widespread
+issue: 88 % of papers with LATEX sources are affected by at
+least one type of “hidden” information, making information
+available for everyone to “discover” and potentially exploit.
+Our analysis reveals substantial amounts of content that were
+either not meant for distribution or should not be publicly
+distributed, including reviewer comments, author discussions,
+survey data with personally identifiable information (PII), as
+well as links to internal documents and reports without any
+restrictive access control. Perhaps surprisingly, papers related
+to top-tier security conferences contain significantly more
+“hidden” information, despite this community’s expectable
+awareness of such issues. Overall, the prevalence of issues
+concerning sensitive information prompted us to initiate two
+responsible disclosure campaigns (cf. Appendix A).
+Contributions. To provide a profound understanding of
+the prevalence and severity of “hidden” information within
+arXiv submissions, better assess corresponding risks, and lay
+the foundation for mitigations, our main contributions are:
+• We present a methodology to reliably detect irrelevant
+content in LATEX sources and identify unused files. Unlike
+current mitigation approaches that solely rely on heuris-
+tics, our approach utilizes an abstract syntax tree and
+pdflatex’s recorder option for precise identification of
+potentially critical “hidden” information (Section 4).
+• We conduct the first large-scale analysis of “hidden” infor-
+mation within preprint sources based on a comprehensive
+dataset of LATEX sources at arXiv (Section 5), covering all
+2.7 M submissions with source files.
+• We reveal that the majority (88 %) of papers feature (un-
+necessary) information within their arXiv submission, with
+striking findings such as secrets (API tokens, private keys,
+passwords), sensitive content (links to internal documents,
+disclosure of FTP and SSH servers), and uncommented text
+fragments and discussions among coauthors (Section 6).
+• To address the identified serious and prevalent issues, we
+develop and release ALC-NG—an improved LATEX cleaner
+that reliably prevents “hidden” information distribution,
+mitigating 90 % of “hidden” information issues (Section 7).
+Open Science Statement. We are committed to open sci-
+ence and thus publish aggregated data of our evaluation [25].
+We also release our LATEX source file cleaner—ALC-NG—for
+public use [26]. In compliance with our ethical considerations
+(Appendix A), we refrain from publishing our analysis code.
+2. Preprint Repositories and arXiv.org
+In academia, a preprint corresponds to a scientific paper
+that is distributed prior to peer review or official publi-
+cation [1], [4], [27]. While they can be shared any time,
+around 40 % of preprints get (finally) formally published [4].
+Independent projects (see DOAPR [28], the directory of open
+access preprint repositories, for an overview) collect preprints
+on specific domains, e.g., bioRxiv and medRxiv, or for
+specific purposes, establishing different preprint repositories.
+Some, such as SSRN or TechRxiv, are even operated and/or
+endorsed by academic publishers. In 2021, Xie et al. [4]
+studied the use of preprint repositories, particularly noting the
+popularity of arXiv [3] and identifying a substantial increase
+in usage in computer science over the past few years.
+Established in 1991 to consolidate the then prevalent
+preprint sharing via email in physics research [1], arXiv [3]
+has evolved into a free, open-access preprint repository,
+hosting more than 2.9 M research papers [5] of differ-
+ent domains [29], including natural sciences, computer
+science, quantitative finance, electrical engineering, and
+economics. The importance of preprints has been established
+decades ago [30], [31], and the observed growth is domain-
+independent, i.e., it also holds for computer security [32].
+Since its inception, both the number of submissions and
+downloads have been increasing continuously [5], [29], [33].
+The general submission process at arXiv works as follows.
+After writing the paper, an author creates a submission by
+uploading the LATEX sources of the paper. arXiv then compiles
+the sources and conducts some basic checks to verify whether
+the paper is eligible for inclusion. This process is not a proper
+peer review, but rather a means for maintaining quality within
+the repository [29], [34]. Upon successful vetting, the paper
+is publicly announced, and a permanent, versioned record is
+created. After the initial announcement, authors can decide
+to upload a new, improved (corrected) version that amends
+the original record or withdraw a version for all kinds of
+reasons [35]. In the latter case, arXiv still retains the original
+submission but adds a dedicated notice of withdrawal.
+For different reasons [6], including accessibility and
+improved long-term maintainability, arXiv requires authors
+to submit LATEX sources if available. Accordingly, more than
+90 % of submissions are distributed with their sources [11].
+3. Related Work
+Research analyzing arXiv has largely focused on non-
+security aspects, such as (i) studying how academic papers are
+written using LATEX [23], [24], (ii) understanding the impact
+of arXiv submissions [36] and the influence of preprints on ci-
+tations [36]–[41], (iii) conducting analyses of authorship and
+publication forms [42]–[47], (iv) detecting plagiarism [48],
+text reuse [49], and AI-generated texts [50], (v) collecting
+reasons for withdrawing preprints [35], (vi) training and
+evaluating language models [51]–[53], and (vii) reconstruct-
+ing LATEX sources [54], analyzing document layouts [55], or
+extracting content from LATEX-compiled PDFs [56].
+However, despite enabling all these diverse research
+streams, publishing sources of LATEX documents inevitably
+carries the risk of unintended information disclosure [6]. In-
+deed, related work analyzing source code in GitHub reposito-
+ries [57]–[61], Docker containers [62], and mobile apps [63]
+has identified a substantial risk of disclosing information such
+
+as secret API keys, private keys, or passwords. Consequently,
+different tools to sanitize LATEX documents before publishing
+them on arXiv have been developed [6], [21], [64]–[66].
+While we refer to Section 7.1 for a detailed survey of those
+tools and their capabilities in accurately sanitizing LATEX
+documents, anecdotal evidence of (remaining) critical content
+in sources of arXiv submissions [19], [20], [23], [24] suggests
+that these tools are either not widely applied or ineffective
+in removing (all) critical content.
+Looking beyond source files, information leakage result-
+ing from published documents such as PDF files [13], [16]–
+[18], images [67], [68], and other formats [12], [14], [15] has
+been analyzed, uncovering several common issues, including
+GPS locations where images were taken, author names, and
+other (partially) private information unintentionally stored
+primarily in metadata fields. To our understanding, these
+issues of “hidden” information in published documents are
+well-researched and well-understood, with practical tools for
+metadata removal being available [69]–[71]. Further work
+has focused on detecting malicious PDFs [72]–[74], which
+is only partly applicable to arXiv-published papers given
+its service-provided build pipeline, or the identification of
+privacy issues within PDF-based publication processes [75].
+Consequently, research is well aware that “hidden” in-
+formation in documents, including metadata, can be a threat
+as it may unintentionally reveal sensitive details, e.g., GPS
+locations in images or author details in rich text documents.
+At the same time, we have arXiv—the largest and most
+popular preprint service—which, in contrast to most other
+preprint services, requires and publicly distributes author-
+submitted LATEX source files. Despite selective attention on
+the Web [19], [20] and in academia [23], [24] as well as
+warnings issued by arXiv [6], research has not yet assessed
+the prevalence of this phenomenon at scale. Concurrent to
+our work, two preprints with specific foci—a LLM-driven
+security audit of source files [76] and assessing the content
+of nonrequired files within sources [77]—also study LATEX
+source files, albeit at significantly smaller scale. Still, they
+highlight and emphasize the relevance of our research.
+4. Methodology For Analyzing LATEX Sources
+The goal of our work is to discover, quantify, and
+analyze the distribution of “hidden” information at the
+popular preprint service arXiv. These findings also serve
+as a foundation for mitigation strategies to prevent the
+inclusion of “hidden” information. In line with research in
+other contexts (Section 3), we identify three key dimensions
+of “hidden” information in arXiv submissions: 1 LATEX
+sources bundled with dangling files, 2 embedded metadata,
+and 3 content/text irrelevant to the build process.
+In the following, we present our methodology to compre-
+hensively uncover “hidden” information across these three
+dimensions with high accuracy to lay the foundation for
+analyzing arXiv submissions and their source files at scale.
+Dimensions of “Hidden” Information. Our methodol-
+ogy for discovering “hidden” information aligns with the
+three dimensions along which such information can occur.
+1 File Level. At the file level, we classify source files
+as either required or dangling files. Required files are strictly
+needed to compile the LATEX sources into a PDF document,
+while dangling files are not used during the build process
+and thus do not need to be part of the served sources.
+We align our detection of dangling files with arXiv’s
+long-used submission system (version 1.0). That is, we
+mark all LATEX root files with documentclass or
+documentstyle as required and then recursively mark
+all additionally included files as required. We further support
+00README(.XXX) files [78], present in 8.8 % of all arXiv
+submissions with sources, in which authors may optionally
+provide additional information to the submission system, e.g.,
+to override arXiv’s default inclusion behavior for files.
+2 Metadata Level. Most file types further support the
+inclusion of metadata to add supplementary information and
+provenance data. Since related work (cf. Section 3) has
+shown that metadata may leak sensitive information [79],
+we rigorously analyze all source files using exiftool [69].
+3 Content/Text Level. Besides content within required
+files that is needed to produce the PDF document, source
+files on arXiv can also contain irrelevant content with no
+influence on the compiled PDF. In this regard, LATEX source
+files (beyond other file types) are especially relevant given
+their intentional support for author-supplied comments [23]—
+a common practice in (academic) writing.
+To identify irrelevant content in LATEX sources, our
+methodology relies on an abstract syntax tree representation
+of said LATEX document using a tree-sitter [80] grammar.
+Harnessing this structured representation of LATEX documents,
+we can reliably parse and extract irrelevant content, e.g.,
+comments, by specifying the different ways irrelevant content
+can be embedded in LATEX sources. This approach fundamen-
+tally differs from the current state of the art in sanitization
+tools (cf. Section 7.1), which rely on heuristic approaches
+based on regexes. To ensure comprehensive coverage of the
+different concepts of embedding comments, we survey the
+treatment of irrelevant information by six state-of-the-art
+LATEX sanitization tools (cf. Section 7.1) and supplement
+these findings with our own experience from authoring more
+than one hundred academic papers with various research
+groups across three continents.
+Syntax of Embedded Comments. Using this approach,
+we derive four widely-used and commonly-known concepts
+for embedding comments in LATEX documents that we
+employ to detect irrelevant content: A standard LATEX line
+comments preluded by % or wrapped in a comment envi-
+ronment, B any characters outside of LATEX’s document
+environment, C non-taken branches of (custom) if state-
+ments, and D ignored arguments of (re)newcommand,
+providecommand, Declare*, or def constructions.
+Complementing the content-level dimension, we further
+consider all content in dangling files as irrelevant.
+Given LATEX’s expressiveness, we may theoretically miss
+other irrelevant content that does not match the syntax de-
+scribed above; for example, csname constructions to insert
+content or author-implemented conditionals. However, our
+investigation into the usage frequency of custom commands
+
+did not reveal meaningful findings. Thus, such practices seem
+rare within arXiv sources, i.e., they are not used at scale.
+Handling Multiple Versions of a Submission. When
+analyzing arXiv papers, multiple versions (i.e., updates) of a
+single paper must be considered (cf. Section 2). Issues present
+in one version may not be part of another version of the same
+paper (either the issue gets introduced in a later version or
+removed during an update). To avoid overcounting “hidden”
+information, we thus perform a worst-case aggregation over
+versions. That is, we consider an issue to be present for a
+given paper if we discover it in at least one version, not
+necessarily the most recent one. As the sources of older
+versions remain accessible for anyone, this approach is
+reasonable and accurately quantifies information leakage.
+Validity. By relying on a structured parsing approach
+based on an abstract syntax tree (instead of relying on
+heuristics, e.g., based on regular expressions), our approach
+intentionally constitutes an accurate lower bound of detected
+irrelevant content. Furthermore, as our coverage of the
+different concepts of embedding comments relies on best
+practices from existing sanitization tools and extensive
+authoring experience, we are convinced that we capture the
+vast majority of irrelevant content. While LATEX, as a Turing-
+complete language, theoretically offers additional custom
+approaches for embedding comments, as part of our analysis,
+we did not discover such peculiarities at scale and thus
+estimate their prevalence to be negligible in practice. As
+such, our assessment methodology (a) reasonably minimizes
+false negatives (undetected irrelevant content), and (b) yields
+almost no false positives (relevant content falsely flagged as
+irrelevant). Alongside turning our comprehensive detection
+methodology into a next-generation sanitization approach
+(cf. Section 7.3), we will show that our abstract syntax tree-
+based approach outperforms all existing sanitization tools in
+simultaneously minimizing false negatives and false positives
+while not visually changing compiled documents.
+To the best of our knowledge, we are the first to apply a
+methodological approach to assess the prevalence of “hidden”
+information in LATEX source files at scale. Our methodology
+ensures an assessment that minimizes false positives, i.e.,
+we do not label content as irrelevant if it is strictly needed
+when compiling the PDF from source. In contrast, although
+covering all prevalent approaches to embed irrelevant content,
+our approach does not guarantee completeness; rare custom
+cases might be missed. Consequently, our results constitute
+a reliable lower bound of discovered “hidden” information.
+5. Dataset Covering All arXiv LATEX Sources
+For our analysis, we have curated a dataset covering
+the source files of all arXiv submissions from its launch
+in 1991 up to and including 12/2025. For 1991–10/2020,
+we retrieved the archive.org collection [81]. To retrieve the
+remaining months and fill any gaps, we relied on the official
+arxiv-bulk dataset access over Amazon S3 storage [82]. Since
+these sources only serve one version of a paper, we further
+sampled full version histories using the official arXiv API
+while complying with their rate limits (cf. Appendix A).
+2000
+2010
+2020
+0
+100k
+200k
+Annual submissions [#]
+Total submissions
+With sources
+% with sources
+60
+70
+80
+90
+100
+Share with sources [%]
+Figure 2. Annual volume of arXiv submissions with and without sources.
+After retrieval, we validated the completeness of our
+dataset: (i) we iterated over the paper ID space to check
+for gaps (some IDs are not associated with a submission),
+(ii) we marked all withdrawn versions and papers (similar
+to WithdrarXiv [35]), and (iii) we verified that submissions
+without source files in our dataset are indeed without sources.
+For the latter two steps, we were in contact with arXiv.
+In total, our dataset covers 2.7 M papers with source
+files, which corresponds to 93 % of all papers on arXiv.
+Fig. 2 shows their distribution over the years, with 2013
+representing the relative lower bound (91 %) and 1991 the
+upper bound (100 %). Across the papers with source files,
+we sampled 1.1 M papers with more than one version with
+source files, accumulating to a total of 4.3 M versions.
+6. Analysis of arXiv Source Files at Scale
+Our dataset of all 2.7 M submissions with available source
+files published on arXiv (by the end of 2025) enables us to
+discover and analyze “hidden” information within sources
+made available by arXiv and thus derive a comprehensive
+picture of the prevalence of unintentional information disclo-
+sure in source files of scientific preprints. To this end, we first
+provide a high-level overview of our findings, summarizing
+frequent types of “hidden” information and reporting changes
+over the years, arXiv categories, and submitted paper versions
+(Section 6.1). Subsequently, we attribute our findings to the
+different dimensions of the problem (cf. Section 4) and
+sequentially discuss them in greater detail (Section 6.2).
+We focus on assessing the prevalence of “hidden” in-
+formation and grasping its sensitivity. Consequently, the
+implications of content-specific changes over time, e.g., the
+removal or addition of authors, the effects of changing
+templates, or the creation of citation graphs, which related
+work already covered partly (cf. Section 3)—albeit at a
+comparatively small scale—are not in our scope.
+6.1. A Birds-Eye View at “Hidden” Information
+We begin our analysis by examining the rate of “hidden”
+information at the file, metadata, and content/text levels.
+Guiding Question. How prevalent are the three dimen-
+sions of “hidden” information in source files of preprints?
+To provide insights into this guiding question, we filter for
+interesting content (Section 6.1.1), quantify frequent issues
+(Section 6.1.2), and analyze differences across submission
+categories, versions, and years (Section 6.1.3).
+
+100
+101
+102
+103
+104
+Count per submission [#]
+0.001%
+0.010%
+0.100%
+1%
+10%
+100%
+1 - CDF [%]
+Dangling files
+Metadata files
+Comments
+Unique
+Figure 3. Complementary cumulative distribution functions (1-CDFs) of
+total and unique “hidden” information per arXiv submission across the three
+dimensions: dangling files, metadata key-value pairs, and LATEX comments.
+6.1.1. Filtering For “Interesting” Content. After process-
+ing the entire dataset of arXiv sources, we obtain a massive
+volume of “hidden” information for analysis across all
+considered dimensions, including 12 M dangling files, 144 M
+metadata key-value pairs, and 644 M comments. Fig. 3 shows
+their distribution across submissions. However, a substantial
+fraction of this massive volume of “hidden” information
+repeats across (many) submissions (e.g., unused template
+files or comments in templates) and thus likely does not
+constitute potentially unintentionally-disclosed information.
+“Interesting” Content. To instead focus only on po-
+tential cases of unintentional information disclosure, we
+define “interesting” content as any content that is (almost)
+unique to an individual submission, following the intuition
+that “hidden” information occurring only in one submission
+likely was added by the authors of this submission (and
+not inherited, e.g., from templates). More specifically, we
+filter out any dangling file, metadata value, or comment that
+we find in more than two submissions (to account for rare
+duplicates by chance or reuse by the same authors).
+In Fig. 3, we visualize complementary cumulative distri-
+bution functions (1-CDFs), detailing the number of unique
+and total information for the three dimensions.
+File Level. Out of 50 M total files, we find 45 M (91 %)
+to be unique (occurring at most twice) based on SHA256
+fingerprints (44 M/88 % for strict uniqueness). This method-
+ology filters out 181 k distinct files that we, on average, find
+in 23.6 different submissions (median=3, max=57 k). LATEX
+templates (.tex/.sty/.cls/.bst) account for 66 % of these files,
+and 15 % correspond to images or PDFs.
+Metadata Level. Metadata either stems from file-level
+modification timestamps (90 % of submissions contain such
+data, i.e., were uploaded as an archive preserving this
+information) or from information embedded in images, PDFs,
+XML, and other file types that can be extracted using
+exiftool [69] (93 % of submissions). Out of the timestamps,
+98 % are unique, indicating that they are not artifacts of
+packing submissions for upload to arXiv (per submission,
+94 % of files have unique timestamps). Interestingly, 84 % of
+filtered timestamps coincide with filtered files, confirming a
+common origin, such as from a ZIP file of a LATEX template.
+For metadata extracted using exiftool, we count a total of
+111 M key-value pairs, of which 38 % are unique. Still, non-
+unique metadata values can carry relevant information, e.g.,
+common software producer names or version numbers.
+Content/Text Level. We identify 644 M independent
+LATEX comments in total; the majority of comments (93 %)
+are part of required files. Comments are present in 95 % of
+all considered arXiv submissions. After filtering for unique
+comments, we obtain 114 M “interesting” comments for
+analysis that span across 75 % of the considered submissions.
+Our analysis not only reveals a large amount of “hidden”
+information across all three dimensions, but also shows that
+the majority of this information is sufficiently unique to likely
+originate from authors directly. Consequently, our analysis in
+the following focuses on precisely this “interesting” data, as
+it is substantially more likely to contain sensitive information
+than repeatedly occurring data (e.g., template files, common
+producer metadata values, or comments in template files).
+6.1.2. Quantifying Frequent Issues. To gain a better
+understanding of the frequency of specific aspects of “hidden”
+information, we compare the prevalence and interplay of
+its three dimensions. As we visualize in Fig. 4, most
+arXiv submissions contain “interesting” comments (75 %).
+In contrast, fewer submissions contain unique metadata
+(56 %) or unique dangling files (25 %). When looking at
+submissions that contain “hidden” information from more
+than one dimension, we observe that comments and metadata
+occur together most frequently (30 %). 18 % of submissions
+even contain “hidden” information from all three dimensions;
+most (88 %) contain “hidden” information in at least one of
+the dimensions.
+6.1.3. Differences in Years, Research Fields, and Ver-
+sions. To better understand potential factors influencing the
+prevalence of these discoveries, we analyze the prevalence
+of “hidden” information for (i) changes over time, (ii) differ-
+ences across disciplines, and (iii) observed variance between
+different versions of the same submission hosted at arXiv.
+Years. As we show in Fig. 4 (left side), the prevalence of
+“hidden” information in arXiv source files slowly increases
+over time across the dimensions. This observation particularly
+holds for the prevalence of dangling files (starting in 2013),
+and holds for all dimensions since 2017. Perhaps surprisingly,
+events such as the release or recommendation of sanitization
+tools or (negative) publicity surrounding “hidden” informa-
+tion have no noticeable impact on the observed trends.
+Research Fields. As a multi-disciplinary preprint reposi-
+tory, arXiv is structured into 38 categories. To understand
+whether the prevalence of “hidden” information shows
+research domain-specific differences, we aggregate these
+categories into nine research fields for comparison. As we
+detail in Fig. 4 (right side), some disciplines, e.g., Math or
+Physics, feature substantially fewer “interesting” dangling
+files, potentially because their submissions overall consist
+of fewer files. Given their high share of submissions (black
+dots in Fig. 4), they have a substantial impact on the overall
+results that we report. Thus, covering different research fields
+when quantifying “hidden” information in arXiv source files
+is important to gain a comprehensive picture.
+In addition to this high-level comparison, we further
+assess whether computer science researchers, in general, and
+security researchers (A*-/A-/B-/C-ranked conferences), in
+
+1990 1992 1994 1996 1998 2000 2002 2004 2006 2008 2010 2012 2014 2016 2018 2020 2022 2024 2026
+0
+20
+40
+60
+80
+100
+Share of source
+submissions [%]
+arXiv endorses
+perl one-liner
+Twitter bot account online
+Google blog announces ALC
+ALC endorsed
+by arXiv
+Elsa Lab
+arXiv cleaner
+Bubeck et al.
+GPT-4 case
+Submission
+system 1.5
+Submissions over time
+CS
+cs.CR
+econ
+eess
+math
+physics
+q-bio
+q-fin
+stat
+Other
+A*
+A
+B
+C
+ArXiv research fields
+CORE
+security FoR
+103
+104
+105
+106
+Submission count [#]
+At least one issue
+All three issues
+Has dangling file
+Has metadata
+Has comment
+Unique values
+Submission count
+Figure 4. Development of the prevalence of “hidden” information over time shows an upward trend (left) as well as across aggregated arXiv categories and
+the CORE [83] field of research (FoR) 4604 “cybersecurity and privacy” (right), revealing minor differences across research fields and publication venues.
+20
+40
+60
+80
+100
+120
+Paper version
+0
+100
+200
+300
+400
+Normalized count
+(v1=100)
+10 3
+10 2
+10 1
+100
+101
+1 - CDF [%]
+Dangling file
+Metadata
+Comment
+1 - CDF
+All
+Unique
+Figure 5. Subsequent versions rather add unique data over the first version.
+Only in the long tail, few papers with many versions skew this trend.
+particular, exhibit any differences in their behavior (Ap-
+pendix C details how we match arXiv submissions to
+published papers by title using dblp [84]). A two-sided
+Mann-Whitney U test confirms significant differences be-
+tween all dimensions shown in Fig. 4 when comparing CS
+(with cs.CR, cryptography and security) against the rest,
+as well as between cs.CR and the rest of computer science
+(p < 0.0001 in all cases): There is more “hidden” information
+in computer science papers compared to other disciplines,
+and even more in security-related papers. Interestingly, the
+same observation holds when comparing A* security papers
+with A ones (p < 0.0001). Again, higher-ranked venues
+feature a significantly larger share of “hidden” information.
+Normalizing issues by the LATEX file size (in bytes) to account
+for length differences does not change this observation. A
+potential explanation could rather be that computer scientists
+(and authors of A* papers) have more elaborate source files,
+while not necessarily paying more attention to “hidden”
+information. On a positive note, out of 1974 dblp-matched
+security papers also submitted to arXiv, we discover 243
+submissions without any dangling files or other irrelevant
+content. When also considering the absence of metadata, we
+identify 70 “perfectly clean” security papers.
+Versions. To support the evolution of a preprint over time,
+arXiv allows superseding a submission with a new version
+(cf. Section 2). While tools for comparing the PDF content
+of papers over versions exist [85], [86], the impact of new
+(updated) versions on “hidden” information remains unknown
+so far. As we illustrate in Fig. 5, many authors update their
+arXiv-hosted papers over time, even repeatedly, or withdraw
+them [35], thereby marking them as obsolete (their sources
+remain publicly available). Intuitively, one reason to submit a
+new version of a paper could be an attempt to fix or to remove
+“hidden” information that was accidentally published. Indeed,
+individual examples such as a submission initially containing
+many valid OpenID tokens in dangling files that were later
+removed with an updated version confirm this suspicion
+(although this practice is an ineffective mitigation, as the
+source files of old versions remain accessible). However, at
+scale, we do not see any consistent indication that authors
+in general reduce the amount of “hidden” information when
+updating their preprints with a new version, when comparing
+the prevalence of “hidden” information between versions in
+Fig. 5 (in the long tail, the low number of papers with many,
+≥20, versions prevents deriving well-founded conclusions).
+Takeaway. All three dimensions of “hidden” information
+are prevalent issues, collectively affecting 88 % of arXiv
+source-code submissions across years, research fields, and
+submission versions, especially when focusing on “interest-
+ing”, i.e., seldomly occurring, content.
+6.2. Individually Looking at “Hidden” Secrets
+While our initial analysis already establishes the preva-
+lence of “hidden” information in arXiv submissions, so far
+we only know that the majority (88 %) of submissions contain
+interesting, i.e., unique “hidden” content. We now take a
+closer look at the individual pieces of “hidden” information.
+Guiding Questions. Which individual cases of “hidden”
+information can we discover? How sensitive are these cases?
+To answer these questions, we examine the three dimen-
+sions of “hidden” information (file, metadata, and content/-
+text) individually. To this end, we focus on identifying poten-
+tially sensitive information disclosure on a per-submission
+basis, i.e., if we identify an issue in multiple versions of the
+same paper, we only count and report it once.
+Where possible, we follow the approach of Leon et
+al. [87] to label findings as high (H), medium (M), or low
+(L) impact based on the potential severity of them being
+publicly available. However, this labeling does not imply
+that all reported findings indeed have the labeled impact.
+6.2.1. Category 1 : Bulk of Dangling Files. Overall, we
+discover a total of 12.0 M dangling files. Digging into file and
+MIME types, we observe the distribution shown in Fig. 6 with
+a similar distribution across dangling and non-dangling files
+for frequent file types and a long-tail of rare file types that are
+predominantly dangling files, including Readme files (3.4 %
+
+Others
+jpeg
+no subtype
+pdf
+plain
+png
+postscript
+MIME subtype
+application
+image
+other
+text
+MIME type
+.bbl
+.bib
+.bst
+.eps
+.jpg
+.pdf
+.png
+.ps
+.sty
+.tex
+Others
+File ending
+Dangling
+Not
+dangling
+Dangling status
+0%
+20%
+40%
+60%
+80%
+100%
+Dangling ratio
+Figure 6. arXiv source files contain a broad range of file types. Some types,
+e.g., images, are more frequently dangling files than others, e.g., TEX files.
+of submissions, L), Python code (0.21 %, L), shell scripts
+(0.21 %, L) and other executable files (0.041 %, L). We also
+find research-related data in CSV (0.20 %, M) and SQLite
+form (0.002 %, M). 0.007 % of submissions (intentionally)
+contain “dangling” files within the anc/ directory [88] (cf.
+Section 7.3), which we thus do not interpret as dangling.
+In general, we cannot reliably assess whether dangling
+files have been intentionally submitted or not. While 173 k
+dangling files carry a path such as supplementary
+or additional_data, likely indicating intentional sub-
+mission, 256 k files correspond to directories that contain
+backup, old, or similar, instead indicating unintentional
+submission. Aggravatingly, 40 submissions contain hidden
+.nfs files that are created by NFS filesystems immediately
+after removal (M), and 74 contain complete Git repositories,
+including editing histories that we consider unintentionally
+submitted (M). Furthermore, we discover configuration files
+that can carry sensitive information such as API keys or
+database connection strings in 2774 submissions (H, we
+detail those findings in Section 6.2.3).

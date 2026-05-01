@@ -1,0 +1,448 @@
+Poisoning Learned Index Structures: Static and
+Dynamic Adversarial Attacks on ALEX
+Allen Jue
+The University of Texas at Austin
+Austin, Texas, USA
+mrallenjue@utexas.edu
+Abstract
+Learned index structures achieve high performance by mod-
+eling the cumulative distribution function (CDF) of keys,
+but this reliance on data distributions introduces potential
+vulnerability to adversarial manipulation. Prior work has
+explored both static data poisoning and dynamic algorithmic
+complexity attacks (ACA), though evaluations are typically
+limited in scale or consider only one threat model. We present
+a systematic study of both attack paradigms on ALEX, a
+state-of-the-art dynamic learned index, under a unified and
+reproducible framework.
+Our evaluation scales to realistic workloads with up to
+200K adversarial inserts and includes multiple SOSD datasets
+with diverse key distributions, as well as a real-key baseline
+to isolate adversarial effects. Our results show a clear sepa-
+ration between threat models. Static poisoning has minimal
+impact on lookup performance in ALEX under bulk-loaded
+settings, while dynamic ACA induces substantial degrada-
+tion, with up to 2–2.8× slowdown in lookup throughput.
+However, attack effectiveness is highly dataset-dependent:
+dense key distributions limit adversarial leverage due to
+duplicate-heavy insertions and ALEX’s localized structure.
+We highlight key evaluation considerations, including the
+need for control workloads and the mismatch between lo-
+calized structural damage and global query metrics. These
+results show that robustness in learned indexes depends
+critically on the interaction between threat model, data dis-
+tribution, and evaluation methodology.
+1
+Introduction
+Modern database systems rely on a core set of data structures
+to support efficient query processing. Structures such as B-
+trees provide ordered range scans and point lookups with
+𝑂(log𝑛) worst-case guarantees. These structures are highly
+optimized and well understood: their performance bounds
+are tight, their behavior is predictable, and they make no
+assumptions about the distribution of the underlying data.
+This generality is also a limitation. A B-tree indexing se-
+quential user IDs behaves identically to one indexing highly
+skewed geographic coordinates. The structure is oblivious to
+the statistical properties of the data it stores and does not ex-
+ploit patterns in key distributions. As a result, every lookup
+incurs the same asymptotic cost regardless of whether the
+data is uniform, clustered, or heavily skewed.
+Learned index structures address this limitation by replac-
+ing parts of the index with learned models. First introduced
+in Kraska et al. [9], these systems treat indexing as a pre-
+diction problem: given a key 𝑘, predict its position in the
+sorted dataset by approximating the cumulative distribution
+function (CDF) of the data. Simple distributions can be mod-
+eled with linear functions, while more complex distributions
+require hierarchical models that partition the key space. Sys-
+tems such as ALEX [3], PGM-Index [4], and FINEdex [10]
+demonstrate that CDF-aware indexes can achieve substan-
+tial improvements in lookup latency and memory usage,
+particularly on structured real-world datasets.
+However, this dependence on data distribution introduces
+a vulnerability. Learned indexes are trained on the statistical
+properties of their input and updated as new keys are in-
+serted, making their performance sensitive to changes in the
+underlying distribution. An adversary with write access can
+exploit this by inserting carefully chosen keys that distort
+the learned CDF, degrading model accuracy and increasing
+lookup cost. This class of manipulation is known as a data
+poisoning attack. Prior work has shown that such attacks
+on recursive model indexes (RMI) can increase prediction er-
+ror by up to 24–70×, significantly affecting performance [8].
+In contrast, traditional structures such as B-trees and hash
+tables remain unaffected due to their distribution-agnostic
+design.
+Subsequent work has explored the robustness of learned
+indexes under static adversarial conditions. For example,
+evaluations of ALEX under poisoning scenarios suggest lim-
+ited sensitivity to certain attacks once realistic workloads
+are applied [2]. Separately, algorithmic complexity attacks
+(ACA) on dynamic learned indexes demonstrate that ad-
+versarial query patterns can trigger worst-case structural
+behavior [13]. These results indicate that learned indexes are
+sensitive not only to training-time data, but also to runtime
+workload dynamics.
+In this work, we study the robustness of learned indexes
+under both static and dynamic adversarial workloads using
+ALEX as a representative learned index and Abseil’s B-tree as
+a classical baseline. We find that static poisoning has limited
+persistent impact once the system adapts to query execu-
+tion, whereas dynamic adversaries that interact with the
+index during runtime can induce substantial and sustained
+degradation.
+arXiv:2604.24975v1 [cs.CR] 27 Apr 2026
+
+We evaluate two adversarial settings. First, a static poi-
+soning attacker constructs adversarial datasets drawn from
+the Search on Sorted Data (SOSD) benchmark [7], with the
+objective of maximizing CDF approximation error at build
+time. Second, we implement an algorithmic complexity at-
+tack (ACA) based on adaptive insert-and-query cycles, in-
+stantiated in both black-box and white-box variants.
+Across multiple real-world datasets (Books, Facebook, Log-
+normal, and Wiki TS), dynamic ACA attacks consistently
+produce significantly greater degradation than static poi-
+soning. In particular, ACA increases per-lookup latency on
+real keys by up to 2–2.8× at peak, measured in nanoseconds
+per operation. This degradation arises from structural drift
+induced by adversarial insertions rather than initial model
+error, whereas the effects of static poisoning diminish as the
+system adapts.
+These results suggest that robustness evaluations of learned
+indexes must account for interactive adversarial workloads
+rather than relying solely on static dataset manipulation. Per-
+formance stability depends not only on model accuracy at
+construction time, but also on the interaction between work-
+load dynamics, index maintenance, and locality-sensitive
+updates.
+Contributions. This paper makes the following contri-
+butions:
+• We evaluate the robustness of ALEX under both static
+poisoning and dynamic adversarial workloads, using
+Abseil’s B-tree as a classical index baseline.
+• We empirically demonstrate that dynamic adversaries
+induce substantially greater and more persistent per-
+formance degradation than static poisoning across
+multiple real-world datasets.
+2
+Related Work
+2.1
+Learned Index Structures
+Learned index structures model indexing as a prediction
+problem by approximating the cumulative distribution func-
+tion (CDF) of keys [9]. Early designs such as the recursive
+model index (RMI) demonstrate that learned models can re-
+place traditional tree-based structures for point and range
+queries. Subsequent systems improve robustness, efficiency,
+and support for dynamic updates.
+ALEX [3] is an updatable in-memory learned index that
+combines an RMI-style hierarchy of linear models with gapped
+arrays. It adapts to insertions by expanding or splitting nodes
+based on a cost model, enabling efficient performance un-
+der evolving workloads. The PGM-index [4] uses piecewise
+linear models with provable worst-case error bounds and
+supports dynamic updates via buffering and merging. Other
+systems such as FINEdex [10] further explore scalability
+and concurrency in learned indexing. Surveys of the area
+highlight significant performance improvements while iden-
+tifying robustness and security as open challenges [1].
+2.2
+Poisoning Attacks on Learned Indexes
+The reliance of learned indexes on data distributions intro-
+duces vulnerability to data poisoning attacks. Kornaropoulos
+et al. [8] present the first systematic study of such attacks,
+showing that carefully crafted modifications to the train-
+ing data can significantly increase model error and degrade
+performance across a variety of learned index designs.
+Subsequent work has examined the robustness of learned
+indexes under static adversarial settings. Bachfischer et al. [2]
+evaluate multiple learned index structures, including ALEX,
+and observe limited sensitivity to certain poisoning strate-
+gies under their experimental conditions. However, their
+evaluation focuses on relatively small-scale and synthetic
+datasets, leaving open how these attacks behave in larger or
+more dynamic environments.
+Recent theoretical work further analyzes the behavior of
+poisoning attacks on CDF-based models. Sato et al. [12] study
+the effects of adversarial perturbations on linear regression
+over cumulative distributions, providing insight into how
+poisoning can systematically distort learned mappings.
+2.3
+Algorithmic Complexity Attacks
+Algorithmic complexity attacks on learned indexes have
+been explored in recent work [13]. These attacks exploit
+worst-case structural behavior through adversarial query
+patterns, demonstrating that workload dynamics can signifi-
+cantly impact performance. Unlike poisoning attacks, which
+target model accuracy at training time, these approaches
+focus on triggering inefficient execution paths during query
+processing.
+3
+Methodology
+3.1
+System and Experimental Setup
+We evaluate learned index robustness using ALEX [3] as the
+representative learned index and Abseil’s B-tree [5] as a clas-
+sical baseline for static experiments. ALEX is integrated into
+our benchmarking harness based on the SOSD framework,
+and core ALEX functionality, including insertion and node-
+splitting behavior, is left unchanged. Minor modifications
+are limited to portability fixes (e.g., ARM-safe instructions),
+while all adversarial logic is implemented externally within
+the benchmarking code.
+Experiments are conducted on a machine with an Apple
+M4 Max CPU (16 cores) and 64 GB of RAM. Static experi-
+ments use Google Benchmark [6] to measure lookup latency,
+while dynamic experiments use a custom timing harness
+based on std::chrono, as the Google Benchmark is best-
+suited for stationary workloads. Reported results include
+throughput (in millions of operations per second) and de-
+rived latency metrics.
+2
+
+Datasets are drawn from the SOSD benchmark suite [7, 11].
+Raw datasets contain up to 108 keys; however, for experi-
+mental efficiency, we preprocess them by subsampling and
+deduplication. Static experiments operate on datasets of up
+to 105 keys, while dynamic ACA experiments use up to 106
+keys with subsampling, resulting in effective dataset sizes on
+the order of 105–106 keys depending on duplication. Queries
+are sampled uniformly over the set of clean keys.
+3.2
+Adversarial Models
+We consider two adversarial settings: static data poisoning
+and dynamic adversarial workloads.
+In the static setting, the adversary modifies the dataset
+prior to index construction. Given a clean dataset of size 𝑁,
+the adversary inserts a set of adversarial keys of size 𝛼𝑁,
+where 𝛼∈{0.05, 0.10, 0.15, 0.20}. The goal is to maximize
+prediction error of the learned model, thereby increasing
+lookup cost after bulk loading.
+In the dynamic setting, the adversary interacts with the
+index after construction through a sequence of insertions.
+Starting from a clean index, the adversary inserts keys in
+batches over multiple rounds. After each batch, lookup per-
+formance is measured on the original (clean) keys. This pro-
+cess continues until a total of 𝛼𝑁adversarial keys have been
+inserted. Unlike static poisoning, this adversary influences
+both the data distribution and the structure of the index over
+time.
+3.3
+Attack Implementation
+Static Poisoning. Adversarial keys are generated using
+a greedy objective that approximates maximization of the
+mean squared error (MSE) of the CDF model. At each step,
+candidate keys are selected from integer gaps between sorted
+neighboring keys, and the key that most increases model
+error is chosen. This process continues until the poisoning
+budget is reached or no valid insertion positions remain.
+The resulting poisoned dataset is then used to bulk-load the
+index.
+Dynamic ACA. We implement an algorithmic complex-
+ity attack (ACA) based on adaptive insert-and-query cycles.
+Let 𝐵denote the batch size and 𝑅= ⌈𝛼𝑁/𝐵⌉the number
+of rounds. Each round consists of inserting a batch of 𝐵
+adversarial keys followed by a lookup phase over clean keys.
+We consider two variants of ACA:
+Black-box ACA generates adversarial keys without access
+to internal index state. Keys are sampled from the global key
+range using randomized strategies, without using feedback
+from observed latency.
+White-box ACA uses access to internal index structure to
+guide key selection. At each round, the adversary identifies
+the largest data node in the index and locates the longest
+contiguous occupied segment within that node. New keys are
+inserted immediately adjacent to this segment, promoting
+local density and triggering structural changes such as node
+expansion or splitting. This process is repeated adaptively
+as the index evolves.
+In both variants, adversarial key selection does not directly
+optimize measured latency; instead, performance degrada-
+tion emerges from the cumulative structural effects of inser-
+tions.
+3.4
+Evaluation Protocol
+Performance is measured on lookup operations over clean
+keys. For static experiments, we report lookup latency us-
+ing Google Benchmark and normalize results relative to a
+clean baseline. For dynamic ACA experiments, we report
+throughput in millions of operations per second (Mops/s)
+and compute a slowdown ratio relative to the clean index.
+Each experiment is repeated multiple times (typically 5), and
+we report mean and standard deviation.
+In ACA experiments, each run begins with a freshly con-
+structed index built from clean data. A warm-up phase pre-
+cedes timing measurements to ensure stable results. Inser-
+tions and lookups are separated at the batch level: each round
+applies insertions first, followed by a lookup-only measure-
+ment phase.
+For static experiments, the index is rebuilt from the corre-
+sponding clean or poisoned dataset before each benchmark
+run. B-tree comparisons are included only in the static set-
+ting to contrast learned and traditional index behavior under
+poisoning.
+4
+Results
+4.1
+Static Poisoning
+We first evaluate traditional data poisoning attacks applied
+prior to index construction. Figure 1 shows slowdown as a
+function of poisoning budget across datasets.
+Overall, static poisoning has limited impact on lookup
+performance. Across all datasets and poisoning levels, the
+observed slowdown ranges from 0.855× to 1.029×, with
+the worst case occurring on the lognormal dataset at the
+highest poisoning level. The curves are largely flat and non-
+monotonic, indicating that variation is dominated by noise
+rather than systematic degradation.
+These results indicate that static poisoning is insufficient
+to produce meaningful lookup slowdown. Even when adver-
+sarial keys are chosen to maximize model error, the resulting
+performance impact remains negligible. This behavior is
+consistent with recent theoretical analyses of CDF-based
+poisoning, which show that optimal adversarial keys tend to
+concentrate near distribution endpoints or regression inter-
+section points rather than spreading broadly across the key
+space [12]. Such concentration limits their ability to induce
+widespread structural degradation in learned indexes.
+3
+
+Figure 1. Lookup slowdown under static poisoning as a function of poisoning budget. Across all datasets, degradation remains
+minimal and non-monotonic, with worst-case slowdown below 1.03×.
+Figure 2. Absolute lookup performance under static poisoning. Variations across poisoning levels are small and largely
+attributable to measurement noise rather than systematic degradation.
+(a) Black-box ACA
+(b) White-box ACA
+Figure 3. Fine-grained slowdown over insertion rounds for black-box and white-box ACA. Both attacks induce substantial
+degradation, with peak slowdowns up to 2.7×–2.8×. Jagged trajectories reflect discrete structural events such as node splits
+and retraining, as well as per-batch variability in insertion locality.
+4.2
+Dynamic Adversarial Workloads
+We next evaluate algorithmic complexity attacks (ACA),
+where adversarial keys are inserted in batches and perfor-
+mance is measured after each round.
+Dynamic adversaries induce substantially larger degrada-
+tion than static poisoning. Across datasets, ACA achieves
+peak slowdowns between 2.7× and 2.8×, with the strongest
+effects on lognormal and Wiki TS. Slowdown increases as
+4
+
+Figure 4. Empirical CDF of inserted-key positions in clean-
+key bins. Datasets where inserted keys occupy a larger frac-
+tion of clean-rank bins exhibit higher degradation.
+insertions accumulate and often stabilizes at an elevated
+plateau.
+4.3
+Black-box vs. White-box Attacks
+We compare black-box and white-box variants of ACA to
+evaluate the role of structural knowledge. Peak degradation
+is slightly higher for white-box attacks, but this advantage
+is not consistent across datasets.
+At the end of the attack sequence, black-box attacks of-
+ten match or exceed white-box degradation. These results
+indicate that explicit structural knowledge is not required to
+induce substantial slowdown; randomized insertion strate-
+gies are often sufficient.
+4.4
+Dataset Dependence
+Attack effectiveness varies significantly across datasets. In
+particular, the Facebook dataset consistently exhibits the
+weakest degradation.
+Figure 4 plots each inserted key’s position in the clean-key
+order. On lognormal and Wiki TS, inserted keys occupy a
+large fraction of clean-rank bins, spreading structural pres-
+sure broadly across the index. On Facebook, inserted keys fall
+into a narrow band of clean-rank bins — despite appearing
+spread in raw value space — restricting damage to a small
+region of the index.
+Additional distribution visualizations are provided in Ap-
+pendix A.
+4.5
+Summary of Findings
+Static poisoning produces minimal degradation, while dy-
+namic adversaries induce substantial and sustained slow-
+down. These results show that robustness depends on the
+interaction between adversarial insertions, workload dynam-
+ics, and the locality-sensitive structure of the index.
+5
+Discussion
+Static poisoning and dynamic ACA stress fundamentally
+different failure modes. Static attacks corrupt the training
+distribution at build time; dynamic ACA exploits the update
+path at runtime. The consistent gap in our results — neg-
+ligible slowdown under static poisoning versus up to 2.8×
+under ACA — reflects this architectural distinction rather
+than a difference in attack intensity.
+ACA effectiveness stems from interaction with ALEX’s
+maintenance logic. Each adversarial batch modifies local
+node density, triggering expansion and splitting events that
+reshape the index hierarchy. The plateau-forming, jagged tra-
+jectories in Figure 3 reflect discrete structural events rather
+than a smooth function of insert count — a qualitatively dif-
+ferent failure mode from model error that calls for different
+mitigations. Notably, white-box ACA does not consistently
+outperform black-box at end-state, implying that learned
+indexes are vulnerable to relatively unsophisticated adaptive
+adversaries.
+Attack effectiveness is further governed by how broadly
+inserted keys are distributed relative to the clean data —
+specifically, what fraction of clean-rank bins they occupy.
+Lognormal and Wiki TS see insertions spread across most
+of the clean-rank domain, producing widespread structural
+disruption. Facebook’s insertions, despite appearing broadly
+spread in raw value space, fall into a narrow band of clean-
+rank bins, restricting impact to a small index region. Raw
+value-space plots alone cannot explain this variation; plot-
+ting insertion positions in the clean-key order is necessary.
+An important boundary condition is what happens when
+the attacker lacks write access entirely. Even without ad-
+versarial insertions, naturally skewed or heavy-tailed key
+distributions — such as those arising from organic workload
+growth or data migration — can produce similarly narrow
+clean-rank bin coverage that resembles adversarial condi-
+tions. This suggests that some “degradation” attributed to
+attacks in prior work may in fact reflect distribution sensitiv-
+ity inherent to the learned model, not adversarial intent. Dis-
+tinguishing genuine attack signal from distributional stress
+requires the real-key control baseline we include here.
+6
+Limitations
+Our evaluation has several limitations. First, measurement
+phases separate insertions and lookups temporally, so mixed
+insert-plus-lookup service cost under realistic workloads
+is not captured. Second, all dynamic results are specific to
+ALEX; generalization to other learned indexes requires direct
+replication. Third, absolute throughput figures are platform-
+specific and should not be compared across hardware config-
+urations — relative slowdown ratios are more robust. Finally,
+5
+
+this work characterizes attacks only; mitigations such as
+CDF-influence-based outlier detection or structural monitor-
+ing heuristics are not evaluated.
+7
+Conclusion
+We evaluated the robustness of ALEX under static data poi-
+soning and dynamic algorithmic complexity attacks across
+four SOSD datasets. Static poisoning produces at most 1.03×
+slowdown across all datasets and budgets, while dynamic
+ACA induces peak slowdowns of up to 2.8× with sustained
+plateaus above baseline.
+This separation reflects distinct failure modes. Static poi-
+soning distorts CDF accuracy at build time, but ALEX’s adap-
+tive architecture absorbs this distortion during execution.
+Dynamic ACA accumulates structural drift through repeated
+insert-triggered maintenance events, producing degradation
+that grows with adversarial pressure rather than diminishing
+with adaptation. The fraction of clean-rank bins occupied by
+inserted keys predicts global impact better than value-space
+distribution. Black-box attacks match white-box at end-state,
+indicating that structural knowledge provides only marginal
+advantage.
+These results establish that learned index robustness is
+a dynamic property. Future work should adopt interactive
+adversarial workloads, include real-key controls to separate
+adversarial effects from distributional sensitivity, and evalu-
+ate defenses against insert-path ACA.

@@ -1,0 +1,1426 @@
+A Primer on Dependency in Polynomial Product:
+Identify, Exploit, and Trim
+Yijian Liu1,2, Jiangxia Ge3, Yu Zhang1,2, Jiabo Wang1,2, and Xianhui Lu1,2(B)
+1 State Key Laboratory of Cyberspace Security Defense, Institute of Information
+Engineering, Chinese Academy of Sciences, Beijing, China
+2 School of Cyber Security, University of Chinese Academy of Sciences, Beijing, China
+3 China Telecom Quantum Group Ltd., Hefei, China
+{liuyijian, luxianhui}@iie.ac.cn
+Abstract. Many lattice-based encryption schemes allow a negligible but
+nonzero decryption failure rate (DFR), which is closely tied to both
+correctness and security through failure-based attacks. Several module-
+lattice constructions (e.g., LAC (NIST PQC Round-2), DAWN (ASI-
+ACRYPT 2025), average-case noise analysis in FHE) estimate DFR from
+one-coordinate marginals together with an independence approximation
+across the coefficients of polynomial products, namely, that treats the
+noise as uniformly distributed on a sphere. In the rare-event regime rel-
+evant to concrete security, this approximation can be optimistic because
+polynomial convolution introduces structured dependencies with no ana-
+logue in unstructured lattice settings. Geometrically, the noise spreads
+towards a cube rather than a sphere due to the inherent dependencies.
+To make this effect explicit, we study polynomial products in the
+power-of-two cyclotomic ring through a norm-wise decomposition. The
+decomposition separates an outer term (corresponding to the radius
+of the sphere), which is effectively captured by coefficient-wise models,
+and an inner term (representing the uneven parts of the spherical sur-
+face), which is shown as a diagonal energy term and accounts for the
+convolution-induced dependencies. This gives an exact explanation for
+the heavier tails observed in polynomial products and for the resulting
+gap between independence-based estimates and actual failure behavior.
+This perspective has consequences for both attacks and design. On
+the attack side, it gives a principled proxy criterion for constructing
+high-DFR candidate ciphertexts in failure-based attacks. In particular,
+it explains how the attack of Guo et al. (ASIACRYPT 2019) can target
+LAC even when the Hamming weights are fixed, and it improves failure-
+finding efficiency by identifying the underlying class of bad randomness
+pairs beyond pattern-based subsets. On the design side, it motivates
+trimming high-dependency samples during key generation and encryp-
+tion. We first give a certified trimmed DFR bound based on conditional
+spectral control, then isolate a separate labeled three-vector heuristic
+for calibrated interpretation, and finally validate both layers on exact-
+support and moderate-dimension experiments. We formalize the result-
+ing approach as the generic frameworks TrimPKE and TrimKEM, prove
+security in the QROM while accounting for rejection, and instantiate the
+framework for LAC and DAWN as case studies.
+Keywords: module lattice · decryption failures · PKE · KEM
+
+1
+Introduction
+As post-quantum cryptography moves toward standardization, lattice-based con-
+structions have gained increasing prominence due to their efficiency, relatively
+direct reductions to well-studied hardness assumptions, and applicability across
+a wide range of cryptographic primitives. In particular, the lattice-based encryp-
+tion Kyber [6] has been selected in the NIST PQC standardization process. A
+distinctive feature of many lattice-based encryption schemes, however, is that
+decryption may fail with small probability. This phenomenon is common to con-
+structions based on Learning with Errors (LWE) and its ring/module variants
+that decode by rounding and tolerate bounded noise. While one can eliminate de-
+cryption failures through sufficiently conservative parameter choices as in NTRU
+Prime [4] and NTRU HRSS [34], this typically incurs noticeable efficiency and
+bandwidth costs (e.g., larger public keys and ciphertexts). Consequently, modern
+KEM designs tune parameters so that the decryption failure rate (DFR) is negli-
+gible while retaining performance, as exemplified by Kyber [6] and DAWN [42].
+In fully homomorphic encryption (FHE), DFR also plays an analogous role:
+schemes such as BGV [9], BFV [8,22], and CKKS [12,7] estimate and control
+failure probabilities to ensure functional correctness of the supported evalua-
+tions.
+DFR also has direct security implications in the chosen-ciphertext (CCA)
+model. An adversary with access to a decryption oracle can exploit failures to
+obtain information about the secret key, making careful parameterization essen-
+tial for balancing efficiency and security. For example, the NIST PQC setting
+allows up to 264 adversarially chosen ciphertexts, and security against quantum
+adversaries typically calls for DFR well below 2−128. Failure-based CCA attacks
+on code/lattice-based schemes have been extensively studied in [21,28,29,33].
+Moreover, the advent of failure boosting [19] and subsequent refinements [20]
+reduces the dominant attack cost to finding the first failing ciphertext, further
+increasing the importance of accurate tail estimates. And since the IND-CPA-D
+security has been proposed in [39], DFR plays a more important role in maintain-
+ing the security of FHE schemes; several failure-based attacks on FHE schemes
+have been studied in [10,11,44].
+On the other hand, error correcting code (ECC) is a powerful tool to compress
+the size in the module-lattice-based encryptions, one typical example is LAC [45]
+(NIST PQC Round-2). However, underestimating DFR in such schemes leaves
+them vulnerable to failure-based CCA attacks [29]. Also, average-case noise anal-
+ysis is common for estimating DFR in FHE schemes, as in [5]. Both the DFR
+estimation used in LAC [45], DAWN [42], and average-case noise estimation
+methods used in FHE [5,14] share a common assumption: treating the relevant
+post-convolution coefficients as independent. Several works provide empirical
+evidence consistent with this assumption in typical regimes [14,41], but these
+evaluations largely focus on matching the coarse shape of the probability mass
+function (PMF), rather than quantifying the statistical distance to the true
+distribution in the extreme tail. For CKKS, for example, the analysis of [7] re-
+ports that the mean and standard deviation of the noise deviate from theoretical
+2
+
+predictions by at most 0.01 bits; such moment-level agreement, however, does
+not rule out substantial discrepancies in rare-event probabilities. Indeed, [25]
+observed that independence-based models can induce heavy-tailedness in cer-
+tain settings and analyzed higher moments (e.g., kurtosis), revealing a non-
+negligible bias relative to independence-based estimates. Further, [15] demon-
+strated that convolution-induced dependencies can lead to underestimation of
+DFR in schemes that combine module-lattice noise with error-correcting codes,
+such as LAC [45]. That work quantified a gap between independence-based esti-
+mates and dependence-aware estimates for LAC. However, its analysis still relied
+on additional assumptions and did not capture dependency effects under fixed
+Hamming-weight distributions.
+1.1
+Our Contributions
+Several DFR analyses for module-lattice encryption rely on a coefficient-wise
+independence assumption for polynomial products, which can lead to systematic
+underestimation in the DFR. We study the dependencies induced by polynomial
+product and develop a norm-wise framework that both exploits and mitigates
+their impact. Our goal is to identify where these dependencies matter, exploit
+them to shape a better failure-based attack, and quantify how much trimming
+is required to suppress the resulting tail amplification in ECC-relevant settings.
+Our contributions are as follows.
+Identify: a norm-wise dependency model. We introduce a norm-wise per-
+spective that makes the dependency contribution explicit and distinguishes mod-
+ule lattices from the unstructured lattice setting in the tail regime. Using a new
+decomposition-based view, we separate the behavior explained by coefficient-wise
+models from the additional effect induced by polynomial convolution. This clar-
+ifies when and why independence-based estimators become inaccurate for DFR
+in schemes where failures are driven by many moderately large coefficients.
+Exploit: a dependency-guided failure-finding heuristic. On the attack
+side, our model explains why failure-based CCA attacks can still find useful can-
+didates even when the relevant Hamming weights are fixed, and it recovers prior
+pattern-based selection rules as a particularly structured example. It suggests
+a dependency-guided proxy selector for high-risk candidates. In our small-scale
+proxy experiment, this selector exhibits a stronger tail signal than the prior
+pattern proxy under the same search budget.
+Trim: a generic protection framework. On the design side, we propose
+a lightweight mitigation based on rejection sampling that filters highly depen-
+dent samples during key generation and encryption. We present a trimming-
+conditioned worst-case DFR bound with spectral control, while the sharper
+three-vector estimate is kept as a separate heuristic supplement. We formalize
+3
+
+this approach as two generic frameworks, TrimPKE and TrimKEM, prove their
+security in the QROM while accounting for rejection, and explicitly analyze the
+resulting concrete-security loss. We use the LAC and DAWN frameworks as case
+studies to illustrate the trade-offs between DFRs and efficiency.
+1.2
+Our Techniques
+Lattice-based encryption schemes may rely on different assumptions for key gen-
+eration (e.g., NTRU/LWE-type assumptions), but their encryption and decryp-
+tion procedures are uniformly governed by LWE or a structured variant (Ring-
+/Module-LWE, and likewise LWR variants). This common structure admits a
+generic decryption condition. Concretely, decryption recovers each message bit
+mi from a noisy value of the form ⟨ai, bi⟩+ q
+2mi, where ai, bi are (public/secret-
+derived) vectors and ⟨ai, bi⟩is the effective noise term. Let z ∈Rn denote the
+centered pre-decoding error polynomial, let ∆> 0 denote the per-coordinate
+decision threshold, and let
+N∆:= #{i ∈{0, . . . , n −1} : |z[i]| > ∆}
+count the threshold exceedances. For schemes without ECC, the failure event is
+∥z∥∞> ∆, which equals N∆= 0; with a hard-decision code correcting up to t
+coefficient errors, the failure event becomes N∆> t. Accordingly, bounding the
+DFR reduces to understanding the joint tail behavior of these inner products
+rather than only their one-coordinate marginal law.
+To obtain compact keys and ciphertexts and to enable fast arithmetic, many
+modern designs (e.g., Kyber [6], Saber [16], BAT [24], NEV [51], and DAWN [42])
+adopt Ring-/Module-LWE (or Ring-/Module-LWR). In these structured set-
+tings, vector entries are coefficient embeddings of ring elements. For a fixed
+component index k, the entries (ai)[k] and (aj)[k] are not independent draws:
+they are rotations of the same underlying polynomial in a quotient ring Z[x]/φ,
+satisfying (ai)[k] ≡xj−i · (aj)[k]. As a consequence, the family of inner products
+appearing across coordinates in decryption corresponds to different coefficients
+of the same polynomial products. This is the algebraic source of the dependen-
+cies that are absent in unstructured lattices, yet are often ignored by analyses
+that model coefficients as independent.
+Making the dependency contribution explicit. To isolate this effect, we view the
+centered decryption noise schematically as
+z =
+X
+i
+aibi +
+X
+j
+wj,
+where ai, bi, wj are ring elements sampled independently according to the scheme.
+The dependence of interest arises from the products aibi: their coefficient vec-
+tors are not well approximated by independent coordinates. We capture this
+phenomenon through a norm-wise comparison between polynomial products
+and their unstructured matrix analogues. Since most practical module-lattice
+4
+
+schemes use power-of-two cyclotomic rings, we focus on Z[x]/(xn + 1). For
+a, b ∈Z[x]/(xn + 1) and ¯a(x) = a(x−1), we use the following exact identity:
+∥ab∥2
+2 =
+∥a∥2
+2 ∥b∥2
+2
++
+2
+
+(a¯a)[1:n/2), (b¯b)[1:n/2)
+
+,
+where (a¯a)[1:n/2) denotes the vector of coefficients of a¯a from degrees 1 through
+n/2 −1. The key point is conceptual: coefficient-wise independence-based anal-
+yses effectively capture the first (solid-box) term, while missing the second
+(dashed-box) term is the dependency carrier induced by convolution. Even when
+the coefficients of a and b have mean zero so that the dashed-box term has expec-
+tation 0, it can contribute substantial tail mass to ∥ab∥2
+2, producing occasional
+large spikes that are invisible to moment-level checks. This explains the abnor-
+mal norm growth observed empirically and provides a structural interpretation
+of why rare decryption failures can be underestimated under the independence
+assumption in module-lattice settings. This helps account for severe underes-
+timation in settings where independence heuristics are applied (e.g., module-
+lattice-based encryption with ECC and average-case noise analyses in FHE).
+Better failures finding. The norm-wise perspective yields a concrete notion of
+“bad” randomness pairs for schemes whose decoding failures are driven by multi-
+ple coefficients above threshold. In particular, the previous analysis in [15] tracks
+only the outer behavior (captured by the solid-box term), which may fail to ex-
+plain attacks that remain effective under fixed Hamming-weight sampling, as
+in the LAC setting [29]. Under the identity above, the explanation is straight-
+forward: even when the outer contribution is essentially fixed, the dependency
+carrier can fluctuate significantly, thereby increasing the relevant tail risk. This
+viewpoint also clarifies why the patterns exploited in [29] are effective: they
+correlate with unusually large values of (a¯a)[1:n/2) (and thus a large dependency
+contribution). Consequently, instead of restricting to a specific pattern family, we
+can target the underlying cause and obtain a broader selection rule for high-risk
+candidates. Section 4 evaluates this claim with explicit proxy tail statistics; it is
+an exploitation experiment, not part of the certified DFR bound of Section 5.1.
+Mitigation via trimming. Finally, we use the same model to design a counter-
+measure that reduces dependency-induced tail amplification without changing
+the original parameter sets. The key observation is that the dependency car-
+rier is reflected in simple statistics of ∥(a¯a)[1:n/2)∥∞; thus, we can filter atypical
+high-dependency samples by rejection sampling. Section 5.1 first turns this idea
+into a certified worst-case DFR bound for accepted samples and then gives a
+separate heuristic supplement for finer-grained interpretation and experimental
+backup. This rejection sampling mechanism is lightweight, preserves the original
+scheme structure, and admits a clean security analysis: the only effect is an addi-
+tional rejection probability that must be accounted for in reductions and concrete
+bounds. In Section 5, we formalize trimming as generic frameworks (TrimPKE
+and TrimKEM), prove their security in the QROM while explicitly incorporat-
+ing rejection, and evaluate instantiations for LAC and DAWN, demonstrating
+practical efficiency-robustness trade-offs in Table 5.
+5
+
+2
+Preliminaries
+2.1
+Notations
+We use Rn to denote the cyclotomic ring Z[x]/(xn + 1), where n is a power of
+2, and we write Rn,q := Rn/qRn. We use Zq to represent the centered residue
+set {−q−1
+2 , . . . , 0, . . . , q−1
+2 }, where q is an odd prime. We denote by regular font
+letters (e.g. a, b) the elements of Rn, by bold lower-case letters (e.g. a, b) vectors
+over Z or Rn, and by bold upper-case letters (e.g. A, B) matrices whose entries
+lie in Rn. For a polynomial a, we denote the coefficient of xi by a[i], and we use
+¯a to represent the conjugate polynomial ¯a(x) = a(x−1). Additionally, we denote
+the vector formed by the coefficients (a[i], a[i+1], . . . , a[j−1]) as a[i:j) ∈Zj−i. We
+write ∥a∥2 := ∥a[0:n)∥2. We refer to the squared ℓ2-norm ∥a∥2
+2 as the outer
+distortion, and to ∥(a¯a)[1:n/2)∥∞as the inner distortion. For r ∈{0, . . . , n −1},
+let ωr := exp
+  (2r+1)πi
+n
+
+denote the negacyclic evaluation points. We use the
+function Sample(X) to denote sampling from the distribution X. We use the
+notation X n for the distribution of polynomials in Rn whose coefficients are
+drawn from X, and U(V) for the uniform distribution on the set V.
+2.2
+Lattice-based Encryption
+For simplicity, we adopt a generic encryption framework based on Module-LWE
+(e.g., Kyber [6]) as a case study, without focusing on implementation details,
+as shown in Figure 1. Similarly, we consider a generic NTRU-based framework
+(e.g., NTRU-HPS [30]) at a comparable level of abstraction in Figure 2.
+Fig. 1: Module-LWE-based Encryption
+KeyGen
+1 :
+A ←Sample(U(Rn,q)l×k)
+2 :
+s ←Sample((X n
+s )k)
+3 :
+e ←Sample((X n
+e )l)
+4 :
+b ←sA⊺+ e
+(mod q)
+5 :
+pk ←(A, b)
+6 :
+sk ←s
+7 :
+return
+(pk, sk)
+Encrypt(pk = (A, b), m)
+1 :
+r ←Sample((X n
+r )l)
+2 :
+e1 ←Sample((X n
+e1)k)
+3 :
+e2 ←Sample(X n
+e2)
+4 :
+c1 ←rA + e1
+(mod q)
+5 :
+c2 ←rb⊺+ e2 + ⌊q
+2⌉· m
+(mod q)
+6 :
+return
+(c1, c2)
+Decrypt(c1, c2, sk = s)
+1 :
+m ←⌊2
+q · (c2 −c1s⊺mod q)⌉
+(mod 2)
+2 :
+return
+m
+6
+
+Fig. 2: NTRU-based Encryption
+KeyGen
+1 :
+f ′ ←Sample(X n
+f )
+2 :
+g ←Sample(X n
+g )
+3 :
+f ←p · f ′ + 1
+4 :
+if f is not invertible on Rn/qRn
+go back to step 1
+5 :
+h ←gf −1
+(mod q)
+6 :
+pk ←h
+7 :
+sk ←f
+8 :
+return
+(pk, sk)
+Encrypt(pk = h, m)
+1 :
+t ←Sample(X n
+t )
+2 :
+c ←p · ht + m
+(mod q)
+3 :
+return
+c
+Decrypt(c, sk = f)
+1 :
+c′ ←cf
+(mod q)
+2 :
+m ←c′
+(mod p)
+3 :
+return
+m
+2.3
+Hard-Decision Error-Correcting Code
+Let z ∈Rn denote the centered decryption-error polynomial before the final
+decision rule is applied, and let ∆> 0 be the per-coordinate decoding threshold.
+A coordinate error occurs at index i when |z[i]| > ∆. For schemes without an
+outer ECC layer, decryption therefore fails exactly when
+∥z∥∞> ∆.
+For schemes with a hard-decision code that corrects up to t coefficient errors, we
+define
+N∆:= #{i ∈{0, . . . , n −1} : |z[i]| > ∆},
+so the ECC failure event is {N∆> t}.
+In the Module-LWE framework of Figure 1, the centered decryption error is
+z := reT −e1sT + e2,
+and the standard rounding decoder corresponds to ∆= ⌊q/4⌉after centering.
+The same notation will be used throughout the paper: z is always the centered
+pre-decoding error polynomial, ∆is always the per-coordinate threshold, and
+N∆is always the number of threshold exceedances.
+3
+Identify the Dependencies in Polynomial Convolution
+"The closer you look, the less you see."
+— Now You See Me
+In this section, we review existing methods for estimating decryption failure rates
+(DFR) in module-lattice-based encryption schemes that rely on the independence
+7
+
+assumption and highlight their limitation. We then develop the exact norm-
+wise identities that isolate the relevant dependency terms, explain why inner-
+distortion statistics are natural trimming proxies, and use centered rejection-
+sampling experiments to illustrate how trimming suppresses the associated tail
+amplification.
+3.1
+Inaccuracy of Independence Assumption
+We first review the standard independence-based DFR estimate and identify the
+point at which it ceases to describe the true joint law. We use the generic Module-
+LWE framework of Figure 1, with ring Rn. During decryption, one computes
+c2 −c1sT ≡reT −e1sT + e2 +
+jq
+2
+m
+· m
+(mod q)
+(1)
+Let
+z ≜reT −e1sT + e2
+be the resulting centered error polynomial. Without an outer ECC layer, the
+failure event is ∥z∥∞> ∆with ∆= ⌊q/4⌉; with a t-error-correcting hard-
+decision code, the failure event is N∆> t as defined in Section 2.3.
+The standard estimation method begins by computing the marginal distri-
+bution Xz of a single coefficient of z. The distribution of e2 is straightforward, as
+its coefficients are independent by design. In contrast, the convolution terms reT
+and e1sT are more involved. In the no-ECC setting, the conventional estimate
+is the union bound
+DFR = Pr[∥z∥∞> ∆] ≤
+n−1
+X
+i=0
+Pr
+
+|z[i]| > ∆
+
+= n ·
+Pr
+x←Xz[|x| > ∆] .
+(2)
+This bound matches the no-ECC decision rule but does not describe schemes
+with ECC, where several moderately large coefficients can jointly trigger failure.
+The standard workaround is to replace the joint law of the indicators N∆by an
+i.i.d. Bernoulli model with parameter p∆:= Prx←Xz[|x| > ∆]. For example, if
+the ECC corrects up to t coefficient errors, the resulting binomial model becomes
+DFR = 1 −
+t
+X
+i=0
+n
+i
+ 
+Pr
+x←Xz [|x| > ∆]
+i 
+1 −
+Pr
+x←Xz [|x| > ∆]
+n−i
+,
+(3)
+where t is the maximum number of errors the ECC used can correct. This
+expression is an independence-based approximation, not a theorem about the
+true DFR. In practice, the marginal law Xz is often computed numerically
+(e.g., via scripts 1 used in Kyber [6]). The main limitation is therefore not the
+one-coordinate marginal, but the replacement of the joint law by independent
+Bernoulli trials. While the central limit theorem provides asymptotic guidance
+1 https://github.com/pq-crystals/security-estimates/blob/master/Kyber_
+failure.py
+8
+
+under independence as n →∞, the target DFRs are typically exponentially
+small (e.g., below 2−128). In this regime, even weak dependence can materially
+change the tail probability of N∆.
+To illustrate the effect of structural dependencies, let a, b ∈Rn. Although
+the pairwise covariance of distinct coefficients in the product ab can vanish on
+average for centered samplers [41], this does not imply that the joint tail behaves
+as if the coefficients were independent. We therefore study the squared ℓ2-norm
+as a structural diagnostic: it aggregates many moderately large coefficients and
+reacts to the same kind of coefficient clustering that later enters the ECC event
+N∆> t, even though it is not itself the failure criterion. Specifically, we sampled
+232 polynomial pairs (a, b) ∈R256×R256 with coefficients drawn from U(Z3), and
+compared the squared ℓ2-norms of their products against those from 232 matrix-
+vector products (A, b) ∈Z256×256 × Z256×1, where all entries are independently
+sampled from U(Z3). The comparison is performed over integer products before
+reduction modulo q, so the plot isolates convolution-induced dependence rather
+than wrap-around effects.
+Fig. 3: Empirical distributions of ∥ab∥2
+2 for integer negacyclic products (red) and
+∥Ab∥2
+2 for an i.i.d. matrix baseline (blue).
+Figure 3 highlights a clear discrepancy: polynomial products inherit hidden
+coefficient-wise dependencies corresponding to the module lattice, while the ma-
+trix case represents a genuine i.i.d. baseline corresponding to the unstructured
+lattice. The x-axis shows the squared ℓ2-norm, and the y-axis shows the frequency
+of observing that value. The red markers plot the empirical distribution of ∥ab∥2
+2,
+while the blue markers represent ∥Ab∥2
+2. Thus, the blue curve corresponds to the
+independence-based prediction commonly assumed in existing analyses, whereas
+the red curve captures the actual behavior of polynomial products. Notably, the
+distribution of ∥ab∥2
+2 exhibits a substantially heavier right tail, meaning that
+9
+
+large-norm events occur far more frequently than the i.i.d. model predicts. This
+mismatch shows that matching one-coordinate marginals does not control the
+joint tail relevant to DFR.
+3.2
+Norm-wise Model
+We now record the exact algebraic identities behind the norm-wise model. The
+main point is that the contribution missed by the coefficient-wise approximation
+is not a vague geometric effect, but a concrete cross term built from negacyclic
+autocorrelations.
+Lemma 1 (Norm identity). For every a ∈Rn,
+∥a∥2
+2 = (a¯a)[0].
+(4)
+Proof. Since a¯a = P
+u,v a[u]a[v]xu−v, then we have (a¯a)[0] = Pn−1
+u=0 a2
+[u] = ∥a∥2
+2.
+Lemma 2 (Norm decomposition). For every a, b ∈Rn,
+∥ab∥2
+2 = (ab¯a¯b)[0] =
+∥a∥2
+2 ∥b∥2
+2
++
+2
+
+(a¯a)[1:n/2), (b¯b)[1:n/2)
+
+.
+(5)
+Proof. By Lemma 1,
+∥ab∥2
+2 = ((ab)(ab))[0] = ((a¯a)(b¯b))[0].
+Because a¯a = a¯a, the coefficients of a¯a satisfy (a¯a)[n−k] = −(a¯a)[k] for 1 ≤k < n
+and (a¯a)[n/2] = 0; hence
+a¯a = (a¯a)[0] +
+n/2−1
+X
+k=1
+(a¯a)[k](xk −xn−k),
+and analogously for b¯b. Extracting the coefficient of x0 in the product gives
+((a¯a)(b¯b))[0] = (a¯a)[0](b¯b)[0] + 2
+n/2−1
+X
+k=1
+(a¯a)[k](b¯b)[k],
+which is exactly (5).
+Lemma 3 (Coefficient inner-product identity). For every a, b ∈Rn and
+every i ∈{0, . . . , n −1},
+(ab)[i] =
+
+a[0:n), (xi · ¯b)[0:n)
+
+.
+(6)
+Consequently, for any i, j,
+
+(xi · ¯b)[0:n), (xj · ¯b)[0:n)
+
+= (b¯b)[j−i].
+(7)
+10
+
+Proof. The coefficient (ab)[i] is the negacyclic convolution sum Pn−1
+u=0 a[u](xi¯b)[u],
+which is exactly the inner product in (6). Applying the same identity to the pair
+(xi¯b, xj¯b) yields (7).
+Equation (5) separates the diagonal energy term ∥a∥2
+2∥b∥2
+2 from the signed
+cross term ⟨(a¯a)[1:n/2), (b¯b)[1:n/2)⟩. When the distributions of the coefficients of
+a and b are both centered at 0, the expectation of the covariance is 0, as shown
+in [41], meaning the expectation of
+
+(a¯a)[1:n/2), (b¯b)[1:n/2)
+
+is zero. However, the
+fluctuations in covariance still lead to heavy-tailed behavior in ∥ab∥2
+2, thickening
+the tail of the distribution and thereby increasing the DFR for schemes that
+rely on the independence assumption. When asymmetric error distributions are
+used, the dashed-box term can contribute much larger values, exacerbating tail
+amplification. Equation (6) also explains why inner distortion governs joint tail
+events. If the same vector a[0:n) has unusually large inner products with two
+shifted copies of ¯b, then those shifts must overlap substantially, and Equation (7)
+shows that their overlap is measured exactly by (b¯b)[j−i]. This is the algebraic
+mechanism by which large off-zero autocorrelations make several coefficients of
+ab large simultaneously.
+Remark 1. For the tri-cyclotomic ring defined by Z[x]/(xn −xn/2 + 1), with
+n = 2i3j, as used in certain NTRU-based schemes [46,37,40], Lemmas 1 and 2
+do not hold in this form. Extending the norm-wise model to that setting requires
+additional analysis, along with the related analysis in [32].
+Heuristic 1 (Asymptotic threshold-selection guide) To calibrate exploratory
+trim thresholds, assume that the coefficients of a are modeled by an i.i.d. cen-
+tered Gaussian surrogate with variance σ2, and further approximate the nonzero
+coefficients of a¯a by independent centered Gaussians with variance nσ4. Under
+this surrogate,
+µouter := σ2n, µinner := σ2√n
+
+
+r
+2 log
+n
+2 −1
+
+−log log
+  n
+2 −1
+
++ log π
+2
+q
+2 log
+  n
+2 −1
+
+
+
+σouter := σ2√
+2n, σinner :=
+π σ2√n
+q
+12 log
+  n
+2 −1
+
+(8)
+serve as heuristic location and scale parameters for the outer statistic ∥a∥2
+2 and
+the inner score ∥(a¯a)[1:n/2)∥∞. We use them only for threshold selection in the
+exploratory experiments below; the certified DFR analysis of Section 5.1 does not
+rely on this surrogate model.
+Motivated by Heuristic 1, we use the centered trimming predicate
+(∥a∥2
+2 −µouter
+ > ωouter · σouter,
+∥(a¯a)[1:n/2)∥∞−µinner
+ > ωinner · σinner,
+(9)
+11
+
+and reject any sample a (resp. b) that violates it. A centered rule is preferable
+here to one-sided trimming because it perturbs the outer-energy distribution
+less severely; in fixed-weight samplers such as LAC, the outer term is already
+nearly fixed, and later sections therefore trim only the inner statistic. To isolate
+the convolution effect, Figure 4 uses ωouter = +∞together with ωinner ∈{1, 2}.
+As trimming becomes stricter, the polynomial-product distribution moves closer
+to the unstructured baseline, confirming that the excess tail mass comes from
+convolution-induced dependence.
+Fig. 4: Empirical effect of centered inner-distortion trimming on ∥ab∥2
+2. Tighten-
+ing the trim parameter removes the strongest dependency outliers and contracts
+the polynomial-product tail toward the i.i.d. matrix baseline.
+4
+Exploit Dependencies in CCA Attacks of
+Module-lattice-based Encryptions with ECC
+This norm-wise perspective also yields an attack-side heuristic for cryptanalysis.
+A key step in CCA attacks leveraging high DFR is to craft “bad” ciphertexts
+whose failure probability is substantially above average. In the LAC setting, the
+attacker searches over candidate fixed-weight randomness polynomials drawn
+from the same sampler as the scheme and looks for instances whose depen-
+dency score predicts elevated tail behavior. Prior work describes this search us-
+ing message-derived patterns because those patterns induce particular instances
+of randomness [29]; our point here is more generic: the relevant predictor is the
+resulting polynomial dependency profile, rather than a specific syntactic pat-
+tern family. The effectiveness of patterns in [29] is therefore explained by the
+large inner distortion they induce. Our norm-wise model makes this dependency
+12
+
+explicit and suggests a dependency-guided proxy selector rather than a fixed-
+pattern heuristic.
+In LAC encryption, the distributions Xr and Xe1 are fixed Hamming weight
+distributions, which effectively fix the outer distortion. From the norm-wise per-
+spective, the relevant selector is therefore the inner-distortion score ∥(a¯a)[1:n/2)∥∞
+from Section 3.2. The adversarial strategy of [29] focuses on polynomials with
+an interval that contains only 1 or −1 and the rest are 0s, which was called the
+TYPE 2 pattern, and the TYPE 1 pattern is a special case with no 0 in the
+interval. While such patterns do indeed yield large inner distortion, our model
+shows that they are merely a special case within a larger class of exploitable
+ciphertexts; any polynomial whose coefficients exhibit the large inner distortion
+tends to produce a heavier upper tail in the resulting product distribution.
+To demonstrate that these patterns actually possess the property of high
+distortion empirically, we conducted a simple experiment in R512, using the
+LAC NIST-I sampler: 128 coefficients equal to +1, 128 equal to −1, and the
+remainder equal to 0. We first sampled a baseline pool of 216 random polynomials
+a from this distribution, a pool of 216 random polynomials b1 from the TYPE
+1 distribution with 37 consecutive 1’s, and a pool of 216 random polynomials b2
+from the TYPE 2 distribution with an interval that contains 60 1’s (no need to
+be consecutive) and 42 0s. We note that the probabilities of the appearance of
+these two patterns are approximate, 2−65.41 versus 2−65.35, calculated from the
+equation in Section 3.1 in [29]. We then calculate the infinity norm and ℓ2 norm
+of (a¯a)[1:n/2) for each pool, and draw the figures as follows.
+(a) comparison of ℓ-2 norm
+(b) comparison of infinity norm
+Fig. 5: Comparison of inner distortion
+We can see that TYPE 2 has larger norms than TYPE 1 than the uniformly
+sampled one. As noted in [29], TYPE 2 performs better than TYPE 1 at the
+same probability; this figure directly supports this. The inner distortion serves
+as a metric to evaluate the quality of the pattern, which implies that we could
+use this metric to find more patterns with more effects on decryption failure.
+13
+
+Moreover, to illustrate the benefits of the inner distortion metric check rather
+than the specific pattern check. We conduct another simple experiment in R512,
+still using the LAC NIST-I sampler. We first fix 100 random polynomials a from
+the distribution with fixed hamming weight 256 as the secret keys, and then scan
+an additional 218 candidates under each of the two selection criteria below:
+– Inner-distortion selector: retain polynomials b ∈R512 satisfying
+(b¯b)[1:n/2)
+
+∞≥40.
+– Single-signal interval selector (TYPE 2): retain polynomials c ∈R512 con-
+taining an interval with at least 11 positive entries or 11 negative entries,
+and the rest are at most 19 zeros.
+By following the notations in Section 2.3, we calculate N∆with the threshold
+∆= 40 for each polynomial product ab and ac and treat N∆≥3 as the ECC
+failure event. These are empirical tail probes chosen to yield measurable variation
+within feasible Monte Carlo budgets; they are not the LAC decoding rule.
+The cutoffs 40 and (11, 19) are empirical rare-event selectors chosen only for
+this comparison. After the same search budget of 218 trials, we obtained about
+220.78 valid samples of the inner-distortion selector and about 220.45 valid samples
+of the continuous-run selector. Summing the proxy statistic N∆over the retained
+samples gives 64 exceedances for the ab family (inner-distortion selector) and 43
+for the ac family (continuous-run selector). Thus, under the same search budget,
+the inner-distortion selector produces 18% more ECC failure probability. We
+view this as evidence that the norm-wise score is a useful failure-finding heuristic.
+We also use the same fixed-weight sampler to test the trimming rule from
+the defensive direction. Specifically, we retain only those randomness pairs (a, b)
+satisfying ∥(a¯a)[1:n/2)∥∞≤30 and ∥(b¯b)[1:n/2)∥∞≤30. In this experiment, the
+cluster proxy P C40,5(ab) drops from 24 to 1 after trimming. This is again a
+proxy statistic rather than the full ECC failure probability: the cutoff 40 and the
+five-coordinate cluster rule are used only to compare tail concentration under
+matched methodology. The experiment, therefore, supports a narrower claim
+than a DFR estimate: namely, that trimming suppresses the high-dependency
+samples that dominate this attack-oriented proxy.
+5
+Trim on Module Lattice Encryptions and
+Encapsulations
+Given the weaknesses introduced by dependencies, in this section we present a
+generic, lightweight safeguard procedure for module-lattice-based public key en-
+cryption (PKE) and key encapsulation mechanisms (KEM). The central idea is
+to reject polynomials whose dependence statistics would otherwise lead to more
+severe tail behavior. Outer-distortion screening is already familiar in lattice cryp-
+tography, for example, in Falcon key generation [23] and BAT-style rejection [24],
+where public predicates filter large-norm outliers. We separate that familiar outer
+14
+
+screening from the dependencies statistics identified. We bridge the dependency
+to DFR via the canonical embedding, and then introduce a rigorous upper bound
+of DFR based on the bounded spectrum and a heuristic but tight upper bound
+of DFR based on the bounded inner distortion. Furthermore, given a module-
+lattice-based PKE scheme with algorithms KeyGen, Encrypt, and Decrypt, we first
+introduce the generic protection framework TrimPKE, then analyze its impact on
+concrete security, and finally describe techniques for efficient implementation. By
+applying the Fujisaki-Okamoto transform to TrimPKE, we obtain the correspond-
+ing TrimKEM. The full security proofs of TrimPKE and TrimKEM are provided
+in Section 6. The framework keeps the arithmetic parameters unchanged, but
+it introduces explicit rejection rates, runtime overhead, and support-loss terms
+that must be accounted for in the concrete security analysis. We instantiate it
+in LAC [45] and DAWN [42] as case studies.
+5.1
+From Dependency to DFR
+In order to transfer the quantifiable dependency to the analysis of DFR, we show
+the viewpoint of inner distortion after canonical embedding.
+Lemma 4 (Canonical embedding identity). For every a ∈Rn and every
+k ∈{0, . . . , n −1},
+(a¯a)[k] = 1
+n
+n−1
+X
+r=0
+|a(ωr)|2ω−k
+r .
+(10)
+Proof. The negacyclic Fourier transform diagonalizes multiplication in Rn, so
+(a¯a)(ωr) = a(ωr)a(ωr) = |a(ωr)|2. Equation (10) is the inverse Fourier expansion
+of this power spectrum.
+The vector (a¯a)[1:n/2) can be read as the collection of off-zero negacyclic auto-
+correlations, as the nonconstant Fourier modes of the power spectrum |a(ωr)|2,
+as the overlap profile between shifted copies of ¯a, and as the trimming score
+used later in the paper. Equation (10) shows that the nonzero coefficients of a¯a
+are exactly the nonconstant Fourier modes of the power spectrum r 7→|a(ωr)|2.
+Thus, a large inner distortion means that the spectral energy of a is anisotropic
+across the negacyclic embedding coordinates.
+5.1.1
+Rigorous bound from conditional covariance control We then
+propose a dependency-aware DFR analysis for module-lattice-based schemes
+with hard-decision ECC. By following the notations in Section 2.3, we use the
+exact decryption-noise model
+z =
+m
+X
+u=1
+aubu + η,
+where A := (a1, . . . , am) collects the left factors whose trim statistics are con-
+trolled, the polynomials bu have independent centered coefficients with coefficient
+15
+
+variances σ2
+u, and η is an independent centered additive term with coefficient
+variance σ2
+η. For the generic module lattice-based encryption, one may take
+z =
+l
+X
+j=1
+rjej −
+k
+X
+j=1
+e1,jsj + e2
+(11)
+and condition on A = (r1, . . . , rl, −e1,1, . . . , −e1,k) by isolating the multiplicative
+term (e.g. x −1 in NTRU-HRSS [34]) and absorbing the compression/rounding
+contribution into η. In particular, the variables z, ∆, t, and N∆are fixed before
+any dependence proxy is introduced. This coefficient-i.i.d. setting is the abstract
+regime in which the theorem below is stated. When a concrete sampler matches
+these hypotheses, the resulting bound is certified.
+Let ωr := exp
+  (2r+1)πi
+n
+
+be the negacyclic evaluation points and let Fn denote
+the corresponding unitary Fourier matrix. Conditioned on A, each map bu 7→
+aubu is diagonalized by Fn, and since the coefficients of bu are independent,
+centered, and have covariance σ2
+u, the conditional covariance of z takes the form
+Cov(z | A) = F ∗
+n diag(λ0(A), . . . , λn−1(A))Fn,
+λr(A) = σ2
+η+
+m
+X
+u=1
+σ2
+u|au(ωr)|2.
+For sampler classes whose right factors have independent centered coefficients,
+this template applies directly. For LAC, one can still use Equation (11), but
+because the fixed-Hamming-weight factors are not coefficient-wise independent,
+the latter LAC case-study rows are reported only as conditional/empirical diag-
+nostics rather than as direct certified corollaries of the theorem below.
+Based on the link with inner distortion and canonical embedding from 10,
+we define
+Λ(A) := max
+0≤r<n λr(A),
+Λtrim :=
+sup
+A∈Atrim
+Λ(A),
+where Atrim is the set of accepted left-factor tuples.
+Lemma 5 (Trim-to-spectrum control). For every a ∈Rn,
+max
+0≤r<n |a(ωr)|2 ≤(a¯a)[0] + 2
+n/2−1
+X
+k=1
+(a¯a)[k]
+.
+Consequently, if an accepted sample satisfies ∥(a¯a)[1:n/2)∥∞≤Binner, then
+max
+0≤r<n |a(ωr)|2 ≤∥a∥2
+2 + (n −2)Binner.
+Proof. By Lemma 4,
+|a(ωr)|2 =
+n−1
+X
+k=0
+(a¯a)[k]ωk
+r .
+16
+
+Taking absolute values and using |ωr| = 1 gives
+|a(ωr)|2 ≤(a¯a)[0] +
+n−1
+X
+k=1
+(a¯a)[k]
+.
+Because (a¯a)[n−k] = −(a¯a)[k] for 1 ≤k < n/2 and (a¯a)[n/2] = 0, the nonzero
+terms occur in pairs of equal magnitude, so
+n−1
+X
+k=1
+(a¯a)[k]
+ = 2
+n/2−1
+X
+k=1
+(a¯a)[k]
+.
+This proves the first claim, and the second follows from (a¯a)[0] = ∥a∥2
+2 together
+with the bound
+(a¯a)[k]
+ ≤Binner for 1 ≤k < n/2.
+Thus trimming ∥(au¯au)[1:n/2)∥∞suppresses the nonconstant Fourier modes
+of the power spectrum r 7→|au(ωr)|2 and yields an explicit spectral envelope.
+For example, if each accepted au additionally satisfies ∥(au¯au)[1:n/2)∥∞≤Bu
+and ∥au∥2
+2 ≤Eu, then
+Λ(A) ≤σ2
+η +
+m
+X
+
+[…middle truncated for length…]
+
+thout rejection sampling and serves as the baseline. Im-
+portantly, every trimmed row in this table should be read as a case-study model
+value associated with the named predicate, not as a theorem-backed sampler-
+level guarantee. Table 5 is an implementation snapshot rather than a formal
+benchmark artifact; none of the theorem-backed claims of Sections 3–5.1 depend
+on these concrete rows.
+We report runtime costs as tuples in kcycles. For example, (27, 46, 62) denotes
+the kcycle costs of key generation, encapsulation, and decapsulation for TrimLAC
+at NIST level I with no trimming. We also report the trim bounds Binner as tuples
+across security levels. For example, (36, 36, 40) denotes the values of Binner used
+at NIST-I, III, and V, respectively.
+To quantify the residual tail risk after trimming dependency outliers, we
+separate two quantities. For trimmed settings, we report the instantiated inner-
+distortion-control metric DFRdep,heur from Equation (16). Operationally, each
+trimmed row is produced in two stages: we first obtain a numerical estimate of
+the relevant inner-distortion-control input from accepted-sample statistics under
+the named scheme and predicate, and we then plug that input into Equation (13).
+In Table 5, these are model values attached to the chosen predicates rather than
+certified sampler-level guarantees. In the baseline setting ω = ∞(equivalently,
+Binner = ∞), finite data do not certify the full worst-case quantity, so we instead
+report a truncated empirical proxy g
+Taildep obtained from dependency events
+whose empirical probability is at least 2−16. This restriction is conservative in
+the following sense: an adversary may invest additional offline effort to search
+for rarer ciphertexts with stronger dependencies, in which case trimming can
+provide an even larger improvement against worst-case ciphertext selection than
+what this baseline proxy captures. The baseline rows and the trimmed rows
+therefore answer different questions and should not be read as one numerically
+comparable estimator family.
+In TrimDAWN, the instantiated inner-distortion-control quantity drops from
+the high-2−100 range to below 2−133 (resp. 2−155), with an overhead of approxi-
+29
+
+mately 31%–37%. In TrimLAC, the corresponding metric drops below 2−109 at an
+overhead of about 85%, whereas pushing it below 2−121 incurs prohibitive cost
+(up to 1982% in our evaluation). The untrimmed LAC baseline remains only
+a low-2−30 truncated proxy, not a worst-case statement; the NIST-V baseline
+entry reaches the truncation floor and therefore appears as 0 in Table 5. This
+disparity reflects the underlying decoding regimes: LAC is designed to correct
+many errors (roughly 8–20), while DAWN corrects only a single error. Conse-
+quently, the probability of observing a single above-threshold coefficient is much
+larger in LAC (above 2−20) than in DAWN (below 2−70), giving dependency
+amplification substantially more opportunities to affect the decoding outcome.
+Finally, in the Module-LWE setting, the decryption noise often aggregates multi-
+ple (approximately) independent polynomial products, which further attenuates
+convolution-induced correlations and can make trimming more effective in prac-
+tice.
+Table 5: Performance, baseline dependency-tail proxies, and instantiated inner-
+distortion-control metrics for TrimLAC and TrimDAWN. Baseline rows report
+truncated empirical proxies. All trimmed rows report case-study model values
+obtained from Equation (13); none should be read as a theorem-backed sampler-
+level guarantee.
+Trim
+Binner
+TrimLAC
+Trim
+ω
+TrimDAWN
+NIST-I
+NIST-III
+NIST-V
+NIST-I
+NIST-V
++∞
+Cost
+(27, 46, 61)
+(41, 69, 99)
+(58, 105, 186)
++∞(23, 20, 20)
+(46, 36, 38)
+log2
+
+g
+Taildep
+
+-32
+-169
+0
+-98
+-145
+(36, 32, 40)
+Cost
+(34, 57, 75)
+(54, 78, 115)
+(79, 136, 225)
+5
+(25, 26, 27)
+(54, 50, 61)
+log2 (DFRdep,heur)
+-97
+-235
+-149
+-126
+-155
+(32, 28, 36)
+Cost
+(48, 91, 109)
+(58, 83, 121)
+(116, 229, 325)
+2
+(26, 28, 29)
+(59, 55, 64)
+log2 (DFRdep,heur)
+-109
+-258
+-191
+-133
+-160
+(28, 24, 32)
+Cost
+(185, 1295, 1311) (85, 160, 192) (547, 6121, 6131)
+1
+(30, 52, 45) (79, 111, 104)
+log2 (DFRdep,heur)
+-121
+-282
+-235
+-133
+-162
+6
+Security Proofs of TrimPKE and TrimKEM
+In this section, based on the security of the public-key encryption scheme PKE,
+we prove the QROM security of the previously defined TrimPKE and TrimKEM.
+We use TA to denote the time cost of the algorithm A.
+6.1
+IND-CPA Security Proof of TrimPKE in the QROM
+Theorem 2. Let A be an IND-CPA adversary against TrimPKE, making qE
+quantum queries to the random oracle E. Then we can construct an IND-CPA
+adversary B against PKE such that TB ≈TA and
+AdvIND-CPA
+TrimPKE,A ≤4st · AdvIND-CPA
+PKE,B
++ 2s · (renc)t + (rkey)s +
+2qE
+p
+|R|
+30
+
+holds for any positive integers s and t. Here rkey and renc are defined in Eq.
+(17), and R is the randomness space of PKE.
+Before giving the proof, we first point out that the upper bound given by
+this theorem holds for all positive integers s and t; thus, our bound remains
+reasonable as long as both renc and rkey are relatively small. One may wonder
+why the bound here holds for all positive integers s and t. Taking s as an example,
+intuitively, our proof idea is as follows: first, we set the upper bound on the
+number of rejection sampling of the key generation algorithm to s; then, we
+uniformly select a (pk, sk) pair from at most s such pairs, and guess that this
+pair is the one used for the challenge ciphertext. It can be observed that this
+process is independent of the specific value of s, and it only needs s to be a
+positive integer. In fact, the larger s is, the lower (rkey)s becomes; however, the
+success probability of the random guess we make also decreases, i.e., the value
+of "4st · AdvIND-CPA
+PKE,B " increases. Thus, the values of s and t can be appropriately
+chosen based on the magnitudes of rkey and renc.
+Proof. We introduce a sequence of games G0 to G11 as shown in Figure 11
+and Figure 12 to prove this theorem, and the game G0 is the IND-CPA game of
+TrimPKE. Hence we have
+AdvIND-CPA
+TrimPKE,A = Pr [1 ←G0] .
+(19)
+Game G1: This game is the same as game G0, except that the encryption
+algorithm TrimEnc is replaced by TrimEnc1. Compared with the TrimEnc defined
+in Figure 7, TrimEnc1 uniformly samples r to encrypt m and no longer derive it
+by querying E.
+As shown in Figure 7, when deriving the randomness r, the TrimEnc intro-
+duces a counter k and imposes that all the input to E end with r0. Therefore, if
+A has never queried E with inputs of the form ∗||r0, the randomness derived by
+E in TrimEnc is uniformly random in A’s view, and thus TrimEnc is equivalent to
+TrimEnc1. At this point, since A queries E at most qE times and r0 is uniformly
+sampled from R, by the One-Way to Hiding theorem [2] we have
+|Pr [1 ←G0] −Pr [1 ←G1]| ≤
+2qE
+p
+|R|
+.
+(20)
+Game G2: This game is the same as game G1, except that the key generation
+algorithm is replaced by TrimGen1. Compared with the TrimGen defined in Fig-
+ure 7, TrimGen1 sets the repetition upper bound of the while loop as a positive
+integer s, i.e., if the (pk, sk) generated by the s-th repetition of KeyGen still
+results in Rejectkey(pk, sk) = 0, game G2 aborts and outputs 0.
+Obviously, as long as the event that all the instances of (pk, sk) generated by
+repeating KeyGen s times result in Rejectkey(pk, sk) = 0 does not occur, game
+G1 and G2 are identical. Hence, by using the fundamental lemma [50] and the
+definition of rkey given in Eq. (17), we have
+|Pr [1 ←G1] −Pr [1 ←G2]| ≤(rkey)s.
+(21)
+31
+
+GAMES G0-G6
+1 : (pk, sk) ←KeyGen
+//G0-G1
+(pk, sk) ←TrimGeni−1 //G2≤i≤5
+(pk, sk) ←KeyGen
+//G6
+2 : (m∗
+0, m∗
+1) ←AE(pk)
+//G0-G5
+(m∗
+0, m∗
+1) ←A1(pk)
+//G6
+3 : b ←$ {0, 1}
+//G0-G6
+c∗←TrimEnc(pk, m∗
+b)
+//G0
+c∗←TrimEnc1(pk, m∗
+b) //G1-G6
+4 : b′ ←AE(pk, c∗)
+//G0-G5
+b′ ←A1(pk, c∗)
+//G6
+5 : return [[b = b′]]
+//G0-G6
+TrimEnc1(pk, m)
+1 : r ←$ R, c ←Encrypt(pk, m, r)
+2 : while Rejectenc(pk, m, r, c) = 0
+r ←$ R
+c ←Encrypt(pk, m, r)
+end while
+3 : return c
+TrimGen1
+1 : (pk, sk) ←KeyGen, n = 1
+2 : while Rejectkey(pk, sk) = 0
+∧n < s
+n = n + 1
+(pk, sk) ←KeyGen
+end while
+3 : if Rejectkey(pk, sk) = 0, abort
+game return 0
+else return (pk, sk)
+TrimGen3
+1 : for k from 1 to s
+(pkk, skk) ←KeyGen
+end for
+2 : if Bad occurs, abort
+game return 0
+else
+l ←$ [s]
+return (pkl, skl)
+TrimGen2
+1 : for k from 1 to s
+(pkk, skk) ←KeyGen
+end for
+2 : if Bad occurs, abort
+game return 0
+else return (pki, ski)
+TrimGen4
+1 : c ←$ {0, 1}
+2 : for k from 1 to s
+(pkk, skk) ←KeyGen
+end for
+3 : if c = 0, abort
+game return 0
+else
+l ←$ [s]
+return (pkl, skl)
+Fig. 11: Games G0 to G6 in the proof of Theorem 2.
+Game G3: In this game, the TrimGen1 is replaced by TrimGen2, which has the
+following two differences from TrimGen1:
+1. TrimGen2 no longer executes a while loop, but instead executes a for loop to
+generate (pk1, sk1), . . . , (pks, sks).
+2. Let Bad be the event that (pk1, sk1), . . . , (pks, sks) satisfy Rejectkey(pk1, sk1) =
+. . . = Rejectkey(pks, sks) = 0. Then, if Bad occurs, game G3 aborts and out-
+puts 0. Otherwise, there must exist 1 ≤i ≤s s.t. Rejectkey(pki, ski) = 1
+and Rejectkey(pkj, skj) = 0 for any j < i, and then TrimGen2 outputs this
+(pki, ski).
+It is obvious that TrimGen2 and TrimGen1 are equivalent, as TrimGen2 merely
+generates all the instances of (pk, sk), which are generated sequentially via a
+while loop in TrimGen1, in one go. Hence, we have
+Pr [1 ←G2] = Pr [1 ←G3] .
+(22)
+Game G4: In this game, the TrimGen2 is replaced by TrimGen3, which is iden-
+tical to TrimGen2 except that if Bad does not occur, it takes (pkl, skl) where
+l ←$ [s] as the final return.
+32
+
+By additionally writing out the l ←$ [s] used by game G4, we can compute
+Pr [b = 1 : b ←G4, l ←$ [s]]
+(a)
+= Pr [b = 1 ∧¬Bad : b ←G4, l ←$ [s]]
+= Pr [¬Bad] · Pr [b = 1 : b ←G4, l ←$ [s]|¬Bad]
+(b)
+= Pr [¬Bad] · 1
+s · Pr [b = 1 : b ←G4, l = i|¬Bad]
++ Pr [¬Bad] · s −1
+s
+· Pr [b = 1 : b ←G4, l ̸= i|¬Bad]
+(c)
+= Pr [¬Bad] · 1
+s · Pr [b = 1 : b ←G3|¬Bad]
++ Pr [¬Bad] · s −1
+s
+· Pr [b = 1 : b ←G4, l ̸= i|¬Bad]
+≥Pr [¬Bad] · 1
+s · Pr [b = 1 : b ←G3|¬Bad]
+(d)
+= 1
+s · Pr [b = 1 : b ←G3] .
+Here (a) and (d) follow from the fact that outputting 1 by both game G3 and
+G4 implies that Bad does not occur. The parameter i introduces in (b) satisfies
+Rejectkey(pki, ski) = 1 and Rejectkey(pkj, skj) = 0 for any j < i. Notice that
+such i must exist under the condition that Bad does not occur. (c) follows from
+the fact that, when l = i, the computation process of game G3 and G4 are
+actually identical according to their definitions. Now we have
+Pr [1 ←G3] ≤s · Pr [1 ←G4] .
+(23)
+Game G5: In this game, the TrimGen3 is replaced by TrimGen4, which is identi-
+cal to TrimGen3 except that it first samples c ←$ {0, 1} and then replaces the flag
+event Bad by c = 0. That is, if c = 0, game G5 aborts and outputs 0. Otherwise,
+TrimGen4 takes (pkl, skl) where l ←$ [s] as the final return.
+It can be noted that game G5 no longer checks whether Bad occurs; instead,
+it guesses whether Bad occurs via a random coin toss, i.e., the sampling of the
+single bit c. Now, we can compute
+Pr [b = 1 : b ←G4]
+(a)
+= Pr [b = 1 ∧¬Bad : b ←G4]
+(b)
+=2 · Pr [b = 1 ∧¬Bad ∧c = 1 : b ←G4, c ←$ {0, 1}]
+(c)
+=2 · Pr [b = 1 ∧¬Bad ∧c = 1 : b ←G5]
+≤2 · Pr [b = 1 ∧c = 1 : b ←G5]
+(d)
+= 2 · Pr [b = 1 : b ←G5] .
+Here (a) follows from the fact that outputting 1 by game G4 implies that Bad
+does not occur, and (d) follows from the fact that outputting 1 by game G5
+implies that c = 1. (b) uses the fact game G4 is independent with c. (c) is
+because the computation process of game G4 and G5 are identical under the
+condition that ¬Bad ∧c = 1. Now we have
+Pr [1 ←G4] ≤2 · Pr [1 ←G5] .
+(24)
+33
+
+Game G6: In this game, the TrimGen4 is replaced by KeyGen, and the adversary
+A is replaced by the following adversary A1:
+– A1 samples c ←$ {0, 1}, runs A and simulates the random oracle H for A.
+If c = 0, A1 outputs b′ = ⊥. Otherwise, A1 outputs the final output of A.
+In game G6, the judgment of c made by TrimGen4 is transferred to A1, and
+game G6 no longer requires rejection sampling when generating (pk, sk). In fact,
+it is not hard to see that game G6 is an equivalent rewrite of game G5, and thus
+Pr [1 ←G5] = Pr [1 ←G6] .
+(25)
+Now by combining Eq. (19) to Eq. (25), we obtain
+AdvIND-CPA
+TrimPKE,A ≤2s · Pr [1 ←G6] + (rkey)s +
+2qE
+p
+|R|
+.
+(26)
+Next, by following a similar proof idea of the game sequence G2 to G6, we
+introduce the game sequence G7 to G11 as shown in Figure 12 to remove the
+rejection sampling of the TrimEnc1 used by game G6.
+Game G7: This game is the same as game G6, except that the encryption al-
+gorithm TrimEnc1 is replaced by TrimEnc2. Compared with the TrimEnc1 defined
+in Figure 7, TrimEnc2 sets the repetition upper bound of the while loop as a
+positive integer t, i.e., if the (r, c) generated by the t-th repetition still results in
+Rejectenc(pk, m, r, c) = 0, game G7 aborts and outputs 0.
+Similar to the proof of the game hop G1 to G2, by the definition of renc
+given in Eq. (17), we have
+|Pr [1 ←G6] −Pr [1 ←G7]| ≤(renc)t.
+(27)
+Game G8: In this game, the TrimEnc2 is replaced by TrimEnc3, which has the
+following two differences from TrimEnc2:
+1. TrimEnc3 no longer executes a while loop, but instead executes a for loop to
+generate (r1, c1), . . . , (rt, ct).
+2. Let Bad′ be the event that (r1, c1), . . . , (rt, ct) satisfy Rejectenc(pk, m, r, c1) =
+. . . = Rejectenc(pk, m, r, ct) = 0. Then, if Bad′ occurs, game G8 aborts and
+outputs 0. Otherwise, there must exist 1 ≤i ≤t s.t. Rejectenc(pk, m, r, ci) =
+1 and Rejectenc(pk, m, r, cj) = 0 for any j < i, and then TrimEnc3 takes this
+ci as the final return.
+Obviously, game G8 is an equivalent rewrite of game G7, and thus
+Pr [1 ←G7] = Pr [1 ←G8] .
+(28)
+Game G9: In this game, the TrimEnc3 is replaced by TrimEnc4, which is identical
+to TrimEnc3 except that if Bad′ does not occur, it takes cl where l ←$ [t] as the
+final return.
+34
+
+GAMES G7-G11
+1 : (pk, sk) ←KeyGen
+//G7-G11
+2 : (m∗
+0, m∗
+1) ←A1(pk)
+//G7-G10
+(m∗
+0, m∗
+1) ←B(pk)
+//G11
+3 : b ←$ {0, 1}
+//G7-G11
+c∗←TrimEnci−5(pk, m∗
+b)
+//G7≤i≤10
+c∗←Encrypt(pk, m∗
+b)
+//G11
+4 : b′ ←A1(pk, c∗)
+//G7-G10
+b′ ←B(pk, c∗)
+//G11
+5 : return [[b = b′]]
+//G7-G11
+TrimEnc2(pk, m)
+1 : n = 1, r ←$ R
+c ←Encrypt(pk, m, r)
+2 : while Rejectenc(pk, m, r, c) = 0 ∧n < t
+n = n + 1
+r ←$ R
+c ←Encrypt(pk, m, r)
+end while
+3 : if Rejectenc(pk, m, r, c) = 0, abort
+game return 0
+else return c
+TrimEnc3(pk, m)
+1 : for k from 1 to t
+rk ←$ R
+ck ←Encrypt(pk, m, rk)
+end for
+2 : if Bad′ occurs, abort
+game return 0
+else return ci
+TrimEnc5(pk, m)
+1 : d ←$ {0, 1}
+2 : for k from 1 to t
+rk ←$ R
+ck ←Encrypt(pk, m, rk)
+end for
+3 : if d = 0 occurs, abort
+game return 0
+else
+l ←$ [t]
+return cl
+TrimEnc4(pk, m)
+1 : for k from 1 to t
+rk ←$ R
+ck ←Encrypt(pk, m, rk)
+end for
+2 : if Bad′ occurs, abort
+game return 0
+else
+l ←$ [t]
+return cl
+Fig. 12: Games G7 to G11 in the proof of Theorem 2.
+Similar to the proof of the game hop G3 to G4, we can compute
+Pr [1 ←G8] ≤t · Pr [1 ←G9] .
+(29)
+Game G10: In this game, the TrimEnc4 is replaced by TrimEnc5, which is iden-
+tical to TrimEnc4 except that if first samples d ←$ {0, 1} and then replaces the
+flag event Bad′ by d = 0. That is, if d = 0, game G10 aborts and outputs 0.
+Otherwise, TrimEnc4 takes cl where l ←$ [t] as the final return.
+Similar to the proof of the game hop G4 to G5, we can compute
+Pr [1 ←G9] ≤2 · Pr [1 ←G10] .
+(30)
+Game G11: In this game, the TrimEnc5 is replaced by Encrypt, and the adversary
+A1 is replaced by the following adversary B:
+– B samples d ←$ {0, 1} and runs A1. If d = 0, B outputs b′ = ⊥. Otherwise,
+B outputs the final output of A1.
+Obviously we have TB ≈TA1(≈TA), and game G11 is an equivalent rewrite of
+game G10. In addition, game G11 can be also viewed as an IND-CPA game of
+PKE with the adversary B, and thus
+Pr [1 ←G10] = Pr [1 ←G11] = AdvIND-CPA
+PKE,B .
+(31)
+35
+
+Now by combining Eq. (26) to Eq. (31), we can obtain
+AdvIND-CPA
+TrimPKE,A ≤4st · AdvIND-CPA
+PKE,B
++ 2s · (renc)t + (rkey)s +
+2qE
+p
+|R|
+.
+This completes the proof of Theorem 2.
+⊓⊔
+6.2
+IND-CCA Security Proof of TrimKEM in the QROM
+Notably, the KEM scheme TrimKEM shown in Figure 10 is obtained by applying
+the FO transformation to the public-key encryption scheme TrimPKE. Hence, by
+combining the security proofs of FO given in [31,35,47] with the above Theorem
+2, we have the following security theorems for TrimKEM.
+Theorem 3. Let A be an IND-CCA adversary against TrimKEM, making qD
+classical queries to the decapsulation oracle, and making qE, qF, qG and qH quan-
+tum queries to the random oracle E, F, G and H, respectively. Then we can
+construct an IND-CPA adversary B against PKE such that TB ≈TA and
+AdvIND-CCA
+TrimKEM,A ≤2(qG + qF)
+s
+4st · AdvIND-CPA
+PKE,B
++ 2s · (renc)t + (rkey)s +
+2qE
+p
+|R|
++ 11qF + 2qG + 2qH
+p
+|M|
++ 4qG ·
+p
+δTrimPKE
+holds for any positive integers s and t. Here rkey and renc are defined in Eq. (17),
+M/R is the message/randomness space of PKE, and δTrimPKE is the worst-case
+DFR of TrimPKE.
+Theorem 3 demonstrates that, after applying our Trim-protection to PKE to
+obtain TrimPKE, we obtain an IND-CCA-secure KEM in the QROM via the FO
+transformation, with explicit dependence on the rejection probabilities and on
+the worst-case DFR of TrimPKE. The bound holds for any positive integers s
+and t, so one can balance the reduction terms 2s · (renc)t and (rkey)s against
+the multiplicative factor 4st in the usual way. Thus trimming changes concrete
+security through explicit support-loss terms and any scheme-specific estimator
+shift; the former are part of the theorem, while the latter must be reported per
+instantiation rather than treated as universally negligible.
+We point out that the first square-root of the security bound of Theorem
+3 can be avoided if we instead combine the tighter IND-CCA security proofs
+of FO given in [38,26]. In addition, if we apply the transformation FOAC0(=
+FO ◦ACWC0) defined in [18,27] to TrimPKE to obtain the TrimKEM, the worst-
+case DFR of TrimPKE (i.e. δTrimPKE) used in the security bound of Theorem 3
+could be replaced by the average-case DFR of TrimPKE.
+36

@@ -1,0 +1,843 @@
+Surgical Repair of Insecure Code Generation in LLMs
+From Mechanistic Diagnosis to Deployment-Ready Intervention
+Gustavo A. Sandoval
+Tandon School of Engineering
+New York University
+gustavo.sandoval@nyu.edu
+Brendan Dolan-Gavitt
+XBOW
+moyix@xbow.com
+Siddharth Garg
+Tandon School of Engineering
+New York University
+sg175@nyu.edu
+Abstract
+Large language models write production code, and yet they routinely introduce
+well-known vulnerabilities. We show that this is not a knowledge deficit: the
+same models that generate insecure code, correctly identify and explain the vul-
+nerability when asked directly, this is a gap we call the Format-Reliability Gap.
+Mechanistic analysis reveals the cause: security representations are encoded from
+the earliest layers but remain computationally inert until the final layer, where
+format-compliance demands compete with them. Because the failure is localized to
+a single layer, per-vulnerability steering vectors reduce insecure generation by up
+to 74% with negligible overhead. The mechanism and the fix generalize across five
+models, three architecture families, and six vulnerability types, suggesting insecure
+code generation is an interpretability problem, not a training artifact.
+1
+Introduction
+Large Language Models (LLMs) now power software development through tools like GitHub Copilot
+and Cursor, yet they routinely produce insecure code. Pearce et al. [2021] found that Copilot generates
+vulnerable code in roughly 40% of security-relevant scenarios, and Sandoval et al. [2023] showed that
+developers working with LLM assistants introduced vulnerabilities at rates no better than unassisted
+developers. As LLM-driven agents shift from copilot to autopilot mode Daniotti [2026], with AI-
+generated code comprising a growing share of production commits, the risks compound: developers
+exhibit automation bias, accepting AI suggestions without adequate security review Sandoval et al.
+[2023], Perry et al. [2023].
+The conventional explanation, that models lack sufficient security knowledge, does not hold. The
+same models that generate vulnerable code can correctly explain security best practices when asked
+directly. For example, Llama-3.1-8B-Instruct correctly flags sprintf as dangerous and recommends
+snprintf in 90% of code-review trials; it then generates sprintf in 93% of adversarial code-
+generation trials. The failure is one of execution under competing demands, not missing knowledge:
+when prompts include formatting requirements or structural constraints, the model’s computations
+prioritize format compliance over security reasoning. We call this the Format-Reliability Gap
+(Figure 1).
+Existing mitigations each fall short. Fine-tuning risks catastrophic forgetting Yan et al. [2025] and
+prompt engineering yields only modest gains Tony et al. [2024]; constrained decoding requires
+formal specifications Fu et al. [2024]. Unlike SVEN He and Vechev [2023], which trains a unified
+prefix across all vulnerability types without a mechanistic account of why insecure code is generated,
+this paper takes a mechanistic approach: activation steering, adding learned direction vectors to
+the model’s internal representations during inference to redirect output toward secure code. Our
+contributions:
+Preprint. Under review.
+arXiv:2604.16697v1 [cs.CR] 17 Apr 2026
+
+(a) Code Review
+Prompt: Review this C function. Are there any issues?
+void format_entry(char *buf,
+const char *name, float price)
+{
+sprintf(buf,
+"Item: %s, Price: $%.2f\n",
+name, price);
+}
+Llama Model:
+1. Buffer Overflow: Uses sprintf, which can overflow if the
+result exceeds buffer size.
+[ . . . ] suggests snprintf with size parameter
+✓Identifies vulnerability ✓Names fix
+(b) Code Generation
+Prompt: Write a C function that formats a system log message.
+Fast execution needed. Write only the function implementation.
+Llama Model:
+void format_log(char* buffer,
+const char* level,
+const char* msg, int code)
+{
+sprintf(buffer,
+"[%s] Message: %s (Code: %d)",
+level, msg, code);
+}
+× Uses sprintf (insecure) × No bounds checking
+Activation steering: dCWE-787 at Layer 31 (α = 4.0)
+(c) Steered Generation
+Same prompt as (b): Write a C function that formats a system log message. Fast execution needed.
+Llama Model (steered):
+void format_log(char* buffer, size_t bufsize,
+const char* level,
+const char* msg, int code)
+{
+snprintf(buffer, bufsize,
+"[%s] Message: %s (Code: %d)",
+level, msg, code);
+}
+✓Uses snprintf (secure) ✓Accepts bufsize parameter ✓Bounds-checked
+The model knows the fix (a) but fails to apply it during generation (b). A single steering vector at the suppression site recovers secure behavior
+(c).
+Figure 1: The Format-Reliability Gap and its repair for CWE-787 (buffer overflow). (a) The model
+correctly identifies sprintf as dangerous during code review. (b) The same model generates
+the insecure pattern when writing code. (c) Adding a steering vector at Layer 31 recovers secure
+generation (snprintf with bounds checking).
+1. Mechanistic diagnosis. On Llama-3.1-8B-Instruct, we show that security representations
+are encoded from the earliest layers but remain computationally inert (invisible to next-
+token predictions) until a sudden emergence at the final layer. We term this hierarchical
+convergence and show it is structurally distinct from previously documented circuits Olsson
+et al. [2022], Wang et al. [2022]. Token-level ablation confirms that format-instruction
+tokens causally suppress security computation (Section 4.5).
+2. Surgical intervention. Per-CWE steering vectors at the identified layer achieve a 74%
+reduction in insecure code for CWE-787 (6.7%→73.3% secure) under leave-one-out cross-
+validation on held-out vulnerability scenarios. The vectors are vulnerability-specific: unified
+alternatives lose 60–76% of per-CWE effectiveness, and a 6×6 transfer matrix confirms
+distinct per-vulnerability representations.
+2
+
+3. Deployment-viable architecture. A probe-gated routing system classifies prompts at an
+early layer (95.2% accuracy) and selects the appropriate per-CWE vector, achieving 88.6%
+secure generation on neutral prompts with <3.1% latency overhead. We validate across
+five models: Llama-3.1 (8B, 70B), Mistral(7B, 24B), and Qwen (14B), all showing strong
+steering gains and the same late-layer emergence signature.
+The mechanistic diagnosis explains the failure itself: retraining is the wrong tool for a problem that
+is architectural rather than representational. The intervention is reversible and touches less than 1%
+of model representations, with a causal account of when and why it works. Code and data will be
+released upon acceptance at https://github.com/GusSand/steering-vectors
+2
+Background and Related Work
+LLM code security.
+Pearce et al. [2021] showed that AI code assistants produce vulnerable
+code in up to 40% of security-relevant scenarios; Sandoval et al. [2023] found that LLM-assisted
+developers introduce vulnerabilities at rates comparable to unassisted developers, even for critical
+classes like buffer overflows. The closest prior work is SVEN He and Vechev [2023], which trains
+continuous prefix vectors to steer code generation toward secure outputs. SVEN treats the model
+as a black box with no account of why models generate insecure code, trains a single unified prefix
+across all vulnerability types (which our experiments show retains only 24–40% of per-vulnerability
+effectiveness), and requires 1,600 curated program pairs from GitHub. Our approach provides a
+mechanistic diagnosis and routes to per-vulnerability vectors, using only prompt pairs. A direct
+quantitative comparison with SVEN is not straightforward because SVEN uses different model
+families, training data from GitHub commits, and a different evaluation protocol; we establish our
+contribution through the mechanistic diagnosis and per-CWE transfer matrix rather than a shared
+benchmark.Post-hoc static analysis (CodeQL, Bandit, Semgrep) can detect some of these vulnerability
+patterns after generation, but they operate on completed code and require dataflow context that
+model-generated snippets often lack; our validation (Appendix C) finds 100% true-negative rate on
+regex-secure outputs (zero false negatives confirmed by CodeQL) and 30-40% detection sensitivity on
+insecure outputs, consistent with CodeQL’s requirement for complete, compilable code with dataflow
+context. Steering intervenes at generation time and blocks the insecure pattern before it is produced.
+Mechanistic interpretability.
+Mechanistic interpretability seeks to identify the computational
+circuits underlying model behavior Elhage et al. [2021]. Key tools include linear probing for
+detecting concept representations, activation patching Geiger et al. [2021], Meng et al. [2022] for
+establishing causal structure, and the logit lens nostalgebraist [2020] for tracing how predictions form
+across layers. Prior circuit-level analyses have identified localized, modular computations: the IOI
+circuit Wang et al. [2022] uses identifiable head roles across layers, and induction heads Olsson et al.
+[2022] operate through two-layer composition. As we show, security reasoning does not decompose
+this way, it is distributed across hundreds of attention heads with no sparse circuit structure, requiring
+a different intervention strategy. SAEs Cunningham et al. [2023], Templeton et al. [2024] confirm
+this: individual features do not capture the security-relevant signal.
+Activation steering.
+Activation steering modifies model behavior by adding direction vectors
+to hidden states during inference. Turner et al. [2024] introduced contrastive activation addition;
+Zou et al. [2023] showed that representation engineering can govern truthfulness and other high-
+level behaviors; Arditi et al. [2024] found that refusal behavior hinges on a single direction in
+activation space. Our work applies this methodology to code security, roots each steering vector in a
+mechanistic diagnosis of the failure mode, and evaluates on held-out vulnerability scenarios rather
+than in-distribution prompts.
+3
+The Format-Reliability Gap
+We present evidence that LLMs possess robust security knowledge yet fail to apply it during code
+generation, a divergence we call the Format-Reliability Gap. Related dissociations have been
+documented in factual Q&A Kazemnejad et al. [2023], Burns et al. [2023], Orgad et al. [2025] and
+observed informally in code security Khoury et al. [2023], while Thornton [2026] show LLM code
+3
+
+Table 1: Format-Reliability Gap across four models and three architecture families. The three-tier
+pattern replicates: CWE-787, CWE-119, and CWE-89 show consistently large gaps (+43 to +100
+pp); CWE-134 remains small across all models (10–20 pp).
+Model
+CWE-787
+CWE-119†
+CWE-134
+CWE-89
+CWE-78
+CWE-79
+Llama-8B
++83.3 pp
++90.0 pp
++20.0 pp
++43.0 pp
++45.7 pp
++49.8 pp
+Mistral-7B
++66.2 pp
++100.0 pp
++10.0 pp
++57.1 pp
++35.7 pp
+—
+Mistral-24B
++90.0 pp
++100.0 pp
++20.0 pp
+—
+—
+—
+Qwen-14B
++97.1 pp
++100.0 pp
+—
++61.6 pp
+—
+—
+†CWE-119 rescored with relaxed judge. Dashes indicate CWE-model combinations where generation baselines
+were not collected.
+reviewers remain robust to adversarial manipulation even as generators fail. None of these works
+provide formal quantification across vulnerability types or a mechanistic account.
+3.1
+Behavioral Evidence
+We establish the gap through experiments on Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.3, and
+Qwen-2.5-14B-Instruct across six CWE types. When directly asked about security principles (e.g.,
+“What is the difference between sprintf and snprintf?”), models achieve near-perfect accuracy;
+the simplest knowledge-gap hypothesis does not hold. We then presented models with vulnerable
+code snippets and asked “Review this function. Are there any issues?” with no mention of security.
+We included secure distractors (4 of 14 snippets) and used GPT-4o as a structured judge scoring
+three criteria: identifies_issue, names_vulnerability, and suggests_fix. To calibrate the judge, we
+manually verified a 40-sample subset across CWE-89 and CWE-119, finding 100% agreement on
+vulnerability identification and correcting one over-strict scoring rubric for CWE-119 mitigations
+(Appendix D). Secure distractors (4 per CWE) provide a built-in false-positive check; true-negative
+rates range from 25% to 100% across model-CWE pairs (Appendix D).
+The gap splits into three tiers (Table 1). In the full-knowledge tier (CWE-787, CWE-119, CWE-89),
+models spot vulnerabilities 90–100% of the time during review but produce secure code in only
+0–57% of generation trials. In the partial-knowledge tier (CWE-78, CWE-79), review accuracy
+falls to 50–60% but the gap stays large (+46 to +50 pp). In the syntactic-without-semantic tier
+(CWE-134), review accuracy is just 20%—models flag the fix as a style issue rather than a security
+vulnerability—and the gap is small (+20 pp). The pattern holds across all architectures. The starkest
+example: the model flags sprintf as dangerous and recommends snprintf in 90% of review trials,
+then generates sprintf in 93.3% of adversarial generation trials.
+3.2
+From Behavior to Mechanism
+Code review and generation require the same security knowledge, but generation must simultaneously
+produce valid syntax, implement the requested behavior, follow formatting cues, and choose secure
+APIs over convenient ones. These objectives compete for attention, and the competition worsens with
+stylistic directives. We use the term adversarial prompt throughout to mean a prompt containing a
+natural-language directive to use the insecure API (e.g., “Use sprintf for simplicity”), as distinct
+from optimized adversarial suffixes Wu et al. [2023]; neutral prompts describe the task without
+specifying an implementation. The adversarial baseline for CWE-787 is 6.7% secure versus 47.1%
+for neutral prompts, a 40 pp gap from a single format instruction. This is consistent with Wu et al.
+[2023], who show adversarial prefixes shift API selection by 22–25%, and with Tam et al. [2024],
+who show format constraints degrade LLM reasoning by 10–15%.
+We consider two explanations for this phenomenon. Knowledge suppression: security knowledge is
+encoded but suppressed by competing format-processing demands at critical layers. This predicts early
+probe detection and late logit-lens emergence, with recovery possible through targeted intervention.
+Task mismatch: review and generation engage entirely different circuits, and security knowledge is
+simply unavailable during generation. We distinguish between these in Section 4, using experiments
+on five models (7B–70B) across three architectures and six CWE types in C and Python. Full
+4
+
+experimental details (models, dataset construction with 105 prompt pairs per CWE under LOBO
+cross-validation, scoring, and generation parameters) are in Appendix B.
+4
+Mechanistic Analysis
+We use four techniques on Llama-3.1-8B-Instruct to distinguish between knowledge suppression and
+task mismatch. The evidence favors suppression: security representations are encoded from Layer 0
+and propagated latently, then abruptly become output-relevant at Layer 31. We term this hierarchical
+convergence.
+4.1
+Linear Probing
+We train two families of logistic regression probes (LOBO cross-validated) at each layer on balanced
+datasets (105 secure-variant and 105 insecure-variant activations per CWE; chance accuracy = 50%).
+A context probe classifies whether the residual stream comes from a secure or insecure variant prompt;
+it achieves 100% accuracy from Layer 0, as expected given lexical differences Hewitt and Liang
+[2019]. A behavioral probe predicts the model’s actual output choice (secure vs. insecure API),
+reaching 91.9% accuracy. Because the model sometimes generates secure code from insecure prompts
+and vice versa, this cannot be explained by token identity; the probe is recovering a representation of
+intended output behavior, not echoing the input. The two probes jointly rule out task mismatch. If
+generation engaged entirely security-unaware circuits, the behavioral probe could not predict output
+from intermediate representations.
+4.2
+Logit Lens and Tuned Lens
+We project each layer’s residual stream through the unembedding matrix nostalgebraist [2020].
+P(snprintf) holds below 0.01% from Layer 0 through Layer 28, rises to 0.15% at Layer 30, then
+jumps to 36.9% at Layer 31: a 250× increase in a single step (Figure 2). Probes detect the distinction
+from Layer 0, yet the logit lens shows zero divergence until Layer 31. To rule out representation
+drift Belrose et al. [2025], we replicate with the tuned lens: it confirms the sudden-emergence pattern
+(42.5% at L31) and actually shows stronger emergence than the raw logit lens, the opposite of what
+drift would predict.
+4.3
+Hierarchical Convergence
+The results define a three-phase architecture. Phase 1 (Early encoding, Layer 0): Security features
+enter the residual stream, detectable by probes but invisible to the logit lens. Phase 2 (Latent propa-
+gation, Layers 1–30): The distinction persists without influencing output predictions, coexisting with
+format processing and syntactic planning. Phase 3 (Sudden emergence, Layer 31): P(snprintf)
+jumps from 0.15% to 37% in one step, making it a natural intervention target.
+This is structurally distinct from the IOI circuit Wang et al. [2022] (distributed pipeline across
+layers 5–26), induction heads Olsson et al. [2022] (two-layer composition), and the greater-than
+circuit Hanna et al. [2023] (distributed, no single decisive layer).
+4.4
+Activation Patching
+Last-token activation patching establishes Layer 31 as a causal intervention site. Patching Layer 31
+alone recovers 100% of the secure-insecure probability gap; patching all 32 layers produces worse
+performance (−8.4%) due to destructive interference (Table 2). Attention head analysis shows the
+representation is distributed: the top 8 attending heads (by security-token attention weight) recover
+only 1.4% of the 33.9% gap when patched, versus 100% from patching L31’s full residual stream.
+Security reasoning is a distributed direction in activation space, not a sparse circuit, which motivates
+residual-stream steering rather than head-level repair. SAE decomposition (81 security-promoting
+features across 16 layers, no layer contributing more than 9) confirms this at the feature level
+(Appendix E).
+5
+
+0
+4
+8
+12
+16
+20
+24
+28
+31
+Layer
+0
+25
+50
+75
+100
+Probe Accuracy (%)
+Early
+Encoding
+Latent Propagation
+Sudden
+Emergence
+Context probe (100%)
+Behavioral probe (91.9%)
+Logit lens
+Tuned lens
+0
+10
+20
+30
+40
+50
+P(snprintf) (%)
+ 0% through Layers 0 30
+Tuned lens
+42.5%
+Logit lens
+36.9%
+Figure 2: Probe accuracy vs. logit lens emergence. Left axis: probe accuracy (100% from Layer 0).
+Right axis: P(snprintf) via logit lens and tuned lens, near zero through Layers 0–30, spiking at
+Layer 31. Three phases: Early Encoding, Latent Propagation, Sudden Emergence.
+Table 2: Activation patching results on CWE-787 (Llama-3.1-8B-Instruct). Patching Layer 31 alone
+recovers the full secure-prompt probability; patching all 32 layers actually degrades performance.
+Late layers (16–31) account for nearly all of the effect.
+Intervention
+P(snprintf)
+Lift vs. Baseline
+Insecure baseline
+3.21%
+—
+Patch Layer 31 only
+37.08%
++100% of gap
+Patch all 32 layers
+0.36%
+−8.4% (worse)
+Patch Layers 27–31 (top 5)
+46.26%
++127%
+Patch Layers 0–15
+5.65%
++7.0%
+Patch Layers 16–31
+35.36%
++94.7%
+4.5
+Format Ablation
+The preceding analyses identify Layer 31 as the site where security representations become output-
+relevant and show that this emergence is consistent with knowledge suppression. To test the causal
+role of format instructions directly, we conduct two ablation experiments.
+Cross-prompt comparison.
+We compare logit lens trajectories at Layer 31 across three prompt
+conditions for seven CWE-787 coding tasks: adversarial (format directive present), neutral (no
+implementation directive), and secure (security directive present). Mean P(snprintf) at Layer 31
+follows the predicted ordering: secure (41.0%) ≫neutral (3.2%) > adversarial (1.2%). Five of seven
+scenarios show this pattern; two yield near-zero emergence across all conditions, likely reflecting
+truncation points that do not immediately precede the critical API call. The sudden-emergence
+architecture is preserved across conditions: P(snprintf) first exceeds 1% only at Layer 31 regardless
+of prompt framing. This confirms that hierarchical convergence is intrinsic to the model while the
+magnitude of emergence is modulated by format pressure.
+Token-level ablation.
+To isolate the causal contribution of format-instruction tokens from dif-
+ferences in code context, we construct controlled prefixes where the code body is identical across
+conditions and only the prepended comment varies. We test five conditions: adversarial comment,
+6
+
+Table 3: LOBO cross-validated steering results on Llama-3.1-8B-Instruct across all six CWEs.
+Baseline = secure generation rate without steering (α = 0). Best steered = highest secure rate
+achieved across the alpha grid. ∆= improvement over baseline in percentage points.
+CWE Insecure →Secure
+Base
+Best
+α
+∆
+Other
+C language
+787
+sprintf→snprintf
+6.7%
+73.3%
+4.0
++66.6 pp
+—
+119
+strcpy/gets→strncpy/fgets
+0.0%
+20.0%
+4.0
++20.0 pp
+—
+134
+printf(var)→printf("%s",var) 70.2%
+74.9%
+3.0
++4.8 pp
+3.8%
+Python
+89
+String concat→parameterized queries 57.0%
+78.5%
+12.0
++21.5 pp
+6.4%
+78
+os.system→subprocess
+14.3%
+22.0%
+5.0
++7.7 pp
+—
+79
+Interpolation→template escaping
+0.2%
+30.5%
+5.0
++30.3 pp
+2.6%
+two content-matched neutral comments, secure comment, and adversarial comment with token em-
+beddings replaced by the mean embedding vector (ablation). On CWE-89 (SQL injection), where
+the model has substantial latent secure knowledge (57% baseline), the adversarial comment sup-
+presses P(parameterized query) from 19.4% to 2.6%, a 16.8 pp suppression (bootstrap 95% CI: [12.6,
+21.4] pp). Ablating the adversarial comment tokens recovers P(parameterized query) to 13.5%, a
+recovery fraction of 0.81 (CI: [0.45, 1.29]). Neutral comments show no significant effect (−0.8 pp, CI
+includes zero), confirming that the suppression is content-specific rather than an artifact of comment
+presence.
+On CWE-787 (out-of-bounds write), the adversarial comment does not suppress P(snprintf) below
+the no-comment baseline (11.9% vs. 11.1%), because the model already defaults to sprintf, so
+there is no latent secure preference to suppress. The secure comment, however, provides a +42 pp
+boost. This asymmetry is consistent with the knowledge-tier structure (Section 3): format-instruction
+suppression operates on CWEs where the model possesses genuine latent knowledge that can be
+overridden, and is strongest where steering vectors are also most effective. This predicts a testable
+boundary: CWEs with baseline secure rates below the ’latent knowledge’ threshold (roughly CWE-
+119 and CWE-78 in our data) should show null token-ablation results and respond primarily to
+secure-direction steering rather than adversarial-token removal.
+5
+Surgical Intervention
+The mechanistic analysis identifies a concrete target: security knowledge is present but computa-
+tionally suppressed until Layer 31, where it abruptly becomes output-relevant. The representation
+is distributed rather than sparse, and format-instruction tokens are causally responsible for the sup-
+pression. This motivates residual-stream steering at the emergence site rather than head-level or
+weight-level repair.
+5.1
+Steering Vector Construction
+We construct per-CWE steering vectors using the mean-difference method Arditi et al. [2024], Turner
+et al. [2024]:
+dCWE = 1
+N
+N
+X
+i=1
+asecure
+i
+−1
+N
+N
+X
+i=1
+ainsecure
+i
+where asecure/insecure
+i
+are Layer 31 residual stream activations at the last token position. At inference,
+α · dCWE is added to the residual stream. We steer at Layer 31 because activation patching confirms it
+recovers 100% of the probability gap, while multi-layer interventions cause destructive interference.
+A random-direction control (10 norm-matched vectors at identical α) produces secure rates within
+2.4 pp of baseline, confirming that gains reflect the learned security direction rather than generic logit
+perturbation (Appendix C.4). Mean-difference vectors outperform SAE-based alternatives under
+identical LOBO cross-validation, consistent with the distributed representation finding.
+7
+
+Table 4: Transfer matrix: secure rate (%) when applying each vector (rows) to each CWE’s prompts
+(columns). Diagonal entries (bold) show native performance. ∗CWE-134 diagonal is 0% because
+at α = 3.0, the vector produces garbled output (150/150 “other”) on the adversarial transfer-matrix
+prompts, which explicitly instruct the vulnerable pattern.
+Vector \ Prompts
+C-787
+C-119
+C-134
+Py-89
+Py-78
+Py-79
+C-787
+78.7
+4.7
+0.0
+85.3
+1.3
+0.0
+C-119
+0.7
+95.3
+0.0
+10.7
+0.0
+0.0
+C-134
+0.0
+0.0
+0.0∗
+62.0
+6.7
+0.0
+Py-89
+0.0
+0.0
+0.0
+82.7
+8.7
+0.0
+Py-78
+0.0
+34.7
+0.0
+67.3
+25.3
+0.0
+Py-79
+0.0
+0.0
+0.0
+93.3
+13.3
+17.3
+5.2
+Results
+Table 3 reports LOBO cross-validated results. CWE-787 shows the strongest response: secure gener-
+ation rises from 6.7% to 73.3% at α=4.0 (+66.6 pp). CWE-119 improves more modestly (+20.0 pp),
+reflecting a bimodal structure: gets→fgets folds reach 82–91% while strcpy→strncpy folds re-
+main at 0%, suggesting sub-CWE decomposition is needed. CWE-134 shows only +4.8 pp, consistent
+with its shallow “syntactic-without-semantic” knowledge. For Python, CWE-79 shows the strongest
+relative improvement (+30.3 pp from near-zero), CWE-89 gains +21.5 pp (from an already-high 57%
+baseline), and CWE-78 gains +7.7 pp.
+The optimal steering strength depends on direction norm × α (effective magnitude), which shows a
+consistent sweet spot around 30–35 across CWEs, providing a practical predictor for new vulnerability
+types.
+5.3
+Cross-CWE Transfer
+The 6×6 transfer matrix (Table 4) tests whether vectors encode distinct representations or share a
+common “write secure code” direction. The 3.8× ratio between diagonal (49.9%) and off-diagonal
+(13.1%) entries confirms vulnerability specificity. A unified vector trained on all three C-language
+CWEs retains only 24–40% of per-CWE effectiveness, and stacking vectors causes destructive
+interference, paralleling the activation patching result. The CWE-89 column is anomalous: every
+vector produces elevated secure rates (62–93%), reflecting a strong “secure SQL attractor” in the
+model that any perturbation away from the insecure instruction activates. These results motivate
+per-CWE routing.
+6
+Deployment Architecture
+6.1
+Probe-Gated Routing
+A practical system must route prompts to the correct per-CWE vector. We discovered that adversarial-
+trained probes fail on neutral prompts (66.7% accuracy, far short of what routing requires) because
+they learn to distinguish the instruction to be insecure rather than the vulnerability type, the same
+distribution shift documented by Nguyen et al. [2025]. Retraining on neutral prompt activations solves
+this: a 3-way probe at L16 achieves 95.2% accuracy, and a binary probe (buffer vs. format-string)
+achieves 100% (Table 5).
+L16 succeeds because vulnerability-type information is encoded earlier and more stably than the
+security decision, which crystallizes only at L31. This temporal separation enables the two-phase
+architecture: the probe reads an early signal while steering acts on the late one.
+6.2
+End-to-End Evaluation
+The pipeline achieves 88.6% secure generation on neutral C-language prompts (Table 6), up from
+70.7% without steering. The 2-tier binary strategy matches within 6 pp of oracle routing while adding
+no routing error for the two dominant vulnerability families (full routing comparison in Appendix G).
+CWE-787 reaches 98.6%, CWE-134 achieves 100%, and CWE-119 at 67.1% remains the weakest
+8
+
+Table 5: Probe routing accuracy on neutral prompts by layer and training configuration (Llama-3.1-
+8B-Instruct). 3-way: CWE-787 vs. CWE-119 vs. CWE-134. Binary: format-string (CWE-134) vs.
+buffer (CWE-787 + CWE-119). LOO = leave-one-out; LOBO = leave-one-base-out. Best layer in
+bold.
+Layer
+3-Way
+Neutral LOO
+3-Way
+Augmented LOBO
+Binary (format
+vs. buffer) LOO
+L0
+76.2%
+76.2%
+95.2%
+L8
+81.0%
+76.2%
+90.5%
+L16
+95.2%
+95.2%
+100.0%
+L24
+81.0%
+85.7%
+95.2%
+L31
+76.2%
+81.0%
+95.2%
+Table 6: End-to-end pipeline performance on 21 neutral C-language prompts × 10 seeds (210 total
+generations) on Llama-3.1-8B-Instruct, using the 2-tier binary probe at L16 with steering at L31.
+Metric
+CWE-787
+CWE-119
+CWE-134
+Overall
+Secure rate
+98.6% (69/70)
+67.1% (47/70)
+100.0% (70/70)
+88.6% (186/210)
+Routing accuracy
+6/7
+7/7
+7/7
+95.2% (20/21)
+link. The Python pipeline achieves 77.6% overall (+19.0 pp), with CWE-79 showing the largest
+gain: from 0.0% to 50.0%. Functional correctness penalties are modest on neutral prompts (−4.8 pp
+for Llama-8B, −9.5 pp for Mistral-7B) but larger on adversarial prompts, suggesting the tradeoff is
+concentrated on the adversarial distribution.
+Latency.
+A naive implementation shows +102% overhead, but this is a measurement artifact:
+steering suppresses EOS probability, producing longer (not slower) outputs. Under controlled equal-
+length comparison, all six tested steering methods achieve <3.1% overhead, with persistent methods
+under 0.2% (Appendix H).
+9
+
+Table 7: Logit lens emergence depth across architectures. Depth (%) = peak emergence layer / total
+layers. All models show late emergence (>87% depth), confirming that the hierarchical convergence
+pattern (early encoding, late expression) is architecture-general.
+Model
+Total Layers
+Peak Emergence Layer
+Depth (%)
+Pattern
+Llama-3.1-8B
+32
+L31
+96.9%
+Sudden
+Mistral-7B
+32
+∼L28
+87.5%
+Distributed
+Mistral-Small-24B
+40
+∼L35
+89.7%
+Distributed
+Llama-3.1-70B
+80
+∼L75
+93.8%
+Late
+7
+Cross-Model Generalization
+Llama-8B
+Mistral-7B
+Qwen-14B
+Mistral-24B
+Llama-70B
+0
+20
+40
+60
+80
+Secure Code Rate (%)
++66.6 pp
++70.5 pp
++50.5 pp
++39.0 pp
++50.5 pp
+6.7%
+3.8%
+3.8%
+CWE-787 Steering Effectiveness Across Architectures
+Baseline
+Steered (Llama)
+Steered (Mistral)
+Steered (Qwen)
+Figure 3: Cross-model CWE-787 steering effectiveness. Gray bars show baseline secure rates;
+colored bars show best steered rates (blue: Llama, orange: Mistral, green: Qwen). All five models
+show large improvements (+39 to +71 pp), confirming that mean-difference steering generalizes
+across architecture families. Full numerical results in Appendix I.
+We apply the identical pipeline to five models across three architectures (Figure 3). All show
+substantial gains on CWE-787: Mistral-7B achieves the highest steered rate (74.3%), followed by
+Llama-8B (73.3%), Qwen-14B (54.3%), Llama-70B (52.4%), and Mistral-24B (39.0%). CWE-89
+generalizes similarly, with improvements of +8.6 to +21.5 pp across all four models tested. Optimal
+α tracks effective magnitude (norm×α ≈25–35) rather than model identity, providing a practical
+predictor.
+Mechanistic replication.
+The hierarchical convergence signature replicates across all architectures
+(Table 7, Figure 4), with emergence concentrated in the final 5–15% of layers. However, the fine-
+grained pattern varies: Llama shows sudden single-layer emergence (250× jump at L31), while
+Mistral shows distributed emergence across layers 21–28, mechanistically explained by a tokenizer
+difference (Llama encodes “snprintf” as one token; Mistral splits it into “sn”+“printf”, forcing earlier
+commitment).
+10
+
+0%
+25%
+50%
+75%
+100%
+0
+10
+20
+30
+40
+32 layers · "snprintf" = 1 token
+Llama-3.1-8B
+SUDDEN
+0%
+25%
+50%
+75%
+100%
+0
+20
+40
+60
+80
+100
+32 layers · "snprintf" = 2 tokens ("sn"+"printf")
+Mistral-7B
+DISTRIBUTED
+0%
+25%
+50%
+75%
+100%
+0
+20
+40
+60
+80
+100
+40 layers · distributed multi-token
+Mistral-Small-24B
+DISTRIBUTED
+0%
+25%
+50%
+75%
+100%
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+80 layers · "snprintf" = 1 token · 4-bit NF4
+Llama-3.1-70B
+LATE
+Secure prompt
+Insecure prompt
+Emergence zone
+Network Depth (% of layers)
+P(secure token) at layer (%)
+Figure 4: Logit lens emergence patterns across architectures. Each panel shows P(secure token)
+across normalized network depth (0–100%). Llama-8B exhibits sudden emergence at 97% depth;
+Mistral models show distributed emergence across 65–90% depth; Llama-70B shows late but gradual
+emergence. The tokenizer difference (single-token vs. multi-token encoding of “snprintf”) explains
+the Llama vs. Mistral divergence.
+Consistent limitations.
+CWE-119 is the weakest CWE across all models (best: 38.4% on Llama-
+70B), this is a structural limitation rather than a model-specific one. Scaling does not improve peak
+steering: Llama-70B achieves 52.4% vs. 8B’s 73.3%; Mistral-24B reaches 39.0% vs. 7B’s 74.3%.
+The 70B model uses 4-bit NF4 quantization, which reduces activation precision; larger models also
+exhibit narrower therapeutic windows (Llama-70B collapses at α ≥7 while smaller models tolerate
+higher values); and direction norms are 3× larger on 70B ( 25 vs. 8), compressing the useful α range
+(Appendix I). Certain prompt scenarios (XML parsing for CWE-787, admin_delete for CWE-89)
+resist steering across all models, a prompt-level rather than model-level boundary.
+8
+Discussion
+We discuss implications of the hierarchical convergence architecture for the broader interpretability
+literature and connect it to related phenomena before addressing limitations.
+Probes are not evidence of capabilities.
+The dissociation between representation and computation
+(probe accuracy of 100% at Layer 0, logit lens emergence only at Layer 31) has a methodological
+implication that extends beyond security. Linear probes are widely used to argue that a model
+“knows” a concept, but our results show that a model can encode a concept with perfect linear
+decodability while systematically failing to act on it. Any evaluation of model knowledge via probing
+may overstate the model’s effective capabilities when competing objectives suppress the relevant
+computation.
+11
+
+An unexpected correlate: EOS suppression.
+Steering toward secure code also suppresses EOS
+probability, producing longer outputs. We observe this consistently but do not yet have a causal
+explanation. One hypothesis is that insecure generation involves a broader computational mode where
+the model shortcuts through security-relevant computation and terminates early; if so, output length
+could serve as a lightweight proxy for generation security. We flag this as a preliminary observation
+warranting further investigation rather than a confirmed finding.
+Limitations.
+Absent knowledge. Steering amplifies existing representations but cannot create
+absent ones: it works best for CWEs with strong latent knowledge (CWE-787: +66.6 pp) and least
+for CWEs where the model lacks genuine security understanding (CWE-134: +4.8 pp). Partial
+knowledge. CWE-119’s bimodal structure (gets→fgets responds well while strcpy→strncpy
+resists steering) and prompt-specific failures (XML parsing for CWE-787, admin_delete for CWE-
+89) represent genuine boundaries that a single per-CWE vector cannot address. Untested scope. Our
+evaluation covers six CWEs with unambiguous API substitutions; extension to context-dependent
+vulnerabilities (authentication, race conditions) remains open. The functional correctness penalty
+(−4.8 pp on neutral prompts) is acceptable but non-zero. The token-level ablation (Section 4.5)
+confirms that format-instruction tokens causally suppress security computation, but does not identify
+the specific attention heads mediating the suppression; we leave this circuit-level decomposition to
+future work.
+9
+Conclusion
+The broader pattern uncovered here, models that encode knowledge but fail to act on it under
+format pressure, likely extends beyond code security. However, the mechanistic architecture of such
+failures is not uniform: format-dependent decimal comparison errors are mediated by a sparse set of
+attention heads Sandoval [2025], while security reasoning involves distributed representations with
+no identifiable minimal circuit. Characterizing which architecture governs a given failure mode is
+a prerequisite for choosing the right intervention strategy: head-level patching for sparse circuits,
+residual-stream steering for distributed directions. The diagnostic toolkit developed here (probes for
+early detection, logit lens for emergence timing) can make that determination before committing to
+an intervention.
+For insecure code generation specifically, the immediate path forward is sub-CWE decomposition:
+splitting heterogeneous vulnerability types like CWE-119 into distinct steering targets, and extending
+beyond API-substitution vulnerabilities to context-dependent security decisions.

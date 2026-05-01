@@ -1,0 +1,939 @@
+CyberCane: Neuro-Symbolic RAG for
+Privacy-Preserving Phishing Detection with Formal
+Ontology Reasoning
+Safayat Bin Hakimα∗
+Aniqa Afzalα
+Qi Zhaoα
+Vigna Majmundarα
+Pawel Slobodaβ
+Houbing Herbert Songα
+α University of Maryland, Baltimore County
+β Bowie State University
+Abstract
+Privacy-critical domains require phishing detection systems that satisfy contradic-
+tory constraints: near-zero false positives to prevent workflow disruption, trans-
+parent explanations for non-expert staff, strict regulatory compliance prohibiting
+sensitive data exposure to external APIs, and robustness against AI-generated at-
+tacks. Existing rule-based systems are brittle to novel campaigns, while LLM-
+based detectors violate privacy regulations through unredacted data transmission.
+We introduce CyberCane, a neuro-symbolic framework integrating deterministic
+symbolic analysis with privacy-preserving retrieval-augmented generation (RAG).
+Our dual-phase pipeline applies lightweight symbolic rules to email metadata,
+then escalates borderline cases to semantic classification via RAG with automated
+sensitive data redaction and retrieval from a phishing-only corpus. We further
+introduce PhishOnt, an OWL ontology enabling verifiable attack classification
+through formal reasoning chains. Evaluation on DataPhish 2025 (12.3k emails;
+mixed human/LLM) and Nazario/SpamAssassin demonstrates a 78.6-point recall
+gain over symbolic-only detection on AI-generated threats, with precision exceed-
+ing 98% and FPR as low as 0.16%. Healthcare deployment projects a 542× ROI;
+tunable operating points support diverse risk tolerances, with open-source imple-
+mentation at https://github.com/sbhakim/Cybercane.
+Keywords: Phishing detection, neuro-symbolic AI, privacy-preserving RAG, formal ontology rea-
+soning
+1
+Introduction
+The human element contributes to over 60% of data breaches [29], with phishing representing a
+primary initial access vector across industries, yet privacy-critical domains face unique detection
+challenges. Healthcare exemplifies these constraints: systems must balance security with unin-
+terrupted access to time-critical patient communications—misclassified appointment reminders or
+prescription notifications directly compromise care. Older adults demonstrate significantly reduced
+ability to discriminate phishing from legitimate emails, with detection performance declining with
+age [22, 8]. Recent generative AI advances amplify this threat across all sectors, enabling adver-
+saries to craft convincing domain-specific terminology and adapt to detection systems [6].
+Privacy-critical detection systems face four contradictory requirements, which we illustrate through
+healthcare as a motivating example. First, false positives must approach zero—in healthcare, each
+false alarm can potentially delay critical medical communications. Second, explanations must be
+∗Corresponding author: shakim3@umbc.edu.
+arXiv:2604.23563v1 [cs.CR] 26 Apr 2026
+
+transparent and actionable for IT staff who often lack specialized security training [7]. Third, sys-
+tems must preserve privacy—regulations like HIPAA (Health Insurance Portability and Account-
+ability Act) prohibit protected information transmission to unauthorized third parties, constraining
+cloud AI services [24]. Fourth, detection must accommodate vulnerable populations with reduced
+digital literacy.
+Existing approaches struggle to satisfy these constraints simultaneously. Rule-based systems are
+precise but brittle to novel attacks and lack semantic understanding for context-aware detection.
+Deep learning models generalize better but are black boxes unsuitable for verified explanations
+and audit trails. Recent LLM-based detectors achieve high accuracy—ChatSpamDetector reaches
+99.7% [15] and KnowPhish achieves 92.5% accuracy with 97.8% precision [18]—but cannot be
+directly deployed in privacy-critical domains due to privacy concerns around transmitting unredacted
+email content to external API providers.
+This work addresses three research questions:
+(i) Does the dual-phase architecture achieve
+healthcare-grade precision (>95%) with near-zero FPR, satisfying the core requirement of privacy-
+critical deployment? (ii) Does Phase 2 RAG provide statistically significant improvement over
+symbolic-only detection while supporting tunable operating points for diverse workflows? (iii) Does
+formal ontology reasoning produce verifiable explanations, and do operational economics justify
+deployment in privacy-critical domains?
+We introduce CyberCane, a neuro-symbolic framework integrating symbolic rules with privacy-
+preserving RAG (Fig. 1). Phase 1 applies deterministic analysis to identify technical violations;
+Phase 2 performs semantic classification via RAG with automated sensitive data redaction and re-
+trieval from a phishing-only corpus. Retrieved examples ground LLM explanations while prevent-
+ing data exposure. CyberCane addresses these requirements through architectural design: tunable
+thresholds achieve near-zero FPR (Req. 1), PhishOnt ontology provides verifiable explanations
+(Req. 2), sensitive data redaction maintains HIPAA compliance (Req. 3), and operating modes
+accommodate diverse workflows (Req. 4).
+Contributions. We make the following contributions:
+(i) Privacy-preserving neuro-symbolic architecture: Dual-phase pipeline combining symbolic
+rules with RAG through HNSW retrieval and sensitive data redaction, achieving tunable op-
+erating points.
+(ii) PhishOnt ontology: Web Ontology Language (OWL)-based reasoning framework enabling
+verifiable attack classification and formal explanation chains.
+(iii) Comprehensive evaluation: Statistical validation through bootstrap confidence intervals and
+DataPhish 2025 benchmark (n=2,337) spanning template-based to GPT-generated attacks.
+(iv) Deployment viability:
+Cost-benefit analysis for healthcare deployment demonstrating
+542.0× ROI, with framework applicable to other privacy-critical domains.
+2
+Related Work
+Phishing detection evolved from blacklist-based filtering [2] to ML systems combining heuris-
+tics [1, 25] and authentication protocols [14, 5, 16]. Recent LLM-based detectors [15, 18] present
+deployment challenges in privacy-critical domains: limited verification, email content transmission
+raises regulatory concerns (e.g., HIPAA), and labeled data may not exist for emerging threats.
+Neuro-symbolic AI combines neural perception with symbolic reasoning [9, 12] addressing fun-
+damental limitations. Privacy-critical domains face unique challenges from life-critical systems
+and vulnerable populations [7, 8] with strict regulatory constraints [24]. To address these chal-
+lenges while maintaining interpretability, recent work has explored retrieval-augmented generation
+(RAG) [26, 10, 11], though existing applications inadequately address privacy in regulated domains.
+We extend RAG with architectural privacy-by-design through sensitive data redaction before em-
+bedding.
+Prior phishing defenses span blacklist/heuristic pipelines and authentication checks, which are in-
+terpretable but brittle to domain compromise and new campaigns [2, 25, 14, 16].
+LLM-based
+detectors raise deployment challenges where sensitive data exposure and auditability are criti-
+cal [15, 24]. Retrieval-augmented security systems improve traceability by grounding outputs in
+cited evidence [26, 10]. However, prior work rarely couples retrieval with strict privacy bound-
+2
+
+Phase 2: Neural RAG classification
+DNS/MX
+Verification
+SPF/DMARC
+signals
+Domain 
+mismatch
+URL & content 
+cues
+(urgency/PHI)
+Email Input
+Symbolic 
+Indicators
+Embedding
+(text-embedding-3-small)
+Vector search
+(pgvector HNSW)
+Retrived
+examples (k≈8)
+LLM reasoning
+(GPT-4.1-mini)
+external API
+external API
+Phishing corpus 
+(~2,300)
+Phase 1: Deterministic symbolic analysis
+Privacy boundary: redaction before external model calls
+Human review
+and Feedback
+Confiidence Score
++ Explanation 
+Phishing (>50%)
+Suspicious(25-50%)
+→ Human Review
+Safe
+(<25%)
+Symbolic Phase
+Neural Phase
+External API
+Human Review
+Privacy Boundary
+(sim ≥0.88 or P1=review 
+& avg≥0.82)
+(sim ≥0.75 or avg≥0.72)
+If Phase 1 = phishing
+(score≥5),
+final=phishing
+regardless of Phase 2
+Figure 1: CyberCane dual-phase architecture. Phase 1 applies symbolic rules to email metadata, computing
+deterministic scores. Emails passing Phase 1 undergo sensitive data redaction before Phase 2 neural analysis
+using RAG with a phishing-only corpus, producing similarity-driven AI scores and multi-layered explanations.
+aries or conservative operating points needed in regulated environments [7, 24]. Human-factor ev-
+idence that vulnerable populations are more susceptible to phishing supports the need for transpar-
+ent, low-FPR decision support [8]. CyberCane combines these elements with privacy-first redaction,
+phishing-only retrieval, and conservative thresholds tailored to diverse operational workflows.
+3
+System Architecture
+CyberCane implements a dual-phase detection pipeline where emails progress sequentially through
+deterministic symbolic analysis (Phase 1) followed by neural RAG-based classification (Phase 2).
+Fig. 1 illustrates the complete architecture.
+The system is implemented as a FastAPI backend
+(Python 3.11) with PostgreSQL 17 using pgvector for HNSW vector indexing, integrated with Ope-
+nAI APIs (text-embedding-3-small, gpt-4.1-mini [21]), and a Next.js 15.0.3 frontend for human
+review.
+Design rationale. Sequential processing prioritizes low-latency, zero-cost symbolic filtering be-
+fore invoking external APIs. Phase 1 catches obvious phishing (missing DNS records, domain
+mismatches) with instant technical explanations IT staff can verify independently; Phase 2 adds se-
+mantic analysis when needed. Operational review rates and Phase 1 baseline metrics are reported in
+Appx. B.
+3.1
+Phase 1: Deterministic Symbolic Analysis
+Phase 1 applies lightweight symbolic rules across five categories: DNS/authentication checks (MX,
+SPF [14], DMARC [16]), domain mismatches, URL obfuscation patterns, urgency language, and
+credential requests. Rules employ tuned weights (wi ∈{1, 2, 3}) producing risk scores that map to
+verdicts: s < 2 (benign), 2 ≤s < 5 (review), s ≥5 (phishing). Detected indicators are passed
+to ontology reasoning (Algorithm 1) for formal attack classification. Appx. A (Algorithm 2) details
+complete rule specifications with regex patterns and validation logic.
+3.2
+Ontology-Guided Symbolic Inference
+We introduce PhishOnt, an OWL ontology encoding phishing attack knowledge as description-logic
+axioms over Phase 1 indicators (missing MX/SPF/DMARC, domain mismatch, URL obfuscation,
+urgency, credential requests, freemail senders). Algorithm 1 formalizes the neuro-symbolic reason-
+3
+
+Algorithm 1: Ontology-Guided Attack Classification
+Input: Phase 1 indicators I, ontology Ω, threshold θ = 0.3
+Output: Attack types A and reasoning chains E
+Function OntologyAttackClassification(I, Ω)
+/* Normalize indicators and map to ontology properties
+*/
+P ←∅
+for each indicator i with I[i] = true do
+P ←P ∪{MapProperty(i)}
+A ←∅
+for each attack type τ ∈Ωdo
+(R∀, R∃) ←Ω.GetAxioms(τ)
+m∀←CountMatch(R∀, P )
+m∃←HasAny(R∃, P )
+den ←|R∀| + 1(R∄= ∅)
+/* Axiom satisfaction from universal and existential coverage
+*/
+c ←(m∀+ m∃)/den
+if c ≥θ ∧(R∃= ∅∨m∃= 1) then
+A ←A ∪{(τ, c)}
+E ←GenerateChain(P, A, Ω)
+return (A, E)
+ing mechanism: Phase 1 indicators map to ontology properties (missing_mx →hasMissingMX), en-
+abling formal attack classification via axiom satisfaction. The reasoner computes multi-label attack
+types with confidence scores (c = m/r where m is satisfied constraints, r is required constraints)
+and generates verifiable reasoning chains linking detected properties to inferred attack classes. This
+formal provenance distinguishes our approach from black-box LLM classifiers, providing trans-
+parent explanations required for healthcare audit trails. Coverage and attack-type prevalence are
+reported in Section 5.2.
+3.3
+Phase 2: Neural RAG Pipeline
+Emails escalated from Phase 1 undergo privacy-preserving RAG analysis. The pipeline: (1) PHI
+redaction masks sensitive fields (emails, SSN, credit cards) via regex before external API calls; (2)
+embedding generation encodes redacted content using text-embedding-3-small (1536-d); (3) vector
+retrieval queries phishing-only corpus (2,297 examples) via HNSW [19], returning top-k = 8 neigh-
+bors with cosine similarities; (4) LLM reasoning generates tagged explanations ([AUTH], [URL],
+[SIMILARITY], [ONTOLOGY]) using gpt-4.1-mini conditioned on redacted email, Phase 1 indica-
+tors, ontology-inferred attack types (Algorithm 1), and retrieved examples. Critically, the AI score
+derives from similarity statistics—not LLM generation—ensuring reproducible, grounded verdicts.
+The complete neuro-symbolic integration workflow is formalized in Appx. A (Algorithm 3), with
+implementation details including prompt engineering and threshold calibration.
+Decision logic. If Phase 1 verdict is phishing, final verdict is phishing. Otherwise: top similarity
+≥0.40 (or Phase 1 needs_review + avg top-3 ≥0.35) yields phishing; top similarity ≥0.25 (or
+avg top-3 ≥0.17) yields needs_review; lower similarity inherits Phase 1 verdict. This prevents neu-
+ral overrides of absent technical violations while capturing semantic similarity. Ontology-inferred
+attack types (Algorithm 1) are passed to the LLM as structured context, enabling [ONTOLOGY]-
+tagged explanations that cite formal reasoning chains rather than heuristic pattern matching.
+Privacy architecture. Three data categories transmit to external APIs: (1) redacted text embed-
+dings (1536-dim vectors); (2) LLM prompts with redacted content, symbolic indicators, ontology-
+inferred attack types, and retrieved example snippets (pre-screened); (3) ontology reasoning chains
+derived from local OWL inference without external transmission. Redaction is empirically active:
+across 2,337 DataPhish 2025 test emails, 50.7% contained at least one redacted PII field (mean 1.63
+items/email); LLM-generated emails averaged 1.73 items/email versus 1.30 for human-written, yet
+detection F1 remained 0.987 for both groups, confirming that semantic classification is preserved
+under active PII masking (detailed counts in Appx. F.6). Critically, ontology classification operates
+entirely offline on Phase 1 indicators, avoiding external API dependency for formal explanations.
+Residual risks include quasi-identifier inference from surviving context, embedding leakage under
+inversion attacks [17], and organizational compliance requirements (business associate agreements,
+workforce training) beyond technical controls. Organizations with zero-trust requirements can de-
+ploy on-premises models (sentence-transformers, Llama 3) at cost of reduced accuracy and increased
+infrastructure complexity.
+4
+
+Retrieval corpus bias mitigation. The phishing-only corpus creates structural positive bias. Three
+mechanisms mitigate: (1) Phase 1 filters obvious phishing before RAG, ensuring borderline cases
+enter neural analysis; (2) conservative similarity thresholds (≥0.40 for phishing classification) re-
+quire strong semantic overlap; (3) LLM receives symbolic indicators (may be empty for legitimate
+emails), ontology attack types, and retrieved examples, with explicit prompting to assess attack char-
+acteristics beyond superficial similarity. The measured FPR=0.16% suggests limited false escalation
+despite corpus composition.
+We empirically evaluate three hypotheses: (H1) dual-phase detection achieves healthcare-grade pre-
+cision (>95%) with minimal FPR; (H2) RAG improves over deterministic-only baselines; (H3) op-
+erational economics justify deployment.
+4
+Experimental Setup
+Dataset. We evaluate on three corpora: (1) Nazario phishing corpus [20] and SpamAssassin [3]
+(2006-era, 7,274 emails); (2) DataPhish 2025 [27] (12,300 emails, ∼75% LLM-generated, ∼25%
+human-written). Table 3 (left) summarizes splits. Only phishing training rows are indexed for
+retrieval. Random seed 42 ensures reproducibility. Synthetic healthcare validation data (Appx. B)
+is generated via a multi-model pipeline with provenance tracking, deduplication, and contamination
+checks; a manifest and dataset card are produced for auditability.
+Metrics. We report precision (fraction of phishing predictions correct—important for minimizing
+false alarms), recall (fraction of phishing detected), F1-score (harmonic mean), and false positive
+rate (FPR—fraction of legitimate emails misclassified). Privacy-critical contexts prioritize FPR min-
+imization to prevent workflow disruption.
+Baselines. Majority class baseline (predicts most frequent label) and TF-IDF logistic regression
+(unigram/bigram features, trained on train split) provide text-only comparisons. Detailed baseline
+results in Appx. F. We evaluate a GPT-4 Direct baseline using OpenAI’s gpt-4o-mini model (cost-
+effective variant representing realistic organizational deployment) to quantify privacy and cost im-
+plications of unfiltered commercial LLM usage. This baseline transmits full unredacted email text
+with a zero-shot prompt (“Is this email phishing?”), tracking API costs and sensitive information ex-
+posure rates via regex pattern detection (email addresses, phone numbers, SSNs, credit cards, dates
+of birth).
+Protocol. Thresholds tuned on validation split. Bootstrap confidence intervals (1,000 resamples
+for CI estimation; 10,000 samples for McNemar significance testing) estimate statistical stabil-
+ity. All experiments use OpenAI text-embedding-3-small (1536-dim) and gpt-4.1-mini (tempera-
+ture=0.2) [21].
+5
+Results
+We present results organized to address our three hypotheses (H1–H3): overall performance and
+baseline comparisons (H1, H2), ontology coverage, explanation quality, operating point flexibility,
+and economic viability (H3).
+5.1
+Overall Performance
+Table 3 (right) compares Phase 1 (deterministic, threshold=2) against RAG (k = 8) across datasets.
+On Nazario/SpamAssassin (n=1,110), RAG raises precision to 99.5% while increasing recall to
+37.2% and reducing FPR to 0.16%. On DataPhish 2025 (n=2,337; human+LLM mix), Phase 1
+recall is 20.5% while RAG reaches 99.1% recall at 98.2% precision. Detailed cohort and model-
+source breakdowns appear in Appx. Table 18, and retrieval quality in Appx. C.
+Comparison with privacy-constrained baselines.
+Table 4 compares CyberCane against three
+baselines under explicit privacy accounting. TF-IDF logistic regression trained on PII-redacted text
+(same pii.py pipeline as CyberCane, PHI exposure = 0%) achieves 98.8% precision and 97.4%
+recall on the Nazario/SpamAssassin test split—but at 6× higher FPR (0.98% vs. 0.16%), with no
+explainability, no formal attack taxonomy, and no tunable operating points. This is the fair privacy-
+constrained bar; CyberCane’s value is not raw recall but precision at near-zero FPR plus verifiable
+PhishOnt reasoning chains required for healthcare audit trails. GPT-4 Direct achieves 99.0% recall
+5
+
+Table 1: DataPhish 2025 robustness: Phase 2 RAG detection consistency across 18 creator sources and 6
+emotion categories (n=2,300; 37 of the 2,337 test emails lack creator attribution and are excluded from per-
+source rows but included in overall Table 3). F1 range 0.976–1.000 across all creator groups.
+Group
+N
+Prec.
+Recall
+F1
+Creator Source
+Human-written
+559
+97.5%
+99.5%
+98.5%
+LLM-generated (17 models)
+1,741
+98.4%
+99.1%
+98.7%
+LLM Model
+DeepSeek-Chat
+602
+99.1%
+99.1%
+99.1%
+OpenAI (GPT family)
+596
+97.1%
+99.3%
+98.2%
+GPT-4o
+62
+95.4%
+100.0%
+97.6%
+DeepSeek Chat (v2)
+62
+100.0%
+97.5%
+98.7%
+Amazon Nova / Grok / Codestral
+156
+100.0%
+100.0%
+100.0%
+Emotion
+Urgency
+1,177
+98.7%
+99.2%
+98.9%
+Curiosity
+976
+98.2%
+99.3%
+98.7%
+Authority
+908
+98.8%
+100.0%
+99.4%
+Neutral
+888
+95.0%
+99.0%
+97.0%
+Fear
+655
+99.4%
+99.2%
+99.3%
+Greed
+432
+99.2%
+98.2%
+98.7%
+Overall
+Phase 2 RAG
+2,300
+98.1%
+99.2%
+98.7%
+Note. All groups are evaluated with identical thresholds (top_sim≥0.40, avg_top3≥0.35). F1 ranges from 0.976 to 1.000 across 18
+creator sources, demonstrating consistent detection regardless of authoring model or rephrasing style. Phase 1 recall for the same set is
+7.7–39.9% (emotion-dependent); Phase 2 closes all blind spots to ≥97% F1.
+but exposes 53.2% of emails as sensitive data, violating HIPAA regardless of detection accuracy,
+and flags ∼600 legitimate emails daily at 5.9% FPR.
+Robustness across creator sources. Table 1 reports detection consistency across 18 email creator
+sources in the DataPhish 2025 test set (n=2,300; 37 emails without creator attribution excluded
+from per-source rows). Phase 2 RAG achieves F1 between 0.976 and 1.000 across all groups—
+human-written (F1=0.985), GPT-family (F1=0.982), DeepSeek-Chat (F1=0.991), and frontier mod-
+els including Grok 4 and Amazon Nova (F1=1.000). Performance is statistically indistinguishable
+between human-written and LLM-generated emails (F1=0.985 vs. 0.987), demonstrating that Cy-
+berCane’s semantic embedding space is invariant to authoring model. Emotion-stratified analysis
+shows Phase 2 closes all Phase 1 blind spots: Neutral-tone attacks (near-zero Phase 1 recall) reach
+F1=0.970; Altruism and Greed reach F1≥0.987. Critically, all DataPhish evaluations apply the
+same pii.py PHI-masking step before retrieval and prompting—yet LLM-generated emails score
+no lower than human-written (F1=0.987 vs. 0.985), confirming that regex redaction does not intro-
+duce a detection gap under AI-augmented attack conditions.
+Phase 2 as layered defense against rule evasion. A structurally important property emerges from
+stratifying DataPhish 2025 results by Phase 1 outcome. Of the 1,589 phishing emails in the test set,
+79.5% (n=1,264) scored zero in Phase 1—attacks with valid DNS infrastructure and no detectable
+urgency cues that entirely bypass symbolic rules. Phase 2 RAG correctly classified 99.0% of these
+Phase 1-evaded emails, leaving a combined two-phase miss rate of only 0.8%. Recovery was con-
+sistent across emotion categories: Neutral-tone attacks (95.8% Phase 1 evasion rate) reached 99.0%
+Phase 2 recovery; Greed-tone (97.2% evasion) 98.2%; Authority-tone (64.1% evasion) 100.0%.
+This demonstrates the intended architectural property: the symbolic layer provides instant verifi-
+able verdicts for flagrant technical violations, while the neural layer provides semantic recovery for
+attacks that deliberately avoid rule triggers.
+5.2
+Ontology Coverage and Attack Taxonomy
+Table 2 summarizes PhishOnt activation on the test split. The ontology fires on 85.0% of emails and
+76.8% of phishing, providing multi-label symbolic explanations; high benign activation (91.7%)
+reflects shared structural indicators (e.g., URLs, authentication patterns) present in both legitimate
+and malicious emails. Critically, PhishOnt complements Phase 1/2 detection logic by generating
+verifiable reasoning chains (e.g., CredentialTheft = hasCredentialRequest AND hasMissingMX) for
+explanations rather than standalone verdicts. On activated emails, PhishOnt assigns 2.66 attack
+labels on average with mean confidence 53.6%, reflecting overlapping threat patterns.
+Confidence discriminability. While activation rates are similar across classes, confidence scores
+differ systematically: phishing activations carry a mean confidence of 54.6% versus 52.8% for be-
+nign activations (+1.84pp). More tellingly, only 14.5% of benign activations exceed the phishing
+mean confidence—meaning 85.5% of benign activations score below the typical phishing confi-
+dence level. This confirms that PhishOnt is discriminative at the confidence level despite similar
+6
+
+Table 2: PhishOnt ontology coverage and attack-type prevalence on the test split (n=1,110).
+(A) Coverage
+Split
+Count
+Cov.
+Overall
+946/1110
+85.2%
+Phishing
+383/495
+77.4%
+Benign
+563/615
+91.5%
+(B) Attack types (prevalence)
+Attack type
+Prev.
+Attack type
+Prev.
+Prescription Fraud
+62.3%
+Insurance Verification Phish
+13.2%
+High-Confidence Phishing
+58.8%
+Appointment Scam
+11.4%
+Technical Attack
+36.8%
+Social Engineering Attack
+8.2%
+Credential Theft
+34.1%
+URL-Based Attack
+1.5%
+Table 3: Dataset composition (left) and performance across corpora (right). DataPhish 2025 shows 78.6pp
+recall gain of Phase 2 RAG over Phase 1 symbolic-only within CyberCane’s pipeline on AI-generated threats.
+(A) Dataset splits
+Source
+Train
+(Benign/Phish)
+Val
+(Benign/Phish)
+Test
+(Benign/Phish)
+Nazario
+0 / 1095
+0 / 234
+0 / 236
+SpamAssassin
+2863 / 1202
+613 / 257
+615 / 259
+DataPhish 2025
+4932 / 3063
+269 / 131
+711 / 1589
+(B) Test performance
+Dataset
+Method
+Prec.
+Recall
+F1
+FPR
+Nazario/SpamAssassin
+Phase 1
+83.0%
+17.8%
+0.293
+2.9%
+RAG
+99.5%
+37.2%
+0.541
+0.16%
+DataPhish 2025
+Phase 1
+93.4%
+20.5%
+0.336
+—
+RAG
+98.2%
+99.1%
+0.987
+—
+binary activation rates. The system is architecturally designed so that this confidence signal feeds
+structured context into Phase 2 RAG rather than producing standalone verdicts, which explains why
+the binary activation rate is not the operative discriminability measure.
+5.3
+Explanation Groundedness
+To evaluate whether LLM-generated explanations cite verifiable evidence, we conducted A/B test-
+ing on 60 random test emails, comparing explanation quality with and without ontology context.
+Each explanation bullet receives a tag ([AUTH], [URL], [URGENCY], [CONTENT], [SIMILAR-
+ITY], [ONTOLOGY]) and should cite specific evidence from Phase 1 analysis, retrieval context, or
+ontology inference. We classify support status as SUPPORTED (cites specific evidence), UNSUP-
+PORTED (generic without citation), or UNKNOWN (no evidence available to cite).
+Table 5 demonstrates ontology integration enables verifiable explanations—all 41 ONTOLOGY-
+tagged bullets (100%) cite correct attack types and reasoning chains from formal inference. In
+comparison, heuristic tags show variable support rates (AUTH: 65.8%, URGENCY: 22.2%, CON-
+TENT: 25.0%), reflecting challenges verifying free-text LLM outputs against rule-based indicators.
+SIMILARITY achieves 100% support by referencing concrete similarity scores. This demonstrates
+that formal symbolic reasoning produces more verifiable explanations than pure heuristic analysis,
+addressing healthcare audit requirements for decision traceability. The key contribution is adding a
+formal layer that ensures verifiability for attack classification and risk scoring.
+5.4
+Operating Point Flexibility
+CyberCane exposes tunable thresholds across Phase 1 scoring and RAG similarity, allowing orga-
+nizations to select precision-recall tradeoffs based on risk tolerance and review capacity. Table 6
+reports five operating modes. The baseline configuration matches the production pipeline (99.5%
+precision, 0.16% FPR), while more aggressive settings increase recall to 44.6% while maintaining
+precision ≥99.3% (FPR remains 0.16% via shared Phase 1 high-confidence threshold).
+Fig. 2 consolidates evidence for H1–H3. Panel A confirms H1: RAG achieves +16.5pp precision
+gain, crossing 95% healthcare threshold. Panel B reveals coverage-precision tradeoff: DNS checks
+(DMARC, MX, SPF) provide 30–46% coverage while content heuristics (urgency, IP literals) de-
+liver 90–94% precision. Panel C validates design rationale (Section 3): 71.2% of false negatives
+result from intentional conservative threshold choices (zero-score attacks 43.2%, low-signal content
+28.0%) that prioritize low FPR over recall, while only 28.8% represent technical limitations requir-
+ing architectural improvements. Panel D confirms H3: 542.0× ROI with $1.5K daily costs versus
+$818K risk mitigation.
+Comparing RAG against higher-threshold Phase 1 (threshold=5) quantifies impact: Phase 1 at
+threshold=5 achieves precision=75.0%, recall=0.6%. RAG improves both metrics: precision in-
+creases to 99.5% (+24.5pp) and recall to 37.2% (+36.6pp), yielding F1-score improvement from
+0.012 to 0.541. Statistical significance testing validates gains: McNemar’s test yields χ2 = 181.0
+(p < 0.001), confirming RAG predictions differ significantly from deterministic baseline. Boot-
+7
+
+Table 4: Comparison with GPT-4 Direct Baseline showing privacy and cost trade-offs.
+Method
+Prec.
+Recall
+F1
+FPR
+Cost/Email
+PHI Exposure
+CyberCane (RAG k=8)
+99.5%
+37.2%
+54.1%
+0.16%
+$0.0017
+0%†
+TF-IDF LR + Redaction§
+98.8%
+97.4%
+98.1%
+0.98%
+$0
+0%†
+TF-IDF LR (no redaction)
+98.6%
+97.4%
+98.0%
+1.14%
+$0
+∼53%
+GPT-4 Direct (gpt-4o-mini)
+93.2%
+99.0%
+96.0%
+5.9%
+$0.0001‡
+53.2%
+Notes.
+†PHI redacted before API transmission.
+‡API cost only; excludes human review ($1,310/day for CyberCane).
+§Privacy-
+constrained fair comparison uses the same redaction pipeline as CyberCane with PHI exposure = 0%. CyberCane provides 6× lower
+FPR (0.16% vs. 0.98%), PhishOnt verifiable reasoning chains, and tunable operating points, none of which are available in TF-IDF.
+Table 5: Explanation groundedness: support rates by tag type (n=60 emails).
+(A) With ontology context
+Tag
+Total Supp.
+Rate
+AUTH
+117
+77 65.8%
+URL
+23
+2
+8.7%
+URGENCY
+18
+4 22.2%
+CONTENT
+16
+4 25.0%
+SIMILARITY
+50
+50
+100%
+ONTOLOGY
+41
+41 100%
+(B) Without ontology context
+Tag
+Total Supp.
+Rate
+AUTH
+135
+78 57.8%
+URL
+19
+2 10.5%
+URGENCY
+14
+4 28.6%
+CONTENT
+14
+4 28.6%
+SIMILARITY
+61
+61
+100%
+ONTOLOGY
+0
+0
+N/A
+strap analysis on F1-score shows mean improvement +0.527 (p < 0.001); confidence intervals are
+reported in Table 19.
+5.5
+Operational Cost-Benefit Analysis
+Table 7 quantifies economic viability for a healthcare deployment example with a mid-sized orga-
+nization processing 10,000 daily emails at 4.4% phishing base rate. With 37.2% recall, the system
+detects ∼164 phishing attacks daily, preventing an estimated 16.4 regulatory breaches (assuming
+10% attack success rate [23]). At $50,000 average regulatory penalty per incident, this mitigates
+∼$818,000 daily risk, yielding a 542× optimistic ROI (detected attacks only; Table 7).
+We additionally report a conservative bound that deducts the estimated cost of missed attacks (276
+daily false negatives × 10% success rate × $50K = $1.38M/day). At 37.2% recall this bound is
+negative, honestly reflecting that conservative threshold deployment does not fully offset phishing
+risk at this operating point. However, the bound turns strongly positive under higher-recall configu-
+rations: at DataPhish 2025 recall (99.1%), optimistic and conservative ROI converge to 1,450× and
+1,437× respectively, since virtually no attacks are missed. This framing reinforces the importance
+of operating point selection: organizations with sufficient review capacity should deploy Balanced
+or Aggressive mode, where recall substantially increases without sacrificing FPR.
+Total operational costs ($1,506/day) include API calls ($1.71), human review labor ($1,310 for
+13.1% escalation at $100/hr based on fully-burdened IT security analyst wages [28]), and false-
+positive impact ($194 for 16 delayed communications at $12.77 each). With FPR 0.16% (16 false
+alarms per 10,000 emails), net benefit is $816,272/day or $297.9M annually, yielding 542.0× ROI.
+Operating-mode economics. Extending analysis across operating points (Appx. F, Table 16), bal-
+anced mode increases detection to 176 attacks daily (40.0% recall, $1,506/day cost) while maintain-
+ing 583× ROI. Aggressive mode detects 196 attacks (44.6% recall) with 651× ROI, showing recall
+gains remain economically viable under low-FPR operating conditions.
+Healthcare generalization. Given the absence of publicly available healthcare phishing datasets,
+we validate domain applicability using synthetic healthcare attacks (Appx. B details multi-model
+generation with provenance tracking and contamination checks). Balanced mode achieves 100%
+recall on template-based phishing with explicit red flags; aggressive mode reaches 87.3% recall at
+95.4% precision on GPT-generated attacks, demonstrating that coverage depends on threshold cali-
+bration. While synthetic evaluation has limitations, the difficulty spectrum provides initial evidence
+of healthcare transferability pending real-world validation.
+5.6
+Feature Importance and Design Validation
+Leave-one-out ablation shows DNS authentication most frequently triggered: no_dmarc covers
+46.5% of phishing (12.5pp recall drop when removed), while content heuristics achieve 90–94%
+precision with lower coverage. Failure taxonomy shows 71.2% of missed phishing cases fall into
+8
+
+Table 6: Operating point configurations showing precision-recall tradeoffs across deployment modes.
+Operating Mode
+Precision
+Recall
+F1
+FPR
+Use Case
+Baseline (Pipeline)
+99.5%
+37.2%
+0.541
+0.16%
+Current deployment
+Conservative
+99.3%
+29.5%
+0.455
+0.16%
+High-stakes clinical
+Balanced
+99.5%
+40.0%
+0.571
+0.16%
+General healthcare
+Moderate
+99.5%
+42.2%
+0.593
+0.16%
+High-volume screening
+Aggressive
+99.5%
+44.6%
+0.616
+0.16%
+Maximum coverage
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Recall (Phishing Detection Rate)
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Precision
+Privacy-Critical Req. (Prec. >95%)
++16.5pp
+(A) Neuro-Symbolic Achieves Deployment-Grade Precision
+Phase 1
+Phase 1 (t=2)
+Phase 1 (t=5)
+RAG (ours)
+0
+10
+20
+30
+40
+50
+Phishing Coverage (%)
+30
+40
+50
+60
+70
+80
+90
+100
+Rule Precision (%)
+DMARC
+MX
+SPF
+Urgency
+IP Literal
+Each circle = rule
+X = coverage, Y = precision
+(B) Feature Importance: Coverage vs. Precision
+Bubble size = recall impact (pp)
+3pp
+8pp
+13pp
+Color = importance tier
+High impact
+Medium impact
+Low impact
+Neutral
+Greed
+Authority
+Overall
+Emotion Category (DataPhish 2025)
+50
+60
+70
+80
+90
+100
+110
+Rate (%)
+95.8%
+97.2%
+64.1%
+79.5%
+99.0%
+98.2%
+100.0%
+99.0%
+Combined two-phase
+miss rate: 0.8%
+(C) Phase 2 Recovers 99.0% of Phase 1-Evaded Attacks
+Phase 1 Evasion Rate
+Phase 2 Recovery Rate
+API
+Human
+FP
+Total
+Risk
+100
+101
+102
+103
+104
+105
+106
+Daily Cost/Beneﬁt ($, log scale)
+ROI: 542.0×
+Net Daily: $816K
+$2
+$1.3K
+$0.2K
+$1.5K
+$818K
+(D) Economic Viability: $297.9M Annual Value
+High-Precision Phishing Detection via Privacy-Preserving Neuro-Symbolic RAG
+Figure 2: CyberCane results overview. (A) Phase 1 versus RAG operating points on precision-recall space.
+(B) Rule coverage versus precision with bubble size encoding recall impact. (C) False-negative taxonomy
+separating intentional thresholds from technical limits. (D) Daily cost-benefit and ROI for privacy-critical
+deployment.
+conservative-threshold categories: 43.2% triggered zero rules (evasive attacks with valid DNS),
+28.0% scored below threshold. Complete ablations and taxonomy in Appx. E Tables 12, 25.
+6
+Discussion
+Key findings. Results support H1 (99.5% precision, 0.16% FPR, Table 3B), H2 (RAG improves
+precision by 16pp over symbolic-only, McNemar’s p < 0.001, Fig. 2A), and H3 (542.0× ROI, Ta-
+ble 7). These findings demonstrate that neuro-symbolic architectures can achieve deployment-grade
+performance in privacy-critical domains by prioritizing precision and explainability over maximiz-
+ing recall—a tradeoff appropriate for environments where false alarms directly disrupt critical work-
+flows. Precision gains arise from semantic classification correcting conservative symbolic flagging,
+while DataPhish 2025 evaluation quantifies a 78.6-point recall gain of Phase 2 RAG over Phase 1
+symbolic-only within the CyberCane pipeline on AI-generated attacks. On Nazario/SpamAssassin,
+37.2% recall under the conservative threshold reflects a deliberate FPR-first design choice, not a
+technical ceiling—Aggressive mode recovers 44.6% recall while maintaining 99.5% precision (Ta-
+ble 6).
+9
+
+Table 7: Cost-benefit analysis: healthcare deployment scenario. Cost parameters grounded in industry bench-
+marks [13, 23, 28].
+Metric
+Value
+Conservative Bound
+Description
+Total Daily Cost
+$1,506
+$1,506
+API + labor + FP impact
+Attacks Detected
+164
+164
+37.2% of 440 daily phishing
+Attacks Missed
+276
+276
+62.8% of 440 (false negatives)
+Breaches Prevented
+16.4
+16.4
+10% attack success rate
+Missed Breach Cost
+—
+$1,381,600
+Missed attacks × 10% × $50K
+Risk Mitigated
+$817,778
+$817,778
+$50K per breach penalty
+Net Daily Benefit
+$816,272
+—
+Risk - operational cost
+ROI (optimistic)
+542.0×
+—
+Detected attacks only†
+ROI (conservative)
+—
+−376×‡
+Accounts for missed attacks
+At DataPhish 2025 recall (99.1%): optimistic 1,450×, conservative 1,437×
+Notes. †Optimistic bound follows industry-standard reporting and is equivalent to assuming no undetected breaches. ‡The conservative
+bound is negative at 37.2% recall because missed breach costs exceed mitigated risk. ROI becomes positive under Balanced/Aggressive
+modes or DataPhish 2025 operating conditions (99.1% recall).
+Privacy-accuracy tradeoffs. Sensitive data redaction enables cloud API access without transmit-
+ting protected information, while symbolic analysis operates on metadata. Direct GPT-4 comparison
+(Table 4) demonstrates privacy necessity: unredacted LLM usage exposes sensitive data in 53.2%
+of communications, violating privacy regulations regardless of detection accuracy. This separates
+CyberCane from general-purpose LLM detectors.
+Design implications. The dual-phase architecture reflects domain-specific requirements: Phase 1
+symbolic filtering provides instant, verifiable explanations for IT staff, while Phase 2 RAG handles
+semantic nuance. Conservative thresholds prioritize false positive minimization over recall, consis-
+tent with privacy-critical domains’ tolerance for missed detections relative to workflow disruption.
+The 13.1% review rate represents an operating point adjustable based on staffing capacity and risk
+tolerance. PhishOnt bridges symbolic and neural phases, providing formal attack taxonomies com-
+plementing similarity-based retrieval.
+Limitations. Real-world deployment validation in privacy-critical environments remains necessary
+beyond DataPhish 2025 and synthetic tests. The lack of publicly available domain-specific phishing
+corpora (e.g., healthcare, finance) required evaluation on general benchmarks. True adversarial
+robustness against white-box attackers aware of system internals remains unvalidated; while Phase 2
+RAG empirically recovers 99.0% of Phase 1-evaded emails (Section 5.1), adaptive adversaries could
+craft content that is simultaneously rule-free and semantically dissimilar to the phishing corpus.
+Residual privacy risks persist despite PHI redaction: quasi-identifiers—rare diagnostic terms,
+institutional domain patterns, and atypical message timestamps—can re-identify individuals even
+after direct PII removal, and dense embeddings transmitted to external APIs remain susceptible
+to inversion attacks [4, 17]. Full mitigation requires organizational controls (business associate
+agreements, privacy impact assessments, workforce training) complemented by on-premises model
+deployment for zero-trust environments; additional details are in Appx. B.
+7
+Conclusion and Future Work
+CyberCane demonstrates that privacy-preserving neuro-symbolic architectures achieve deployment-
+grade phishing detection in privacy-critical domains. Our dual-phase pipeline achieves 98.2% pre-
+cision with 99.1% recall on DataPhish 2025, delivering a 78.6-point recall gain over symbolic-only
+detection on contemporary AI-generated threats. On Nazario/SpamAssassin, the system reaches
+37.2% recall at 99.5% precision under a conservative FPR-first threshold—a deliberate tradeoff
+where missed detections are tolerated over workflow-disrupting false alarms. PhishOnt ontology
+reasoning provides formal attack classification with verifiable explanations, while architectural sen-
+sitive data redaction maintains regulatory compliance. Healthcare deployment analysis indicates
+542× ROI for mid-sized organizations, with tunable operating points supporting diverse risk toler-
+ances. Future work includes adaptive threshold learning from operational feedback, domain-specific
+dataset curation across privacy-critical sectors, multi-channel detection for SMS and voice phishing,
+and comprehensive adversarial robustness evaluation in operational environments. By combining
+formal verifiability with neural adaptability, this work establishes a framework for trustworthy AI-
+augmented security in life-critical domains.
+10

@@ -1,0 +1,559 @@
+Polynomial Multiproofs
+for Scalable Data Availability Sampling
+in Blockchain Light Clients
+Rachit Anand Srivastava*, Vikram Bhattacharjee*, Will Arnold, Toufeeq Pasha
+Avail
+Abstract
+Light clients are essential for scalable blockchain systems because they verify data avail-
+ability without downloading full blocks. In data-availability-sampling-based systems,
+sampled cells are retrieved from a peer-to-peer network and verified against cryptographic
+commitments. A common deployment pattern associates each sampled cell with an
+independent Kate–Zaverucha–Goldberg (KZG) proof, creating substantial cumulative
+bandwidth, storage, and verification overhead. This paper studies polynomial multiproofs
+(PMP) as a mechanism for reducing these costs in blockchain light clients. We present a
+design in which multiple sampled cell evaluations are verified using a single aggregated
+proof over a shared evaluation micro-domain and describe the corresponding changes to
+proof generation, dissemination, retrieval, and verification in a peer-to-peer light-client
+stack. We instantiate and evaluate the design in Avail, a modular data availability layer
+for blockchains, as a case study. The results show lower proof bytes, lower verifier CPU
+and memory usage, and deployment-level infrastructure cost reductions of up to 45%
+relative to a per-cell baseline, while also clarifying the trade-offs introduced by grouped
+retrieval.
+1
+Introduction
+Blockchain systems face a basic scalability problem: strong verification usually requires
+every node to download and validate full blocks, which imposes substantial communication,
+storage, and computation costs [1, 2]. These costs are especially restrictive for light clients
+running on mobile devices, browsers, and edge environments [4]. For light clients to be
+practical at scale, data availability verification must remain both sound and efficient.
+A common approach is Data Availability Sampling (DAS), in which block data is erasure
+coded into cells and clients sample a subset of coordinates to obtain probabilistic assurance
+that the full data is available [3, 1]. Many modern deployments authenticate sampled cells
+using Kate–Zaverucha–Goldberg (KZG) polynomial commitments [5, 3]. In a baseline
+design, however, each sampled cell carries an independent proof, so the cumulative cost of
+proof transmission, storage, and verification grows quickly with the number of samples.
+These costs are amplified in peer-to-peer settings, where cells and proofs are retrieved
+through a distributed hash table (DHT) [7, 4]. We address this bottleneck by studying
+polynomial multiproofs (PMP) as a mechanism for reducing proof overhead in blockchain
+light clients [6]. Instead of verifying each sampled cell with a separate KZG proof, a light
+client verifies multiple sampled cells with one aggregated proof, while the peer-to-peer
+layer stores grouped proof-carrying objects rather than per-cell objects. We instantiate
+this design in Avail as a case study.
+*Both authors contributed equally to this work.
+1
+arXiv:2604.16559v1 [cs.CR] 17 Apr 2026
+
+A key requirement is that aggregation must not weaken DAS security. In our design,
+grouping changes only the transport unit exposed by the DHT. The light client still reasons
+about sampled coordinates individually. To make this precise, we bind each aggregated
+proof to a fixed micro-domain of evaluations and to canonical grouping metadata, so the
+verifier knows exactly which opened values belong to each proof.
+The main contributions of this paper are:
+• identifying per-cell KZG proofs as a bottleneck for DAS light clients in peer-to-peer
+settings and designing a multiproof retrieval and verification model for grouped sampled
+cells;
+• specifying the implementation path from full-node proof generation to fat-client DHT
+publication and light-client verification; and
+• implementing and evaluating the design in Avail, showing lower verifier overhead and
+up to 45% lower infrastructure cost.
+2
+Related Work
+Data availability has emerged as a central problem in scalable blockchain verification.
+Al-Bassam et al. [1] introduced fraud and data availability proofs for strengthening light-
+client security, and LazyLedger later proposed an architecture centered on ordering and
+data availability rather than global execution [2]. Hall-Andersen et al. [3] formalized DAS
+and analyzed its security in relation to erasure coding and commitment schemes. At the
+networking layer, Król et al. [4] studied the peer-to-peer requirements of Ethereum-style
+DAS.
+Polynomial commitments provide the cryptographic basis for many DAS constructions.
+Kate, Zaverucha, and Goldberg introduced constant-size commitments with succinct
+evaluation proofs [5]. Boneh et al. [6] showed how multiple polynomial evaluations can be
+aggregated into a single proof. Our work differs from this prior literature by studying
+how such multiproofs can be integrated into a peer-to-peer light-client workflow, where
+proof dissemination, retrieval granularity, and verifier cost all matter at the systems level.
+A relevant engineering reference point is Ethereum’s EIP-4844 and the broader proto-
+danksharding effort, which deploy KZG commitments and batch verification in a large-scale
+production setting. That work focuses on validator-side blob verification, whereas we focus
+on peer-to-peer dissemination and reuse of proof-carrying objects for DAS light clients. In
+particular, validator-side systems often batch independent openings using pairing-product
+checks, which is an important comparison point for our evaluation.
+Recent work on DAS networking has explored stronger dissemination and robustness
+models than a conventional DHT. PANDAS [8] redesigns dissemination around direct,
+lightweight exchanges to meet consensus-time constraints, while Robust Distributed Arrays
+pursue stronger end-to-end robustness guarantees. Related measurement work on large
+peer-to-peer content-routing systems also helps contextualize the assumptions behind
+DHT-based lookup performance. For example, recent studies of IPFS report meaningful
+centralization and heterogeneity in peer quality, which can materially affect routing
+reliability, latency, and lookup behavior in practice [9]. Our work is complementary:
+rather than redesigning the dissemination substrate, we optimize the cryptographic and
+storage paths within a DHT-oriented light-client architecture.
+2
+
+3
+Polynomial Multiproof Construction
+A polynomial commitment scheme (PCS) is defined as a tuple of algorithms or protocols
+S = (gen, com, open).
+Here gen outputs a structured reference string (SRS), com commits to a polynomial, and
+open proves correct evaluation on designated sets.
+3.1
+Generic Multiproof Form
+The construction used in our case study follows the first scheme of Boneh et al. [6], which
+is designed to optimize opening efficiency. To avoid notation overload, we use Ui ⊆T for
+the opened subset associated with polynomial fi, where T = {z1, . . . , zt} is a common
+ambient evaluation domain.
+The prover computes
+h(X) :=
+X
+i∈[k]
+γi−1 · fi(X) −ri(X)
+ZUi(X)
+,
+(1)
+where ri is the interpolation polynomial matching the opened values on Ui and γ is the
+verifier challenge. The verifier checks one aggregated pairing equation rather than one
+equation per opening.
+3.2
+Shared-Point Specialization Used Here
+To obtain a design suitable for grouped DAS retrieval, we use the shared-point specialization
+Ui = Tg
+∀i ∈[k],
+(2)
+where Tg is a fixed micro-domain of size g inside one row- or column-commitment context.
+Each opened polynomial still satisfies the same degree bound d, but all openings appearing
+in one aggregated proof are over the same micro-domain Tg.
+Under this specialization,
+h(X) =
+P
+i γi−1 (fi(X) −ri(X))
+ZTg(X)
+.
+(3)
+The prover therefore computes the weighted polynomial sum, divides by ZTg, and discards
+the remainder. This avoids interpolation during proof generation.
+The verifier computes
+Zi := [ZTg\Ui(x)]2 = [1]2 = g2,
+(4)
+because Ui = Tg for every opened polynomial, and then reduces the check to a single
+aggregated pairing relation:
+F :=
+Y
+i
+e
+
+γi−1 · (ci −[ri(x)]1), Zi
+
+= e
+ X
+i
+γi−1ci −
+"X
+i
+γi−1ri(x)
+#
+1
+, g2
+!
+.
+(5)
+Table 1 summarizes the opening and verification cost under the shared-point specialization.
+These counts apply to the specialized construction above, not to generic batch verification
+of independent single-point KZG openings.
+3
+
+Operation
+Open
+Verify
+Polynomial interpolation
+0
+1
+G1 scalar multiplication
+d + 1 −|Tg|
+N + |Tg| + 1
+G2 scalar multiplication
+0
+d (cacheable)
+Pairing
+0
+2
+Table 1: Operation summary for the shared-point specialization.
+3.3
+Mapping to DAS Grouping
+The main source of ambiguity in practice is the relationship between the transport group
+and the point set used by the verifier. In our instantiation, these are the same object:
+each grouped retrieval object corresponds to a full micro-domain
+Tg = {zj1, . . . , zjg}
+inside a single row or column context.
+The grouped object therefore transports all
+evaluations in that micro-domain for each included commitment context, rather than only
+an arbitrary subset of them. This is what makes the specialization in Equation 2 correct.
+Concretely, let a row polynomial fr be evaluated over a full row domain Trow. The
+implementation partitions Trow into disjoint micro-domains of size g. For one such block
+Tg = {zj1, . . . , zjg} ⊂Trow,
+the grouped object stores the entire value vector
+
+fr(zj1), . . . , fr(zjg)
+
+together with the commitment identifier and block metadata. If several rows are grouped
+together under one proof, each row contributes its full evaluation vector on the same
+micro-domain Tg.
+Worked example. Suppose a row commitment context uses row domain
+Trow = {z1, . . . , z8},
+and the implementation chooses micro-domain size g = 4. One grouped object may
+correspond to
+Tg = {z1, z2, z3, z4}.
+If two adjacent rows are packed together, then the object transports
+(fr(z1), fr(z2), fr(z3), fr(z4))
+and
+(fr+1(z1), fr+1(z2), fr+1(z3), fr+1(z4)).
+A light client may have sampled only one or two coordinates inside this group, but
+verification is performed against the full transported micro-domain Tg. This removes the
+earlier ambiguity between the sampled subset and the verifier’s opened set.
+4
+
+3.4
+Non-Interactive Challenge Derivation
+Because aggregated proofs are stored in the DHT and reused by multiple clients, we
+instantiate the verifier challenge γ using Fiat–Shamir:
+γ = H(domain ∥srs_id ∥cm1 ∥· · · ∥cmk ∥Tg ∥coords ∥GCellBlock).
+(6)
+The transcript binds the challenge to the commitment context, the exact micro-domain,
+the grouping metadata, and the SRS domain.
+This prevents replay across different
+grouping layouts or heterogeneous commitment contexts, assuming collision resistance of
+the hash function and a common SRS for all commitments appearing in the proof.
+4
+Instantiation in Avail
+We instantiate the design in Avail. Row and column commitments, together with the
+corresponding proof material, are generated by Avail full nodes. The implementation path
+is as follows.
+1. A full node computes the encoded block, row and column commitments, and the
+evaluation values required for each configured micro-domain.
+2. For each micro-domain, the full node constructs the aggregated proof input: commit-
+ment identifiers, full evaluation vectors over Tg, and block-position metadata.
+3. A fat client fetches authenticated headers and proof-carrying objects from one or more
+full nodes, packages them into grouped retrieval objects, and republishes them into
+the DHT.
+4. A light client samples coordinates, maps each sampled coordinate to its containing
+micro-domain, fetches the corresponding grouped object from the DHT, authenticates
+the commitment root from the header, and verifies the grouped proof.
+In the baseline design, each sampled data entry is stored together with an independent
+proof in the DHT, which duplicates proof metadata at fine granularity and increases the
+number of DHT objects. We therefore redesign the DHT layout so that a single proof
+authenticates multiple scalars grouped into a larger retrieval unit.
+4.1
+Grouped Object Types
+The grouped retrieval path in Avail is represented by two core structures: GCellBlock,
+which identifies the covered region of the encoded block, and MCell, which packages the
+transported scalar values together with one aggregated proof.
+struct GCellBlock {
+rows_start:
+u32,
+rows_end:
+u32,
+cols_start:
+u32,
+cols_end:
+u32,
+}
+struct MCell {
+proof:
+[u8; 48],
+block:
+GCellBlock,
+count:
+u32,
+scalars:
+Vec<[u64; 4]>,
+}
+Figure 1: Core grouped retrieval structures used in the multiproof path.
+Figure 1 shows the logical structure of the grouped retrieval object used by the multiproof
+5
+
+path. GCellBlock binds the proof to a canonical block region, while MCell carries the
+proof, the covered region, and the transported scalar values.
+4.2
+Threat Model and Grouping Trade-Offs
+Grouping preserves the DAS acceptance rule but brings additional network-level considera-
+tions. Grouped requests may expose interest in nearby coordinates, reducing unlinkability
+compared with per-coordinate retrieval. Likewise, withholding at the level of grouped
+objects can increase correlation among retrieval failures. These are trade-offs of the
+grouped retrieval design within the DHT-based model considered here.
+The Fiat–Shamir transcript is bound to the SRS identifier, ordered commitment list,
+micro-domain Tg, coordinates, and GCellBlock metadata. Under canonical serialization,
+this binding helps prevent a proof constructed for one grouped object from being reused
+under a different grouping, ordering, or commitment context without changing the derived
+challenge.
+Conservative soundness accounting. If a deployment originally budgets s independent
+sampled coordinates under a per-cell retrieval model, then under worst-case perfect
+correlation inside groups of size g, a conservative lower bound on the number of effectively
+independent events is approximately ⌊s/g⌋. To preserve the same target soundness level
+under this pessimistic model, one should therefore budget roughly g times as many
+coordinate samples or, equivalently, ensure that at least the original target number of
+distinct groups is sampled. This is intentionally conservative, but it makes the grouping-
+versus-soundness trade-off explicit.
+Privacy trade-off. The same grouping factor g also controls privacy leakage. Larger
+groups improve proof amortization and locality but reveal a larger neighborhood of queried
+coordinates to a serving peer. Smaller groups preserve more of the unlinkability of per-cell
+retrieval. In practice, g should be chosen jointly with the sampling budget and the
+expected threat model.
+4.3
+Encoding and Retrieval Model
+We use the following visual encoding:
+• Grid entry (32-byte data): •
+• Commitment: •
+• Cell retrieved through the DHT: □
+• Proof for that cell: •
+Figure 2: Baseline and multiproof layouts in the Avail instantiation.
+Figure 2 illustrates the difference between the baseline per-cell layout and the grouped
+multiproof layout used in the Avail instantiation.
+6
+
+4.4
+Baseline and Multiproof Layouts
+In the baseline layout, every 32-byte data entry is stored with its own 48-byte proof.
+Proof [u8;48]
+Data [u8;32]
+Table 2: Baseline layout.
+In the multiproof layout, several scalars are grouped into one authenticated object
+represented by an MCell, which stores a vector of scalars, one aggregated proof, and a
+GCellBlock describing the covered block region.
+Proof
+GCellBlock
+Count
+Scalars
+[u8;48]
+4 × u32
+u32
+N × [u64; 4]
+Table 3: Multiproof layout.
+Tables 2 and 3 show the difference between the baseline per-entry object and the grouped
+authenticated object used by the multiproof path.
+4.5
+Storage Analysis
+In the baseline design, each DHT object occupies
+32 + 48 = 80 bytes.
+For 64 entries, the total is
+64 × 80 = 5,120 bytes.
+If 4 entries are grouped into one authenticated cell, each cell contains
+4 × 32 = 128 bytes
+plus one 48-byte proof, for a total of
+128 + 48 = 176 bytes per cell.
+The amortized cost is therefore
+128 + 48
+4
+= 44 bytes per entry,
+and 64 entries require
+16 × 176 = 2,816 bytes.
+These calculations isolate proof amortization and do not include deployment metadata
+such as GCellBlock, scalar counts, serialization framing, DHT keys, routing metadata,
+replication overhead, or transport framing. They should therefore be interpreted as
+lower-bound proof amortization figures rather than full end-to-end on-wire storage or
+bandwidth costs.
+5
+Implementation in Avail
+We implemented the design in Avail’s Rust-based light-client stack, using the open-source
+Avail light client repository as the baseline [10]. The multiproof integration described in
+this paper was merged through pull request #778 at commit 4b17189 [11]. Full nodes
+generate proofs and commitment context for DAS serving. Fat clients fetch these objects,
+convert them into grouped authenticated MCell objects keyed by GCellBlock, and publish
+them into the DHT. Light clients sample coordinates, fetch grouped objects, reconstruct
+the evaluation context, and verify multiple sampled cells against one proof. If a grouped
+object fails verification or cannot be retrieved within the configured timeout, the light
+client treats that attempt as a failed lookup and retries with another peer.
+7
+
+6
+Experimental Results
+We evaluate the proposed multiproof integration along four dimensions: verifier resource
+consumption, network behavior, service capacity, and sensitivity to system parameters.
+6.1
+Experimental Setup
+Hardware and software. Experiments were conducted on AWS c6a.{2xlarge, 4xlarge}
+instances for fat clients and m6a.large instances for light clients. All nodes used Rust
+1.85, blst for pairing operations, and tokio for asynchronous execution. The DHT
+implementation is Kademlia over TCP with α = 3, bucket size k = 20, concurrency
+window 16, and replication factor 5.
+Environment model. The reported results were obtained under a benign-cloud deploy-
+ment model rather than an adversarial routing model. DHT hit rate denotes successful
+retrieval within the experiment timeout window under this deployment. Accordingly,
+a reported hit rate of 100% means that all measured lookups in that workload and
+time window succeeded; it is not a universal guarantee about all future deployments or
+adversarial conditions.
+Datasets and workloads. We generated Reed–Solomon-encoded blocks from 1 KB
+to 2 MB and evaluated four configurations: Vanilla, which serves each sampled cell
+with an independent proof; Batched Single Proofs, which batch-verifies independent
+KZG openings using pairing-product checks; Grouped Only, which uses grouped DHT
+objects without multiproof aggregation; and PMP, which serves grouped objects using
+aggregated multiproofs. Unless varied explicitly, the PMP configuration used |Tg| = 16.
+Each experiment ran for 30 minutes and was repeated five times with different random
+seeds. Reported values are means with 95% bootstrap confidence intervals.
+Metrics. We report verifier CPU cost, peak memory usage, DHT hit rates, DHT put
+rates, and the deployment size needed to keep 95th percentile lookup latency below 250 ms.
+CPU is reported in normalized relative units with the single-proof baseline fixed at 100
+on the same hardware. Per-fat capacity denotes the maximum sustained payload served
+per fat client while meeting the latency target.
+6.2
+Evaluation Scope and Ablation
+Table 4 separates three sources of improvement: verifier-side batching of independent
+proofs, DHT-side grouping of retrieval objects, and full multiproof aggregation. Batched
+verification closes part of the verifier-cost gap relative to the naive per-proof baseline, but
+it does not reduce proof bytes or DHT object count. Grouped retrieval improves locality
+and storage fragmentation. The best end-to-end gains appear when proof aggregation
+and grouped transport are combined.
+Metric
+Vanilla
+Batched Grouped Grouped + PMP
+Verifier CPU @1,000 batch
+110
+82
+92
+60
+Peak memory (GB)
+1.2
+1.05
+1.0
+0.7
+DHT hit rate @1 KB
+78%
+78%
+88%
+100%
+DHT hit rate @1.5–2 MB
+12%
+12%
+48%
+98%
+Fats to meet SLO (1 KB)
+40
+36
+18
+10
+Per-fat capacity (B/fat @2 MB)
+16
+19
+46
+80
+Table 4:
+Ablation across independent-proof batching, grouped retrieval, and polynomial
+multiproofs.
+8
+
+6.3
+Verifier Cost
+Figure 3 shows that PMP lowers verifier CPU cost across batch sizes. At a batch size of
+1,000 verifications, PMP uses about 60 normalized CPU units compared with about 110
+for the single-proof baseline. Batched independent proofs reduce this to about 82 units,
+which narrows but does not eliminate the advantage of PMP. The same trend appears in
+memory usage in Figure 4.
+Figure 3: CPU usage by batch size.
+Figure 4: Peak memory usage across the baseline and ablation configurations.
+6.4
+Network Behavior
+Figure 5 shows that PMP sustains higher DHT put rates as payload size increases. Figure 6
+shows that DHT hit rates improve much more substantially once grouped retrieval and
+multiproofs are introduced. At 1 KB payload size, hit rate rises from 78% in the vanilla
+design to 88% with grouped retrieval alone and 100% with PMP. At 1.5–2 MB payload
+sizes, the hit rate rises from 12% to 48% with grouping and to 98% with PMP. Ordinary
+batched verification does not materially improve DHT hit or put behavior, because it
+changes only verifier arithmetic and not the number or layout of transported objects.
+9
+
+Figure 5: DHT put rates by payload size for the baseline and PMP configurations.
+Figure 6: DHT hit rates by payload size for Vanilla, Grouped Only, and Multiproofs.
+6.5
+Capacity and Sensitivity
+Figure 7 shows the improvement in per-fat payload capacity at 2 MB block size. Figure 8
+shows the reduction in serving fat clients across configurations, and Figure 9 shows the
+corresponding reduction in server requirements. For the 1 KB payload scenario, the
+number of serving fat clients required to satisfy the latency objective drops from 40 in
+the vanilla system to 36 with batched single proofs, 18 with grouped retrieval alone, and
+10 with PMP. At larger payloads, per-fat capacity improves from 16 to 19 B/fat under
+batched independent verification, to 46 B/fat under grouped retrieval, and to 80 B/fat
+with PMP.
+Figure 7: Per-fat payload capacity versus fat count at 2 MB block size.
+10
+
+Figure 8: Serving fats required across configurations.
+Figure 9: Servers required across the baseline and PMP configurations.
+Varying |Tg| ∈{8, 16, 32} shows a convex trade-off between proving efficiency and verifier
+interpolation cost, with |Tg| = 16 giving the best end-to-end latency. Under 10%–30%
+DHT churn, PMP maintains hit rates above 75% at 2 MB payload size, while the baseline
+falls below 20%.
+6.6
+Infrastructure Cost Model
+We define infrastructure cost as the cloud compute cost of the minimum deployment
+required to satisfy the target lookup latency objective. In the experiments, this corresponds
+to the number and type of fat client instances needed to keep the 95th percentile lookup
+latency below the target threshold.
+Metric
+Vanilla
+PMP
+Relative
+Verifier CPU @1,000 batch
+110
+60
+↓45%
+Peak memory (GB)
+1.2
+0.7
+↓42%
+DHT hit rate @1 KB
+78%
+100%
+↑1.28×
+DHT hit rate @1.5–2 MB
+12%
+98%
+↑8.17×
+Fats to meet SLO (1 KB)
+40
+10
+↓75%
+Per-fat capacity (B/fat @2 MB)
+16
+80
+↑5×
+Infra compute cost
+—
+—
+↓≤45%
+Table 5: Results summary comparing the baseline design with the PMP deployment.
+Table 5 consolidates the main end-to-end gains of PMP relative to the baseline design.
+It should be read together with Table 4, which shows that part of the gain comes from
+grouped transport and part from proof aggregation itself.
+11
+
+6.7
+Reproducibility
+All experiments fix compiler versions, random seeds, and network parameters. Metrics
+are exported through Prometheus, and confidence intervals are computed using bootstrap
+resampling. CPU usage is reported as normalized utilization relative to the baseline
+single-proof configuration on the same hardware. Because CPU and memory are reported
+in normalized units on fixed hardware, the results support relative comparison across
+configurations but do not by themselves establish feasibility on mobile- or browser-class
+devices.
+7
+Conclusion
+This paper studied polynomial multiproofs as a systems optimization for blockchain
+light clients and validated the design through an implementation and evaluation in
+Avail. By aggregating multiple sampled evaluations into a single proof and embedding
+that representation directly into the DHT workflow, the proposed design reduces proof
+redundancy, improves locality, and lowers verifier overhead.
+The results show lower CPU and memory consumption, higher hit rates under large
+payloads, and lower infrastructure requirements, while also making explicit the trade-off
+introduced by grouped retrieval under adversarial or privacy-sensitive conditions. The
+design is complementary to stronger dissemination substrates such as PANDAS: our
+contribution targets proof amortization and retrieval locality within the authenticated
+data path.
+Nomenclature
+• DAS: Data Availability Sampling
+• DHT: Distributed Hash Table
+• KZG: Kate–Zaverucha–Goldberg polynomial commitment
+• PCS: Polynomial Commitment Scheme
+• PMP: Polynomial Multiproof
+• SRS: Structured Reference String
+• F: finite field
+• G1, G2: pairing groups
+• e(·, ·): bilinear pairing
+• Tg: shared evaluation micro-domain
+• ZTg: vanishing polynomial over Tg

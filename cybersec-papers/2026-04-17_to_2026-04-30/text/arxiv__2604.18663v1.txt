@@ -1,0 +1,580 @@
+Beyond Explicit Refusals: Soft-Failure Attacks on
+Retrieval-Augmented Generation
+Wentao Zhang1, Yan Zhuang1, Zhuhang Zheng1, Mingfei Zhang1,
+Jiawen Deng1,∗, Fuji Ren1,2,*
+1University of Electronic Science and Technology of China, Chengdu, China
+2Shenzhen Institute for Advanced Study, UESTC, Shenzhen, China
+{zwt, 202211081370, 202522080622, mingfeizhang}@std.uestc.edu.cn
+{dengjw, renfuji}@uestc.edu.cn
+Abstract
+Existing
+jamming
+attacks
+on
+Retrieval-
+Augmented
+Generation
+(RAG)
+systems
+typically induce explicit refusals or denial-of-
+service behaviors, which are conspicuous and
+easy to detect. In this work, we formalize a
+subtler availability threat, termed soft failure,
+which degrades system utility by inducing
+fluent
+and
+coherent
+yet
+non-informative
+responses rather than overt failures.
+We
+propose Deceptive Evolutionary Jamming
+Attack (DEJA), an automated black-box
+attack framework that generates adversarial
+documents
+to
+trigger
+such
+soft
+failures
+by exploiting safety-aligned behaviors of
+large language models.
+DEJA employs an
+evolutionary optimization process guided by
+a fine-grained Answer Utility Score (AUS),
+computed via an LLM-based evaluator, to
+systematically degrade the certainty of answers
+while maintaining high retrieval success.
+Extensive experiments across multiple RAG
+configurations and benchmark datasets show
+that DEJA consistently drives responses toward
+low-utility soft failures, achieving SASR
+above 79% while keeping hard-failure rates
+below 15%, significantly outperforming prior
+attacks. The resulting adversarial documents
+exhibit high stealth, evading perplexity-based
+detection and resisting query paraphrasing, and
+transfer across model families to proprietary
+systems without retargeting.
+1
+Introduction
+Large language models (LLMs) remain susceptible
+to factual hallucinations and limited knowledge,
+motivating RAG systems that ground responses
+in external corpora (Lewis et al., 2020; Xu et al.,
+2024). While retrieval improves factual accuracy,
+it creates a critical dependency on the integrity
+of the retrieval corpus. In practice, RAG knowl-
+edge bases are often constructed from third-party or
+*Corresponding authors.
+ Normal Operation
+(Benign)
+Benign Docs
+LLM
+Hard Failure
+(Denial of Service)
+where was the 
+eagles song 
+hotel california 
+written?
+It was written in a 
+rented house on 
+Malibu Beach by 
+Don Felder
+I don’t know, The 
+context does not 
+provide enough 
+information
+where was the 
+eagles song 
+hotel california 
+written?
+LLM
+ Soft-Failure
+ (DEJA Attack)
+where was the 
+eagles song 
+hotel california 
+written?
+Optimized 
+Deceptive Docs
+LLM
+Fluent, 
+Non-Informative Response
+Fluent,
+Informative Response
+Explicit,
+Refusal Response
+1) Normal
+Operation
+2) Hard
+Failure
+3) Soft
+Failure
+Response: Sources show 
+discrepancies... it was 
+written in various 
+locations by the Eagles 
+band members... 
+Refusal-Inducing 
+Docs
+Figure 1: Comparison of RAG behaviors. (1) Normal
+Operation: Retrieves benign documents to yield infor-
+mative answers. (2) Hard Failure: Triggers explicit
+refusals via refusal-inducing documents. (3) Soft Fail-
+ure: Injects optimized deceptive documents to induce
+fluent, non-informative responses that undermine an-
+swer certainty, stealthily degrading utility.
+user-generated sources, making corpus poisoning
+attacks a realistic threat (Zhong et al., 2023).
+Recent work has explored various adversarial
+threats to RAG systems (Zhang et al., 2025; Arza-
+nipour et al., 2025). Among these, attacks that in-
+duce explicit failure modes represent a concerning
+vulnerability. Shafran et al. (2025) demonstrates
+that this behavior can be adversarially induced at
+scale through carefully crafted documents, yielding
+a hard failure resembling denial of service. Such
+failures are overt: they manifest as visible refusals
+and anomalous text statistics, such as high perplex-
+ity, making them naturally detectable by anomaly-
+based defenses. In contrast, we study a more subtle
+failure mode that avoids such observable break-
+downs. We formalize this threat as soft failure, a
+failure mode where adversarial documents induce
+responses that degrade utility through fluent yet
+non-informative content.
+Unlike hard failures that trigger explicit refusal
+keywords or denial-of-service, soft failures pro-
+duce no detectable anomalies in linguistic fluency
+arXiv:2604.18663v1 [cs.CR] 20 Apr 2026
+
+or semantic coherence. The core challenge lies
+in the semantic gap between surface plausibility
+and substantive utility. Attackers can leverage the
+model’s safety alignment mechanisms, which cause
+the model to hedge against uncertainty and generate
+fluent yet vacuous responses. Figure 1 illustrates
+system behavior under three scenarios. Given a fac-
+tual query about the origin of “Hotel California”,
+a normal RAG system retrieves benign documents
+and returns an informative answer. A hard-failure
+attack causes the system to refuse service outright
+(e.g., “I don’t know”). Such failures are immedi-
+ately observable. In contrast, a soft-failure attack
+produces a response that appears responsive: the
+model acknowledges the query and discusses the
+song, yet systematically avoids committing to any
+specific answer by citing fabricated conflicts or
+ambiguity.
+To induce soft failures under realistic black-box
+constraints, we propose Deceptive Evolutionary
+Jamming Attack (DEJA). An adversarial document
+must satisfy two conflicting objectives: achieving
+high retrieval rank by maintaining strong query
+relevance, and simultaneously forcing the gener-
+ator to yield low-utility outputs through semantic
+evasion. DEJA addresses this challenge by com-
+bining retrieval-aware document construction with
+an evolutionary optimization process guided by
+a fine-grained Answer Utility Score (AUS). This
+framework enables the automated generation of
+documents that manipulate retrieval and induce the
+model toward non-informative hedging behaviors.
+Our main contributions are as follows:
+• We formalize soft failure as a distinct availabil-
+ity threat to RAG systems, characterized by
+utility degradation without detectable refusal.
+• We propose DEJA, a black-box evolutionary
+framework for inducing soft failures in RAG
+systems via adversarial document construc-
+tion, without access to model internals.
+• We introduce an LLM-based Answer Utility
+Score (AUS) to quantify response utility and
+empirically demonstrate that DEJA consis-
+tently induces soft failures across multiple
+benchmarks and evades common detection
+and mitigation strategies.
+2
+Related Work
+2.1
+Retrieval-Augmented Generation
+RAG systems typically comprise two components:
+a retriever that selects relevant documents from
+a corpus, and a generator that conditions its out-
+put on both the query and retrieved context (Lewis
+et al., 2020). Dense neural retrievers have become
+the standard approach, encoding queries and doc-
+uments into a shared embedding space and rank-
+ing by similarity (Karpukhin et al., 2020). Re-
+cent systems scale retrieval to large, heterogeneous
+corpora and incorporate adaptive or self-reflective
+retrieval mechanisms to improve factuality and ro-
+bustness (Jiang et al., 2023b; Shi et al., 2024; Su
+et al., 2024; Asai et al., 2023). While effective at
+mitigating hallucinations, reliance on external and
+often non-curated corpora expands the attack sur-
+face, exposing these systems to adversarial corpus
+manipulation.
+2.2
+Adversarial Attacks on RAG Systems
+Recent work has studied adversarial attacks on
+RAG systems by manipulating the retrieval corpus
+or retrieved context. One major line of research
+focuses on knowledge poisoning, where injected
+documents induce targeted false outputs in RAG
+systems, as demonstrated by PoisonedRAG and
+follow-up work extending it to dense retrievers and
+black-box settings (Zou et al., 2025; Zhong et al.,
+2023; Wang et al., 2025). These attacks primarily
+target output reliability and can substantially com-
+promise system behavior even with a small number
+of adversarial documents, motivating verification-
+based defenses for retrieved evidence and gener-
+ated responses (Sankararaman et al., 2024; He et al.,
+2024; Liang et al., 2025; Chen et al., 2025b).
+Another line of work investigates availability-
+oriented attacks that disrupt system utility by trig-
+gering refusals or abstentions. The approach pro-
+posed by Shafran et al. (2025) shows that a single
+blocker document can effectively jam RAG sys-
+tems and induce explicit refusal behavior, which
+has also been considered in recent benchmarking
+efforts (Zhang et al., 2025). In addition, prompt
+injection attacks form a complementary threat, em-
+bedding malicious instructions in model inputs
+or retrieved content to manipulate behavior (Liu
+et al., 2023, 2024a). Recent work has studied indi-
+rect prompt injection in tool-integrated and agentic
+RAG settings, along with corresponding detection
+and mitigation strategies (Zhan et al., 2024; Chen
+
+et al., 2025a). Such attacks often rely on explicit or
+weakly obfuscated instructions, motivating seman-
+tic filtering and instruction detection mechanisms
+for mitigation.
+While diverse in mechanism, these attacks share
+a common property: they produce explicit, observ-
+able failures. In contrast, our work investigates
+soft failures—utility degradation through fluent yet
+non-informative responses.
+2.3
+Adversarial Optimization for Text
+Generation
+Adversarial text generation has been extensively
+studied, including white-box gradient-based meth-
+ods such as HotFlip (Ebrahimi et al., 2018) and
+universal adversarial triggers (Wallace et al., 2019),
+as well as black-box synonym-based attacks (Jin
+et al., 2020; Li et al., 2020). More recent work
+treats large language models as optimization primi-
+tives, enabling evolutionary and generate-and-filter
+strategies for prompt optimization (Zhou et al.,
+2022; Yang et al., 2023; Fernando et al., 2023;
+Guo et al., 2025). However, most existing meth-
+ods focus on optimizing relatively short prompts
+using binary success criteria. Our work addresses
+a distinct and more complex challenge: generating
+long-form adversarial documents that simultane-
+ously satisfy retrieval constraints, ensuring high
+relevance, and generation objectives, causing con-
+trolled utility degradation, all without breaking se-
+mantic coherence.
+3
+Problem Formulation
+Definition of Soft Failure. As illustrated in Fig-
+ure 1, a soft failure occurs when a RAG system
+generates fluent yet non-informative responses that
+appear cooperative while systematically undermin-
+ing the certainty of substantive answers required
+to resolve the query. Unlike explicit refusals, this
+failure mode evades detection by maintaining lin-
+guistic quality indistinguishable from benign gen-
+eration. We characterize this behavior by three
+properties: linguistic fluency, where the response
+avoids detectable disfluencies; topical engagement,
+which mimics successful retrieval by providing rel-
+evant background information; and substantive eva-
+sion, where definitive conclusions are diluted by
+fabricated ambiguity or competing alternatives, ef-
+fectively stripping the response of decision-relevant
+utility.
+Why Soft Failures Matter. Soft failures repre-
+sent a critical vulnerability in RAG systems for
+four primary reasons. First, they weaponize safety
+alignment. Current LLMs are aligned to hedge
+or abstain when facing uncertainty; soft failure
+attacks exploit this behavior by introducing adver-
+sarial ambiguity, forcing the model into a conserva-
+tive, low-utility state. Second, they undermine the
+core value of RAG. By degrading the response to
+vague generalizations, the attack neutralizes the fac-
+tual precision that motivates the retrieval augmenta-
+tion paradigm (Lewis et al., 2020). Third, they
+are operationally indistinguishable from benign
+retrieval limitations. Users are likely to attribute
+non-informative answers to corpus gaps rather than
+malicious interference, delaying incident diagno-
+sis. Finally, they circumvent existing defenses. As
+demonstrated in Section 5.6, detection mechanisms
+relying on perplexity shifts or explicit refusal key-
+words fail to identify soft failures, which operate
+entirely within the manifold of natural language.
+3.1
+Threat Model
+Adversary’s Objective. We define an adversary
+A whose goal is to inject a single adversarial doc-
+ument dadv into the knowledge base D to induce
+a soft failure for a target query q. The attack is
+considered successful if and only if dadv satisfies
+two concurrent conditions: (i) Retrieval Success,
+where dadv ranks within the top-k context Ck re-
+trieved for q, even when competing ground-truth
+documents are present; and (ii) Semantic Domi-
+nance, where the retrieved dadv exerts sufficient
+influence to steer the generator G toward the soft-
+failure regime. This threat model is particularly
+relevant for RAG systems indexing open or user-
+contributed content (e.g., web search, collaborative
+wikis), where strict verification of every document
+is infeasible.
+Adversary Capabilities. We assume a black-box
+setting where A interacts with the system solely
+via the query interface, observing only the final
+response y. The adversary has no access to model
+parameters, gradients, or internal embeddings. To
+maximize stealth, we enforce a minimal injection
+constraint: the adversary may inject only one doc-
+ument per target query. Furthermore, we assume
+A utilizes an auxiliary LLM to generate dadv, en-
+suring the adversarial content inherently satisfies
+natural language fluency requirements without re-
+quiring explicit perplexity constraints.
+Corpus Poisoning. Following prior work on adver-
+sarial RAG attacks (Shafran et al., 2025; Zou et al.,
+
+2025), we assume the adversary has write access
+to a fraction of the indexed corpus (e.g., via third-
+party data integration or public data feeds). This
+assumption is realistic for RAG systems that rely
+on external knowledge sources such as web search
+or collaborative wikis, where strict verification of
+every document is infeasible. During ingestion, a
+single adversarial document dadv is inserted into
+the knowledge base D. When a query q matches
+the attacker’s target topic, the retriever pulls dadv
+into the context window, activating the soft failure.
+4
+Methodology
+4.1
+Overview
+We propose Deceptive Evolutionary Jamming At-
+tack (DEJA), a framework for constructing adver-
+sarial documents that induce soft failures in RAG
+systems. DEJA targets the inherent tension be-
+tween retrieval relevance and answer generation by
+crafting documents that are highly retrievable yet
+non-informative at generation time-undermining
+the certainty of substantive answers.
+To achieve this, DEJA decomposes the adver-
+sarial document into three semantically coupled
+components:
+dadv = q ⊕hhook ⊕ppayload,
+(1)
+where q anchors the document to the target query,
+hhook ensures retrieval success and primes semantic
+steering, ⊕denotes text concatenation and ppayload
+exploits alignment behaviors to elicit ambiguous
+or non-committal responses. This decomposition
+enables hhook to serve two critical functions: op-
+timizing retrieval ranking through query-relevant
+vocabulary and establishing a coherent semantic
+bridge from the query context to the adversarial
+payload. Without this narrative transition, abrupt
+shifts to evasive content would trigger alignment-
+driven refusals, undermining attack effectiveness.
+As illustrated in Figure 2, the framework operates
+through two primary phases: Context-Aware Ini-
+tialization (Section 4.2) to construct the document
+foundation, and Evolutionary Payload Optimiza-
+tion (Section 4.3) to iteratively refine payloads, cul-
+minating in the Adversarial Document Assembly.
+4.2
+Context-Aware Initialization
+Before optimization, we construct the structural
+foundation through three steps: selecting an attack
+strategy aligned with the query’s semantic charac-
+teristics, generating a retrieval hook that ensures
+both top-k ranking and semantic bridging to the
+payload, and initializing a diverse population of
+candidate payloads.
+Strategy Selection. To ensure both attack effi-
+cacy and semantic coherence, DEJA first selects a
+global adversarial strategy s∗conditioned on query
+q. This pre-selection serves two purposes: it adapts
+the evasion tactic to the specific query type, and
+establishes a shared theoretical theme to unify the
+separately optimized retrieval hook and payload
+components. Formally:
+s∗= arg max
+si∈S
+Compatibility(q, si),
+(2)
+where S denotes the set of six predefined adver-
+sarial strategies (defined in Appendix A.1), and
+Compatibility(q, si) represents an LLM-based as-
+sessment score indicating how naturally strategy
+si supports fluent yet non-informative responses to
+query q.
+Retrieval Hook Generation. The retrieval hook
+hhook serves two functions: (i) ensuring high re-
+trieval ranking through dense query-relevant vo-
+cabulary, and (ii) priming the generator toward the
+adversarial strategy via smooth narrative transition
+from q to ppayload. Without this bridging, abrupt
+semantic shifts create a coherence gap, causing the
+generator to perceive the document as unreliable
+and disregard the payload, rather than integrating
+it as valid evidence. Given query q and strategy s∗:
+hhook = Gaux(q ⊕Ihook ⊕s∗),
+(3)
+where Gaux is an auxiliary LLM and Ihook specifies
+style constraints. Conditioning on s∗ensures the
+hook introduces rhetorical framing (e.g., source
+inconsistency) that justifies downstream evasion.
+Population Initialization. To seed evolution,
+we generate a diverse initial population P0 =
+{p(0)
+1 , . . . , p(0)
+N } by prompting the auxiliary LLM.
+Specifically, the j-th candidate payload p(0)
+j
+is gen-
+erated as:
+p(0)
+j
+= LLMinit(q, s∗, θtemplate, seedj),
+(4)
+where θtemplate denotes the structured prompt tem-
+plate that aligns generation with strategy s∗while
+ensuring fluency, and seedj is a random seed in-
+troduced to ensure output diversity across the N
+candidates.
+4.3
+Evolutionary Payload Optimization
+With the foundation established, we iteratively
+refine payloads through fitness-guided evolution.
+
+Query: "Where was 
+the eagles song hotel 
+california written?"
++
+LLM
+Response: Sources show 
+discrepancies... it was 
+written in various 
+locations... difficult to 
+pinpoint...
+Soft-Failure Response
+Retriever
+User
+Knowledge base
+Retrieved Documents
+Generator
+#1
+#2
+Adv Doc
+Current
+Population
+ (Pj)
+Selection
+Selecting parents 
+closest to 
+AUS=τsoft
+Optimization Goal:
+AUS->τsoft
+LLM 
+Judge
+Evaluation 
+RAG
+AUS-based
+Fitness Evaluation
+τsoft
+Deceptive Evolutionary 
+Jamming 
+Attack(DEJA)
+RAG Workflow
+Soft 
+Failure 
+Attack
+Adversary dadv=q⊕hhook⊕ppayload
+inject
+Fitness=1/(|AUS-τsoft|+Ɛ)
+Hook Generator
+Retrieval Hook (hhook)
+Population Init
+Payload (P0)
+strategy space 
+Best dadv
+Input & 
+Strategy 
+Selection
+1
+2
+3
+4
+5
+s*
+q
+S
+Context-Aware Initialization
+Pj+1=Ɛ(Pj; s*,F)
+q: Where was the eagles song hotel california written?
+hhook: ...Detailed production logs suggest that the 
+location of writing varies significantly depending on 
+the source consulted...
+Ppayload: ...According to the International Music 
+Archival Registry, sources present conflicting 
+accounts. Some attribute it to Los Angeles, others to 
+Malibu... making it impossible to pinpoint a single 
+location.
+1. Semantic Anchor (q): Aligns document 
+with user intent.
+2. Retrieval Hijacking (hhook): Dense 
+terms (blue) ensure top-k ranking, while 
+red phrases prime the conflict.
+3. Soft-Failure Induction (ppayload): 
+Fabricated authorities (red) and 
+conflicts trigger hedging behavior.
+Mechanism
+dadv
+Evolutionary Payload Optimization
+Adversarial Document Assembly
+Figure 2: Overview of the DEJA framework. Top: The attack workflow where an injected document (dadv) induces
+soft failure. Bottom: The generation pipeline operates through two primary optimization phases: (1) Context-Aware
+Initialization for strategy selection (s∗) and hook generation (hhook); and (2) Evolutionary Payload Optimization
+to refine payloads via AUS-based fitness. These phases culminate in (3) Adversarial Document Assembly. This
+final block synthesizes the document components and illustrates the Mechanism of retrieval hijacking and utility
+degradation via dense terms (blue) and semantic conflicts (red).
+Constructing effective adversarial payloads is a
+discrete, non-convex optimization problem over
+natural language. Unlike token-level attacks that
+produce brittle artifacts, DEJA employs LLM-
+driven semantic operators that preserve fluency
+while steering responses toward utility degradation.
+Fitness Function. Prior RAG attacks (Poisone-
+dRAG (Zou et al., 2025), Jamming (Shafran et al.,
+2025)) target binary outcomes available via key-
+word matching or F1 scores. However, soft failures
+operate at the semantic level, where responses may
+mention correct entities while avoiding substantive
+commitment. We propose Answer Utility Score
+(AUS), an LLM-based scoring function quantifying
+informativeness on a continuous scale. AUS evalu-
+ates: (1) Problem Resolution, measuring whether
+the response solves the core problem or merely
+circles the topic; (2) Factual Specificity, capturing
+the presence of specific facts versus vague gener-
+alizations; and (3) Information Density, assessing
+the ratio of effective new information to redundant
+background or verbosity. Detailed rubrics are in

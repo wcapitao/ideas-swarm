@@ -1,0 +1,938 @@
+Taint-Style Vulnerability Detection and Confirmation for Node.js
+Packages Using LLM Agent Reasoning
+Ronghao Ni
+ronghaon@andrew.cmu.edu
+Carnegie Mellon University
+Mihai Christodorescu
+christodorescu@google.com
+Google
+Limin Jia
+liminjia@andrew.cmu.edu
+Carnegie Mellon University
+Abstract
+The rapidly evolving Node.js ecosystem currently includes mil-
+lions of packages and is a critical part of modern software supply
+chains, making vulnerability detection of Node.js packages increas-
+ingly important. However, traditional program analysis struggles
+in this setting because of dynamic JavaScript features and the large
+number of package dependencies. Recent advances in large lan-
+guage models (LLMs) and the emerging paradigm of LLM-based
+agents offer an alternative to handcrafted program models. This
+raises the question of whether an LLM-centric, tool-augmented
+approach can effectively detect and confirm taint-style vulnerabil-
+ities (e.g., arbitrary command injection) in Node.js packages. We
+implement LLMVD.js, a multi-stage agent pipeline to scan code,
+propose vulnerabilities, generate proof-of-concept exploits, and
+validate them through lightweight execution oracles; and systemat-
+ically evaluate its effectiveness in taint-style vulnerability detection
+and confirmation in Node.js packages without dedicated static/-
+dynamic analysis engines for path derivation. For packages from
+public benchmarks, LLMVD.js confirms 84% of the vulnerabilities,
+compared to less than 22% for prior program analysis tools. It also
+outperforms a prior LLM–program-analysis hybrid approach while
+requiring neither vulnerability annotations nor prior vulnerability
+reports. When evaluated on a set of 260 recently released packages
+(without vulnerability groundtruth information), traditional tools
+produce validated exploits for few (≤2) packages, while LLMVD.js
+generates validated exploits for 36 packages.
+Keywords
+Automatic Vulnerability Detection, Node.js, Large Language Mod-
+els, ReAct Agents, LLM Agents, Exploit Generation, Vulnerability
+Confirmation
+1
+Introduction
+The Node.js ecosystem comprises millions of JavaScript packages
+and is among the most widely used software platforms today. How-
+ever, numerous studies have shown that a substantial fraction of
+these packages contain security vulnerabilities [15, 58] and have
+been exploited in software supply-chain attacks [30, 40]. To ensure
+application security, it is critical to be able to identify vulnerabil-
+ities within this ecosystem and in recent years researchers have
+proposed tools to automatically detect and confirm vulnerabilities
+in Node.js packages [9, 10, 28, 35]. These tools primarily target
+taint-style vulnerabilities, including OS command injection, code
+injection, prototype pollution, and path traversal. These tools use a
+wide range of analysis techniques, such as dynamic taint analysis,
+Preprint.
+code-property-graph-based static analysis, symbolic execution, and
+constraint-based synthesis.
+While successful in uncovering many real-world vulnerabilities,
+these tools share several fundamental challenges stemming from
+inherent limitations of the underlying analysis techniques. First,
+JavaScript’s highly dynamic nature makes accurate modeling of
+language semantics difficult. The lack of precise type information
+further complicates analysis. Second, Node.js native (built-in) func-
+tions are implemented in C++, requiring either instrumentation of
+the V8 engine or manually constructed abstractions. Third, these
+tools rely on external JavaScript analysis infrastructure, such as
+parsers [2], transpilers [1], and instrumentation tools [44]. These
+dependencies are inherently brittle due to JavaScript’s complex lan-
+guage features and evolving standards. Finally, many approaches
+depend on satisfiability modulo theories (SMT) solvers, which often
+fail to handle constraints involving string operations and regular-
+expression matching.
+Large Language Models (LLMs) have shown strong performance
+on coding-related tasks, including code generation and code com-
+prehension [11]. Rather than relying on purpose-fit abstractions,
+LLMs leverage extensive pre-trained knowledge and reasoning abil-
+ities to comprehend complex code patterns and dynamic program
+behaviors. Furthermore, LLM agents can iteratively refine their
+outputs by incorporating feedback from previous unsuccessful at-
+tempts. These capabilities suggest LLMs may be able to overcome
+the limitations of traditional program analysis techniques.
+This paper aims to answer the following question: Can an LLM-
+centric, tool-augmented workflow effectively detect and confirm vul-
+nerabilities in npm packages without dedicated static/dynamic anal-
+ysis engines? To answer this question, we design and implement
+LLMVD.js, a ReAct-based [54] agent that leverages large language
+models to perform taint-style vulnerability detection and confirma-
+tion for Node.js packages. We evaluate LLMVD.js on three datasets
+(existing public benchmarks, one private benchmark, and a set of
+recently released npm packages) and show that it confirms 84% of
+public benchmark vulnerabilities with valid exploits, substantially
+outperforming prior program-analysis tools and also outperform-
+ing an LLM+program-analysis hybrid system [47] while requiring
+significantly less prior information, and further discovers 36 vul-
+nerabilities in recently released packages.
+For the rest of this paper, we use rule-based program analysis to
+refer to analysis techniques such as symbolic execution and taint
+analysis that do not rely on machine learning components. We use
+LLM-centric reasoning to refer to LLM-agent reasoning over raw
+source code with lightweight tooling (e.g., search, execution, and
+oracles), but without dedicated static/dynamic analysis engines for
+taint/path derivation.
+Our contributions are as follows:
+1
+arXiv:2604.20179v1 [cs.CR] 22 Apr 2026
+
+Ronghao Ni, Mihai Christodorescu, and Limin Jia
+• A systematic evaluation of a multi-stage ReAct-style LLM
+agent framework for taint-style vulnerability detection
+and confirmation in Node.js packages, with direct com-
+parison against state-of-the-art program-analysis tools and
+a program-analysis–aided LLM approach.
+• A multi-dataset evaluation setup for LLM-agent vulnerabil-
+ity research: combining standard public benchmarks, trans-
+formed benchmark variants for memorization robustness
+checks, a private real-world dataset without CVEs/public
+exploits, and recently released npm packages to assess gen-
+eralizability under realistic settings.
+• LLMVD.js identified 36 previously undocumented vulnera-
+bilities in recently released Node.js packages.
+Ethical Considerations Our work raises inherent dual-use con-
+cerns due to LLMVD.js’s ability to automatically detect vulnerabili-
+ties and generate exploits; however, we believe that the defensive
+benefits outweigh the associated risks. All experiments were con-
+ducted in sandboxed environments; no production systems or exter-
+nal servers were targeted. We analyze only open-source packages.
+We reported all 36 previously unreported validated vulnerabili-
+ties identified in newly released packages to maintainers and have
+received acknowledgments from 3 maintainers.
+2
+Background and Related Work
+Vulnerability detection is the task of identifying security-relevant
+flaws in software that may be exploited by adversaries [12, 31,
+42, 43]. Vulnerability detection tools typically only report poten-
+tial vulnerabilities and a separate confirmation step is needed to
+remove false positives. To reduce the costly manual confirma-
+tion effort, researchers have developed automated vulnerability
+confirmation methods that synthesize proof-of-concept (PoC) ex-
+ploits [5, 9, 10, 35]. We review most recent work on vulnerability
+detection and confirmation of Node.js packages and applying LLMs
+to vulnerability detection.
+2.1
+Node.js Vulnerability Detection and
+Confirmation
+Node.js Taint-style Vulnerability Detection. Recent vulnerability
+detection tools for Node.js packages [9, 10, 28, 29, 35, 39] focus on
+taint-style vulnerabilities, partly because they have easy to detect
+code patterns and partly because they can lead to serious con-
+sequences such as allowing attackers to inject arbitrary code or
+execute arbitrary commands. For detection, these tools need to iden-
+tify tainted paths from attacker controlled inputs to arguments of a
+sink. In the case of command injection, code injection, and path tra-
+versal, the sinks are known APIs such as exec, Function, File.Write. For
+prototype pollution, the vulnerability pattern involves two tainted
+paths and specific object field accesses.
+To compare against LLM-centric agent reasoning without
+dedicated static/dynamic analysis engines, we use FAST [28],
+NodeMedic-FINE [9], and Explode.js [35] as representative exam-
+ples of rule-based program analysis tools. FAST and Explode.js
+use code-property-graph (CPG) based methods for detection. They
+generate (their own custom) graphs representing information
+such as dependency, object relationship, and key operations; then
+Listing 1: Code snippet of a vulnerable API
+1
+const { exec } = require('child_process');
+2
+Arpping.prototype.ping = function(range) {
+3
+...
+4
+return new Promise((resolve, reject) => {
+5
+range.forEach(ip => {
+6
+exec(`ping ${flag} ${this.timeout} ${ip}`, (
+err, stdout, stderr) => {
+7
+...
+8
+});});});
+9
+}
+Listing 2: PoC exploit
+1
+const Arpping = require('./index');
+2
+(async () => {
+3
+const a = new Arpping({ timeout: 1 });
+4
+const payload = ['127.0.0.1; touch /tmp/
+os_cmd_success'];
+5
+await a.ping(payload);
+6
+})();
+Figure 1: The vulnerable npm package arpping@2.0.0 (Snyk
+ID: SNYK-JS-ARPPING-1060047).
+vulnerability detection is reduced to a graph query. NodeMedic-
+FINE on the other hand, instruments JavaScript at the source level
+to implement dynamic taint tracking for vulnerability detection.
+The current implementation of NodeMedic-FINE only detects
+command injection and code injection vulnerabilities.
+Vulnerability confirmation via exploit generation. To generate
+PoC exploits, the tools need to generate a driver (testing harness)
+that can trigger a call to the vulnerable API (sink) and find inputs
+that can not only reach the sink, but also deliver the desired attack
+payload (e.g., a command of attacker’s choice for command injection
+vulnerabilities). For example, Listing 1 shows one vulnerable API in
+the arpping package (Snyk ID: SNYK-JS-ARPPING-1060047). The
+ping function constructs a command string using attacker-controlled
+input range and passes it to the exec function, leading to an OS com-
+mand injection vulnerability. To confirm this vulnerability, the tool
+needs to generate a driver (Listing 2) that calls the ping function
+with an input that injects an attacker-controlled command.
+For inputs, FAST and Explode.js use symbolic execution to iden-
+tify path constraints to reach the vulnerable API. NodeMedic-FINE
+synthesizes input constraints from the taint provenance graph,
+which is an output from the dynamic taint analysis and documents
+all the operations that the tainted inputs underwent before reach-
+ing the sink. Only Explode.js is capable of generating drivers that
+can chain multiple API calls to reach the sink. It does so by query-
+ing its custom code property graph to identify a linear call chain.
+NodeMedic-FINE and FAST, instead, use a fix template to directly
+call the vulnerable API. All tools rely on SMT solvers to resolve
+constraints.
+2
+
+Taint-Style Vulnerability Detection and Confirmation for Node.js Packages Using LLM Agent Reasoning
+2.2
+LLMs in Software Vulnerability Detection
+LLM-assisted Security Audit. Recent work has explored using
+LLMs as assistants for security auditing, either as standalone vul-
+nerability detectors or as components that augment traditional pro-
+gram analysis workflows [26, 46, 52, 56]. Several studies systemati-
+cally evaluate the capability of LLMs on vulnerability detection and
+code analysis tasks. For example, Fang et al. analyze the strengths
+and failure modes of LLMs for code reasoning in security-relevant
+settings [19], while Lin et al. conduct a large-scale comparative eval-
+uation of LLM configurations across multiple datasets and program-
+ming languages [34]. Similar evaluation efforts further characterize
+prompt sensitivity, model scale effects, and generalization limits in
+vulnerability detection [37, 41]. LLMs have been increasingly inte-
+grated into end-to-end auditing pipelines that combine detection,
+testing, and repair. Prior work demonstrates LLM-guided fuzzing
+and protocol testing, where models infer grammars and message se-
+quences to improve coverage for stateful implementations [36, 49].
+Other systems leverage LLMs to assist patch generation and auto-
+mated repair under realistic constraints [18, 38].
+LLMs have also been integrated into Node.js vulnerability anal-
+ysis [24, 32, 33]. Most closely related to our work, PoCGen utilizes
+LLMs alongside static and dynamic analyses to interpret vulner-
+ability reports, draft candidate exploits, and iteratively validate
+and refine them for npm vulnerabilities [47]. PoCGen relies on
+CodeQL-based static taint analysis to identify candidate vulnerable
+functions and input-to-sink paths, and employs dynamic analysis
+by executing generated exploits in a sandboxed Node.js environ-
+ment with vulnerability-specific runtime oracles to validate exploit
+success and guide refinement. PoCGen demonstrates the effective-
+ness of tightly integrating LLMs with program analysis and argues
+that plain LLM-based agents are insufficient for this task [47]; in
+contrast, we investigate whether a carefully designed LLM reason-
+ing–only agent can achieve competitive performance. Accordingly,
+we include PoCGen as a baseline in our evaluation.
+LLM Agents in Security Auditing. A parallel line of work studies
+LLMs as agents that can plan, use tools, and iteratively refine hy-
+potheses, moving beyond single-pass vulnerability labeling toward
+multi-step auditing [22, 25, 45, 57]. PentestGPT formalizes an LLM-
+driven penetration-testing workflow with modular agent roles that
+decompose high-level objectives into actionable testing steps and
+tool interactions [16]. More broadly, recent studies demonstrate
+that agentic LLM systems can exploit real-world known vulnerabili-
+ties from vulnerability descriptions, highlighting both the potential
+and the risks of autonomous offensive capability when paired with
+tool use and structured memory [20]. However, to our knowledge,
+no prior work has studied the performance and limitations of a
+carefully designed LLM agent for end-to-end taint-style vulnerabil-
+ity detection and confirmation in Node.js packages, which is the
+focus of this paper.
+3
+Motivation
+In this section, we discuss fundamental challenges that rule-based
+program analysis tools face when detecting and confirming taint-
+style vulnerabilities in Node.js packages and outline why the capa-
+bilities of LLMs in a ReAct-based agent design framework suit this
+task.
+Table 1: Limitations of three representative program-
+analysis-based tools for Node.js taint-style vulnerability de-
+tection and confirmation: FAST [28], NodeMedic-FINE [9],
+Explode.js [35]
+Challenges
+Why challenging
+C1 Generating dri-
+vers for PoC
+Drivers may include complex interactions that
+make multiple API calls, set up global environ-
+ment correctly, and construct and invoke call-
+backs.
+Tools
+FAST
+Does not generate drivers.
+Limits
+NodeMedic-
+FINE
+Uses fixed driver templates and cannot handle
+complex interactions.
+Explode.js
+Supports only linear call chains
+C2 Hard to analyze
+code units
+Imported dependencies significantly increase the
+complexity of the analysis. Native operations are
+managed internally by the JavaScript engine and
+therefore need delicate custom handling.
+Tools
+FAST
+Needed manual modeling of native functions.
+Current implementation is missing significant
+(> 90%) support.
+Limits
+NodeMedic-
+FINE
+Applies over-approximated tainting policy.
+Explode.js
+Needs manually crafted symbolic summaries for
+imported APIs, resulting in low detection rate
+in Node.js packages in the wild.
+C3 Lacking
+type
+info.
+Analysis needs arguments of the correct type and
+object structure.
+Tools
+FAST
+Ignore types
+Limits
+NodeMedic-
+FINE
+Algorithms for reconstructing types, neither
+sound nor complete
+Explode.js
+Querying the CPG to reconstruct types, neither
+sound nor complete
+C4 Reliant
+on
+other JavaScript
+analysis infras-
+tructure
+Analysis tools need another set of complex tools
+such as parsers, transpilers, and instrumentation
+tools, to implement their custom analysis. These
+tools are brittle due to JavaScript’s standard evo-
+lutions and complex features.
+Tools
+FAST
+Esprima [2] parsing errors and call-edge issues.
+Limits
+NodeMedic-
+FINE
+Jalangi2’s [44] lack of support for ES6+
+Explode.js
+Graph.js [21] exits with errors for many pack-
+ages.
+C5 Reliant on SMT
+The analysis generates constraints on string op-
+erations and regular expression matching, which
+are difficult to handle for SMT solvers and is an
+active area of research.
+Tools
+FAST
+Z3 [14] timeout when solving path constraints.
+Limits
+NodeMedic-
+FINE
+SMT solver timeout when solving constraints
+on input.
+Explode.js
+SMT solver timeout when solving path and in-
+put constraints.
+3.1
+Challenges in Rule-based Program Analysis
+Recall from Section 2.1 state-of-the-art rule-based tools [9, 28, 35]
+implement dynamic taint tracking and code-property-graph-based
+static analysis for detection; and leverages symbolic execution and
+3
+
+Ronghao Ni, Mihai Christodorescu, and Limin Jia
+constraint-based synthesis for generating inputs for PoCs. Some
+use [35] CPG-based static analysis for generating drivers that in-
+clude complex code patterns (i.e., not directly call the vulnerable
+API). Despite substantial improvements, these tools continue to face
+challenges arising from the highly dynamic nature of JavaScript, the
+ongoing evolution of the JavaScript language, large and complex
+dependencies, and their reliance on other sophisticated analysis
+infrastructures. These challenges are common across existing tools
+and stem from the fundamental limitations of the underlying tech-
+niques, rather than from limitations of individual implementation
+choices. We summarize these challenges in Table 1 and explain how
+each tool partially addresses them. In practice, these limitations
+often lead to missed vulnerabilities or failures in exploit confir-
+mation. Although these tools will continue to improve, as long as
+the same core techniques are employed, progress is likely to be
+incremental [7, 8]. Alternatively, tools may be increasingly special-
+ized, exploring different trade-off spaces to achieve high efficiency
+for specific vulnerability classes or to target different application
+domains (e.g., Mini apps [48, 55], React web apps [23], and Electron
+apps [4, 27]).
+3.2
+Advantages of LLM Agents
+Reasoning beyond handcrafted program models. As summarized
+in Table 1, many challenges faced by rule-based tools are from the
+need to construct and maintain accurate program models, which
+is often at odds with scalability and requires substantial manual
+effort and domain expertise. Moreover, there is a steep increase
+in the effort required for improving the analysis to cover addi-
+tional features, once core behaviors have been modeled. In contrast,
+learning-based approaches, especially large language models in
+the current era, provide a promising alternative by utilizing their
+extensive pre-trained knowledge and reasoning abilities to compre-
+hend complex code patterns, library usages, and dynamic behaviors
+without requiring exhaustive manual modeling. As a result, they
+can adapt more readily to evolving programming practices and soft-
+ware ecosystems, where manually maintaining precise program
+models becomes increasingly impractical.
+Oracle-Guided Iterative Reasoning. Another important factor that
+makes LLM agents well-suited for taint-style vulnerability detection
+and confirmation tasks in Node.js packages is that LLM agents can
+iteratively refine their answers based on feedback from previous
+unsuccessful attempts. In contrast, traditional program-analysis
+techniques typically perform one-shot reasoning over a fixed pro-
+gram representation. While iterative counter-example guided ab-
+straction refinement (CEGAR) methods [13] have been applied to
+domains such as model checking, custom algorithm design and
+significant engineering effort is needed for a specific tool to benefit
+from CEGAR. Moreover, it is easy to design and implement a test-
+ing oracle for taint-style vulnerabilities by observing side effects,
+commonly used in previous work [9, 28, 35]. LLM agents can then
+generate candidate inputs, execute them against the target package,
+and refine their reasoning based on observed outcomes.
+Favorable code size distribution in the npm ecosystem. Despite
+the strong reasoning capabilities of large language models, current
+LLMs remain constrained by finite context window sizes, which
+102
+103
+104
+105
+106
+Token Count (log scale)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Cumulative Probability
+90% = 32,448
+25%
+50%
+75%
+90%
+Code Injection
+OS Command Injection
+Path Traversal
+Prototype Pollution
+Total (All Types)
+(a) SecBench.js & VulcaN datasets
+100
+101
+102
+103
+104
+105
+106
+107
+Token Count (log scale)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Cumulative Probability
+90% = 147,025
+25%
+50%
+75%
+90%
+All Packages
+Total (All Types)
+(b) Recently crawled npm packages (17,151 pack-
+ages)
+Figure 2: Cumulative distribution function (CDF) of token
+counts using the gpt-5-mini tokenizer. Blue dashed lines
+mark the 90th percentile for the combined datasets: 32,448
+tokens for SecBench.js & VulcaN and 147,025 tokens for re-
+cently crawled npm packages. Only JavaScript files (with ex-
+tensions .js, .jsx, .mjs, and .cjs) are included in the count. We
+exclude TypeScript files because most published npm pack-
+ages distribute transpiled JavaScript artifacts for execution,
+and our analysis focuses on code that is directly executed in
+production.
+limit the amount of code that can be processed effectively in a single
+pass [11, 17, 51]. However, when considering the natural distribu-
+tion of real-world npm packages, we observe that in widely used
+benchmarks and empirical datasets, most npm packages are suffi-
+ciently small that they do not stress the context limits of modern
+LLMs. For instance, as shown in Figure 2, the majority of packages
+in the VulcaN and SecBench.js datasets contain relatively small
+amounts of code, with 90th percentile token counts below 32,449.
+Similarly, in the recently crawled npm packages (which will be
+discussed in Section 5.1.1), the cumulative distribution over token
+counts exhibits a comparable trend, where 90th percentile token
+counts are below 147,026. This measures the total sizes of the code-
+base, but in reality, an LLM agent will not load the entire codebase
+into its context window since it can focus on specific files and
+functions relevant to the vulnerability detection task. However,
+even considering this, the 90th percentile token counts are still well
+within the context window sizes of recent LLM models, such as
+4
+
+Taint-Style Vulnerability Detection and Confirmation for Node.js Packages Using LLM Agent Reasoning
+<package>@<version>
+Finder
+Environment 
+Setup
+Judge
+Judge
+Judge
+Constraints
+Constraints 
+Inferencer
+Testing Oracles
+Exploit
+Exploiter
+Rule-based Program
+LLM Agent
+Per-finding validation
+Iterative exploit attempts
+LLM Agents
+{ 
+ "vuln_type": "prototype_pollution", 
+ "location": { "file": "utils.js", "line": 34 }, 
+ "description": "User input is merged into an 
+object without filtering special keys, allowing 
+prototype pollution.", 
+ "evidence": "Object.assign({}, defaults, 
+userInput)" 
+}
+{ 
+ "vuln_type": "path_traversal", 
+ "location": { "file": "server.js", "line": 87 }, 
+ "description": "User-controlled path is 
+joined with the base directory without 
+validation.", 
+ "evidence": "fs.readFile(path.join(root, 
+req.url))" 
+}
+{ 
+ "vuln_type": "os_command_injection", 
+ "location": { "file": "index.js", "line": 12 }, 
+ "description": "User input is concatenated 
+into a shell command.", 
+ "evidence": "exec(\"ls \" + name)" 
+}
+Findings
+{ 
+ "finding": { 
+ "vuln_type": "path_traversal", 
+ "location": { "file": "server.js", "line": 87 }, 
+ "description": "User-controlled path is 
+joined with the base directory without 
+validation.", 
+ "evidence": "fs.readFile(path.join(root, 
+req.url))" 
+ }, 
+ "constraint": "Payload must include ../ 
+{ 
+ "finding": { 
+ "vuln_type": "os_command_injection", 
+ "location": { "file": "index.js", "line": 12 }, 
+ "description": "User input is concatenated 
+into a shell command.", 
+ "evidence": "exec(\"ls \" + name)" 
+ }, 
+ "constraint": "Payload must be a valid 
+filename and …” 
+} 
+Constraints
+{ 
+ "findings": [ { ... } ], 
+ "verdicts": [ { ... } ], 
+ "constraints": [ { ... } ], 
+ "exploits": [ 
+ { 
+ "finding": { … } }, 
+ "all_runs": [ 
+ { "code": "const { exec } = require(…); …”, 
+"exit_code": 0 } 
+ ], 
+ "success": true, 
+ "successful_run": { 
+ "code": "const { exec } = require(…); …”, 
+ "exit_code": 0 
+ } 
+ } 
+ ], 
+} 
+Final Report
+Figure 3: Overview of LLMVD.js.
+OpenAI’s GPT-5 series (400K), Gemini-3 series (1M), and Claude
+Sonnet 4.5 (200K by default, 1M experimental).
+This does not imply that large or complex packages are unim-
+portant; rather, it reflects the natural size distribution of the npm
+ecosystem, where most packages are relatively small. As a result,
+LLM-based approaches are well suited for reasoning about a sub-
+stantial fraction of real-world packages. Even when packages are
+larger, an LLM agent can iteratively construct task-relevant context
+through pattern-based search and package-structure understand-
+ing, without requiring dedicated static/dynamic analysis engines
+for taint/path derivation.
+4
+LLMVD.js Design and Implementation
+In this section, we present the design and implementation details of
+our proposed multi-stage LLM-based agent framework for detecting
+and confirming vulnerabilities in Node.js packages.
+4.1
+System Overview
+Figure 3 illustrates the architecture of LLMVD.js, a multi-stage
+framework for vulnerability detection and exploit confirmation
+in Node.js packages. In practice, end-to-end vulnerability confir-
+mation requires reasoning about candidate locations, construct-
+ing executable drivers, and validating exploitability with reliable,
+automated signals. To make this process tractable and auditable,
+LLMVD.js decomposes the pipeline into a small number of stages
+with distinct objectives: the initial finding stage prioritizes high
+recall, aiming to identify as many potentially vulnerable locations
+as possible, while the subsequent stages focus on precision by vali-
+dating exploitability and eliminating false positives. Accordingly,
+LLMVD.js organizes analysis as a staged workflow in which candi-
+date findings are first enumerated, then filtered for exploitability,
+then augmented with exploitation conditions, and finally validated
+through execution-based verification. The final stage uses auto-
+mated execution oracles that determine success based on concrete
+side effects.
+4.2
+Target Resolution and Execution Context
+The pipeline accepts either a local project path or an npm identi-
+fier in package@version format and operates on a fixed snapshot
+of the target package. We support four taint-style vulnerability
+classes that are commonly supported by prior program analysis
+tools, including command injection, code injection, path traversal,
+and prototype pollution. Each class is registered with (i) a natural
+language vulnerability specification, (ii) goal-oriented exploitation
+criteria, and (iii) a class-specific execution oracle. Success is deter-
+mined by vulnerability-class–specific side effects. These uniform
+success predicates enable automated validation across heteroge-
+neous vulnerability types.
+4.3
+Multi-Stage Vulnerability Reasoning
+Pipeline
+Candidate Enumeration (Finder). The Finder stage performs
+hypothesis generation by enumerating candidate vulnerabilities
+through lightweight codebase exploration, including directory tra-
+versal, pattern-based search, and source inspection. Each candidate
+is summarized as a structured hypothesis consisting of a vulner-
+ability type, precise source location, supporting code evidence,
+and a set of potentially reachable APIs. This stage intentionally
+favors over-approximation and prioritizes coverage over precision
+through prompt design, deferring exploitability assessment and
+confirmation to subsequent refinement stages. Each candidate
+is then processed independently through the remainder of the
+pipeline.
+Exploitability Filtering (Judge). The Judge stage filters infeasi-
+ble hypotheses through focused code inspection and lightweight
+data-flow reasoning, primarily as a reachability check without solv-
+ing path constraints. Exported APIs are conservatively treated as
+externally reachable to avoid prematurely discarding viable attack
+surfaces. For each candidate, the stage produces a structured verdict
+consisting of a binary exploitability label and a concise justification.
+5
+
+Ronghao Ni, Mihai Christodorescu, and Limin Jia
+Only candidate findings deemed potentially exploitable proceed to
+constraint inference, thereby eliminating false positives early and
+reducing unnecessary exploration in later stages.
+Constraint Inference (Constraints Inferencer). Given a validated
+hypothesis, the Constraints Inferencer stage derives a compact set
+of actionable exploitation conditions, including likely entry points,
+required parameters, payload structure, and relevant bypass con-
+siderations. These constraints summarize the minimal conditions
+necessary to propagate attacker-controlled input to the vulnera-
+ble sink and serve as an explicit interface between exploitability
+reasoning and exploit synthesis.
+By representing exploitation conditions explicitly as structured
+constraints, this stage provides a clear, structured interface for
+subsequent exploit synthesis.
+Execution-Coupled Exploit Synthesis (Exploiter). The Exploiter
+stage performs execution-coupled synthesis by generating exploits
+that instantiate the inferred constraints and executing them within
+the target package environment. Each attempt imports the vul-
+nerable module, executes the payload under Node.js, and records
+structured results together with full stdout and stderr traces. Exploit
+attempts are bounded by iteration limits, and all failed attempts are
+retained for post hoc analysis. Successful executions are immedi-
+ately validated by the class-specific oracle (discussed in Section 4.4)
+to provide confirmation of exploitability.
+4.4
+Oracle-Guided Execution and Automatic
+Probing
+A central design choice in LLMVD.js is the use of oracle-guided
+exploit confirmation to avoid reliance on model self-reporting and
+manual inspection. For each vulnerability class, we define an ex-
+ecution oracle that evaluates concrete side effects produced by
+exploit attempts. The execution harness augments each payload
+with vulnerability-specific probing logic. For example, code injec-
+tion exploits must trigger a predefined marker function; prototype
+pollution exploits are validated by probing polluted object prop-
+erties; and path traversal exploits must read and print a prepared
+sentinel file. For OS command injection, sentinel artifacts are re-
+moved before each attempt to prevent contamination across runs.
+These class-specific probes provide uniform, automated success
+predicates and enable execution-driven refinement of exploit hy-
+potheses without explicit symbolic constraint solving.
+4.5
+Tooling and Coordination Infrastructure
+We organize the supporting toolset into three categories aligned
+with the stages of vulnerability reasoning. First, exploration and
+inspection tools enable rapid understanding of package structure
+and relevant logic through directory navigation, source reading,
+and pattern-based search. These tools are shared across all reason-
+ing stages. Second, execution and environment interaction tools
+are restricted to the exploit synthesis stage and provide controlled
+Node.js and shell execution, vulnerability-specific harness integra-
+tion, auxiliary side-effect checks, and optional background process
+management for long-running services such as web server appli-
+cations. Finally, structured reporting and coordination utilities en-
+force typed submissions for hypotheses, verdicts, constraints, and
+exploit results, enabling stage-level auditing, failure attribution,
+and systematic analysis of intermediate reasoning behavior.
+4.6
+Implementation
+Each conceptual stage described above is implemented as a dedi-
+cated LLM agent. Each agent operates with an isolated context and
+is responsible for a specific task within the pipeline.
+LLM Model Selection. Since our evaluation involves vulnerability
+detection and confirmation on unrevealed or unpublished vulnera-
+bilities, we use APIs that have a non-training policy to minimize
+the risk of data leakage and the possibility of further training LLMs
+on unrevealed vulnerabilities. To balance performance and cost,
+we select OpenAI’s GPT-5-mini model (gpt-5-mini-2025-08-07)
+as our LLM backbone. The model is accessed via OpenAI’s API
+platform.
+Agent Framework. We implement our multi-stage agent frame-
+work based on LangChain1, a popular framework for developing
+LLM-powered applications. LangChain provides modular compo-
+nents for building complex agent workflows. We use a recursion
+limit of 54 for the agents to prevent infinite or excessive loops
+during tool usage. Considering the non-determinism of LLMVD.js,
+we allow up to three attempts when no successful exploit is gener-
+ated. Here, success is defined as observable side effects detected by
+automated oracles, but not by manual verification.
+We adopt a custom multi-stage architecture rather than ex-
+isting open-source frameworks such as OpenHands [50] and
+SWE-agent [53], to provide explicit stage separation, enabling fine-
+grained auditing, debugging, and the integration of domain-specific
+verification components. While these frameworks are effective
+for general software engineering tasks, they lack native support
+for stage-level logging and interfaces for vulnerability validation,
+exploit execution, and oracle-based verification required for our
+analysis. LLMVD.js enables our study of LLM agent behavior for
+npm vulnerability detection and exploit generation in a transparent
+and controllable environment.
+Prompt Design. We create custom prompts for each agent stage
+to guide the LLM’s reasoning and tool usage. The prompts include
+clear instructions, the exploitation goal, and an output structure
+formatted in JSON that contains the expected information for each
+stage. We refine the prompts iteratively based on initial experiments
+to improve agent performance, while ensuring no information leak-
+age related to the evaluated packages. Full prompt templates are
+provided in Appendix C.
+5
+Evaluation
+We evaluate LLMVD.js on a variety of datasets to answer the fol-
+lowing research questions:
+• RQ1: How effective is LLMVD.js in detecting and confirming
+vulnerabilities in Node.js packages?
+• RQ2: What is the cost of using LLMVD.js?
+• RQ3: What are the limitations and failure modes of LLMVD.js,
+and how can they inform future improvements?
+1https://python.langchain.com/en/latest/index.html
+6
+
+Taint-Style Vulnerability Detection and Confirmation for Node.js Packages Using LLM Agent Reasoning
+Table 2: Overview of the VulcaN, SecBench.js, NodeMedic, and the newly crawled Wild datasets. “Raw” refers to the initial
+number of vulnerable instances per dataset as used in previous work (VulcaN and SecBench.js) or as received (NodeMedic and
+Wild). “Valid” denotes packages still available on the npm registry at collection time. “Used” is the sampled subset. “Total” is
+the count of valid packages and sampled packages. “Dist. (%)” indicates the distribution of each vulnerability type across the
+combined datasets.
+Vulnerability Type
+CWE
+VulcaN
+SecBench.js
+NodeMedic
+Wild
+Total
+Dist. (%)
+Raw
+Valid
+Raw
+Valid
+Raw
+Used
+Raw
+Used
+Path Traversal
+CWE-22
+5
+3
+161
+156
+0
+0
+91
+65
+224
+21.62%
+Command Injection
+CWE-78
+66
+58
+82
+78
+1,022
+130
+1,004
+65
+331
+31.95%
+Code Injection
+CWE-94
+22
+21
+21
+21
+228
+129
+452
+65
+236
+22.78%
+Prototype Pollution
+CWE-1321
+67
+62
+120
+118
+0
+0
+104
+65
+245
+23.65%
+Total
+160
+144
+384
+373
+1,250
+259
+1,651
+260
+1,036
+100.00%
+5.1
+Experiment Setup
+5.1.1
+Datasets. Our evaluation utilizes four types of datasets: 1)
+public benchmarks commonly used in vulnerability detection re-
+search, 2) a private dataset of real-world Node.js packages with
+known vulnerable data paths but no associated CVEs or public
+exploits, 3) a transformed dataset derived from public benchmarks
+to assess generalizability, and 4) a crawled dataset of recently re-
+leased Node.js packages from the npm registry to further evaluate
+performance on unseen data.
+Public benchmarks. Following common practice, we use
+two widely recognized public benchmarks: VulcaN [7] and
+SecBench.js [6]. These datasets collected vulnerable Node.js
+packages from the npm registry based on reports from GitHub
+Advisory, Snyk, Huntr.dev, and the CVE database. For a fair com-
+parison with past work, we select four vulnerability types that have
+been studied previously: path traversal (CWE-22), OS command
+injection (CWE-78), code injection (CWE-94), and prototype pollu-
+tion (CWE-1321). We use the same set of packages evaluated in the
+most recent prior work (Explode.js [35]), excluding packages that
+are no longer available on the npm registry.
+Private dataset. We obtained access to the NodeMedic-FINE pri-
+vate dataset [9], which contains real-world Node.js packages with
+vulnerable data paths but without associated CVEs or public ex-
+ploits. Although all packages contain vulnerable code paths, no
+CVEs or other security advisories have been assigned for reasons
+like low download count or the developers’ assumption that the
+parent package should sanitize the input before calling the vulnera-
+ble API. This dataset can only be used to evaluate our framework on
+code injection and OS command injection vulnerabilities, the only
+types supported by NodeMedic-FINE. Considering cost and time
+constraints, we randomly sample 129 packages with code-injection
+vulnerabilities and 130 with command-injection vulnerabilities for
+evaluation. These sample sizes were chosen based on the average
+number of vulnerable instances per vulnerability type in the VulcaN
+and SecBench.js datasets after filtering. This dataset is especially
+useful for assessing our framework’s capability to identify vulner-
+abilities that are not publicly documented, thus creating a more
+realistic scenario for vulnerability detection, particularly regarding
+the issues of LLMs memorizing codes and exploits instead of en-
+gaging in genuine reasoning. In this work, we refer to this dataset
+as NodeMedic.
+Transformed dataset. Since the public benchmarks used in this
+work were released before the knowledge cutoff date of the LLM we
+chose (GPT-5-mini: May 31, 2024), there is a risk that memorization
+in the LLM affects the performance and thus it is crucial to evaluate
+how well our framework generalizes to unseen data. To achieve this,
+we create a transformed dataset by selecting up to 20 vulnerable
+instances per CWE from each public dataset, and applying code
+transformations such as renaming variables and functions, remov-
+ing comments, and changing formatting. Package names, versions,
+and links in manifest files are also anonymized. The aim is to gen-
+erate code that maintains the original semantics and vulnerabilities
+while being sufficiently different from the LLMs’ training data, thus
+reducing the chances of memorization. For transforming JavaScript
+code, we use terser [3], a toolkit for mangling and compressing
+JavaScript.
+Crawled dataset. To further evaluate our framework on unseen
+data, we crawled recently released Node.js packages from the npm
+registry that were published in December 2025. We consider only
+newly released or updated packages and collected 17,151 packages
+during this period. We designed regular expressions to identify
+potential vulnerable code patterns. The full regex set is provided in

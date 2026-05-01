@@ -1,0 +1,902 @@
+MBU: Scalable and Constant-Round Evaluation
+of Non-linear Functions in Standard MPC Setting
+Min Yang, Dongcan Guo, Zihang Zhou, Jinxuan Du, and Qingshu Meng
+Wuhan University, Hubei Province 430072, China qsmeng@126.com
+Abstract. After more than four decades of research, multi-party com-
+putation (MPC) has achieved remarkable success in handling 2-variable
+multiplication and comparison-based functions (e.g., ReLU) with prac-
+tical eciency. However, for general non-linear functionssuch as mul-
+tiplication of many variables, power, exponential, trigonometric func-
+tions, sigmoid, softmax, and GeLUno native MPC algorithm exists as
+Beaver-based mutiplication that is constant-round, scalable and exact.
+Existing solutions rely on either polynomial approximations (trading pre-
+cision for eciency), iterative multi-round protocols like Multiplication-
+to-Addition (M2A) conversion (requiring log2 k rounds for k parties), or
+Function Secret Sharing (FSS) with lookup tables (introducing quan-
+tization errors and large storage, mainly limited to 2-4 parties). These
+approaches suer from fundamental trade-os among accuracy, commu-
+nication rounds, and scalability.
+In this work, we propose a unied mask-broadcast-unmask design pattern
+that enables constant-round, scalable and approximation-free evaluation
+of a wide range of non-linear functions. Our contributions include:
+ A general multiplication protocol for k variables in one round
+with optimal O(kn) communication. When k = 2, it reduces to the
+classic Beaver triple multiplication; when each secret has only one
+non-zero share and k = 2, it becomes the well-known M2A protocol.
+ Power functions (xk) in one round.
+ Trigonometric functions (sin x, cos x) and exponential func-
+tions (ax) in 4 rounds.
+ Sigmoid, softmax in 6 rounds.
+All these protocols are provably secure in the semi-honest model, sup-
+port arbitrary number of parties, introduce no approximation er-
+ror beyond plaintext oating-point rounding, and require only constant
+communication rounds (16) independent of function complexity. Fur-
+thermore, by restricting the random mask to a suitable range (e.g.,
+0 ≤r < 2l −2lx), we can reduce the rounds from 1-6 to 1-3. This
+work lls the long-standing gap for general non-linear functions in stan-
+dard MPC settings, making privacy-preserving machine learning more
+practical for modern DNNs.
+1
+Introduction
+Multi-party computation (MPC) has seen tremendous progress over the past
+four decades, evolving from a theoretical curiosity to a practical tool for privacy-
+preserving collaborative computation. In particular, MPC has achieved ecient
+
+2
+Yang et al.
+solutions for two-variable mutliplication and comparison-based functions (e.g.,
+ReLU) using techniques such as Beaver triples, garbled circuits, and secret shar-
+ing. However, a fundamental and persistent challenge remains: the secure evalu-
+ation of general non-linear functionsmultiplication of many variables, power,
+exponential, trigonometric functions, sigmoid, softmax, and GeLUwhich are
+ubiquitous in modern machine learning and statistical analysis.
+1.1
+The Problem: No Native Algorithm To Non-linear Functions
+Despite decades of research, there is no native MPC algorithm for general non-
+linear functions that simultaneously achieves:
+1. No approximation error  exact (for algebraic functions) or bitwise
+equivalent to plaintext oating-point evaluation (for transcendentals);
+2. Constant communication rounds  independent of function complexity
+or number of parties;
+3. Scalability  support large number of participants.
+Existing approaches each suer from critical drawbacks:
+ Polynomial approximations (e.g., Taylor series, piecewise polynomials)
+are the most common workaround. They approximate non-linear functions
+by low-degree polynomials, enabling evaluation via standard MPC multipli-
+cation. However, this forces an inherent trade-o: higher-degree polynomi-
+als improve accuracy but increase rounds and communication; lower-degree
+polynomials are ecient but introduce approximation errors that can de-
+grade model accuracy, often requiring ne-tuning. No polynomial approxi-
+mation can achieve exactness.
+ Multiplication-to-Addition (M2A) conversion achieves exact results
+(up to oating-point rounding) by converting multiplicative shares to ad-
+ditive shares. However, existing M2A-based protocols require ⌈log2 k⌉com-
+munication rounds for k parties, which becomes a bottleneck in low-latency
+settings or when many such conversions are needed.
+ Function Secret Sharing (FSS) with lookup tables precomputes func-
+tion values for discretized input bins. While achieving constant online rounds,
+this method introduces quantization error due to nite bin granularity.
+Reducing the error requires exponentially more bins, leading to large storage
+and oine overhead. Usually they only support 2-4 parties.
+In summary, after 40 years of MPC research, there is no native algorithms
+for general non-linear functions that is constant-round, scalable and exact and
+avoids the pitfalls of approximation, high rounds, or quantization.
+1.2
+Our Approach: Mask-Broadcast-Unmask
+We introduce a systematic framework based on a simple yet powerful design
+pattern: mask-broadcast-unmask. The idea is to shift complexity to an oine
+phase that precomputes structured random tuples, and to design an online phase
+where parties:
+
+Title Suppressed Due to Excessive Length
+3
+1. Mask their shares with precomputed randomness and broadcast the masked
+values.
+2. Reconstruct the masked sum and evaluate the target function (or a simple
+auxiliary function) locally using standard arithmetic (exact ring/eld for
+algebraic functions, IEEE 754 oating-point for transcendentals).
+3. Use precomputed random tuples to remove the eect of randomness, obtain-
+ing exact shares of the target function.
+This pattern guarantees:
+ Constant rounds (16)  the only communication is the initial broadcast.
+ No approximation error  transcendentals are evaluated directly on the
+reconstructed masked value using standard math libraries; only the inherent
+rounding of oating-point arithmetic remains, identical to plaintext evalua-
+tion.
+ Linear communication  each party broadcasts O(1) values per function.
+1.3
+Our Contributions
+We instantiate this pattern for a comprehensive set of non-linear functions:
+ General multiplication (Qk
+j=1 xj): 1 round, O(kn) communication. When
+k = 2, it reduces exactly to the classic Beaver triple multiplication[1]. When
+each secret has only one non-zero share and k = 2, it becomes the well-known
+M2A protocol[9].
+ Power function (xk): 1 round, O(n) communication.
+ Trigonometric functions (sin x, cos x): 3 rounds of communication for 2
+participants; 4 round for n > 2 participants.
+ Exponential functions (ax): 3 rounds of communication for 2 participants;
+4 round for n > 2 participants.
+ Sigmoid, softmax:6 rounds, built by composing the exponential and mul-
+tiplication protocols.
+All protocols are provably secure in the semi-honest model with up to n −1
+corruptions, and are fully scalable (any number of parties). The oine phase
+only requires precomputed random tuples, which can be generated by existing
+techniques (PCG, OT extension, or even a trusted dealer).
+1.4
+Comparison with Prior Art
+Table 1 contrasts our work with existing approaches. To the best of our knowl-
+edge, no prior work simultaneously provides:
+ Exact computation (no polynomial or quantization error);
+ Constant online rounds (16);
+ Linear online communication;
+ Coverage of all common non-linear functions (multiplication, power, exp,
+trig, sigmoid, softmax, GeLU).
+
+4
+Yang et al.
+1.5
+Paper Organization
+The rest of the paper is organized as follows. Section 2 reviews preliminaries.
+Section 3 presents our protocols for general multiplication, power, exponential,
+trigonometric, sigmoid, softmax, and GeLU. Section 4 discusses oine precom-
+putation. Section 5 provides security analysis. Section 6 discusses related work,
+and Section 7 concludes.
+2
+Preliminaries
+2.1
+System Model
+We consider n parties P1, . . . , Pn holding additive secret shares of a value x ∈Z2l
+(or a nite eld), such that x = Pn
+i=1 xi. The goal is to securely compute a
+function f(x), with each party obtaining an additive share of f(x). We assume
+a semi-honest adversary controlling up to n −1 parties. All protocols are pre-
+sented in the standard oine/online model, where an oine phase precomputes
+correlated randomness independent of the inputs.
+2.2
+Additively Secret Sharing (ASS)
+ASS is a core MPC primitive for secure computation, oering information-
+theoretic security against semi-honest adversaries. It is widely used in PPML
+systems [19,22,18] due to its simplicity and eciency for linear operations. We
+adopt the ASS-based MPC for the evaluation of non-linear functions.
+Sharing: To share x ∈Z2l, each Pi generates a random ⟨x⟩i ∈Z2l such that
+x = Pn
+i=1⟨x⟩i mod 2l.
+Reconstruction: Each Pi broadcasts ⟨x⟩i, and locally compute x = Pn
+i=1⟨x⟩i
+mod 2l.
+Addition: For shared values x and y, each party computes local sums: ⟨x +
+y⟩i = ⟨x⟩i + ⟨y⟩i mod 2l.
+Public Scalar Multiplication: For a ∈Z2l (public) and ⟨x⟩, each party multi-
+plies locally: ⟨ax⟩i = a · ⟨x⟩i mod 2l.
+2.3
+Computational Model
+Our protocols operate in two distinct computational settings depending on the
+function type.
+Algebraic Functions. For functions such as multiplication, power, compu-
+tation is performed over a ring Z2l. All operationsaddition, multiplication, and
+reconstructionare exact and deterministic. The protocols produce shares that
+reconstruct to the exact value(only with random rounding error) that would be
+obtained by evaluating the function in the same algebraic structure.
+Transcendental Functions. For functions such as exp, sin, cos, sigmoid,
+softmax, and GeLU, each input is masked xi + ri mod 2l. The HP reconstructs
+
+Title Suppressed Due to Excessive Length
+5
+a masked value x + r mod 2l rst and then turns it into a oating-point num-
+ber. The evaluation of function is performed over oating-point numbers using
+standard arithmetic (e.g., IEEE 754). We assume that all parties have access
+to a deterministic oating-point implementation of these functions (e.g., from a
+standard math library). The nal reconstructed output is identical to the result
+of evaluating the function on the plaintext input (only with random rounding
+error)using the same oating-point arithmetic. No additional approximation is
+introduced by the MPC protocol.
+3
+Protocols for Non-linear Functions
+3.1
+Core Design Pattern
+All our online protocols follow a simple, unied pattern that guarantees constant
+rounds:
+1. Each party Pi masks its share xi with a precomputed random ri and broad-
+casts xi + ri.
+2. All parties reconstruct x + r = P
+i(xi + ri) and compute g(x + r) locally,
+where g is an auxiliary function (often the same as f or a simple variant).
+3. Using precomputed shares of functions h(r), where h() is a function related
+to f(), each party removes the eect of r to obtain a share of f(x).
+This structure guarantees constant rounds because the only communication is
+the initial broadcast; all subsequent steps are local.
+We now present concrete instantiations of this pattern for the set of common
+non-linear functions used in privacy-preserving machine learning. All protocols
+are exact (as dened above), require constant rounds, and have total communi-
+cation linear in n.
+3.2
+Multi-Variable Multiplication
+Oine Precomputation: Output ASS shares ⟨RS⟩i of RS for every non-empty
+subset S ⊆{1, . . . , k}, where RS = Q
+j∈S rj, and r1, r2, . . . , rk ∈Z2l are k
+random numbers. The empty set S = ∅gives R∅= 1, no shares needed.
+Online Phase (1 round)
+Input: Each Pi holds ⟨x1⟩i, . . . , ⟨xk⟩i with xj = P
+i⟨xj⟩i.
+Output: Each Pi obtains ⟨Qk
+j=1 xj⟩i.
+1. Each party Pi (in parallel) compute aj,i = ⟨xj⟩i + ⟨rj⟩i for j = 1, . . . , k.
+Broadcast all k values a1,i, . . . , ak,i to all other parties.
+2. Each party Pi reconstructs Aj = Pn
+m=1 aj,m = xj +rj (public), j = 1, . . . , k.
+3. Each party Pi (in parallel) set ⟨V ⟩i = 0. For each non-empty S ⊆{1, . . . , k},
+compute TS,i = (−1)|S| Q
+j /∈S Aj
+
+· ⟨RS⟩i, and then ⟨V ⟩i ←⟨V ⟩i + TS,i.
+4. Designate P1 to compute P = Qk
+j=1 Aj (public). P1 sets ⟨Qk
+j=1 xj⟩1 = ⟨V ⟩1+
+P. For i = 2, . . . , n, Pi sets ⟨Qk
+j=1 xj⟩i = ⟨V ⟩i.
+
+6
+Yang et al.
+Correctness: By inclusionexclusion,
+k
+Y
+j=1
+xj =
+X
+S⊆{1,...,k}
+(−1)|S|Y
+j /∈S
+(xj + rj)
+Y
+j∈S
+rj
+
+= P +
+X
+S̸=∅
+(−1)|S|Y
+j /∈S
+Aj
+
+RS.
+Thus the sum of the output shares equals Qk
+j=1 xj.
+Communication: 1 round, O(kn) elements. Without this protocol, to com-
+pute the product of k variables, it takes log2k rounds of communication with
+classic Beaver-based multiplication.
+Precomputation: 2k −1 random product shares (only practical for small k,
+say k ≤5). For large k, say k=64, it is not practical to use our scheme directly,
+a hybrid scheme can be used: the 64 variables are divided into 16 groups, with
+each group having 4 variables. Each group can be solved by the multi-variable
+multiplication protcol. The whole comunication rounds is reduced from 6 to 3.
+Three special cases:
+Case 1: The classic Beaver-based multiplication. The multi-variable
+multiplication protocol with k=2 becomes the classic Beaver-based Multiplication[1],
+which is the ruling method of multiplication in MPC.
+1. Each party Pi (in parallel) compute ⟨x1⟩i + ⟨r1⟩i, ⟨x2⟩i + ⟨r2⟩i. Broadcast
+them to all other parties.
+2. All parties reconstruct e = Pn
+i=1(< x1 >i + < r1 >i) = x1 + r1 and
+f = Pn
+i=1(< x2 >i + < r2 >i) = x2 + r2.
+3. P1 computes ef + e < r2 >1 +f < r1 >1 + < r1r2 >1; other party Pi
+computes e < r2 >i +f < r1 >i + < r1r2 >i.
+Case 2: the M2A protocol. If each variable xi is specially shared with only
+one share is nonzero, then the protocol becomes the M2A protocol proposed in
+the paper[9] and used in papers[6,27]. Theoretically, with our scheme the commu-
+nication rounds is reduced from log2k to one round. In practice, communication
+rounds is reduced from log2k rounds to logak rounds, where a = 3, 4or5.
+Case 3: The power function. When all xi, i = 1, 2, · · · , k are equal to
+each other, the protocol becomes the power function. Considering the simplied
+steps and its important usage, we discuss this case in the next subsection.
+3.3
+Power Function (xk)
+For k ≥2, we compute xk exactly in one round.
+Oine Precomputation: Output ASS shares ⟨(−r)k−t⟩i, i = 1, 2, · · · , n
+of (−r)k−t for t = 0, 1, . . . , k −1. Distribute ⟨(−r)k−t⟩i, i = 1, 2, · · · , n, t =
+0, 1, . . . , k −1 to each party Pi and the ASS shares ⟨r⟩i, i = 1, 2, · · · , n of r.
+Online Phase:
+Input: Each Pi holds ASS shares ⟨x⟩i such that x = Pn
+i=1⟨x⟩i.
+Output: Each Pi obtains the ASS share < xk >i of xk.
+
+Title Suppressed Due to Excessive Length
+7
+1. Each party Pi broadcasts ⟨x⟩i + ⟨r⟩i.
+2. Each party Pi reconstructs x + r = Pn
+j=1(⟨x⟩j + ⟨r⟩j), and locally computes
+the public powers (x + r)t for t = 0, 1, . . . , k .
+3. Each party computes its share of xk as:
+⟨xk⟩i =
+k−1
+X
+t=0
+k
+t
+
+(x + r)t · ⟨(−r)k−t⟩i.
+Let tmp = ⟨xk⟩1. P1 computes its shares of xk as ⟨xk⟩1 = tmp + (x + r)k.
+Correctness: By the binomial theorem,
+xk = (x+r−r)k =
+k
+X
+t=0
+k
+t
+
+(x+r)t·(−r)k−t =
+k−1
+X
+t=0
+k
+t
+
+(x+r)t·(−r)k−t+(x+r)k.
+Since each party Pi holds ⟨(−r)k−t⟩i, the local linear combination yields a correct
+share of xk. "1" is unnecessary to secretly shared.
+Communication: 1 round, O(n) elements. Without this protocol, to com-
+pute the power xk with Beaver-based mulitplicaiton, it take log2k rounds. This
+is vey important for evaluation of nonlinear functions, such as division, log(x)
+and nth root extraction functions. As there is no similar additive mask solution
+to them, polynomial approximatoin seems to be a possible solution, which we
+will discuss in another paper for space limitation.
+3.4
+Wrap Protocol
+The wrap protocol determines whether x+r exceeds 2l. It returns 1 if x+r ≥2l,
+and 0 otherwise. Here x = Pn
+i=1 xi mod M and r = Pn
+i=1 ri mod M are shared
+among n parties, with each party Pi holding xi and ri, and M = 2l.
+The protocol is based on the identity:
+(xi + ri) = (xi mod M) + M
+j xi
+M
+k
++ (ri mod M) + M
+j ri
+M
+k
+,
+which leads to
+P
+i(xi + ri)
+M
+
+=
+x + r
+M
+
++
+P
+i xi
+M
+
++
+P
+i ri
+M
+
+.
+The term
+j P
+i ri
+M
+k
+can be precomputed oine. Each party can compute
+j P
+i(xi+ri)
+M
+k
+from the received broadcasts. If
+j P
+i xi
+M
+k
+can be obtained, then ⌊(x + r)/M⌋(i.e.,
+the wrap value) follows. The sign protocol[17] is listed in Appendix A.
+Oine Phase: Precompute ri ∈ZM and send to each party Pi. Precompute
+j P
+i ri
+M
+k
+and broadcast to each party.
+
+8
+Yang et al.
+Online Phase:
+1. On the larger ring ZM 2, the parties run the sign protocol with inputs {x1 −
+j2l + 1, x2, . . . , xn} to decide whether x > j2l for j = 0, 1, · · · , n −1. The
+largest j for which the inequality holds gives
+j P
+i xi
+M
+k
+.
+2. Each party computes xi + ri (without modulo) and broadcasts it.
+3. All parties compute
+j P
+i(xi+ri)
+M
+k
+over a larger ring (e.g., ZM 2) such that
+P
+i(xi + ri) is within the modulus without overow. Then using the value
+of
+j P
+i xi
+M
+k
+from step 1, each party computes ⌊(x + r)/M⌋=
+j P
+i(xi+ri)
+M
+k
+−
+j P
+i xi
+M
+k
+−
+j P
+i ri
+M
+k
+as the wrap value wrap(x, r, 2l).
+The output j does not leak information about x in the sense of x mod M.
+As step 2 and 3 are independent from step 1, they can run in parallelly. The
+protocol requires 4 rounds of communication.
+Practical optimization: The wrap protocol requires expensive 4 rounds of
+communication. Though in the special case of two parties, the wrap protocol
+can be executed in 3 rounds, it is still expensive. To make our schemes more
+practical while preserving strong security, we observe that in typical machine
+learning settings the eective bit-length lx of the input x is small (e.g., lx ≤14),
+whereas the ring modulus is 2l with l = 32 or 64. The expensive wrap protocol
+(4 rounds) is only needed when x + r ≥2l. We can entirely avoid this overhead
+by choosing the random mask r such that x + r < 2l always holds. Two simple
+approaches achieve this:
+1. Probabilistic security: let r be uniform over Z2l. The overow probability
+is at most 2lx/2l = 2lx−l, which for lx = 14, l = 64 is only 2−50  negligible
+in practice.
+2. Deterministic security: restrict r to the range 0 ≤r < 2l −2lx. Since
+x < 2lx, we have x + r < 2lx + (2l −2lx) = 2l. This eliminates only a
+negligible fraction 2lx/2l = 2lx−l of the ring, thus preserving almost full
+entropy.
+Consequently, the wrap protocol is omitted entirely, saving 4 communication
+rounds for all protocols that rely on it (exponential, trigonometric functions,
+etc.). However, in the following protocol, we still use the wrap protocol for com-
+pleteness.
+3.5
+Trigonometric Functions (sin x, cos x)
+ Oine Precomputation: Output shares < r >i of random number r ∈Z2l
+and shares < sin(r) >i, < cos(r) >i of sin(r) and cos(r) respectively , where
+r is turne into real number in accordin to the precison of x(see Section 4).
+ Online Phase:
+Input: Each Pi holds ⟨x⟩i such that x = P
+i⟨x⟩i.
+Output: Each Pi obtains ⟨sin(x)⟩i and/or ⟨cos(x)⟩i.
+
+Title Suppressed Due to Excessive Length
+9
+1. Each party broadcasts ⟨x⟩i + ⟨r⟩i, and reconstruct x + r = Pn
+j=1(⟨x⟩j +
+⟨r⟩j) mod 2l.
+2. Each party turns x + r into real number in according to the precision of
+x and locally computes sin(x + r) and cos(x + r) using a standard math
+library.
+3. Each party runs the wrap protocol to obtain w = wrap(x, r, 2l).
+4. Each party computes
+< sin(x) >i= sin(x+r+w2l)· < cos(r) >i −cos(x+r+w2l)· < sin(r) >i,
+< cos(x) >i= cos(x+r+w2l)· < cos(r) >i + sin(x+r+w2l)· < sin(r) >i,
+where sin(x + r + w2l) = sin(x + r)cos(w2l) + cos(x + r)sin(w2l), and
+cos(c + r + w2l) = cos(x + r)cos(w2l) −sin(x + r)sin(w2l).
+As step 1 and 2 are independent from step 3, they can run in parallely. The
+protocol requires 4 rounds of communication.
+3.6
+Exponential (ax)
+ Oine Precomputation: Output the shares < r >i of random r and
+shares < a−r >i of a−r, i = 1, 2, · · · , n().
+ Online Phase:
+Input: Each Pi holds ⟨x⟩i such that x = P
+i⟨x⟩i.
+Output: Each Pi obtains ASS share ⟨ax⟩i of ax.
+1. Each party broadcasts ⟨x⟩i+⟨r⟩i mod 2l, and locally reconstruct x+r =
+Pn
+j=1(⟨x⟩j + ⟨r⟩j) mod 2l.
+2. Each party run the wrap protocol to calculate w = wrap(x, r, 2l).
+3. Each party turns x+r+w2l into real numer in according to the precision
+of x and computes ax+r+w2l locally.
+4. Each party outputs ax+r+w2l· < a−r >i.
+As step 1 and 2 are independent from step 3, they can run in parallely. The
+protocol requires 4 rounds of communication.
+3.7
+Sigmoid
+The sigmoid function is dened as:
+sigmoid(x) =
+ex
+1 + ex .
+The sigmoid protocol is as follows:
+Oine precomputation: Output the ASS shares ⟨es⟩of es, with s a random
+number.
+Online pahse:
+Input: Each Pi holds ⟨x⟩i such that x = P
+i⟨x⟩i.
+Output: Each participant Pi obtains an ASS share of sigmoid(x).
+Protocol Steps:
+
+10
+Yang et al.
+1. Run the exponential protocol to obtain shares ⟨ex⟩i.
+2. Each participant takes ⟨ex + 1⟩i and ⟨es⟩i as inputs, runs the multiplication
+protocol to obtain ⟨(esex + es)⟩i, and broadcasts it; each party takes ⟨ex⟩i
+and ⟨es⟩i as inputs, runs the multiplication protocol to obtain ⟨(esex)⟩i.
+3. Each participant Pi aggregates the received shares to obtain t = esex + es,
+and locally computes ⟨ex+s⟩i/t as the share of sigmoid(x).
+The protocol requires 6 rounds of communication, and oers provable security.
+Since tanh can be linearly dened from sigmoid, the Tanh function can be im-
+plemented analogously using this protocol and is not elaborated further.
+3.8
+Softmax
+The softmax function is dened as:
+softmax(xm) =
+exm
+Pk
+j=1 exj .
+oine precomputation: Output ASS shares ⟨er⟩of er, with r a random num-
+ber.
+Online pahse:
+Input: Each Pi holds ⟨xj⟩i, with xj = P
+i⟨xj⟩i, j = 1, 2, · · · , k.
+Output: Each participant Pi obtains an additive secret share of softmax(xm).
+Protocol Steps:
+1. Each party runs the exponential protocol to obtain ASS shares of all exj,
+j = 1, 2, . . . , k. Each participant Pi computes the sum of its own shares:
+si =
+D k
+X
+j=1
+exjE
+i.
+2. Each party takes si and ⟨er⟩i as inputs, runs the multiplication protocol to
+obtain < Pk
+j=1 exj+r >i, and broadcasts the result; each party takes ⟨exm⟩i
+and ⟨er⟩i as inputs, runs the multiplication protocol to obtain ⟨exm+r⟩i.
+3. Each participant aggregates the received shares to obtain
+S =
+k
+X
+j=1
+exj+r,
+and locally computes ⟨exm+r⟩i/S as the share of softmax(xm).
+The protocol requires 6 rounds of communication and oers provable secu-
+rity. In step 1, if each party broadcast si to reconstruct the denominator, the
+denominator will leak some information (the average value of each variable, for
+example) though it is impossible to infer exact value of each xi for i = 1, 2. · · · , k.
+Our MBU scheme also supports GeLU. However, as the protocol is based on
+the two approximation represenatations[12], it is not an exact protocol. We list
+it in Appendix B.
+
+Title Suppressed Due to Excessive Length
+11
+4
+Oine Precomputation
+Our protocols require two types of precomputed tuples:
+Type I (Algebraic Correlations). For multiplication and power functions,
+we require Beaver triples (r, s, r · s) and their generalizations. These can be
+generated eciently using pseudo-random correlation generators (PCG) [4,15]
+or oblivious transfer extensions [13]. These techniques are well-established and
+can be instantiated with linear communication and constant rounds in the oine
+phase.
+Type II (Transcendental Correlations). For transcendental functions,
+we require tuples (r, h(r)) where h ∈{sin, cos, exp, etc.}. Unlike algebraic correla-
+tions, these involve non-linear, non-polynomial relations and cannot be generated
+by PCG-based methods by now.
+Generating Transcendental Correlations. The generation of such tuples
+is an independent research problem that has received increasing attention.
+Several approaches exist:
+ Trusted Dealer Model. A common simplication in MPC literature [2]
+assumes a trusted oine dealer that generates random r, computes h(r)
+locally, and distributes secret shares. This suces for security proofs when
+the dealer does not interact with online inputs.
+ Function Secret Sharing (FSS). Recent work [3] extends FSS[5] to sup-
+port trigonometric functions via piecewise polynomial approximation [25].
+For exponential functions, FSS-based constructions remain an open chal-
+lenge, though xed-point approximations can be used [23,21].
+ Secure Computation in the Oine Phase. The parties can jointly com-
+pute h(r) from shares of r using any existing MPC protocol (e.g., piecewise
+and high-degree polynomial approximation, garbled circuits or SPDZ) in the
+oine phase. Since the oine phase is input-independent and can tolerate
+higher latency, this approach is feasible in principle, though it may incur
+higher computational overhead.
+Scope of This Work. The focus of this paper is the online phase: we
+provide constant-round, low-communication protocols for non-linear functions
+assuming the existence of the required precomputed tuples. The oine genera-
+tion of transcendental tuples is an important orthogonal direction. We note that
+our protocols do not require any new oine techniquesany secure
+method for generating shares of h(r) suces. The development of more ecient
+oine generation for these tuples is left as future work.
+5
+Security Analysis
+All protocols are secure in the semi-honest model with up to n −1 corrupted
+parties. We prove security via a standard simulation argument.
+
+12
+Yang et al.
+5.1
+Ideal Functionality
+For each function f, we dene an ideal functionality Ff that receives inputs
+x1, . . . , xn from parties, computes f(x) (over the appropriate domain: ring/eld
+for algebraic functions, oating-point for transcendental), and outputs shares to
+all parties.
+5.2
+Simulator Construction
+Consider the online phase of a protocol for f. The only values revealed to parties
+are the masked shares xi + ri (broadcast in round 1). Since each ri is uniformly
+random and independent of the input, the masked value x + r is uniformly
+distributed. A simulator can generate a random value u and set the simulated
+broadcast to u.
+For transcendental functions, each party broadcasts xi + ri leaks nothing
+because ri is chosen uniformly in the ring. The sign's security lies in the two
+mask techniques: addtive mask in additve group and the multiplicative mask in
+a multiplicative group, which leaks nothing too. The broadcast in wrap protocol
+xi + ri leaks nothing too.
+5.3
+Hybrid Argument
+We prove security by composing the oine generation of precomputed tuples
+(which is input-independent and secure by construction of the underlying prim-
+itive) with the online protocol. The online protocol only uses the precomputed
+shares in linear combinations or as input to secure multiplcaion protocol, preserv-
+ing the secret-sharing property. Formal security proofs for each protocol follow
+by constructing a simulator that replaces the precomputed values with random
+values consistent with the revealed masked values. For functions (multiple vari-
+able multiplication, power function) with 1 round communication, their proof is
+similar to the proof of classic Beaver-based multiplication. For exponential func-
+tion, Trigonometric Functions, sigmoid, softmax and GeLU, by UC principle, as
+each step is secure, the whole protocol is secure.
+Due to space constraints, we only provide the full simulation for sigmoid and
+softmax.
+Theorem 1 (Sigmoid). Let πsigmoid be the protocol described in Algorithm ??
+(or Algorithm 5). πsigmoid securely computes sigmoid(x) in the presence of a
+semi-honest adversary that corrupts any t < n parties (including the worst case
+t = n −1).
+Proof. The protocol consists of one exponential protocol, two multiplication pro-
+tocols, and one broadcast of ⟨es+x + es⟩i. The adversary's view consists of:
+ the view of the exponential protocol (broadcast values ⟨x⟩i +⟨r⟩i and public
+x + r );
+
+Title Suppressed Due to Excessive Length
+13
+ the views of the two multiplication protocols( broadcast values of form ⟨ex⟩i+
+⟨α⟩i, ⟨es⟩i + ⟨β⟩i , and public values of the form ex + α, es + β with random
+α, β;
+ the broadcast shares ⟨es+x + es⟩i and their sum es+x + es.
+We construct a simulator S as follows. S knows the corrupted parties' inputs
+⟨x⟩i (i ∈C) and receives from the ideal functionality the shares ⟨sigmoid(x)⟩i
+for i ∈C. S randomly generates all precomputed random tuples (e.g., r, s,
+and Beaver triples) independently of the inputs, since the oine phase is input-
+independent.
+For each broadcast value (e.g., ⟨x⟩i +⟨r⟩i ,⟨ex⟩i +⟨α⟩i, etc.), S computes the
+exact values for corrupted parties (using their known inputs and precomputed
+randomness) and chooses uniformly random values for honest parties such that
+the total sum matches the public value. The public value x + r is uniformly
+random because r is random; similarly, each masked value in the multiplications
+is uniform.
+For the nal denominator es+x +es, note that its distribution is independent
+of x: since s is uniform, es+x + es = es(ex + 1) has the same distribution for
+any x. Hence S can sample a random s′ and set the denominator to c · es′ for
+an arbitrary constant c (e.g., c = 2, corresponding to x = 0) without knowing x.
+because at least one honest party's share is unknown to the adversary, the joint
+distribution is uniform and indistinguishable from the real execution.
+All messages received by the adversary are either exact values derived from
+its known inputs (for corrupted parties) or uniformly random values (for hon-
+est parties). Moreover, every public value either is uniformly random (for sums
+involving independent masks) or has a distribution independent of the input x
+(for the nal denominator), and there is always at least one unknown share from
+an honest party. Therefore, the simulated view is statistically indistinguishable
+from the real view.
+Theorem 2 (Softmax). Let πsoftmax be the protocol described in Algorithm 6.
+πsoftmax securely computes softmax(xm) in the presence of a semi-honest adver-
+sary that corrupts any t < n parties (including the worst case t = n −1).
+Proof. The protocol consists of three phases:
+ k parallel exponential protocols (Algorithm 4) to obtain ⟨exj⟩i for j =
+1, . . . , k;
+ two parallel Beaver multiplications:
+• one to compute ⟨Pk
+j=1 exj+r⟩i from ⟨er⟩i and ⟨Pk
+j=1 exj⟩i (where the
+latter is obtained by local addition of ⟨exj⟩i);
+• another to compute ⟨exm+r⟩i from ⟨exm⟩i and ⟨er⟩i;
+ a broadcast of the shares ⟨Pk
+j=1 exj+r⟩i to reveal the public denominator
+S = Pk
+j=1 exj+r.
+The adversary's view consists of the views of these sub-protocols and the nal
+broadcast.
+
+14
+Yang et al.
+We construct a simulator S as follows. S knows the corrupted parties' inputs
+xj,i for j = 1, . . . , k, i ∈C (where C is the set of corrupted parties, |C| ≤n −1),
+and receives from the ideal functionality the shares ⟨softmax(xm)⟩i for i ∈C. S
+randomly generates all precomputed random tuples (e.g., r and Beaver triples)
+independently of the inputs, since the oine phase is input-independent.
+Simulation of the exponential protocols. For each j, the exponential pro-
+tocol reveals broadcast values xj,i + rj,i (where rj,i are shares of a random rj)
+and the public value xj + rj. For corrupted parties i ∈C, S computes the exact
+broadcast values using the known xj,i and the precomputed ⟨rj⟩i. For honest
+parties, S chooses uniformly random values such that the sum of all broadcasts
+equals a uniformly random public value (since rj is random). The resulting view
+is indistinguishable from the real one, as argued in the analysis of 1-round pro-
+tocols.
+Simulation of the two parallel Beaver multiplications. The two multipli-
+cations are independent and can be simulated in parallel. For each multiplication,
+the protocol reveals masked values of the form A + α and B + β with random
+α, β, where (A, B) are the two inputs being multiplied.
+For the denominator multiplication: - Inputs are A = er and B = Pk
+j=1 exj.
+- S knows the corrupted parties' shares of A and B (from precomputation and
+from summing the exponential outputs). It can compute their exact masked
+values. - For honest parties, S chooses random masks such that the public sums
+are uniformly random (because α, β are random).
+For the numerator multiplication: - Inputs are A′ = er and B′ = exm. -
+Similarly, S knows the corrupted parties' shares and simulates honest parties'
+broadcasts with random values.
+Thus the simulated multiplication views are indistinguishable from the real
+ones.
+Simulation of the broadcast. In the real protocol, each party broadcasts its
+share ⟨S⟩i = ⟨Pk
+j=1 exj+r⟩i (from the denominator multiplication). The sum of
+these shares is S = Pk
+j=1 exj+r. We claim that the distribution of S is indepen-
+dent of the input vector (x1, . . . , xk). Indeed, S = er · Pk
+j=1 exj. Since r is
+uniformly random and independent of all xj, the factor er is a random positive
+scaling. For any two input vectors x and x′, the distributions of S are identical
+(both are er times a constant). Therefore, S can simulate S without knowing
+the inputs: it picks a random r′ and sets S = c · er′ for an arbitrary constant c
+(e.g., c = k, corresponding to all xj = 0). S then generates shares ⟨S⟩i for cor-
+rupted parties arbitrarily (e.g., uniformly random) and sets the honest parties'
+shares such that the sum equals S. Because at least one honest party's share
+is unknown to the adversary, the joint distribution of the shares is uniform and
+indistinguishable from the real execution.
+Simulation of the nal division. After the broadcast, each party locally
+computes ⟨softmax(xm)⟩i = ⟨exm+r⟩i/S. S already knows the ideal output shares
+⟨softmax(xm)⟩i for corrupted parties. It simply outputs these values as the result
+of the division step. (Correctness of the protocol ensures that the division yields
+exactly these shares.)
+
+Title Suppressed Due to Excessive Length
+15
+Indistinguishability argument. All messages received by the adversary are
+either:
+ exact values computed from its known inputs (for corrupted parties), or
+ uniformly random values (for honest parties' broadcasts) with the same dis-
+tribution as in the real protocol.
+Every public sum (e.g., xj + rj, masked multiplication values, and the nal de-
+nominator S) is either uniformly random or has a distribution independent of the
+inputs. Since at least one honest party's share remains unknown to the adver-
+sary, the joint distribution of the adversary's view is statistically identical to that
+in the real execution. Hence the simulated view is statistically indistinguishable
+from the real view.
+6
+Related Work
+We categorize existing secure inference schemes for Transformers according to
+how they handle non-linear functions (Softmax, GeLU, SiLU, etc.). Table 1 sum-
+marizes the four classes.
+6.1
+Polynomial Approximation: Trading Accuracy for Eciency
+The most common approach approximates complex non-linear functions using
+low-degree polynomials, piecewise polynomials, or Taylor expansions. This re-
+duces communication and rounds but inevitably introduces approximation errors
+that may aect model accuracy.
+Hybrid HE/MPC frameworks. BOLT [20] approximates GeLU with a
+degree-4 polynomial and Softmax with a clipped Taylor series, achieving near-
+oating-point accuracy without ne-tuning. BumbleBee [16] uses a 4-segment
+polynomial (degree-3 and degree-6) for GeLU and the approximation (1+x/2n)2n
+for Softmax, reducing communication by 80%90% but incurring up to 11 ULP
+error for GeLU. BLB [26] inherits BumbleBee's piecewise approximations.
+Three-party frameworks. PUMA [8], Ditto [24], Iron [11], and Nimbus [28]
+all rely on polynomial or piecewise approximations. MPCFormer [14] replaces
+GeLU with a quadratic and Softmax with a division of quadratics, causing about
+5% accuracy drop that requires ne-tuning.
+Limitation. All these methods face an inherent trade-o: higher-degree poly-
+nomials improve accuracy but increase communication rounds and computation;
+lower-degree polynomials are more ecient but risk accuracy degradation. None
+achieves exact computation without approximation.
+6.2
+Multiplication-to-Addition (M2A) Based Exact Computation
+A dierent line of work computes non-linear functions exactly (up to oating-
+point rounding) by converting multiplicative secret shares to additive shares
+using interactive protocols.
+
+16
+Yang et al.
+SecureTLM [6] uses hybrid secret sharing (additive and multiplicative). To
+compute Softmax, each party locally computes e[xm]i · ⟨γ⟩i and then invokes a
+conversion protocol Ftrans to obtain additive shares. This yields exact results
+(no polynomial or LUT approximation), but the conversion requires ⌈log2 N⌉
+communication rounds for N parties.
+Limitation. While M2A-based schemes avoid polynomial approximation er-
+ror, their logarithmic round complexity makes them less suitable for low-latency
+applications.
+6.3
+FSS-Based Lookup Tables: Quantization Error
+Function secret sharing (FSS) enables low online communication by precomput-
+ing keys for lookup tables (LUTs). These schemes discretize the input domain
+into a nite number of bins and precompute function values for each bin.
+SIGMA [10] builds FSS-based protocols for GeLU, Softmax, and layer nor-
+malization, achieving GPU-accelerated inference. Its GeLU uses an LUT for
+δ(x) = ReLU(x) −GeLU(x) on [−4, 4] with 256 entries (6-bit precision), which
+introduces quantization error. The output diers from plaintext oating-point
+computation due to discretization.
+Mosformer [7] extends FSS to maliciously secure three-party computation
+using veriable DPFs (VDPFs). Its GeLU also relies on a precomputed LUT of
+256 entries, incurring similar quantization error.
+Limitation. Finite LUT size inevitably causes approximation (quantization
+error). Finer granularity reduces error but increases key size and oine overhead.
+Thus, these schemes trade o precision against storage and preprocessing cost.
+6.4
+Our Scheme: Only Random Truncation Error
+In contrast to the three categories above, our framework achieves the following:
+ Algebraic functions (multiplication, power): exact over the underlying
+ring/eld, identical to plaintext evaluation.
+ Transcendental functions (exponential, trigonometric, sigmoid, softmax):
+computed directly using standard oating-point arithmetic on the recon-
+structed masked value x + r. The only numerical dierence from plaintext
+evaluation is the inherent rounding error; no additional approximation
+(polynomial, LUT, or otherwise) is introduced by the MPC protocol.
+ Communication rounds: low constant (16)/(1-3) independent of function
+complexity or number of participants.
+6.5
+Summary
+Table 1 compares representative schemes across key dimensions.
+
+Title Suppressed Due to Excessive Length
+17
+Table 1. Comparison of non-linear function evaluation approaches in secure Trans-
+former inference.
+Scheme
+Technique
+Exact?
+Online Rounds
+Additional Error
+BOLT, BumbleBee, BLB
+Polynomial approx.
+No
+O(1)O(log n)
+Polynomial tting
+SecureTLM, SecureGPT
+M2A conversion
+Yes (oating)
+⌈log2 N⌉
+None
+SIGMA, Mosformer
+FSS + LUT
+No
+Constant
+Quantization
+Ours
+Oine tuples + local eval Yes (oating)
+16/1-3
+Only random truncation
+7
+Conclusion and Future Work
+This work presents the rst unied framework that enables constant-round,
+linear-communication MPC for the set of common non-linear functions required
+by modern machine learning and statistical analysis, with precision guarantees
+that match plaintext computationexact for algebraic functions and bitwise
+equivalent for transcendental functions.
+Existing practical MPC solutions for machine learning have been limited to
+DNNs that use comparison-based activation functions. By providing the rst
+ecient protocols for the full spectrum of non-linear functions used in modern
+DNNswith constant rounds, linear communication, and no approximation er-
+rorthis work removes the nal barrier that has prevented MPC from being
+a truly practical tool for the broader landscape of privacy-preserving machine
+learning.
+Future Work. The ecient oine generation of transcendental correlations
+(r, f(r)) remains an important open problem. While existing techniques (FSS for
+trigonometric functions, trusted dealer, homomorphic encryption) provide fea-
+sible solutions, developing lightweight, PCG-like methods for these non-linear
+correlations is a promising direction. Additionally, extending our framework to
+the malicious security model and implementing the protocols for real-world de-
+ployment are natural next steps.

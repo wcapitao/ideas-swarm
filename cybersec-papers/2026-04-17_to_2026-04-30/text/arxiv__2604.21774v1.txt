@@ -1,0 +1,954 @@
+1
+Adversarial Robustness of Near-Field
+Millimeter-Wave Imaging under Waveform-Domain
+Attacks
+Lhamo Dorje, Jordan Madden, Soamar Homsi, and Xiaohua Li
+Abstract—Near-field millimeter-wave (mmWave) imaging is
+widely deployed in safety-critical applications such as airport
+passenger screening, yet its own security remains largely un-
+explored. This paper presents a systematic study of the ad-
+versarial robustness of mmWave imaging algorithms under
+waveform-domain physical attacks that directly manipulate the
+image reconstruction process. We propose a practical white-
+box adversarial model and develop a differential imaging attack
+framework that leverages the differentiable imaging pipeline to
+optimize attack waveforms. We also construct a real measured
+dataset of clean and attack waveforms using a mmWave imaging
+testbed. Experiments on 10 representative imaging algorithms
+show that mmWave imaging is highly vulnerable to such attacks,
+enabling an adversary to conceal or alter targets with moderate
+transmission power. Surprisingly, deep-learning-based imaging
+algorithms demonstrate higher robustness than classical algo-
+rithms. These findings expose critical security risks and motivate
+the development of robust and secure mmWave imaging systems.
+Index Terms—Millimeter-wave Imaging, Adversarial Attack,
+Robustness, Adversarial Machine Learning, Synthetic Aperture
+Radar, RF Sensing
+I. INTRODUCTION
+Near-field millimeter-wave (mmWave) imaging enables
+high-resolution two-dimensional (2D) or three-dimensional
+imaging capabilities comparable to optical systems while
+offering unique advantages such as all-weather operation, pen-
+etration through clothing, non-ionizing radiation, and privacy
+preserving. These properties have led to widespread deploy-
+ment in safety- and security-critical applications, including air-
+port passenger screening, concealed weapon detection, public
+surveillance, and senior care [1], [2].
+Despite its growing adoption, the security of the mmWave
+imaging pipeline itself, especially the image reconstruction
+algorithms, remains largely unexplored. This gap is particu-
+larly critical for high-resolution near-field mmWave imaging
+systems. Although existing research on radar or radio fre-
+quency (RF) sensing security has extensively studied signal-
+level attacks such as jamming, interference, and spoofing [3],
+it primarily focuses on far-field point-target tracking rather
+than high-resolution imaging. In parallel, adversarial machine
+learning has extensively studied perturbations in the digital
+L. Dorje, J. Madden, and X. Li are with the Department of Electri-
+cal and Computer Engineering, Binghamton University, Binghamton, NY
+13902 USA (e-mail: ldorje1@binghamton.edu; jmadden2@binghamton.edu;
+xli@binghamton.edu).
+S. Homsi is with the Air Force Research Laboratory, Information Direc-
+torate, Rome, NY 13441 USA (e-mail: soamar.homsi@us.af.mil).
+Manuscript received March xx, 2026; revised September 00, 00.
+image domain [4], [5]. However, it primarily focuses on
+the adversarial robustness of downstream imaging recognition
+models. It does not address whether an adversary can manip-
+ulate physical sensing waveforms to alter the reconstructed
+images.
+This paper addresses this critical gap by studying the
+adversarial robustness of mmWave imaging algorithms when
+adversaries inject physical signal waveforms to cause the
+reconstruction of fake but visually plausible mmWave images.
+These adversarial attacks aim to compromise the image re-
+construction, thereby evading the detection of both human and
+automated analysis. Our central premise is that the mmWave
+imaging pipeline can be implemented as a differentiable
+mapping from received waveforms to reconstructed images,
+which enables the use of gradient-based optimization to design
+adversarial waveforms that achieve specific attack objectives.
+As a preliminary study, our work in [6] demonstrated that
+simple waveform injection can produce camouflaged imaging
+results. This stealthy attack raises immediate security con-
+cerns; for example, an adversary carrying a weapon could
+potentially pass airport screening by deploying a carefully
+designed attack device near the imaging system. However, it
+remains unclear whether such vulnerabilities are inherent to
+mmWave imaging in general or limited to specific algorithms.
+This motivates a systematic evaluation across a diverse set of
+imaging algorithms.
+The contributions of this paper are summarized as follows:
+1) To the best of our knowledge, this paper presents the first
+systematic evaluation of adversarial robustness for high-
+resolution near-field mmWave imaging algorithms at
+the image reconstruction stage under waveform-domain
+physical attacks.
+2) This paper establishes a new adversarial study frame-
+work in adversarial machine learning, contributing a
+strong yet realistic white-box threat model, an end-to-
+end differentiable imaging pipeline, and a differential
+imaging attack (DIA) algorithm for optimizing physical
+attack waveforms.
+3) A new dataset consisting of real measured imaging
+and attack waveforms is constructed. The adversarial
+robustness of 10 representative mmWave imaging al-
+gorithms is evaluated under various attack strategies.
+The results demonstrate that mmWave imaging is not
+robust to adversarial attacks and, contrary to common
+belief, learning-based algorithms appear more robust
+than classical algorithms.
+Approved for Public Release on 22 Apr 2026. Distribution Is Unlimited; Case Number: AFRL-2026-2017
+arXiv:2604.21774v1 [cs.CR] 23 Apr 2026
+
+2
+The remainder of this paper is organized as follows. Section
+II reviews related work. Section III presents the mmWave
+imaging model and representative reconstruction algorithms.
+Section IV introduces the adversarial model and the proposed
+attack framework. Section V describes the experimental setup
+and presents the evaluation results. Section VI concludes the
+paper. Source code and dataset are publicly available at 1.
+II. LITERATURE REVIEW
+RF sensing and imaging [7] play important roles across a
+wide range of applications, including medical imaging [8],
+senior care [9], and security and surveillance [10]. Remote
+sensing using satellites or unmanned aerial vehicles (UAVs)
+has been widely adopted for ecological monitoring [11], crisis
+management [12], and public surveillance [13]. Most of these
+systems operate in the far field and provide relatively low-
+resolution imaging, suitable for tasks such as point-target
+localization, human activity recognition, gesture recognition,
+and large-scale geological mapping.
+In contrast, near-field mmWave imaging, enabled by short
+wavelengths and short sensing distances, can achieve high-
+resolution imaging comparable to optical cameras [14]. It has
+been widely used in applications such as passenger screening
+in airports, train stations, and government facilities [1], [15], as
+well as concealed weapon detection [16], [17]. High-resolution
+imaging typically requires a large sensing aperture. Fortu-
+nately, low-cost implementations can employ a single-antenna
+sensor that is mechanically scanned over a large aperture to
+collect measurements, followed by image reconstruction based
+on the synthetic aperture radar (SAR) principle [15], [18]. A
+variety of mmWave imaging algorithms have been developed,
+ranging from classical analytical methods such as the range
+migration algorithm to modern deep neural network-based
+approaches [1].
+Adversarial attacks on RF sensing and imaging systems
+have been extensively studied [3]. However, most existing
+works focus on disrupting signal reception through jamming,
+interference, or spoofing [19], [20]. Furthermore, they primar-
+ily consider far-field, low-resolution radar sensing or mmWave
+systems [21], [22], [23], [24], [25], [26], [27], [28]. It has even
+been suggested in [29] that high-resolution mmWave imaging
+may mitigate such attacks; in contrast, this paper demonstrates
+the opposite.
+As a subfield of adversarial machine learning, numerous
+studies have examined the robustness related to radar and
+remote sensing images [30], [31]. These studies are typically
+conducted in the digital pixel domain and aim to disrupt
+downstream target recognition or classification models, rather
+than the image reconstruction process itself. A clear gap
+remains in understanding the adversarial robustness of near-
+field, high-resolution mmWave imaging systems under attacks
+conducted in the physical signal domain to directly manipulate
+the imaging algorithms.
+x
+z
+y
+Target 
+Target slice 
+Receiver 
+Transmitter 
+ 
+ 
+ 
+ ( 
+ 
+ 
+ )
+ 
+ ( 
+ 
+ 
+ )
+ ( )
+ 
+ 
+Approximated distance 
+(
+)
+Adversary sensor 
+(
+)
+Fig. 1.
+System model of the near-field mmWave imaging scenario under
+adversarial attack. The imaging sensor performs synthetic aperture scanning
+to reconstruct an image of the target, while a nearby adversarial sensor injects
+attack waveforms into the receiver to induce a fake image.
+III. NEAR-FIELD HIGH-RESOLUTION MMWAVE IMAGING
+A. Imaging Model
+As illustrated in Fig. 1, we consider a near-field mmWave
+imaging system equipped with an imaging sensor. The sensor
+sequentially scans the scene and employs the SAR principle
+to reconstruct the target image. An adversary is assumed to
+be present in proximity to the scene but remains unknown to
+the imaging system. During the sensing process, the adversary
+injects carefully designed waveforms into the receiver, thereby
+perturbing the measured signals and altering the reconstructed
+image.
+The imaging sensor is assumed to have one transmit antenna
+and one receive antenna, and it moves on a planar aperture
+at z = 0. At each sensing location r′ = (x′, y′, z′ = 0),
+referred to as an aperture look ℓ, the sensor transmits a
+sensing waveform and records the corresponding echo signal.
+The objective of the imaging algorithm is to estimate the
+2D reflectivity distribution of a target located on the plane
+r = (x, y, z = z0) from the collection of received echoes.
+In near-field imaging, the separation between the transmit
+and receive antennas cannot be neglected. At aperture look ℓ,
+the sensor transmits a frequency-modulated continuous-wave
+(FMCW) signal p(t) from position r′
+T = (x′
+T, y′
+T, z′
+T = 0),
+and the echo is recorded at r′
+R = (x′
+R, y′
+R, z′
+R = 0). The
+transmitted waveform is given by
+p(t) = exp
+
+j2π
+ f0t + 1
+2Kt2 
+,
+(1)
+where f0 denotes the start frequency and K is the chirp slope.
+1https://github.com/ldorje1/Differential-Imaging-Attacks-on-Near-Field-
+SAR-Imaging
+Approved for Public Release on 22 Apr 2026. Distribution Is Unlimited; Case Number: AFRL-2026-2017
+
+3
+The received echo signal at aperture look ℓcan be modeled
+as
+sℓ(t) =
+ZZZ
+σ(r) p
+ t −τℓ(r)
+
+dr + νℓ(t),
+(2)
+where σ(r) represents the reflectivity of the target at location
+r, τℓ(r) is the propagation delay from the transmit antenna
+to r and then to the receive antenna, and νℓ(t) denotes noise,
+clutter, and interference.
+To facilitate algorithmic processing, the imaging region is
+discretized into N voxels centered at {rn}N−1
+n=0 , and measure-
+ments are collected over L aperture locations {r′
+ℓ}L−1
+ℓ=0 . From
+(2), the standard linear imaging model can be derived [14],
+[32] (See Appendix A for deduction):
+y = H α + v,
+(3)
+where y ∈CL is the complex measurement vector, α ∈CN
+denotes the discretized reflectivity, v ∈CL represents noise,
+and H ∈CL×N is the propagation matrix with entries
+Hℓn = exp
+ j 2k R0(r′
+ℓ, rn)
+
+R2
+0(r′
+ℓ, rn)
+,
+(4)
+where R0(r′
+ℓ, rn) denotes the distance between the sensing
+location r′
+ℓand the voxel location rn, and k = 2πf0/c with c
+being the speed of light.
+B. Imaging Algorithms
+The complete imaging pipeline can be expressed as a
+compositional operator
+G(·) = (Gimg ◦Gpre)(·),
+(5)
+where Gpre(·) represents signal pre-processing (i.e., extracting
+y from received waveforms sℓ(t)), and Gimg(·) performs
+image reconstruction which is essentially estimating α from
+y given H.
+In this paper, we categorize image reconstruction algorithms
+into two classes: classical, and learning-based.
+The first class consists of classical (non-deep-learning)
+approaches. One important category is the analytical recon-
+struction algorithms with closed-form expressions. A canon-
+ical example is the time-domain Back-Projection Algorithm
+(BPA), which reconstructs the image via
+ˆα = Gimg(y) = HHy,
+(6)
+where (·)H denotes the Hermitian transpose [33].
+Due to the high computational cost of explicitly forming H,
+frequency-domain implementations are often employed when
+both sensing and imaging grids are regular. This leads to
+the Range-Migration Algorithm (RMA), which leverages fast
+Fourier transform (FFT) operations for efficient computation
+[16]. For near-field scenarios, the Matched-Filtering Algorithm
+(MFA) has been specifically designed [14], [34]. For irregu-
+lar sensing geometries, the Light-weight Imaging Algorithm
+(LIA) reconstructs the image iteratively with reduced com-
+plexity [18].
+Another important category in this first class formulates im-
+age reconstruction as an inverse problem with regularization.
+A representative example is the Compressive-Sensing-based
+Algorithm (CSA) [33], [35], which solves
+ˆα = arg min
+α∈CN
+1
+2
+y −Hα
+2
+2 + λ R(α),
+(7)
+where R(·) encodes structural priors (e.g., sparsity), and λ
+controls the regularization strength.
+The second class consists of learning-based approaches
+inspired by deep learning. One important category is algorithm
+unrolling, where iterative solvers for (7) are converted into
+finite-depth computational graphs. A representative example is
+the joint Range-Migration and Iterative Shrinkage Threshold
+algorithm (RMIST) [36], which iteratively updates
+α(k+1) = Proxθk
+
+α(k) −µk HH Hα(k) −y
+
+,
+(8)
+where µk is the step size and Proxθk denotes a learned prox-
+imal operator. Another important category is the fully data-
+driven approaches that employ deep neural networks (DNNs)
+to directly map measurements or intermediate reconstructions
+to final images. Examples include Vision Transformer-based
+models (ViT) [37] and U-Net-based architectures such as
+Deep2S, Deep2SP+, and CV-Deep2S [38].
+IV. WAVEFORM-DOMAIN ADVERSARIAL ATTACK
+A. Adversarial Model
+To evaluate adversarial robustness under a worst-case sce-
+nario, we adopt a strong yet practical white-box adversary
+model characterized as follows:
+• Adversary knowledge: The adversary is assumed to have
+full knowledge of the imaging system, including sensing
+locations, sensing timing, and transmitted waveforms.
+The adversary can also observe or reconstruct the signal
+waveforms received by the imaging sensor. With this
+information, the adversary can design and transmit at-
+tack waveforms that are synchronized in both time and
+frequency with the sensing process.
+• Adversary constraints: The adversary has no direct ac-
+cess to or control over the internal components of the
+mmWave imaging system. In addition, the adversary is
+subject to power constraints, either in terms of per-look
+transmit power or total transmit power across all sensing
+locations.
+It is reasonable to assume that the adversary possesses
+substantial knowledge of the imaging system. For example,
+technical specifications of commercial mmWave imaging sys-
+tems are often publicly available through regulatory filings.
+Many systems rely on unsecured communication protocols,
+making it feasible for an adversary to intercept, record, and
+analyze sensing waveforms.
+The assumption that the adversary knows the imaging
+sensor’s received signal waveform sℓ(t) in (2) is strong
+but realistic in many practical scenarios. For example, the
+adversary may install a passenger screening system identical
+to the systems deployed in airports. This allows it to replicate
+and observe the received echo signals sℓ(t). Nevertheless, this
+strong assumption is not necessary if attack objective can be
+reduced, which we will demonstrate in experiments.
+Approved for Public Release on 22 Apr 2026. Distribution Is Unlimited; Case Number: AFRL-2026-2017
+
+4
+B. Attack Signal Waveform
+As illustrated in Fig. 1, the adversary injects an attack wave-
+form patk
+ℓ
+(t) directly into the receiver of the imaging sensor.
+The resulting received signal becomes the superposition of the
+clean echo (2), the injected attack signal, and noise:
+sℓ(t) =
+ZZZ
+σ(r) p
+ t −τℓ(r)
+
+dr
+|
+{z
+}
+clean echo
++
+patk
+ℓ
+(t)
+| {z }
+attack signal
++ νℓ(t). (9)
+After standard signal processing, the corresponding discrete
+measurement model becomes
+y = H α + yatk + v,
+(10)
+where yatk denotes the contribution of the injected attack
+signal.
+Since the imaging system is unaware of the attack, it
+reconstructs the image as
+ˆαadv = Gimg(y).
+(11)
+As a result, the reconstructed image ˆαadv deviates from the
+clean reconstruction ˆα due to the presence of yatk.
+Theorem 1. Consider the aperture look ℓwhen the imaging
+sensor is located at phase-center r′
+ℓ, the target is located at
+r and the attack sensor is located at rA. If the attack signal
+waveform is
+patk
+ℓ
+(t) = wℓp(t) e−j2πδℓt,
+(12)
+with the optimizable complex gain wℓ∈C and fixed frequency
+offset
+δℓ= K(τℓ(r) −τ atk
+ℓ
+(rA)),
+(13)
+where τℓ(r) and τ atk
+ℓ
+(rA) are the propagation delays of the
+clean sensing signal and the attack signal, respectively, then
+the attack signal can be successfully received and processed
+by the imaging sensor, and the ℓth element of yatk in (10) is
+given by
+yatk
+ℓ
+= wℓej2kR(r′
+ℓ,rA).
+(14)
+Proof. See Appendix B.
+C. Differential Imaging Attack (DIA)
+The objective of the attack is to optimize the complex
+weights wℓsuch that the resulting adversarial image ˆαadv
+appears visually plausible but differs from the true image ˆα.
+The optimal attack weights wℓcan in principle be derived
+analytically based on (10) and (14). However, in order to avoid
+calculating the big matrix H, a more general and flexible
+approach is to treat the entire imaging pipeline (5) as a differ-
+entiable mapping and perform gradient-based optimization.
+Define the attack parameter vector
+w =
+ w0,
+· · · ,
+wL−1
+
+.
+(15)
+The adversary solves the following constrained optimization
+problem:
+w⋆= arg min
+w
+∥ˆαadv(w) −ˆαtgt∥2
+2 + λ ∥w∥2
+2,
+(16)
+Algorithm 1 Waveform-Domain Adversarial Attack
+1: Before Attack:
+2:
+Attacker: Acquire imaging system parameters. Either
+select a target image ˆαtgt and use the DIA algorithm
+to pre-compute the optimal w⋆(16), or initialize w⋆
+randomly.
+3: During Attack: At each aperture look ℓ,
+4:
+Imaging Sensor: Transmits sensing signal p(t) (1)
+5:
+Attacker: Intercepts the sensing signal, analyzes it,
+refines w⋆using DIA, and transmits the attack signal
+patk
+ℓ
+(t) (12)
+6:
+Imaging Sensor: Receives the echo signal sℓ(t) (9)
+7: Image Reconstruction:
+8:
+Imaging Sensor: Processes sℓ(t) to obtain y and recon-
+structs the image ˆαadv (10)-(11)
+where ˆαadv(w) denotes the reconstructed image under attack
+weights w, ˆαtgt is the adversary-chosen target image, and λ
+controls the attack power.
+Under the white-box model, the adversary can synthesize
+the received signal (9) and calculate ˆαadv(w) for any candi-
+date w. The optimization problem (16) can therefore be solved
+using gradient descent, analogous to targeted adversarial at-
+tacks in machine learning.
+The regularization term λ∥w∥2
+2 enforces a constraint on the
+attack power. Let Ps =
+R
+|p(t)|2dt denote the sensing signal
+power and Pa =
+R
+|patk
+ℓ
+(t)|2dt denote the attack power. Then,
+∥w∥2
+2 = Pa
+Ps
+.
+(17)
+Additional constraints, such as per-look power limits |wℓ|2,
+can also be incorporated.
+When the attacker uses (16) to optimize the attack signal
+(12), the method is referred to as the Differential Imaging
+Attack (DIA). Alternatively, the attacker may choose w ran-
+domly without optimization. In that case, the attack may only
+produce random (which is in fact blank) adversarial images
+rather than a targeted adversarial image ˆαtgt. In both cases,
+the adversary may further refine w online using intercepted
+signals during the sensing process.
+The overall attack procedure is summarized in Algorithm 1.
+V. EXPERIMENTS AND SIMULATIONS
+We adopt a measurement-driven simulation framework to
+evaluate the adversarial robustness of mmWave imaging al-
+gorithms. Specifically, we first construct a dataset consisting
+of real-measured clean sensing waveforms and attack wave-
+forms. We then use this dataset to simulate imaging pipelines
+and adversarial attacks, enabling systematic and reproducible
+evaluation across multiple algorithms and attack strategies.
+Such
+a
+hybrid
+approach
+is
+necessary
+because
+fully
+hardware-based evaluation is currently not available. Imple-
+menting waveform-domain attacks requires stringent time and
+frequency synchronization between the imaging sensor and
+the attacker, which is not supported by the low-cost mmWave
+hardware available today [39]. Real demonstration of FMCW
+radar attacks has been reported in only several papers [39],
+Approved for Public Release on 22 Apr 2026. Distribution Is Unlimited; Case Number: AFRL-2026-2017
+
+5
+[24], [25], [26], and all of them use custom-built sensors
+and are limited to simple point-target location rather than
+imaging. Moreover, high-resolution SAR imaging requires
+raster scanning over a large aperture, which can take hours per
+image, making large-scale hardware experiments prohibitively
+time-consuming.
+A. Real-Measured Dataset Acquisition
+As shown in Fig. 2, we build a mmWave imaging and attack
+testbed using two Texas Instruments TI IWR1843Boost radar
+sensors. One operates as the imaging sensor, while the other
+acts as the adversarial transmitter.
+The imaging sensor is mounted on a two-axis translation
+stage controlled by a host PC for configuration and data
+acquisition. The radar operates in the 76–81 GHz band. The
+stage performs raster scanning over a planar synthetic aperture
+of size 250 mm × 250 mm with step sizes ∆x = 1 mm and
+∆y = 2 mm, resulting in 250 × 125 = 31,250 aperture looks.
+At each look, 256 fast-time samples are recorded at a sampling
+rate of 5 MHz. The target is positioned at approximately
+z0 ≈230 mm from the sensor. The adversarial sensor is
+placed near the target and transmits signals toward the imaging
+receiver.
+To obtain an attack signal waveform, two back-to-back mea-
+surement runs are conducted. In the first run, only the imaging
+sensor transmits, producing a clean received waveform. In
+the second run, the imaging sensor transmits again while the
+attack sensor injects a time-aligned attack waveform, resulting
+in a received signal that contains both the clean echo and the
+attack component. The attack waveform is then extracted from
+these two measurements. Let the received signals from the two
+runs be s1(t) and s2(t), respectively. We estimate the optimal
+scaling factor a and time shift d by solving
+{a⋆, d⋆} = arg min
+{a,d} E[∥s2(t) −as1(t −d)∥2],
+(18)
+where E[·] denotes expectation. The attack waveform is then
+obtained as s2(t) −a⋆s1(t −d⋆).
+In practice, extracting high-quality attack waveforms is
+significantly more challenging than collecting clean data due
+to synchronization requirements. Many trials are often needed
+to obtain a usable attack signal waveform.
+Using this setup, we collected clean imaging data for more
+than 10 distinct targets (more than 312,500 waveforms) and
+approximately 40,000 attack waveforms.
+Example waveforms are shown in Fig. 3. In the frequency
+domain, the clean signal exhibits a single dominant peak
+corresponding to the true target at 0.01 cycles/sample. In
+contrast, the attacked signal shows an additional peak at 0.075
+cycles/sample, which corresponds to a false target introduced
+by the adversarial waveform. The extracted attack waveform
+isolates this artificial component, confirming that the injected
+signal can emulate a physically consistent target response.
+B. Adversarial Attack Simulation Setup
+We evaluate adversarial robustness by simulating imaging
+and attack pipelines (Algorithm 1) using the real-measured
+dataset.
+mmWave radar
+Imaging target
+Motion controller
+Laptop
+PC 1 (Imaging sensor)
+PC 2 (Adv. sensor)
+Adversary sensor
+Target
+Imaging sensor
+Linear stage controller
+Fig. 2.
+Experimental testbed for data acquisition. A TI IWR1843Boost
+mmWave radar mounted on a two-dimensional translation stage performs
+synthetic aperture scanning of the target, while a second radar acts as an
+adversarial transmitter.
+Fig. 3. Example of measured waveforms and their spectra. Top: time-domain
+signals including the clean echo, the combined sensing-plus-attack wave-
+form, and the extracted attack waveform. Bottom: corresponding normalized
+magnitude spectra. The attack introduces an additional spectral peak, which
+corresponds to a physically plausible but false target.
+We implement 10 representative imaging algorithms: Five
+classical algorithms (BPA, LIA, RMA, MFA, CSA) and five
+learning-based algorithms (RMIST, ViT, Deep2S, Deep2SP+,
+CV-Deep2S). See Section III-B for details. For each algorithm,
+we implement both the standard (non-differentiable) version
+used by the imaging system, and a differentiable version used
+by the attacker for gradient-based optimization.
+For learning-based algorithms, we use publicly available
+implementations when possible. We made extensive efforts
+to look for learning-based methods with publicly available
+Approved for Public Release on 22 Apr 2026. Distribution Is Unlimited; Case Number: AFRL-2026-2017
+
+6
+code or pretrained models. RMIST and ViT provide source
+code but no pretrained weights, so we retrained them using
+our simulated mmWave dataset [40]. The only work providing
+both code and pretrained models is [38], from which we adopt
+Deep2S, Deep2SP+, and CV-Deep2S. However, these three
+models were originally trained and thus could only work on
+simulated data rather than real measured mmWave data.
+For attacking, we evaluate three attack strategies:
+• Target Conceal Attack: The attacker aims to suppress
+the true target. A blank image is used as ˆαtgt, and DIA
+(16) is used to compute the optimal w⋆;
+• Target Swap Attack: The attacker replaces the true target
+with a fake one. A randomly selected image from the
+dataset is used as ˆαtgt, and DIA is used to compute w⋆;
+• Randomization Attack: The attacker uses randomly
+selected weights w without DIA optimization.
+We quantify adversarial robustness or attack effectiveness
+using Peak Signal-to-Noise Ratio (PSNR), Structural Similar-
+ity Index Measure (SSIM), and attack power ratio Pa/Ps in
+(17). Specifically, we report
+• PSNRAC, SSIMAC: adversarial vs. clean image
+• PSNRAT , SSIMAT : adversarial vs. target image
+Successful attacks reduce PSNRAC and SSIMAC while in-
+creasing PSNRAT and SSIMAT . Adversarial robustness im-
+plies the opposite behavior.
+For each imaging algorithm, we evaluate performance
+across all 10 true target objects in the dataset. For each
+object, the three attack strategies are applied repeatedly using
+10 different adversarial target images. Consequently, each
+performance metric is computed from 100 measurements, from
+which both the mean and variance are reported.
+C. Results
+a) Overall performance: Due to the large volume of
+data, we first present the summary Table I that summarizes
+the average PSNR and SSIM across all algorithms. Taking
+a look at the global averages, it is clear that adversarial
+images ˆαadv are highly similar to the attacker-specified tar-
+get images ˆαtgt (PSNRAT
+= 37 dB, SSIMAT
+= 0.80)
+while being significantly different from the clean images ˆα
+(PSNRAC = 13 dB, SSIMAC = 0.22). Importantly, the attacks
+require only moderate power. In many cases, the attack power
+is comparable to or only slightly higher than the sensing
+signal power, indicating that the attacks are successful and
+the imaging algorithms are not robust to adversarial attacks.
+Another key observation is that learning-based imaging
+algorithms exhibit higher robustness than classical algorithms.
+In both Target Conceal and Target Swap attacks, higher attack
+power (4.6 and 1.5) is required by learning-based algorithms
+than classical algorithms (0.23 and 0.38). Despite this higher
+power, the resulting PSNRAT and SSIMAT values are lower,
+suggesting reduced attack effectiveness.
+b) Target Conceal Attack: Detailed results for the target
+conceal attack are presented in Tables II and III. The former
+corresponds to unconstrained attack power (used to calculate
+the “Conceal” averages in the summary table), while the latter
+enforces a constraint of Pa/Ps = 0.1. Example images are
+shown in Fig. 4.
+Results in Table II show that the attacks effectively conceal
+the targets. The adversarial images deviate significantly from
+the clean images and closely resemble the target images, as
+also illustrated in Fig. 4.
+Table III shows that attacks remain effective against classi-
+cal algorithms even with limited power (10 dB below sensing
+power). However, for learning-based algorithms, the attack
+becomes less effective under the same power constraint, as
+PSNRAT and SSIMAT are lower than PSNRAC and SSIMAC.
+This indicates that the adversarial images remain closer to the
+clean images than to the target images. Overall, learning-based
+algorithms exhibit greater robustness, requiring higher attack
+power or resulting in lower attack quality.
+c) Target Swap Attack: Results are shown in Tables
+IV and V, corresponding to unconstrained and constrained
+(Pa/Ps = 0.1) settings, respectively. The data in Table IV
+are used to calculate “Swap” averages in the summary Table.
+Example images are shown in Fig. 5. The results confirm
+that the attack successfully replaces the true target with the
+adversarial target. Learning-based methods again demonstrate
+higher robustness compared to classical methods.
+As a special note, PSNR and SSIM in this case are com-
+puted over a region of interest (ROI) containing the object,
+rather than the entire image. This is because the background
+structure and dynamic range are similar across images, making
+full-image metrics less sensitive to differences that are visually
+apparent.
+d) Randomization Attack with Random Weights w:
+Results are presented in Table VI, with example images in
+Fig. 6. With moderately increased attack power (10 dB), the
+attack successfully leads to blank reconstructed images that
+differ significantly from the true images.
+VI. CONCLUSION
+This paper presents a systematic study of the adversarial
+robustness of near-field mmWave imaging algorithms under
+waveform-domain physical attacks. A differential imaging
+attack framework is developed to optimize injected adversarial
+waveforms. To enable experimentally grounded evaluation,
+a dataset of real measured clean imaging waveforms and
+attack waveforms is constructed using a mmWave imaging
+testbed. The proposed framework is applied to 10 repre-
+sentative imaging algorithms. The results demonstrate that
+near-field mmWave imaging algorithms are vulnerable to
+adversarial waveform injection, and that targeted manipulation
+of reconstructed image content is feasible. Learning-based
+imaging algorithms generally exhibit greater robustness than
+classical algorithms. In safety-critical applications such as
+airport passenger screening, such vulnerabilities could allow
+an adversary to conceal prohibited objects or inject false
+targets, posing significant risks to public security.
+The vulnerability identified in this paper motivates the
+development of robustness-enhancing defense mechanisms for
+mmWave imaging systems. Potential defenses include wave-
+form authentication or randomization to prevent attackers
+Approved for Public Release on 22 Apr 2026. Distribution Is Unlimited; Case Number: AFRL-2026-2017
+
+7
+TABLE I
+SUMMARY OF ADVERSARIAL ROBUSTNESS RESULTS. THE TABLE REPORTS AVERAGE PSNR, SSIM, AND ATTACK POWER RATIO Pa/Ps, AVERAGED
+OVER 5 CLASSICAL AND 5 LEARNING-BASED ALGORITHMS, RESPECTIVELY. GLOBAL AVERAGE IS THE AVERAGE OF EACH COLUMN.
+Imaging
+Attack
+Adv vs Clean Image
+Adv vs Target Image
+Power
+Alg.
+Strategy
+PSNRAC(dB)
+SSIMAC
+PSNRAT (dB)
+SSIMAT
+Pa/Ps
+Conceal
+18
+.13
+40
+.85
+.23
+Classical
+Swap
+10
+.28
+54
+.95
+.38
+Random
+3
+.01
+-
+-
+10
+Conceal
+14
+.18
+24
+.57
+4.6
+Learning
+Swap
+18
+.50
+30
+.83
+1.5
+Random
+14
+.21
+-
+-
+10
+Global Average
+13
+.22
+37
+.80
+-
+TABLE II
+PERFORMANCE OF THE TARGET CONCEAL ATTACK WITHOUT POWER CONSTRAINTS (MEAN ± STD). THE ADVERSARIAL IMAGES ACHIEVE LOW
+SIMILARITY TO CLEAN IMAGES AND HIGH SIMILARITY TO TARGET IMAGES, INDICATING EFFECTIVE CONCEALMENT.
+Alg.
+PSNRAC
+SSIMAC
+PSNRAT
+SSIMAT
+Pa/Ps
+BPA
+17.20 ± 3.07
+0.0664 ± 0.0561
+83.68 ± 24.29
+1.0000 ± 0.0000
+0.0614 ± 0.0690
+LIA
+17.99 ± 3.07
+0.1156 ± 0.0971
+22.51 ± 2.83
+0.8896 ± 0.0770
+0.0611 ± 0.0686
+RMA
+20.98 ± 3.40
+0.2615 ± 0.1213
+28.30 ± 2.26
+0.8726 ± 0.0689
+0.4464 ± 0.3014
+MFA
+18.47 ± 3.30
+0.1201 ± 0.0797
+23.99 ± 0.95
+0.5027 ± 0.0689
+0.4809 ± 0.3014
+CSA
+18.73 ± 2.85
+0.0790 ± 0.0550
+42.84 ± 8.47
+0.9985 ± 0.0017
+0.0793 ± 0.1062
+RMIST
+16.49 ± 1.41
+0.1770 ± 0.1133
+27.50 ± 3.81
+0.7881 ± 0.1235
+12.4791 ± 2.7903
+ViT
+13.71 ± 1.49
+0.0481 ± 0.0152
+25.99 ± 2.15
+0.7771 ± 0.0243
+1.8767 ± 0.6811
+Deep2S
+13.47 ± 1.97
+0.1980 ± 0.1458
+23.05 ± 5.71
+0.5088 ± 0.2439
+2.2098 ± 1.7449
+Deep2SP+
+15.05 ± 1.45
+0.2863 ± 0.1117
+22.44 ± 3.98
+0.4476 ± 0.2004
+1.5752 ± 0.9503
+CV-Deep2S
+12.85 ± 2.59
+0.2063 ± 0.1437
+18.73 ± 5.52
+0.3441 ± 0.2073
+4.8752 ± 3.5686
+TABLE III
+PERFORMANCE OF THE TARGET CONCEAL ATTACK UNDER A POWER CONSTRAINT (Pa/Ps = 0.1). CLASSICAL IMAGING ALGORITHMS REMAIN HIGHLY
+VULNERABLE, WHEREAS LEARNING-BASED METHODS EXHIBIT PARTIAL ROBUSTNESS, AS REFLECTED BY REDUCED SIMILARITY TO THE TARGET
+IMAGE.
+Alg.
+PSNRAC
+SSIMAC
+PSNRAT
+SSIMAT
+Pa/Ps
+BPA
+17.65 ± 2.78
+0.0833 ± 0.0566
+76.59 ± 36.25
+0.9739 ± 0.0572
+0.10
+LIA
+18.49 ± 2.56
+0.1354 ± 0.0930
+21.77 ± 3.25
+0.8591 ± 0.1113
+0.10
+RMA
+22.11 ± 3.17
+0.4040 ± 0.0641
+18.78 ± 5.95
+0.4009 ± 0.2972
+0.10
+MFA
+20.72 ± 3.64
+0.2115 ± 0.0987
+19.18 ± 5.17
+0.5264 ± 0.3351
+0.10
+CSA
+19.45 ± 2.81
+0.1044 ± 0.0649
+38.04 ± 13.42
+0.9430 ± 0.1246
+0.10
+RMIST
+33.98 ± 8.78
+0.5965 ± 0.2731
+18.20 ± 2.06
+0.2805 ± 0.1160
+0.10
+ViT
+21.38 ± 2.56
+0.5026 ± 0.1728
+18.70 ± 1.33
+0.3255 ± 0.0745
+0.10
+Deep2S
+18.10 ± 1.17
+0.5433 ± 0.0831
+11.70 ± 1.72
+0.0897 ± 0.0789
+0.10
+Deep2SP+
+18.03 ± 1.04
+0.5427 ± 0.0684
+9.75 ± 4.38
+0.1057 ± 0.0709
+0.10
+CV-Deep2S
+21.53 ± 2.58
+0.7726 ± 0.0970
+9.76 ± 4.03
+0.0545 ± 0.0657
+0.10
+from accurately synchronizing injected signals, signal-level
+anomaly detection to identify inconsistencies in the received
+echoes across aperture looks, multi-sensor consistency checks
+to detect physically implausible reconstructions, and robust
+reconstruction algorithms that explicitly model adversarial per-
+turbations, similar in spirit to adversarial training. Developing
+practical and provably robust defenses in the waveform domain
+remains an important direction for future work.

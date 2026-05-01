@@ -1,0 +1,114 @@
+Position Paper: Denial-of-Service against
+Multi-Round Transaction Simulation
+Yuzhe Tang∗, Yibo Wang†, Wanning Ding∗, Jiaqi Chen∗, Taesoo Kim‡
+∗Syracuse University, {ytang100, wding04, jchen217}@syr.edu
+†University of Wyoming, ywang34@uwyo.edu
+‡Georgia Institute of Technology and Microsoft, taesoo@gatech.edu
+Abstract—Transaction simulation is an important subsystem
+of block building, denial of whose service could lead to severe
+damage to the blockchain ecosystem and transaction delivery.
+Denial of block building has been studied, where the existing
+attack designs either target single-round builders, such as Con-
+ditionalExhaust [1], or target two-round builders, by exploiting
+cross-round inconsistency, such as GhostTX [1] and denial of
+sequencers [2].
+This work examines the denial-of-service security of multi-
+round
+transaction
+simulation
+under
+a
+new
+exploit:
+inter-
+transaction dependency that manifests in smart-contract state.
+On public blockchains, block building is the process of
+assembling candidate blocks from unconfirmed transactions,
+from which downstream validators select the next block to ap-
+pend to the chain. In practice, block building can handle either
+public or private transactions, operate on-chain or off-chain,
+and run as a module within validator nodes or as standalone
+nodes. Internally, a block-building service’s core responsibility
+is to select unconfirmed transactions from mempools, order
+and execute them before package into the block to be built.
+Builder DoS security: Block builders control transaction
+admission in blockchain systems, so denial of their service
+can significantly disrupt the ecosystem. The failure of a
+builder’s service excludes its customers’ transactions from
+the blockchain, hurts the fairness of the upstream MEV-
+searcher market, centralizes the builder market, and forces
+downstream relays and proposers to skip victim builders’
+blocks. In practice, such systematic unfairness can benefit
+competing builders and MEV searchers and incentivize them
+to mount the attacks.
+Next, we review existing attacks and outline the latest multi-
+round builder design before introducing our research problem.
+• Existing attacks: Denial-of-service attack against block
+building process has been examined in prior work through
+several attack vectors, such as disrupting builders’ internal
+mempools [3], [4], [1] or exhausting computing resources by
+transaction flooding [5], [6], [7] or by executing resource-
+intensive smart contracts. The last vector can succeed by
+evading the protective gas mechanism enforced during block
+validation [8], [9], [10] or by exploiting the speculative
+contract execution prior to validation [1], [5].
+Among these vectors, speculative contract execution is a
+promising attack vector. The existing attacks, including Con-
+ditionalExhaust [1], GhostTX [1], denial of sequencers [2],
+and DoERS [5], exploit factors such as builders’ cen-
+sorship compliance, or RPC contract-testing APIs (e.g.,
+eth_call), or the inconsistency between the checks inside
+block building and outside (e.g., the downstream relays in
+PBS [1] or the upstream pre-mempool validation [2]).
+• Multi-round builders: A multi-round builder runs uncon-
+firmed transactions across multiple rounds, each under a
+distinct transaction ordering. For bundling services, multi-
+round designs help search for bundles that maximize pro-
+poser revenue. The extra rounds also allow filtering out
+transactions that revert.
+Attack designs: The existing attacks surveyed above are
+largely agnostic to the internal design of block building and are
+ineffective against multi-round builders. In brief, their common
+attack strategy is to passively inspect whether the current
+execution is speculative and to release the resource-exhaustion
+payload accordingly. For example, ConditionalExhaust [1]
+checks whether the underlying node is censorship-compliant
+and triggers resource exhaustion only on such nodes. These
+passive checks, however, cannot distinguish which block-
+building round a transaction is executing in. Consequently,
+the resource-exhaustion payloads are triggered prematurely
+during pre-rounds, where any induced slowdown is confined
+to adversarial threads and does not interfere with normal
+transactions executing in parallel threads.
+Observing the limitation, we propose a proactive design
+for evasive attacks on multi-round builders. The key idea
+is by exploiting inter-transaction dependencies: On an n-
+round builder, our adversarial contract conceals the resource-
+exhaustive payload in a path guarded by (n −1) branch
+conditions, each depending on a distinct state variable. An
+attack issues more than n transactions, where the first (n −1)
+set up the context and the remaining transactions continuously
+trigger the payload. As a result, adversarial transactions behave
+normally in all pre-rounds, evading invalidation, and deliver
+the payload only in the final round, where adversarial and nor-
+mal transactions execute together in serial order and delaying
+one transaction directly delays those that follow.
+Our attack design uses a sequence of transactions that access
+shared smart contract state. We stress that this exploitation of
+inter-transaction dependencies has not been considered in prior
+DoS attack designs. In particular, the most relevant attacks,
+such as ConditionalExhaust and GhostTX [1], use sequences
+of independent transactions without shared state. The only
+arXiv:2604.21169v2 [cs.CR] 27 Apr 2026
+
+attack based on the design of inter-dependent transactions is
+latent overdraft (e.g., DETER-Z in [3]), which is used against
+mempool, not transaction execution as in this work.
+Mitigation: We explore the design space of defenses, propose
+several mitigation strategies, and identify a fundamental chal-
+lenge in securing any finite-round builder against DoS attacks.
+Summary: This work addresses an open research problem:
+denial of service against multi-round transaction simulation
+without relying on cross-round inconsistency. It presents a new
+attack vector that exploits inter-transaction dependency across
+rounds in block building.

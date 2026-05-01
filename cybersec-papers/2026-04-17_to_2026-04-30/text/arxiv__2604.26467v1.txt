@@ -1,0 +1,620 @@
+Differentially Private Contrastive Learning via Bounding
+Group-level Contribution
+Kecen Li
+National University of Singapore
+Singapore
+Chen Gong∗
+University of Virginia
+USA
+Zinan Lin
+Microsoft Research
+USA
+Tianhao Wang
+University of Virginia
+USA
+Xiaokui Xiao
+National University of Singapore
+Singapore
+Abstract
+Differentially private (DP) contrastive learning aims to learn general-
+purpose representations from sensitive data, alleviating the privacy
+leakage concerns of organizations deploying or sharing embed-
+ding models trained on private user content. However, existing
+approaches suffer from severe utility degradation due to the over-
+strong inter-sample dependency inherent in standard contrastive
+objectives, where each sample’s gradient depends on all other sam-
+ples in the batch, amplifying the impact of DP noise.
+In this work, we argue that effective DP contrastive learning
+requires explicitly reducing such intrinsic inter-sample reliance. To
+this end, we propose DP-GCL, a principled DP contrastive learning
+framework that structurally limits gradient dependency through
+bounding group-level contribution. DP-GCL partitions each batch
+into small, disjoint groups and restricts available negative samples
+to within-group samples, thereby localizing gradient influence and
+reducing sensitivity. To counteract the resulting loss of negative
+sample diversity, we further introduce intra-group augmentation,
+which generates additional negative views without increasing pri-
+vacy cost. Extensive experiments across eight datasets demonstrate
+that DP-GCL consistently advances the state of the art in both
+uni-modal and multi-modal contrastive learning under practical
+privacy budgets: it improves image classification accuracy by 5.6%
+and image-text retrieval accuracy by 20.1% over existing DP con-
+trastive methods.
+CCS Concepts
+• Security and privacy →Privacy-preserving protocols.
+Keywords
+Differential Privacy, Privacy Preserving, Contrastive Learning
+∗Corresponding Author.
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+CCS ’26, Hague, Netherlands
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 978-1-4503-XXXX-X/2018/06
+https://doi.org/XXXXXXX.XXXXXXX
+1
+Introduction
+Contrastive learning [7] has been a cornerstone of modern self-
+supervised representation learning, which enables training an em-
+bedding model to acquire rich, transferable features without relying
+on human-annotated labels. Contrastive learning methods like Sim-
+CLR [6], MoCo [18], and CLIP [38] not only match or exceed their
+supervised counterparts on downstream benchmarks, but have also
+become foundational components in large-scale foundation mod-
+els. These models are increasingly deployed in real-world applica-
+tions, ranging from content recommendation [49] to medical image
+analysis [4]. However, various previous works have shown that
+contrastive learning models face serious privacy concerns [33, 45].
+For example, input reconstruction attacks can recover the origi-
+nal training images or data points just by looking at the learned
+embeddings [45], while membership inference attacks (MIAs) ex-
+ploit statistical differences in embedding similarities to distinguish
+whether a sample was used during training [10, 33].
+Differential privacy (DP) [9] offers a principled remedy to pri-
+vacy leakage by providing a formal guarantee that the presence
+or absence of any single data point does not significantly alter
+the model’s output distribution. While DP has been successfully
+applied to supervised learning (e.g., data classification [11, 57])
+via techniques like DP-SGD [1], its integration with contrastive
+learning remains underexplored and nontrivial. Unlike supervised
+learning, where the loss and gradient of a sample depend only on
+its own label and prediction, the contrastive learning (introduced
+in Section 2.2) exhibits an intrinsic inter-sample dependency: the
+loss for each sample is computed relative to other samples in the
+same batch. Consequently, the gradient of any single sample is not
+self-contained, but implicitly influenced by many other data points,
+which challenges the direct application of standard DP-SGD to con-
+trastive learning. This paper focuses on addressing the question:
+“How to achieve effective DP contrastive learning under the intrinsic
+inter-sample dependency?”
+Existing solutions have attempted various adaptations of DP-
+SGD for contrastive learning [22, 26]. Huang et al. [22] clip the
+aggregated batch gradient instead of per-sample gradients. Kong
+et al. [26] decompose the gradient of contrastive loss into pair-
+wise terms and clip them accordingly. While these approaches offer
+pragmatic workarounds, none directly address the root cause: the
+intrinsic inter-sample dependency induced by the contrastive objec-
+tive itself. As a result, they suffer from severe utility degradation.
+This paper proposes that a more principled direction for effective
+DP contrastive learning lies in explicitly mitigating the over-strong
+arXiv:2604.26467v1 [cs.CR] 29 Apr 2026
+
+inter-sample dependency inherent in objectives. In other words,
+the key to promoting DP contrastive learning is to design learning
+objectives or gradient computation that inherently reduce the re-
+liance of each sample’s gradient on arbitrary other samples, while
+preserving meaningful comparison relationships.
+To this end, we propose DP-GCL, a DP contrastive learning
+framework that structurally reduces inter-sample dependency. DP-
+GCL is composed of two key modules. (1) Bounding Group-level
+Contribution (BGC): DP-GCL partitions each batch into multiple
+disjoint groups, where each sample is only compared with other
+samples within the same sub-group. Gradients computed within
+each sub-group are individually clipped and then aggregated to
+update the model. (2) Intra-Group Sample Augmentation (ISA): Con-
+trastive learning relies on diverse negative samples to learn mean-
+ingful representations. Grouping reduces the number of available
+negatives, weakening learning signals. ISA addresses this by gener-
+ating augmented variants within each group, artificially increasing
+negative diversity without introducing additional privacy cost.
+Our Evaluations. We evaluate DP-GCL against existing approaches
+on both uni-modal and multi-modal contrastive learning tasks.
+Across eight datasets and under privacy budgets 𝜖∈{1, 10}, DP-
+GCL outperforms the current state-of-the-art method, DP-CLIP [22],
+by an average of 5.6% in uni-modal (image) classification accuracy
+and 20.1% in multi-modal (image-text) retrieval accuracy. Moreover,
+DP-GCL presents strong scalability with respect to large batch
+size (e.g., 8192), making it well-suited for large-scale private multi-
+modal contrastive learning. This gain stems from two core modules
+of DP-GCL, bounding group contribution and intra-group sample
+augmentation (detailed in Section 3). Both modules mitigate the
+adverse effects of noise on gradients, thereby enhancing the signal-
+to-noise ratio. As a result, the model training converges faster and
+achieves better balances between privacy protection and utility. We
+further study how model architectures, fine-tuning methods, and
+hyper-parameters influence performance. DP-GCL shows strong
+generalization across various contrastive learning configurations,
+such as LoRA and various Vision Transformer (ViT) architectures.
+Besides, DP-GCL exhibits robust performance across various set-
+tings with consistent hyper-parameter choices.
+Contributions. We list our contributions as follows:
+• We propose DP-GCL, a novel DP contrastive learning framework
+that explicitly mitigates inter-sample dependency by bounding
+group-level contribution.
+• We introduce intra-group augmentation to enrich negative sam-
+ple diversity within each group, effectively preserving strong
+contrastive signals under DP constraint.
+• We conduct comprehensive evaluations across both uni-modal
+and multi-modal settings, demonstrating consistent and signifi-
+cant improvements over state-of-the-art DP contrastive learning
+methods on eight datasets under varying privacy budgets.
+• We analyze scalability and practical deployment considerations,
+showing that DP-GCL benefits from larger batch sizes and re-
+mains effective under parameter-efficient fine-tuning and diverse
+model architectures, highlighting its architectural flexibility and
+real-world applicability. We release the replication package on
+the link.1
+1https://github.com/SunnierLee/DP-GCL
+2
+Background
+2.1
+Differential Privacy
+Definition. Differential privacy (DP) [9] safeguards individual
+privacy by ensuring that the presence or absence of any single data
+record in a dataset has only a limited influence on the output of a
+randomized algorithm. Formally, DP is defined as follows.
+Definition 1 ((𝜖,𝛿)-Differential Privacy [9]). A randomized
+algorithm M satisfies (𝜖,𝛿)-differential privacy for parameters 𝜖> 0
+and 𝛿≥0 if, for every pair of adjacent datasets D and D′, and for
+all measurable subsets 𝑂of the output space of M, the following
+inequality holds:
+Pr[M(D) ∈𝑂] ≤𝑒𝜖· Pr[M(D′) ∈𝑂] + 𝛿.
+(1)
+Two datasets D and D′ are considered adjacent, denoted D ≃D′,
+if one can be obtained from the other by adding or removing a
+single data record. The parameter 𝜖, known as the privacy budget,
+quantifies the maximum allowable privacy loss: smaller values of
+𝜖mean stronger privacy guarantees. The parameter 𝛿allows for
+a small probability of additional privacy loss beyond the bound
+dictated by 𝜖. When 𝛿= 0, the definition reduces to pure 𝜖-DP.
+Gaussian Mechanism. The Gaussian mechanism (GM) achieves
+DP by adding noise drawn from a Gaussian distribution to the
+output of a function. To calibrate the noise, we first define the
+ℓ2 sensitivity of a function 𝑓: Δ𝑓= maxD≃D′ ∥𝑓(D) −𝑓(D′)∥2,
+which captures its worst-case change under the modification of a
+single data point. Given a function 𝑓with sensitivity Δ𝑓, the GM
+M is defined as:
+M(D) = 𝑓(D) + N
+
+0, Δ2
+𝑓𝜎2I
+
+,
+(2)
+where N 0, Δ2
+𝑓𝜎2I denotes a multivariate Gaussian random vari-
+able with independent components, each distributed as N(0, Δ2
+𝑓𝜎2).
+The scalar 𝜎> 0 is a hyperparameter that controls the amount of
+added noise and directly influences the privacy guarantees [9].
+DP-SGD. In machine learning, the most widely adopted method for
+satisfying DP is DP Stochastic Gradient Descent (DP-SGD) [1]. DP-
+SGD modifies standard SGD by perturbing the parameter gradients
+with calibrated Gaussian noise at each training step. Specifically,
+the model parameters 𝜃are updated as follows:
+𝜃←𝜃−𝜆
+|𝑏|
+©­
+«
+∑︁
+𝑥𝑖∈𝑏
+Clip𝐶
+ ∇𝜃L(𝑥𝑖) + N 0, 𝐶2𝜎2Iª®
+¬
+,
+where 𝜆is the learning rate, 𝑏is a randomly sampled mini-batch of
+training examples, ∇𝜃L(𝑥𝑖) denotes the gradient of the loss L with
+respect to the model parameters 𝜃for a single example 𝑥𝑖, Clip𝐶(·)
+is a clipping operation that rescales the gradient vector to have ℓ2
+norm at most 𝐶, N(0,𝐶2𝜎2I) is isotropic Gaussian noise, and 𝜎is
+the noise multiplier that governs the privacy-utility trade-off.
+DP-SGD is an application of the Gaussian mechanism to the
+clipped batch gradient function 𝑓(𝜃,𝑏) = Í
+𝑥𝑖∈𝑏Clip𝐶
+ ∇𝜃L(𝑥𝑖),
+whose ℓ2 sensitivity is bounded by𝐶. By injecting noise proportional
+to this sensitivity, DP-SGD prevents the model from overfitting
+to individual training examples and limits the memorization of
+sensitive data, thereby providing strong privacy guarantees.
+2
+
+2.2
+Contrastive Learning
+Contrastive learning [7] is a self-supervised representation learning
+paradigm that aims to learn meaningful embeddings by pulling
+together positive pairs and pushing apart negative pairs. Let B =
+{(𝑥𝑖,𝑥+
+𝑖∈R𝑑𝑥)}
+𝐵
+𝑖=1 be a batch with 𝐵data pairs, where 𝑥𝑖and 𝑥+
+𝑖
+are positive pairs (e.g., for uni-modal datasets, 𝑥𝑖could be an image
+and 𝑥+
+𝑖is a augmented version of 𝑥𝑖, while for multi-modal datasets,
+𝑥𝑖could be an image and 𝑥+
+𝑖is its text description), and 𝑠𝑖,𝑗be some
+similarity metric between 𝑥𝑖and 𝑥+
+𝑗. A commonly used metric is
+the cosine similarity,
+𝑠𝑖,𝑗=
+E(𝑥𝑖)⊤E(𝑥+
+𝑗)
+∥E(𝑥𝑖)∥2∥E(𝑥+
+𝑗)∥2
+,
+(3)
+where E is an embedding model E : 𝑥∈R𝑑𝑥→𝑧∈R𝑑𝑧parameter-
+ized with 𝜃. The basic objective of contrastive learning is training
+E to maximize 𝑠𝑖,𝑖and minimize 𝑠𝑖,𝑗, where 𝑖≠𝑗. Thus, one of the
+earliest approaches proposes the pair-wise loss function [16],
+Lpair =
+𝐵
+∑︁
+𝑖=1
+ −𝑠𝑖,𝑖+ max  0,𝑠𝑖,𝑗𝑖−𝑚 ,
+where 𝑗𝑖is an index randomly sampled from {1, . . . , 𝐵} such that
+𝑗𝑖≠𝑖. The margin 𝑚controls how far negative pairs should be
+pushed apart. Schroff et al. propose triplet-based objectives [42],
+Ltriple =
+𝐵
+∑︁
+𝑖=1
+max  0, −𝑠𝑖,𝑖+ 𝑠𝑖,𝑗𝑖+ 𝑚 ,
+which enforces that a sample is closer to its positive example than to
+a negative one by a fixed margin 𝑚. While intuitive and easy to im-
+plement, these methods suffer from inefficient use of negative sam-
+ples and often require careful negative sample selection strategies
+to ensure efficient convergence, especially on large datasets [44].
+InfoNCE loss [6], now widely adopted in modern contrastive
+representation learning, generalizes previous ideas to enable stable
+and effective learning with large numbers of negatives. Formally,
+InfoNCE loss function is defined as,
+LNCE =
+𝐵
+∑︁
+𝑖=1
+−log
+𝑒𝑠𝑖,𝑖/𝜏
+Í𝐵
+𝑗=1 𝑒𝑠𝑖,𝑗/𝜏,
+(4)
+where 𝜏is a temperature hyper-parameter, which can be fixed or
+learnable during training [38]. Compared to pair-wise and triplet-
+based loss, InfoNCE loss treats contrasting as a classification prob-
+lem over all samples in the batch, and has a similar loss structure
+with Cross Entropy loss [36] that is commonly used in classifica-
+tion. Given the learning rate 𝜆> 0, the embedding model E, which
+aims to minimize Equation (4), is typically trained iteratively using
+stochastic gradient descent (SGD) as 𝜃= 𝜃−𝜆𝑔. The gradient 𝑔is,
+𝑔= ∇𝜃LNCE =
+𝐵
+∑︁
+𝑖=1
+∇𝜃−log
+𝑒𝑠𝑖,𝑖/𝜏
+Í𝐵
+𝑗=1 𝑒𝑠𝑖,𝑗/𝜏,
+(5)
+where 𝜃is the parameter of the embedding model E. Through
+minimizing Equation (4), E learns to extract meaningful features
+from the data, and then can be further finetuned for other tasks, such
+as classification [38], dense retrieval [35], and data generation [39].
+Although other contrastive loss functions exist, some of which
+reduce reliance on negative samples [15, 47], we focus on InfoNCE
+following previous works [22, 26], given its widespread adoption
+in state-of-the-art self-supervised learning frameworks [6, 18, 38].
+2.3
+DP Contrastive Learning
+DP contrastive learning aims to design a DP training algorithm
+for the InfoNCE loss function (Equation (4)). Before introducing
+our solution, we make a systematic review of existing approaches,
+and analyze their pros and cons. As introduced in Section 2.2, each
+term in Equation (5) is related to all data, thus it is key to bound
+the contributions of each data when computing the model gradient,
+and reduce the sensitivity of computing gradients.
+2.3.1
+Sample-level Bounding. The most straightforward approach
+to designing a DP contrastive learning algorithm is to directly
+apply standard DP-SGD [1] to the InfoNCE loss. In this formulation,
+gradients are computed per sample and then clipped to bound
+individual contributions,
+𝑔sample =
+𝐵
+∑︁
+𝑖=1
+Clip𝐶
+ 
+∇𝜃−log
+𝑒𝑠𝑖,𝑖/𝜏
+Í𝐵
+𝑗=1 𝑒𝑠𝑖,𝑗/𝜏
+!
+.
+(6)
+This strategy implements sample-level bounding and naturally pre-
+serves the gradient accumulation effect: as batch size 𝐵increases,
+the aggregated gradient norm grows, potentially improving the
+signal-to-noise ratio. However, because each individual gradient de-
+pends on all samples in the batch through the denominator in Equa-
+tion (6), changing a single sample affects every term in the sum.
+Consequently, the sensitivity scales as Δ𝑔sample = (2𝐵+ 1)𝐶, which
+becomes prohibitively large for even moderate batch sizes. As a
+result, the added noise (per Equation (2)) overwhelms the useful
+signal, undermining utility.
+2.3.2
+Batch-level Bounding. To mitigate this high sensitivity, Huang
+et al. [22] proposed DP-CLIP, which instead applies clipping after
+aggregating gradients across the batch,
+𝑔batch = Clip𝐶
+ 𝐵
+∑︁
+𝑖=1
+∇𝜃−log
+𝑒𝑠𝑖,𝑖/𝜏
+Í𝐵
+𝑗=1 𝑒𝑠𝑖,𝑗/𝜏
+!
+.
+(7)
+This batch-level bounding reduces sensitivity to a constant Δ𝑔batch =
+2𝐶, independent of batch size 𝐵, thereby achieving low sensitivity
+and enabling more stable privacy guarantees. However, by clipping
+the entire batch gradient as a single unit, this approach loses the
+gradient accumulation effect: increasing 𝐵no longer strengthens the
+signal relative to the fixed noise scale 4𝐶2𝜎2. Consequently, larger
+batches do not yield the expected privacy-utility improvements
+that is commonly observed in other DP training settings [28, 52].
+Both strategies reveal a common root limitation: the InfoNCE loss
+induces an over-strong intrinsic inter-sample dependency, wherein
+every sample influences every other. This limitation simultaneously
+inflates sensitivity (as in sample-level clipping) and obstructs scal-
+able signal accumulation (as in batch-level clipping). To address
+this fundamental issue, we propose DP-GCL, a simple and effective
+DP contrastive learning algorithm based on group-level contribution
+bounding and intra-group sample augmentation. DP-GCL achieves
+both minimal sensitivity 2𝐶and preserves the gradient accumula-
+tion effect by carefully decoupling inter-sample interactions. We
+detail DP-GCL in Section 3.
+3
+
+s11
+…
+…
+…
+…
+s21
+s31
+s41
+s12
+s22
+s32
+s42
+s13
+s23
+s14
+s33
+s43
+s24
+s34
+s44
+…
+…
+…
+…
+…
+s11
+…
+…
+…
+…
+s21
+s31
+s41
+s12
+s22
+s32
+s42
+s13
+s23
+s14
+s33
+s43
+s24
+s34
+s44
+…
+…
+…
+…
+…
+ℰ
+e1
+x1
+x1
++
+x2
+x2
++
+x3
+x3
++
+x4
+x4
++
+…
+…
+s11
+…
+…
+…
+…
+…
+e4
+e3
+e2
+s21
+s31
+s41
+s12
+s22
+s32
+s42
+s13
+s23
+s14
+s33
+s43
+s24
+s34
+s44
+…
+…
+…
+…
+…
+ℒ1
+ℒ2
+ℒ...
+𝐵 data pairs
+෍
+𝑖=1
+𝐾
+Clip𝐶(∇𝜃ℒ𝒾) + 2𝐶𝑛
+update
+shared
+Group
+Aug
+e1
++
+e4
++
+e3
++
+e2
++
+…
+ℰ+
+Figure 1: Overview of DP-GCL. Given 𝐵data pairs (𝑥𝑖,𝑥+
+𝑖), we
+partition them into ⌈𝐵/𝑆⌉disjoint groups. Within each group,
+every sample is only contrasted against other samples from
+the same group, and comparisons across different groups
+are explicitly discarded. We apply data augmentation within
+each group to generate diverse samples for comparison. The
+contrastive loss is then computed independently for each
+group. Each gradient is clipped individually and aggregated
+with Gaussian noise for DP guarantee. For uni-modal con-
+trastive learning, the parameters of E and E+ are shared.
+3
+Methodology
+DP-GCL is an effective DP contrastive learning method, which con-
+sists of two key modules: (1) bounding group-level contribution
+and (2) intra-group sample augmentation for strong gradient accu-
+mulation effect and low sensitivity. For neighboring datasets, we
+adopt the following definition as in previous works [22, 26].
+This paper uses the definition of neighboring datasets in add-
+or-remove DP [9]. Specifically, given a dataset D = {(𝑥𝑖,𝑥+
+𝑖)}𝑁
+𝑖=1,
+its neighboring dataset could be D′ = {(𝑥𝑖,𝑥+
+𝑖)}𝑁−1
+𝑖=1
+or D′ =
+{(𝑥𝑖,𝑥+
+𝑖)}𝑁+1
+𝑖=1 . For uni-modal datasets, 𝑥𝑖could be an image and
+𝑥+
+𝑖is an augmented version of 𝑥𝑖, while for multi-modal datasets,
+𝑥𝑖could be an image and 𝑥+
+𝑖is its text description.
+3.1
+Motivation
+As introduced in Section 2.3, existing approaches to DP contrastive
+learning typically adopt one of two extremes for gradient clipping:
+either clipping the norm of the summed gradient over the entire
+batch (batch-level), or clipping the gradient of each individual sam-
+ple before aggregation (sample-level). While simple, the former
+strategy fails to benefit from the signal amplification that comes
+with larger batch sizes. The latter preserves such desirable proper-
+ties, however, coming at the cost of high sensitivity, which leads to
+excessive noise injection under DP.
+Motivated by this observation, we first propose group clipping,
+a more flexible framework that partitions the batch into groups
+and applies clipping at the group level before final aggregation.
+This intermediate strategy retains the signal-amplification benefit
+of sample-level clipping while enabling more fine-grained control
+over sensitivity, which will be detailed in Section 3.2.1. Based on
+this group clipping framework, we introduce two key components:
+group-level negative samples, which ensure that negative samples
+are shared only within each group, and intra-group sample augmen-
+tation, which mitigates the reduction of negative samples diversity.
+Together, these designs align the structure of contrastive learning
+with the group clipping, forming our complete method, DP-GCL.
+Figure 1 presents the workflow of DP-GCL. Given 𝐵positive
+pairs (𝑥𝑖,𝑥+
+𝑖), we randomly partition the data into multiple disjoint
+groups such that each group contains at most 𝑆sample. Within each
+group, samples are contrasted exclusively against other members
+of the same group, while cross-group comparisons are dropped.
+To mitigate the reduction in negative sample diversity, we apply
+intra-group augmentations to generate additional negative samples.
+A separate contrastive loss is computed for each group, and the
+resulting gradients are individually clipped and aggregated with
+Gaussian noise to ensure DP.
+3.2
+Bounding Group Contribution (BGC)
+3.2.1
+Group-level Clipping. To preserve the gradient accumula-
+tion effect, we introduce a group-level clipping strategy. Given a
+data batch B = {(𝑥𝑖,𝑥+
+𝑖)}𝐵
+𝑖=1, we randomly divide the sample in-
+dices {1, · · · , 𝐵} into 𝐾= ⌈𝐵/𝑆⌉disjoint groups {G1 . . . , G𝐾} such
+that each group contains at most 𝑆samples. Then the gradients of
+each group are clipped separately. Finally, all clipped group-level
+gradients are aggregated. Formally, the gradient 𝑔g_clip is,
+𝑔g_clip =
+𝐾
+∑︁
+𝑘=1
+Clip𝐶
+ 
+∇𝜃
+∑︁
+𝑖∈G𝑘
+−log
+𝑒𝑠𝑖,𝑖/𝜏
+Í𝐵
+𝑗=1 𝑒𝑠𝑖,𝑗/𝜏
+!
+.
+(8)
+Group-level clipping provides a more unified analytical framework
+that bridges batch-level and sample-level clipping: when 𝑆= 𝐵,
+group-level clipping reduces to batch-level clipping (Equation (7)),
+and when 𝑆= 1, it becomes equivalent to sample-level clipping
+(Equation (6)). Due to this flexibility, our framework enables a better
+privacy–utility tradeoff. However, the sensitivity of Equation (8)
+is still high especially when a small 𝑆could be a better choice.
+Formally, we have the following theorem.
+Theorem 1. For any two neighboring datasets D and D′, the
+𝑔g_clip has a bounded global sensitivity Δ𝑔g_clip, where Δ𝑔g_clip is defined
+as maxD∼D′
+𝑔g_clip(D) −𝑔g_clip(D′)
+
+2 = (2𝐾+ 1)𝐶.
+It is noticed that 𝐾= ⌈𝐵/𝑆⌉. We provide the proof of Theorem 1 in

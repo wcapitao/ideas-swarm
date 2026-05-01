@@ -1,0 +1,1404 @@
+Malicious ML Model Detection by Learning
+Dynamic Behaviors
+Sarang Nambiar1[0009−0001−1738−2864], Dhruv Pradhan1[0009−0002−9640−0940],
+and Ezekiel Soremekun1[0000−0002−0039−8106]
+Singapore University of Technology and Design
+sarang_nambiar@sutd.edu.sg, dhruv_pradhan@sutd.edu.sg,
+ezekiel_soremekun@sutd.edu.sg
+Abstract. Pre-trained machine learning models (PTMs) are commonly
+provided via Model Hubs (e.g., Hugging Face) in standard formats like
+Pickles to facilitate accessibility and reuse. However, this ML supply chain
+setting is susceptible to malicious attacks that are capable of executing
+arbitrary code on trusted user environments, e.g., during model loading.
+To detect malicious PTMs, state-of-the-art detectors (e.g., PickleScan)
+rely on rules, heuristics, or static analysis, but ignore runtime model
+behaviors. Consequently, they either miss malicious models due to under-
+approximation (blacklisting) or miscategorize benign models due to over-
+approximation (static analysis or whitelisting). To address this challenge,
+we propose a novel technique (DynaHug) which detects malicious PTMs
+by learning the behavior of benign PTMs using dynamic analysis and
+machine learning (ML). DynaHug trains an ML classifier (one-class SVM
+(OCSVM)) on the runtime behaviours of task-specific benign models. We
+evaluate DynaHug using over 25,000 benign and malicious PTMs from
+different sources including Hugging Face and MalHug. We also compare
+DynaHug to several state-of-the-art detectors including static, dynamic
+and LLM-based detectors. Results show that DynaHug is up to 44%
+more effective than existing baselines in terms of F1-score. Our ablation
+study demonstrates that our design decisions (dynamic analysis, OCSVM,
+clustering) contribute positively to DynaHug’s effectiveness.
+1
+Introduction
+Pre-trained machine learning models (PTMs) are typically provided via Model
+Hubs such as Hugging Face (HF) [29], Kaggle [42], GitHub [35], OpenCSG [60],
+SparkNLP [77] and ModelScope [53]. These PTM hosting platforms ease model
+accessibility and reuse; thereby supporting a large community of users. Practi-
+tioners and companies rely on Model Hubs for the distribution of their PTMs.
+Similarly, end users rely on third-party vendors to obtain PTMs. For instance,
+Hugging Face currently hosts over one (1) million ML artifacts and serves over
+18.9 million visitors per month [75].
+The huge reliance of the PTM ecosystem on third-party Model Hubs raises
+serious security concerns. Particularly, Model Hubs and end users are vulnerable
+arXiv:2604.19438v1 [cs.CR] 21 Apr 2026
+
+2
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+to malicious actors. Attackers often upload malicious PTMs on Model Hubs
+to compromise user safety and system security [86]. This increases the risks of
+end-users executing malicious models in trusted execution environments (e.g.,
+company servers and user’s personal computers)
+[54–57] [24, 46, 65, 73]. For
+instance, researchers have found malicious PTMs on Hugging Face that initiate
+a reverse shell connection to external servers, potentially allowing to send victim
+data to attacker-specified IP addresses [54].
+To address this concern, malicious PTM detectors and scanners have been
+developed by Model Hubs, security engineers and researchers. Hosting platforms,
+such as Hugging Face, employ scanners for the early detection and mitigation
+of malicious models [31–33]. For instance, Hugging Face’s default security API
+employs four (4) closed-source scanners using blacklisted imports, virus scanning,
+static analysis and rulesets [31–33].
+Table 1 describes the characteristics of existing PTM scanners/detectors. On
+the one hand, state-of-the-art detectors employ static analysis, heuristics, or black-
+listing to detect malicious PTMs. For instance, PickleScan, ModelScan and HF
+PickleScan rely on blacklisted imports to detect malicious models [16,31,52]. How-
+ever, these tools are ineffective in detecting previously unseen malicious payloads
+since blacklists are often non-exhaustive. Table 2 (last (“PyPI”) column) illustrates
+how importing PyPI modules that support code execution (e.g., execute [21])
+evades blacklisting methods (e.g., PickleScan and ModelScan [16,52]). On the
+other hand, some approaches (e.g., ModelTracer [20]) employ dynamic analysis or
+blacklisting to detect malicious models. However, these approaches have high false
+positive rates – they wrongly flag benign models as malicious. More importantly,
+an attacker can easily evade a whitelist or blacklist set of rules, e.g., by using rare,
+new or previously unseen imports or system calls. Table 2 (second (“Benign”)
+column) demonstrates how blacklisting methods (e.g., ModelTracer [20]) can lead
+to false positives.
+To address this challenge, we propose an automated method (called Dy-
+naHug1) that learns the behavior of benign models using a combination of
+dynamic analysis and ML. To the best of our knowledge, DynaHug is the first
+technique that automatically learns to detect malicious models via dynamic
+behavioral analysis. Figure 1 and Figure 6 present the design and algorithm of
+our DynaHug approach. DynaHug learns the behaviors of benign models by
+first clustering models by tasks (e.g., text-classification). Secondly, it
+conducts dynamic analysis of the model in a sandbox and collects system call
+traces. In this step, PTMs are executed by loading the model and deserializing
+it. Next, it trains a one-class SVM that learns the behavior of benign models.
+At inference, when given the system call traces of a PTM under test (PUT),
+DynaHug automatically detects whether it is malicious or benign.
+This work makes the following contributions:
+1. DynaHug: We propose an automated method (called DynaHug) that
+learns to detect malicious PTMs by learning the behavior of task-specific
+1 DynaHug means “Dynamic Hugging Face PTM Detector”
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+3
+Table 1: Details of state-of-the-art detectors versus our approach (DynaHug)
+showing whether the detector “fully” ( ), “partially” ( ), or “does not” ( )
+employ the specified analysis technique.)
+Detection Tools
+Rule
+Based
+Import
+Scanning Blacklist Whitelist Heuristic Dataflow
+Analysis
+Vulnerability
+Detection
+Restricted
+Loader
+Machine
+Learning
+Dynamic
+Analysis
+Open
+Source
+PickleScan [52]
+ModelScan [16]
+Fickling [17]
+MalHug [86]
+PickleBall [44]
+ModelTracer [20]
+Weights-Only [23]
+JFrog (HF) [32]
+Guardian (HF) [33]
+ClamAV (HF) [31]
+HF_PickleScan [31]
+DynaHug
+clusters of benign models via dynamic program analysis. DynaHug provides
+an automated learning method for detecting malicious PTMs in Model Hubs
+such as Hugging Face.
+2. Evaluation: We evaluate DynaHug using over 25,000 PTMs. Our experi-
+ments demonstrate that DynaHug is effective in detecting malicious models
+with an F1-score of up to 0.9963 across all datasets.
+3. State-of-the-art Comparison: We compare DynaHug to six (6) PTM
+detectors – PickleScan, ModelScan, Fickling, ModelTracer and LLM-based
+detectors (Llama-3.1-8B-Instruct-tuned and GPT-5.2). Results show that
+DynaHug is up to 44% more effective than the baselines in terms of F1-score.
+4. Ablation and Sensitivity Studies: We report ablation studies examining
+whether our design decisions (e.g., dynamic analysis, etc.) contribute posi-
+tively to DynaHug’s effectiveness and outperform alternative design choices.
+Additionally, we conduct probing and sensitivity studies examining the impact
+of task clustering, and training sizes on DynaHug’s performance.
+2
+Overview
+2.1
+Problem Definition
+In this work, we pose the following scientific question: Given a PTM, how can we
+automatically detect that it is malicious (or benign)? Addressing this question is
+important to ensure the security of trusted execution environments and Model
+Hubs. Specifically, we aim to develop an automated method that ensures that
+malicious PTMs are identified during model execution or when uploaded on
+Model Hubs. We consider a PTM to be malicious if it exhibits insecure or unsafe
+behaviors that are beyond the intended behaviors of typical PTMs. For instance,
+PTMs that copy user data, sends user data to an unknown IP address or perform
+remote code execution are considered to be malicious [79,85]. Thus, a malicious
+model detector is effective, if it accurately detects genuinely malicious models
+and does not misclassify benign models. Otherwise, it is ineffective.
+
+4
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+Table 2: Motivating examples showing the performance of DynaHug and
+baselines in detecting malicious PTMs. Disassembled code/trace snippets in
+orange are benign. Code/trace snippets in red shows malicious payloads ✓
+meaning the malicious PTM was detected by a tool. ✗mean the model was
+classified as benign and ✓indicates a false positive.
+Benign
+MalHug
+PyPI
+Model Name
+llm-stacking/G_learn_depth [78]
+jossefharush/gpt2-rs [41]
+Zolllll/dont_download_this [87]
+Description
+Benign model importing
+a Tensor class
+from torch, not part
+of the standard library [70]
+Model found in MalHug [86]
+containing blacklisted
+library eval [39]
+Model injected with a
+payload using library
+execute from PyPI [87]
+Disassembled Code
+110: \x93
+STACK_GLOBAL
+111: \x94
+MEMOIZE
+(as 7)
+112: \x8c
+SHORT_BINUNICODE
+’torch’
+119: \x94
+MEMOIZE
+(as 8)
+120: \x8c
+SHORT_BINUNICODE
+’Tensor’
+128: \x94
+MEMOIZE
+(as 9)
+129: \x93
+STACK_GLOBAL
+130: \x94
+MEMOIZE
+(as 10)
+0: \x80 PROTO
+2
+2: c GLOBAL ’__builtin__
+eval’
+20: q
+BINPUT
+0
+22: X
+BINUNICODE
+’exec(\’\’\’\nimport
+urllib.request;
+exec(urllib.request.
+urlopen("https://
+pastebin.com/raw
+/sVvZph7V").read().
+decode())\n\’\’\’) or dict()’
+158: q
+BINPUT
+2
+160: R
+REDUCE
+0: \x80 PROTO
+2
+2: c GLOBAL ’execute both’
+16: q
+BINPUT
+0
+18: X
+BINUNICODE ’nc -e
+/bin/sh 127.0.0.1 4444’
+51: q
+BINPUT
+1
+53: \x85 TUPLE1
+54: q
+BINPUT
+2
+56: R
+REDUCE
+57: q
+BINPUT
+3
+Dynamic Traces
+104089 newfstatat(AT_FDCWD,
+"/usr/src/app/.venv/lib/
+python3.10/site-packages/
+torch/_tensor.py",
+{st_mode=S_IFREG|0644,
+st_size=74282, ...}, 0)= 0
+...
+104089 socket(AF_INET6,
+SOCK_STREAM|SOCK_CLOEXEC,
+IPPROTO_IP) = 3
+104089 bind(3,
+{sa_family=AF_INET6,
+sin6_port=htons(0),
+sin6_flowinfo=htonl(0),
+inet_pton(AF_INET6,
+"::1", &sin6_addr),
+sin6_scope_id=0}, 28) = 0
+...
+...
+370730 socket(AF_INET, SOCK_DGRAM
+|SOCK_CLOEXEC|SOCK_NONBLOCK,
+IPPROTO_IP) = 4
+370730 setsockopt(4, SOL_IP,
+IP_RECVERR, [1], 4) = 0
+370730 connect(4,
+sa_family=AF_INET,
+sin_port=htons(53),
+sin_addr=inet_addr
+("169.254.169.254"), 16) =
+0
+370730 poll([{fd=4,
+events=POLLOUT}], 1, 0) =
+1 ([{fd=4,
+revents=POLLOUT}])
+...
+...
+410421 close(7)
+= 0
+410421 close(9)
+= 0
+410421 getdents64(5,
+0x7ffcf8560c80 /* 0
+entries */, 280) = 0
+410421 close(5)
+= 0
+410421 execve("/bin/sh",
+["/bin/sh", "-c", "nc -e
+/bin/sh 127.0.0.1 4444"],
+0x611b65855370 /* 46 vars
+*/ <unfinished ...>
+410416 <... vfork resumed>)
+= 410421
+...
+Fickling [17]
+✓
+(Tagged as unsafe)
+✓
+✓
+(Tagged as unsafe)
+PickleScan [52]
+✗
+✓
+✗
+ModelScan [16]
+✗
+✓
+✗
+HF_JFrog [32]
+✗
+✓
+✗
+HF_Guardian [33]
+✗
+✓
+✗
+HF_ClamAV [31]
+✗
+✗
+✗
+HF_PickleScan [31]
+✓(marked as needing attention)
+✓
+✓(marked as needing attention)
+ModelTracer [20]
+✓
+✓
+✓
+DynaHug
+✗
+✓
+✓
+2.2
+Key Insight
+This work proposes DynaHug, an automated technique for malicious PTM
+detection. The main idea of DynaHug is to employ dynamic program analysis
+and ML to learn the behavior of benign PTMs. The key insight of our approach
+is that, for a specific ML task, malicious PTMs often exhibit behaviors that are
+unique, rare or different from the behaviors of benign models. In particular, we
+posit that for a specific ML task, (a) benign PTMs exhibit common behaviors,
+e.g., they often use similar system calls (with similar frequency) and (b) malicious
+PTMs often exhibit unique, outlier behaviors that are rarely exhibited by benign
+PTMs. Hence, we hypothesize that automatically learning the behaviors of benign
+PTMs is applicable for detecting malicious PTMs. Malicious PTMs are known to
+perform certain operations (e.g., remote code execution) that are never or rarely
+performed by benign PTMs [86]. This is evident from the fact that malicious
+payloads require certain system calls for attack orchestration. For instance,
+malicious PTMs that perform remote code execution often employ system calls
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+5
+(such as execve) which are rarely used by benign models since PTMs do not
+typically execute arbitrary code or require shell access [20]. This insight is evident
+in the literature; previous works have shown that certain behaviors (e.g., imports
+or system calls) are security sensitive, unique to malicious models or identifiable
+as safe, unsafe or sensitive [20,86].
+2.3
+Motivating Examples
+Table 2 shows examples of real-world benign and malicious PTMs. The two
+malicious models (last two columns) allow an attacker to conduct dynamic
+execution of arbitrary Python code during model loading or deserialization. As
+shown in Table 2 (“MALHUG” third column), most tools detect the malicious
+payloads involving builtin Python library imports (e.g., os). In particular, such
+imports are often used to orchestrate dynamic code execution in Python. Thus,
+they are typically added to the blacklist rules of most detectors.
+However, most tools are unable to detect uncommon or rare PyPI modules
+that allow for dynamic code execution (“PyPI” last column). State-of-the-art
+detectors miss such modules due to the non-exhaustive nature of blacklists.
+Indeed, there are numerous PyPI libraries that allow for dynamic code execution
+which makes it impossible to construct a complete blacklist.2 Additionally, we
+show that some detectors (e.g., Fickling) flag almost all models as malicious. This
+is due to its non-exhaustive set of safe and unsafe opcodes and library imports.
+Overall, state-of-the-art detectors suffer from under- or over- approximation due
+to static, incomplete sets of blacklisting or whitelisting rules.
+Unlike most detectors, DynaHug detects the two malicious models in Table 2
+and it correctly classifies the benign model. This is due to its use of task-
+specific clustering, dynamic analysis and ML, which allows it to accurately learn
+the behavior of benign models and flag the behaviors of malicious models, In
+DynaHug, dynamic analysis allows to collect behaviors of benign models, and
+ML allows to generalize learned behaviors beyond a static rule set. DynaHug
+is able to detect malicious PTMs using rare library imports (Table 2 column
+1), since such imports use specific system calls which are rarely used by benign
+models. This demonstrates the importance of dynamic analysis. Our task-specific
+clustering allows to narrow down the set of behaviors that are unique to a specific
+category of PTMs. This is inspired by previous works in anomaly detection which
+have demonstrated that specific categories of applications exhibit similar program
+behaviors [34,38,64].
+Note on Traditional malware scanners: Traditional malicious app detectors
+are not amenable to malicious Pickle/PTM detectors due to the difference in
+the behavioural profile of PTMs vs. apps or traditional software. For instance,
+Hugging Face has two main types of traditional malware detectors (ClamAV and
+VirusTotal), and three specialised PTM scanners. At the time of our Hugging
+2 The first 20 pages of PyPI when searching “execute” [67] contains over 20 modules
+that can perform reverse shell execution, many of which are not blacklisted by the
+state-of-the-art detectors (as at 10 Oct 2025).
+
+6
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+Fig. 1: Workflow of DynaHug
+Face analysis, only the specialised scanners detect the malicious PTM datasets
+collected in this work and reported in previous works (MalHug). In particular,
+the three specialised PTM scanners such as PickleScan and JFrog are more
+effective at detecting malicious PTMs than traditional scanners (see Table 2).
+Furthermore, we uploaded five (5) models from MalHug to VirusTotal [6]
+to demonstrate the issue. We note that none of the five (5) malicious models
+are detected [1–4, 7] by any of the 64 security scanners on VirusTotal. These
+64 scanners are from well-known security vendors like Kaspersky, SentinalOne,
+BitDefender and CrowdStrike. However, this same pickle file is easily detected
+by pickle security scanning tools like Picklescan [52].
+2.4
+Novelty vs. State-of-the-art
+Table 1 illustrates the novelty of our approach (DynaHug) with respect to state-
+of-the-art techniques. Detectors can be divided into two classes, namely static
+detectors and dynamic detectors. On one hand, static detectors employ static
+analysis (e.g., disassembling, dataflow analysis or tainting) alongside blacklisting
+or whitelisting of specific imports, system calls or opcodes. For instance, PickleS-
+can [52] employs a combination of static analysis, blacklisting and whitelisting of
+safe and unsafe imports and opcodes for malicious PTM detection (see Table 1).
+On the other hand, there are few dynamic detectors. Notably, ModelTracer [20]
+combines dynamic analysis and a blacklist of system calls to detect malicious PTM.
+However, ModelTracer’s blacklisting limits it from capturing rare or previously
+unseen imports or system calls and does not allow for subtlety in blacklisted calls.
+As exemplified in Table 2 (column two), ModelTracer detects the benign model as
+malicious because of the presence of a socket call, which is part of the blacklist.
+Additionally, traditional anti-virus (e.g. VirusTotal, ClamAV) are ineffective in
+detecting malicious PTMs since they are general software vulnerability scanners,
+they are not specialised for detecting anomalous behaviors in PTMs. This is
+evident in the poor performance of ClamAV on our motivating examples (Table 2
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+7
+HF_ClamAV). In particular, anti-virus perform poorly on malicious PTMs due
+to the difference in the behavioral profile of PTMs versus traditional software.
+Meanwhile, DynaHug is able to correctly classify malicious models as benign
+since it does not rely on a rulelist. The system level granularity of DynaHug’s
+traces contributes to its performance since the hundreds of imports/opcodes that
+are manually blacklisted or whitelisted by existing approaches translate to a
+limited set of system calls during DynaHug’s behavioral analysis.
+To the best of our knowledge, DynaHug is the first approach that employs
+ML and dynamic analysis for malicious PTM detection. DynaHug is unique
+with its combination of task-specific clustering, dynamic analysis and machine
+learning. As shown in Table 1, DynaHug is the only tool that does not rely on
+blacklisting or whitelisting rules to detect malicious PTMs and the only detector
+that deploys ML for malicious PTM detection. Besides, DynaHug is only one of
+two tools that employs dynamic analysis.
+2.5
+Threat Model
+Attack assumptions: In this work, we assume the attacker modifies an existing
+model or acts as a third-party model provider supplying a PTM containing
+arbitrary malicious payloads, e.g., reverse shell. The malicious model is distributed
+through Model Hubs, provided online or directly sent to users. The attacker
+provides the malicious model as well as instructions to load/execute the model.
+This attack setting is practical and fits how models are provided on Model Hubs
+(Hugging Face [29], GitHub [35] and Kaggle [42]).
+Defense assumptions: We assume the defender loads the model following the
+instructions provided by the model provider. We do not require access to the
+source code of the model or need security expertise (e.g., to modify how the
+model is loaded), except the instructions provided by the provider (e.g., in the
+model card or README). We do not assume access to module libraries or need
+to modify the default model loading instruction. We assume the model under
+test is executable in a sandbox and the attacker does not employ anti-debugging
+techniques. These assumptions are practical, relying on the trust of the victim
+in the Model Hubs and third-party vendors and does not require additional
+security or ML expertise or external tool except the model and the model loading
+instructions. This setting is realistic and similar to the manner end-users obtain
+PTMs from Model Hubs – Hugging Face [29], GitHub [35] and Kaggle [42].
+3
+Methodology
+Figure 1 illustrates the high-level workflow of DynaHug. Figure 6 (Appendix)
+describes the algorithm for DynaHug as detailed in subsection 9.1.
+3.1
+Detailed Methodology
+Crawling and Clustering: The goal of this phase is to collect relevant models
+from a Model Hub. We make use of the proprietary Model Hub API (e.g.,
+
+8
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+Fig. 2: Inter-cluster and Intra-cluster analysis of the system calls with the
+maximum difference in mean frequency between clusters.
+huggingface_hub [28]) to filter the repositories based on the tag and the
+type of the model artifact as shown in Figure 6. Prior works, such as Gorla
+et al. [38], demonstrate that Android applications that are similar, in terms
+of their descriptions, should also behave similarly. Analogously, our underlying
+assumption is that models which are assigned the same tags should behave
+similarly. Task tags in Model Hubs identify the task a particular model is
+designed for. For instance, the text-generation pipeline tag in HF identifies
+models that are designed for text generation tasks. This helps narrow down
+the expected behaviour of a benign model from that particular tag. We also
+evaluate our task-clustering hypothesis by comparing the standard deviation (SD)
+of the mean frequency of the top-10 most differing system calls across clusters,
+using the top-2000 most liked text-generation, text-classification, and feature-
+extraction from HF. In particular, we examine the SD of the mean frequency of
+system calls for four (4) clusters, namely (a) within clusters (intra-cluster) for
+text-generation, text-classification and feature-extraction,
+and (b) without clustering (inter-cluster, “all”). Figure 2 shows that there are
+differences in the SD of the mean frequency within and outside clusters making
+it imperative to cluster to correctly capture the fine-grained behavioral profile of
+the benign PTMs and ease malicious PTM detection.
+In our analysis of HF, we rank the models according to the likes, and filter
+models based on pipeline tags with the help of the huggingface_hub [28]
+library in Python. The intuition is that popular models, models which have a
+higher amount of “likes”, are less likely to be malicious. We focus our efforts
+on PyTorch models since 95% of all malicious models in HF are known to
+be PyTorch models [22]. Hence, when retrieving the models, we make sure
+that a pytorch_model.bin is present. We look for this file in particular
+since it is common convention within Hugging Face (HF) to store the model
+weights for inference inside pytorch_model.bin. This is to ensure that the
+transformers library from HF is able to find the weights file when trying to
+load a model for inference [30]. Next, the fetched models are stored in a Google
+Cloud Storage (GCS) Bucket [36] and sent to a sandbox for dynamic analysis.
+Dynamic Analysis: DynaHug simulates an inference workflow of a user trying
+to run a model downloaded from a Model Hub. We build a Docker [27] container
+to load/deserialize the PyTorch models, emulating a reproducible environment
+similar to that of a user. Docker containers provide OS-level virtualization
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+9
+Fig. 3: DynaHug’s feature set
+22928 execve("/usr/bin/cat",
+["cat",
+"/home/sandbox/.aws/secrets"],
+0x5d0f8b34df28 /* 55 vars */
+<unfinished ...>
+22927 <... vfork resumed>)
+=
+22928
+22927 rt_sigprocmask(SIG_SETMASK,
+[], ~[KILL STOP RTMIN RT_1], 8)
+= 0
+22928 <... execve resumed>)
+= 0
+Fig. 4: Strace log snippet
+from deserialization [85]
+to isolate any processes running within it from the host machine, preventing
+any damage from potentially malicious models, e.g., Remote Code Execution
+(RCE) on the host machine [26]. Moreover, since the output logs from strace are
+non-deterministic and varies with the environment on which the PyTorch model
+is deserialized and the hardware resources available at that point in execution, it
+is imperative to have control on the environment, which Docker provides [19].
+DynaHug provides the flexibility of choosing the runtime observability tools
+(e.g., strace [81], tcpdump [83], eBPF [80], etc.) to the user depending on
+the runtime aspects they wish to monitor. Once the runtime observability tool
+records the deserialisation process of the PyTorch model, the logs are saved for
+further processing in the upcoming phases.
+In our analysis, we utilize strace, a diagnostic userspace utility used to mon-
+itor interactions between processes and the Linux kernel which includes system
+calls, signal deliveries and change of process state [81]. strace monitors system
+calls related to File System Management, Networking, Process Management,
+Memory Management, etc. which covers almost all key operations to give a broad
+overview of system activity. Previous works [20] also utilize strace for dynamic
+analysis and detection of malicious PTMs. strace outputs a detailed raw log
+file which contains the different system calls and their arguments. For instance,
+Figure 4 shows the system call, execve, running the unix tool, cat, to display
+AWS secrets on the terminal output in a folder commonly known to store them.
+Model Training: To train our classifier effectively, it is important that the
+input data be represented in a manner that the model can interpret efficiently.
+Data Processing: DynaHug extracts meaningful information such as system
+call frequency and stores it in structured formats such as CSV and Apache
+Parquet.
+Feature Engineering: DynaHug prepares a presence and frequency feature
+set for system calls as shown in Figure 3 to feed into the classifier. Presence
+features indicate the presence of a certain feature with a binary value of either 0
+or 1. Frequency features indicate the frequency of occurrence of a certain feature.
+These features would provide a detailed insight on the statistical distribution
+of system calls during the deserialization process. To avoid bias towards certain
+system calls due to their magnitude, DynaHug normalizes frequency features to
+the same scale.
+In our analysis, we utilize the -c flag in strace to get the summarized
+information of system calls (Section 3.1) during deserialization. The frequency of
+
+10
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+system calls is parsed from this summarized data and stored in Apache Parquet,
+since it is faster to load than CSV [61]. DynaHug fetches the presence and
+frequency features for plain system calls and applies normalization with the help
+of StandardScaler(nomean=True) class in scikit-learn [47]. Next, the
+established feature set is passed to the training component. We have also evaluated
+other features, e.g., n-grams and Process IDs (see section 4).
+Training: DynaHug performs hyperparameter tuning while training a one-
+class SVM. The models trained from each parameter setting are evaluated
+using F1-score. The best performing model is chosen as DynaHug and used
+during inference. At inference, DynaHug follows a similar approach to training
+to retrieve and process the data from the model analysis (Section 9.1). The
+processed data is passed into DynaHug for detection – "Benign" or "Malicious".
+4
+Experimental Setup
+4.1
+Research Questions
+– RQ1 Effectiveness: How effective is DynaHug in detecting malicious PTMs?
+– RQ2 State-of-the-art Comparison: How does DynaHug compare to the
+SOTA detectors?
+– RQ3 Ablation study: What are the contributions of our design decision
+(e.g., static vs. dynamic features) to the performance of DynaHug?
+– RQ4: Probing and Sensitivity Study: What is the impact of clustering
+on DynaHug’s performance? How sensitive is DynaHug to different training
+dataset sizes?
+4.2
+Datasets
+Table 3: PTMs on Top six (6) Model Hubs.
+Hub
+#Models Formats
+Text
+Generation
+Text
+Classification
+Feature
+Extraction
+Hugging Face [29]
+1881296 Pytorch, Tflow, gguf 296411
+98414
+13864
+GitHub [35]
+150685 Pytorch, Tflow, gguf 1732
+4427
+1957
+Spark NLP [77]
+135372 Custom
+25181
+35248
+N/A
+OpenCSG [60]
+111189 Pytorch, Tflow, gguf 4224
+278
+484
+ModelScope [53]
+80574 Pytorch, Tflow, gguf 20307
+1172
+740
+Kaggle [42]
+3140 Pytorch, Tflow, gguf 800
+197
+N/A
+In our experiments, we
+employ Hugging Face (HF)
+as our Model Hub, since it
+is the most popular model
+hub with the largest set
+of models. Table 3 pro-
+vides details of the top six
+model hubs. We collect our dataset of benign models from the Top-K (default
+2000) models on HF. Our experiments involve three (3) task categories from HF,
+namely text-generation, text-classification and feature-extraction.
+Table 4: Details of training and evaluation datasets across all clusters.
+Datasets
+Range
+Benign
+Malicious
+Total
+(Sorted By
+Most Likes)
+Text
+Gen
+Text
+Class
+Feature
+Extraction
+No
+Cluster
+Text
+Gen
+Text
+Class
+Feature
+Extraction
+No
+Cluster
+Real (HF)
+(1 −3000) ∪(4601 −5625) 5025 5001
+5001
+3000
+3
+0
+0
+0
+18030
+Real (MalHug)
+-
+0
+0
+0
+0
+20
+2
+17
+0
+39
+Real (PickleBall)
+-
+0
+3
+16
+0
+2
+2
+0
+0
+23
+Synthetic (MalHug Injected)
+3600-4600
+0
+0
+0
+0
+1000 1000
+1000
+1000
+4008
+Synthetic (PyPI Injected)
+3600-4600
+0
+0
+0
+0
+1000 1000
+1000
+0
+3008
+Real (Total)
+-
+5025 5004
+5017
+3000
+25
+4
+17
+0
+18092
+Synthetic (Total)
+-
+0
+0
+0
+0
+2000 2000
+2000
+1000
+7016
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+11
+Table 4 describes our collected dataset for each cluster. For the text-generation
+cluster, we first filter out models that are flagged by HF as malicious and that
+are not part of known malicious PTMs [44,86]. In the top 3,000 models, we found
+and filtered out two (2) PTMs. Specifically, we download the top 3000 models
+ranked by most likes, from which we filtered out two (2) models that are flagged
+by HF and MalHug [86] as malicious. We download another 1000 benign models
+so that we can evaluate DynaHug on them, and also inject them with malicious
+payloads to make our injected set of 2000 models. To leave an appropriate gap
+between the training set and the injection set to avoid contamination, we collect
+our next set of 1000 models from the 3600 to 4600 top liked models. Furthermore,
+we download the next 1025 models that are not flagged by HF as an evaluation set
+to test the model against, and balance our dataset with regards to our malicious
+set. The above setting describes all text-generation experiments (RQ1 to RQ4).
+Then, we repeat the steps described above for text-classification and
+feature-extraction (RQ1) and non-clustered experiments (RQ4).
+4.3
+Injected malicious models
+To ensure detectors generalise to unseen models and address class imbalance,
+we augment our evaluation dataset by injecting malicious payloads into benign
+models using models from HF and malicious payloads from MalHug and libraries
+from PyPI that allow for code execution.
+MalHug injected models: Using Fickling [17], we automatically inject 64
+malicious payloads from MalHug into 1000 benign models from HF. Example 1.1
+shows an example of a MalHug injected payload. We ensure a model is valid by
+checking that it is successfully loaded by PyTorch with torch.load(). Injection
+process times out and proceeds to the next payload when there is a blocking
+operation from a MalHug payload, e.g., it requires user input (input()).
+PyPI injected models: The goal of the PyPI injected model is to provide
+more realistic malicious payloads (e.g., used for information reconnaissance, or
+reverse shells), since most MalHug payloads are Proof-Of-Concepts (PoCs).
+Hence, the payloads were chosen from well-known external sources such as
+PayloadsAllTheThings [82] and revshells.com [14]. We automatically inject 20 of
+these malicious payloads using PyPI libraries [68] into 1000 benign models from
+HF. Example 1.2 shows an example of our PyPI injected payload. These libraries
+allows the user to either execute system commands (similar to os.system()),
+or execute Python code (similar to exec()). Using these 20 malicious pickles,
+we directly inject their Pickle bytecode into the 1000 benign models we collected,
+after modifying the required stack addresses such that there is no memory conflict
+between the original model and the injected payload. For each injected payload,
+we setup a test oracle to confirm that the resulting models are valid, and injection
+was successful. To account for the blocking operations of the reverse shells, we
+start a netcat [58] server that sends an exit instruction to terminate the reverse
+shell.
+
+12
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+4.4
+Training Process
+Architecture Selection: We begin the training process after collecting the
+required number of benign models from crawling through HF as detailed in
+Section 9.2 (Appendix). The one-class SVM (OCSVM) was selected since it is
+a popular choice in unsupervised learning based anomaly detection, alongside
+Stochastic Gradient Descent one-class SVM (SGDSVM) and Isolation Forest
+(IF). These architectures require only one-class of training data, which becomes
+essential in the case of a dataset imbalance. ML algorithms supporting one-class
+training are necessary in the PTM setting since there are millions of benign
+models but few malicious models.
+Feature Engineering: Figure 3 shows the variety of features that were used in
+the experiments. When constructing features related to individual system calls,
+a platform-specific exhaustive list of system calls was used. This was adopted to
+prevent Out Of Vocabulary issues that could arise from unseen system calls in
+the test set. The exhaustive list was obtained from the Linux kernel source code
+in the docker container [45], corresponding to the x86-64 architecture.
+DynaHug has three (3) different features sets for training. First, presence and
+frequency features capture the presence and frequency of individual system calls
+(e.g.,“execve”, “read”, “write”). Sequence based features represent the presence and
+frequency of system call sequences (n-grams) (e.g., “execve:read”, “read:write”).
+Sequence features are represented with 2-grams, as this configuration offers the
+best trade off between model complexity and performance as shown in Table 12.
+Although higher order n-grams (i.e., 3-gram, 4-gram) provide a better spacial
+understanding of system calls to the model, preliminary analysis showed that
+choosing these n-gram configurations would lead to poorer performance.
+Finally, Process Sequence based features incorporated presence and frequency
+of process ID (PID) system call sequences (e.g., “P1:close_P5:rt_sigprocmask”,
+“P4:rseq_P1:read”) . The raw PID value was not used to represent the process
+since each process has a unique PID in every run which would introduce noise
+into our training dataset. Hence, a generalized form of the PID is used where
+the parent process is P1 and any subsequent processes would be numbered
+accordingly. Process sequence features are also 2-grams.
+Dataset Split: Datasets are split into train, validation and test sets in the ratio
+80:10:10. The training dataset consists exclusively of the benign models collected
+from HF. However, for the validation and test set, we combined an equal number
+of benign and malicious models. Specifically, the malicious models were randomly
+sampled from MalHug and MalHug-injected from the chosen task cluster. This
+makes it easier to facilitate a more reliable assessment on the model’s ability to
+distinguish between benign and malicious models. The malicious models in the
+validation or test set contains half of MalHug from the selected task cluster, and
+the rest are supplemented by MalHug-injected to solve the dataset imbalance
+between benign and malicious models in the validation and test set. For instance,
+our default setting consists of 2000 models from the text-generation cluster. The
+size of validation and test set is 200 (10% of 2000). MalHug has 25 malicious
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+13
+models belonging to the text-generation cluster. Hence, in the split, half of
+these models (12) would go into the validation and the other half (13) would be
+part of the test set. To avoid data imbalance between benign and malicious, the
+rest of the models (188 or 187 for validation or test set) are randomly sampled
+from MalHug-injected.
+Hyperparameter Tuning Strategy: DynaHug performs Grid Search on a
+set of hyperparameters which are tailored to a specific classifier architecture. We
+employ a 5-fold cross validation procedure to ensure that we get the average
+F1-score for the best model evaluation.
+Hyperparameter Choices: For OCSVM, we tune parameters nu (0.01 to
+0.5), kernel (linear, RBF and sigmoid), and gamma (0.01, 0.1, 1 and
+auto). For the SGDSVM, we additionally tune batch_size (32, 64, 128 and
+1000). Finally, for IF, we tune n_estimators (50 to 150), contamination_rate
+(0.001, 0.01, 0.1 and auto) and max_samples (128, 256, 512 and 1000).
+Data Preprocessing: Once the hyperparameter combination is selected, we
+utilize the DictVectorizer from scikit-learn [47] to transform the feature-
+value mapping to a matrix which is comprehensible to the classifier. The values
+within this matrix are normalized by applying the StandardScaler(nomean=
+True) class. The centralization of the values by the mean is disabled to prevent
+the data from losing its sparse nature and optimizing memory usage by avoiding
+the sparse matrix from becoming a dense matrix. This normalized data is fitted
+to the classifier of choice and this process is repeated until a classifier with the
+highest possible average F1-score on the validation set is selected as the final
+trained model. The final trained model is also evaluated on the test set to gain
+deeper insights of the model’s performance on unseen data.
+4.5
+Metrics and Measures
+DynaHug uses accuracy, precision, recall and F1-score to evaluate trained models.
+The F1-score was utilized as a judging criteria for selecting the best model during
+hyperparameter tuning. The F1-score is the harmonic mean between precision
+and recall. This means that an increase in False Positives (affects Precision) or
+False Negatives (affects Recall) would punish the F1-score, promoting a balance
+between False Positives and False Negatives.
+4.6
+Research Protocol
+Firstly, we evaluate DynaHug using three (3) different tasks (RQ1) by train-
+ing our classifer on the text-classification, text-generation and
+feature-extraction cluster. The goal is to measure the effectiveness of
+our approach on different clusters. Besides, we compare DynaHug to the current
+state-of-the-art (RQ2), we evaluate existing open-source detectors encompassing
+both static and dynamic analysis. We also evaluate whether LLMs can serve as
+an effective malicious PTM detector by replacing our classifier with an LLM
+and using the traces collected from dynamic analysis as an input. We excluded
+
+14
+Sarang Nambiar, Dhruv Pradhan, 
+
+[…middle truncated for length…]
+
+958
+1
+0.5269
+0.6902
+Fickling [17]
+2025
+25
+1000
+1000 2025
+0
+2025
+0
+0.5
+1
+0.6667
+Dynamic ModelTracer [20]
+0
+25
+828
+907
+1760 2025
+0
+265
+1
+0.8691
+0.9299
+Dynamic Llama-3.1 [51]
+1337
+22
+993
+995
+2010
+688 1337 15
+0.6005
+0.9926
+0.7483
++ LLM
+GPT-5.2 [15]
+12
+20
+988
+796
+1804 2013
+12
+221
+0.9933
+0.8909
+0.9393
+Dynamic DynaHug (default)
+1
+25
+1000
+986
+2011 2024
+1
+14
+0.9995
+0.9931
+0.9963
+on the text generation cluster than the text classification cluster (0.9963 vs.
+0.9893) and the feature extraction cluster (0.9963 vs. 0.9930). Across all metrics,
+DynaHug’s performance is consistently high (between 0.9861 and 0.9995). All in
+all, DynaHug has a good performance, which is consistently above 0.986 across
+all metrics and settings. This result implies that the ML-based dynamic analysis
+technique of DynaHug is effective in malicious PTM detection. In summary,
+our approach (DynaHug) generalizes to two different PTM tasks.
+DynaHug is effective in malicious PTM detection across all three (3) clusters
+(up to 0.9963 F1-score).
+RQ2: State-of-the-art Comparison. We found that DynaHug is up to
+44% more effective than the state-of-the-art detectors in terms of F1-score. It
+outperforms the other baselines by up to 25%, 20.77% and 19.2% in detecting
+Real Malicious, MalHug injected and PyPI injected respectively. Table 6 shows
+that DynaHug outperforms the closest competitior (GPT-5.2) by about 5%
+(0.9963 vs. 0.9393 F1-score). GPT-5.2 excels in detecting the MalHug injected
+set as compared to Llama-3.1 and ModelTracer. ModelTracer is the best non-
+LLM detection in the baselines. On the one hand, ModelTracer detects all real
+malicious PTMs, but it does not generalize on the exact malicious payloads
+when injected in different models. This demonstrates that its detection is not
+generalizable to new models. In addition, ModelTracer does not perform well on
+PyPI injected modules, which underscores its non-exhaustive trace blacklisting.
+On the other hand, the static detectors have the worst performance, followed by
+the Llama-3.1-8B-Instruct-tuned. DynaHug is 44% (0.9963 vs. 0.6902 F1-score)
+more effective than the best static detectors, i.e., PickleScan and ModelScan. We
+attribute the poor performance of the static detectors to the lack of behavioral
+information, use of rule sets and the over-approximation of static analysis. Finally,
+DynaHug is 33% (0.9963 vs. 0.7483) more effective than Llama-3.1 in malicious
+PTM detection. We believe the poor performance of Llama-3.1 is due to the
+lack of PTM-specific security knowledge. Overall, this experiment demonstrates
+the superiority of DynaHug, and the importance of its behavioral analysis and
+learning approach to malicious PTM detection.
+
+16
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+Table 7: DynaHug’s performance under different analysis types (best results are
+in bold text)
+Analysis
+Benign
+Malicious
+Overall Performance
+Type
+Detector
+HF (2025) Real (25) Injected (2000)
+TP
+TN
+FP FN Precision Recall F1-score
+Static
+DynaHug
+2025
+25
+2000
+2025
+0
+2025
+0
+0.5000
+1.0000
+0.6667
+Dynamic DynaHug (default)
+1
+25
+1986
+2011 2024
+1
+14
+0.9995
+0.9931
+0.9963
+Hybrid
+DynaHug
+1
+25
+1986
+2011 2024
+1
+14
+0.9995
+0.9931
+0.9963
+Table 8: DynaHug’s effectiveness with varying feature sets showing ‘freq” =
+frequency, “seq” = sequence and “proc” = process (best results are in bold text)
+Feature Set
+Benign
+Malicious
+Overall Performance
+Detector
+HF (2025) Real (25) Injected (2000) TP
+TN FP FN Precision Recall F1-score
+presence
+DynaHug
+0
+22
+1664
+1686 2025
+0
+339
+1.0000
+0.8326
+0.9086
+freq
+DynaHug
+1
+25
+1986
+2011 2024 1
+14
+0.9995
+0.9931
+0.9963
+presence, freq
+DynaHug (default)
+1
+25
+1986
+2011 2024 1
+14
+0.9995
+0.9931
+0.9963
+presence, freq, seq
+DynaHug
+33
+24
+2000
+2024 1992 33
+1
+0.9840
+0.9995
+0.9917
+presence, freq, seq, proc seq DynaHug
+51
+24
+2000
+2024 1974 51
+1
+0.9754
+0.9995
+0.9873
+DynaHug is up to 44% more effective than the state-of-the-art detectors in
+terms of F1-score.
+RQ3: Ablation and Probing study (Analysis Type). We found that
+DynaHug with dynamic analysis is more effective than DynaHug with static
+analysis. Table 7 shows that dynamic analysis in DynaHug is twice (2x) as
+effective as static analysis (precision of 0.5 vs. 0.9995). Meanwhile, hybrid analysis
+has the same performance as dynamic analysis. We observe that static analysis
+is not as effective as dynamic analysis. Besides, combining dynamic and static
+analyses does not improve the performance of DynaHug, it is as effective as
+using only dynamic analysis (see Table 7). We attribute the weak performance
+of static analysis to the lack of precise execution information which causes over-
+approximation. This result also aligns with the performance of the static detectors
+in RQ2 (see Table 6). Overall, this result shows that DynaHug’s use of dynamic
+analysis contributes positively to its detection effectiveness.
+Dynamic analysis contributes positively to detection effectiveness of DynaHug;
+it is twice as effective as using only static analysis.
+Fig. 5: Top-10 most important features
+that explain DynaHug’s predictions on
+malicious models
+Feature Selection: Results show
+that the default feature setting of Dy-
+naHug (presence and frequency of
+system calls) contributes positively to
+its effectiveness and outperforms al-
+ternative features setting.
+More im-
+portantly, Table 8 shows that the fre-
+quency of system calls improves Dy-
+naHug’s detection effectiveness more
+than all other feature settings. In com-
+parison to presence only features, the
+frequency of system calls improves the
+recall and F1-score of DynaHug by
+up to 19% (0.8326 vs. 0.9931) and
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+17
+Table 9: DynaHug’s performance across different architectures (best results are
+in bold text)
+Architecture
+Benign
+Malicious
+Overall Performance
+Detector
+HF (2025) Real (25) Injected (2000) TP
+TN FP FN Precision Recall F1-score
+IsolationForest
+DynaHug
+4
+24
+1782
+1806 2021
+4
+219
+0.9978
+0.8919
+0.9419
+OneClassSVM
+DynaHug (default)
+1
+25
+1986
+2011 2024 1
+14
+0.9995
+0.9931
+0.9963
+SGDOneClassSVM DynaHug
+67
+25
+2000
+2025 1958 67
+0
+0.9680
+1.000
+0.9837
+≈10% (0.9086 vs. 0.9963), respectively. Meanwhile, employing a larger feature set
+than the default settings (e.g., adding sequence of system calls and/or sequence
+of system processes) leads to poorer performance with a reduced the precision
+and F1-score (see Table 8). We attribute the performance of DynaHug’s default
+setting to its use of the frequency of system calls which makes DynaHug detect
+outlier system call distribution. This observation aligns with our explainability
+findings. For instance, Figure 5 shows that the frequency of set_robust_list,
+clone and futex calls are the most important features for predicting mali-
+cious models. Similarly, the frequency of futex, brk and read are the most
+important features for predicting benign models as shown in Figure 7 (Appendix).
+These results show that DynaHug’s feature setting contributes positively to its
+detection effectiveness.
+The default feature setting of DynaHug outperforms alternative feature settings
+and the frequency of system calls contributes the most to its performance.
+ML Architecture: We observed that the default model architecture in DynaHug
+(OCSVM) outperforms the tested alternative architectures (IF and SGDOCSVM).
+Table 9 shows that default DynaHug (OCSVM) performs best in terms of
+precision and F1-score: DynaHug (OCSVM) performs best (F1 = 0.9963), followed
+by DynaHug with SGDOCSVM (F1 = 0.9419), then DynaHug with IF (F1 =
+0.9837). However, we observed that DynaHug with SGDOCSVM has a slightly
+better recall (1.0 vs. 0.9931). We attribute the better performance of the the
+default DynaHug (OCSVM) to the size of our dataset, since the tested alternatives
+(IF and SGDOCSVM) are often sensitive to the size of the training dataset and
+more suitable for training larger datasets [66, 71, 72]. In particular, OCSVM is
+more suitable for DynaHug due to DynaHug’s task clustering step (causing a
+reduced training size) and the huge computational cost of training larger datasets.
+This result demonstrates that the OCSVM architecture fits DynaHug’s design
+and outperforms close alternatives (IF or SGDSVM).
+DynaHug’s architecture (OCSVM) fits its design and outperforms alternatives
+(IF or SGDSVM).
+RQ4: Probing and Sensitivity Study
+Task Clustering: We found that DynaHug with clustering outperforms Dy-
+naHug without clustering. Table 10 shows that DynaHug performs better when
+it is trained on individual task-based clusters (e.g., text-generation) versus
+on the Top-2000 models on HF (without clustering). This result holds across
+all metrics. For instance, the F1-score of the DynaHug trained on the text
+generation cluster is 0.9851, while the non-clustered DynaHug has an F1-score
+
+18
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+Table 10: Impact of clustering on DynaHug (best results are in bold text)
+Benign Malicious
+Overall Performance
+Cluster
+Detector
+Set
+Set
+TP
+TN
+FP
+FN
+Precision Recall F1-score
+text-generation
+DynaHug 4/200
+198/200
+198/200 196/200 4/200 2/200
+0.9802
+0.9900
+0.9851
+text-classification DynaHug
+7/200
+199/200 199/200 193/200 7/200 1/200
+0.9660
+0.9950
+0.9803
+feature-extraction DynaHug
+5/200
+197/200
+197/200
+195/200 5/200 3/200
+0.9752
+0.985
+0.9801
+non-clustered
+DynaHug
+9/200
+199/200 199/200 191/200 9/200 1/200
+0.9567
+0.9950
+0.9754
+Table 11: DynaHug’s sensitivity to varying dataset size (best results are in bold
+text)
+Training
+Benign Malicious
+Overall Performance
+Size
+Detector
+Set
+Set
+TP
+TN
+FP
+FN
+Precision Recall F1-score
+1000
+DynaHug
+4/100
+100/100 100/100
+96/100
+4/100 0/100
+0.9615
+1.0000
+0.9804
+2000
+DynaHug (default)
+4/200
+198/200
+198/200
+196/200 4/200 2/200
+0.9802
+0.9900
+0.9851
+3000
+DynaHug
+4/300
+297/300
+297/300 296/300 4/300 3/300
+0.9867
+0.9900
+0.9884
+of 0.9754. We attribute the performance of the clustered setting to the fact that
+it learns the specific behavior of a particular task better than the non-clustered
+model. This finding demonstrates the importance of clustering and motivates our
+design decision to cluster before training.
+Task-based clustering contributes positively to DynaHug’s performance.
+Sensitivity to training dataset size: We found that the effectiveness of
+DynaHug slightly improves as the training dataset increases. Table 11 shows
+that training on a smaller dataset (1000) has a lower F1-score than training
+on the default DynaHug setting (2000), and training on even more PTMs
+(3000) outperforms the default DynaHug setting. DynaHug’s performance
+is sensitive to the size of the dataset. We attribute the performance of larger
+datasets to the contribution of additional data points for generalizing the training.
+However, there is a trade-off between analysis cost and improved performance.
+Thus, we employ the 2,000 training data size for all other experiments, since the
+performance improvement with 3,000 PTMs is not significant (0.9884 vs. 0.9851)
+and it is computationally expensive to collect dynamic analysis on a larger set of
+models across each study, (e.g., thousands of models for additional settings in
+the ablation studies (RQ3)).
+DynaHug’s effectiveness slightly improves as the size of the training dataset
+increases.
+6
+Limitations and Threats to Validity
+Internal Validity: The main threats to internal validity of this work and
+DynaHug are the correctness of our implementation and the reproducibility
+of our results. To mitigate this threat, we have tested our implementation and
+resulting models under varying settings to ensure reproducibility (see RQ3).
+We also provide our source code and experimental data to support scrutiny and
+reuse.
+External Validity: The main risk to external validity is the generalizability
+of DynaHug and our findings. In particular, our findings may not generalize
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+19
+to other Model Hubs, tasks or unpopular (non-Top-K) models. To mitigate this
+threat, we have performed our experiments using the most popular model hub
+(Hugging Face), tested on two popular clusters and thousands of benign and
+malicious models. We have also tested on different parameter settings in our
+ablation and sensitivity study (RQ3 and RQ4). In addition, to address concerns
+that the injected payloads may not be representative of real world malware, we
+have conducted experiments to test our approach on advanced payloads (e.g.,
+Anti-VM detection techniques, staged payloads, obfuscated payloads, and delayed
+execution payloads) as detailed in Section 9.6 (Appendix).
+However, despite best efforts, we acknowledge that our findings may not
+generalize to other settings, beyond the tested settting.
+Construct Validity: To avoid experimenter bias in this work, we have employed
+thousands of models from Hugging Face and related scanners (e.g., MalHug). We
+have also compared our approach to five (5) open-source state-of-the-art detectors
+and filtered our training set using the scanners provided by Hugging Face security
+API. Finally, we have also manually inspected the real-world malicious PTMs to
+confirm they are malicious and constructed test oracles to check that our injector
+indeed inject malicious payloads.
+Additional Dynamic features: The dynamic features explored in this work
+are not exhaustive. Employing additional features which may improve the perfor-
+mance of DynaHug. In future work, we plan to explore additional features such
+as API call graph, control flow graph, etc. [76,84].
+Ethical Considerations: DynaHug is computationally less intensive than
+using LLMs because our approach relies on classical ML algorithms with 30+
+parameters and requires smaller datasets (25K PTM traces), as compared to
+the billions or trillions of parameters and trillions of tokens of publicly available
+training datasets in LLMs [5,48,50]. Hence, our approach is more sustainable and
+environmentally friendly compared to inferencing, training or fine-tuning LLMs.
+For security reasons, we do not publicly provide all of our injected malicious
+PTMs or make them available on any platforms, except as an artefact for this
+paper’s evaluation. We plan to provide the PTMs as an artefact for research
+purposes after paper acceptance. In the artefact, we will include cautions, dis-
+closure and disclaimer. In particular, we will provide the injected models and
+a description of the associated libraries for research purposes. In our study, we
+tested five (5) malicious PTMs on Hugging Face as a Proof-of-concept (PoC) to
+report the performance of Hugging Face scanners on our PyPI-injected models.
+These models contain PoC payloads that only demonstrate the capability of the
+attack without actually carrying out a real attack, e.g., (a) reverse shell to a local
+IP, rather than an external IP, and (b) printing the list of files in a directory
+“ls”, rather than more serious shell commands like deleting directories “rm”.
+We created an HF repository with some PoCs, and explicitly caution against
+downloading them. The repository’s [87] card README contains a warning
+that it is intended for security research purposes and should not be downloaded:
+“Please do not download these models, as they are for research purposes only and
+may be damaging to your system. Not safe.”
+
+20
+Sarang Nambiar, Dhruv Pradhan, and Ezekiel Soremekun
+7
+Related Works
+Static Detectors: These tools aim to detect malicious PTMs by inspecting
+its code for potential malicious behaviors, e.g., using disassemblers like pickle-
+tools [44] or Fickling [44]. Detection is typically performed through a blacklist
+of unsafe opcodes (e.g., PickleScan, Modelscan, HF PickleScan [16,31,52]) or a
+whitelist of safe opcodes (e.g., PickleBall [20]). To further overcome the limits of
+a static list of rules, some static detectors also employ methods such as heuris-
+tics (MalHug [86]), policy generation (PickleBall [44]) or data flow analysis
+(Fickling [17]). Unlike these approaches, DynaHug employs dynamic behavior of
+PTMs rather than static analysis and relies on ML rather than static blacklisting
+or whitelisting.
+Dynamic Detectors: Similar to DynaHug, ModelTracer [20] detects malicious
+PTMs using dynamic analysis, in particular, strace [81] and Python’s sys [25].
+It processes the generated syscall data and then checks for sensitive syscall
+presence like exec, connect and chmod as indicators of malicious behaviour.
+Invariably, it employs a blacklist of system calls to detect malicious PTMs.
+Unlike ModelTracer, DynaHug relies on the ML classifier to learn the behaviours
+of benign models, rather than relying on a static rule list which can be easily
+bypassed. and require expert review.
+8
+Conclusion
+This work proposes a novel method for detecting malicious PTM models. The
+goal of our work is to ensure that PTM users can detect malicious PTM models
+provided by third-party vendors in the ML supply chain system. In particular,
+we aim to ensure the safety of PTMs uploaded on Model Hubs like Hugging Face
+or executed in trusted user environments. Our approach (DynaHug) employs
+a combination of dynamic analysis, task-specific clustering and ML to detect
+malicious PTM models. We orchestrate DynaHug by employing a one-class SVM
+to learn the behavior of the top-K (2000) most liked models in a task-specific
+cluster (e.g., text generation) of Hugging Face. We also evaluate DynaHug
+using over 25,000 benign and malicious models from different sources, including
+Hugging Face, MalHug and injected malicious payloads using MalHug and
+PyPI modules. Besides, we compare the effectiveness of DynaHug to five baseline
+detectors, including static, dynamic and LLM-based detectors. Our evaluation
+results demonstrate that DynaHug is effective in detecting malicious PTMs,
+outperforms the baselines. This work motivates the need to employ behavioral
+analysis for PTM detection and reduce reliance on blacklists or whitelists. In
+the future, we aim to study additional model hubs and task clusters, and deploy
+DynaHug in the wild.
+
+Malicious ML Model Detection by Learning Dynamic Behaviors
+21

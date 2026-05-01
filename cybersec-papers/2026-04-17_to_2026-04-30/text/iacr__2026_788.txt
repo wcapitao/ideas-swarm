@@ -1,0 +1,1313 @@
+Secret-Carrying Puzzles and Garbled Circuits Optimized for
+Zero-knowledge Proofs
+Debasish Ray Chawdhuri
+Manoj Prabhakaran∗
+draychawdhuri@cse.iitb.ac.in
+manojmp@iitb.ac.in
+Indian Institute of Technology Bombay
+Mumbai, Maharashtra, India
+Abstract
+In this work, we introduce the concept of Obliviously Checkable
+Secret-Carrying Puzzles (OxSP) and build proof-friendly Garbled
+Circuits (GCs) to enable their practical implementation. OxSPs
+allow one to publicly pose puzzles and verify purported solutions
+received in response, keeping the desired parts of the puzzles and
+the responses hidden.
+We show how OxSPs can be based on Garbled Circuits (GCs).
+However, this requires ZK-SNARK proofs of correctness of garbling.
+We note that combining existing GC and ZK-SNARK constructions
+results in very large computational costs for the OxSP solvers. Our
+main technical contribution is to design a new proof-friendly GC
+construction which cuts down the cost of generating a proof of
+correct garbling to almost a third, without resorting to non-standard
+cryptographic assumptions.
+Beyond its use in OxSP, we expect our proof-friendly GCs to be
+of significant independent interest, as a tool for auditable secure
+2-party computation.
+1
+Introduction
+Many transactions carried out over a blockchain, possibly using
+smart contracts, are between two parties. We introduce a general
+purpose tool, called Obliviously Checkable Secret-carrying Puzzles
+(OxSP), which enhances the versatility of such transactions, by
+leveraging the power of secure 2-party computation (2PC).
+Consider a smart-contract based transaction of the following
+general form: Alice offers to transfer a certain amount of crypto-
+currency to anyone who can post a message that satisfies certain
+conditions she has specified. (We shall refer to this as a puzzle). If
+later on, Bob posts such a message (which we shall refer to as a
+solution), the block-chain (implemented by a crowd with a large
+enough fraction of honest/rational players) automatically trans-
+fers the promised amount from Alice’s account to Bob’s account,
+without any intervention from Alice. Compared to using smart-
+contracts directly in such a situation, using an OxSP (which we
+shall elaborate on shortly) offers a few advantages:
+• Privacy: External observers do not see the puzzle’s solution. Even
+Alice does not see the solution directly, but only a desired func-
+tion of the solution. Further some aspects of the puzzle itself
+could be kept hidden from the observers and Bob, if desired.
+• Efficiency: Without using any off-chain mechanisms, the ob-
+servers’ effort can be small and independent of the size of the
+challenge or the solution, unless a dispute arises between the
+two transacting parties. Such disputes are irrational as they can
+be publicly resolved (with a bit of effort from the observers) and
+penalties can be attached to false claims.
+We describe a few example use cases to demonstrate our moti-
+vation. Consider Alice looking to buy a solution for a hard opti-
+mization problem (e.g., an instance of the Traveling Salesperson
+Problem, Integer Linear Programming, or Max-SAT, or a crypto-
+graphic problem like finding a small pre-image for a hash function).
+Suppose she already has one candidate solution, and she is inter-
+ested in purchasing a better solution. If she were to directly use
+a smart-contract for soliciting such a solution, she will need to
+post her solution (or at least its value) to ensure that only better
+solutions will get paid; further, someone wishing to transact with
+Alice will have to reveal their solution publicly rather than just to
+her.
+With an OxSP, Alice can post a challenge which hides her so-
+lution; then anyone can attempt to sell her a solution without
+revealing it to anyone else, and further it is not revealed to Alice
+either, unless it meets the criterion she has set. In all of this, the
+observers need not take any action till a time-limit, when the pur-
+chase will be finalized (seller getting the promised amount) or Alice
+declares, after obliviously checking the submitted solution, that it
+is not a better solution than her own. In the latter case, she will
+be able to prove this to the seller and the public, while keeping
+both solutions secret; furthermore, verifying this proof will be very
+efficient (involving only one hash evaluation).
+As one may expect, Zero-Knowledge (ZK) proofs will play a role
+in implementing OxSP. However, ZK proofs are not enough for
+OxSP. Indeed, for Alice and Bob to check if the submitted solution
+is better than hers when neither party knows both of the solutions,
+what is required is an instance of 2PC. As we shall see, ZK proofs
+combined with a classical tool for 2PC, namely Garbled Circuits
+(GCs), will yield a viable implementation of OxSP. Apart from
+conceptualizing OxSP, the key technical challenge we attack is of
+reducing the cost of constructing ZK proofs about Garbled Circuits.
+OxSP is powerful enough to support more sophisticated applica-
+tions. Below, we illustrate a few such applications:
+• Smart Contracts with Secret-Handshakes: OxSP can be used
+to create smart contracts between a pair of parties such that the
+contract is engaged only when secret parameters supplied by
+the two parties “agree” with each other (e.g., the asking-price
+by a seller is no more than the price that a potential buyer is
+willing to pay; parameters of a product from a potential supplier
+meet the buyer’s requirements; credentials supplied match cre-
+dentials sought; etc.). More generally, the terms of the contract
+
+Debasish Ray Chawdhuri and Manoj Prabhakaran
+can be determined by the secret parameters (e.g., if a buyer pro-
+vides a valid discount coupon, a pseudonymous identifier for
+the coupon is revealed to prevent double-spending of coupons,
+while transferring only the discounted price to the seller).
+• Private Auditing of Smart Contracts: In a scenario as above
+where smart contracts carry secrets, they may need to be audited
+for compliance with laws and/or for fairness. By encoding a
+smart contract as an OxSP, statistical tests (with secret test-cases,
+encoded as OxSP solutions) can be performed on it, with publicly
+verifiable outcomes.
+• Private Benchmarks for (Small) ML Models: Many widely
+used traditional ML models (like Random Decision Forests used
+in banking and financial industrial sectors, or decision logic for
+fraud detection or spam filters) can often be implemented as
+circuits with fewer than a million gates. By encoding test data as
+secrets in an OxSP, and model parameters as secrets in a solution,
+a public leader-board can be maintained without revealing these
+secrets.
+• In the above applications, one can add an element of trustworthy
+randomization (e.g., for lotteries when choosing one of many
+qualifying bids, or for randomizing statistical tests or test-cases)
+without resorting to an external source of randomness. For this,
+the puzzle’s secret can incorporate a key for a pseudorandom
+function.
+Related Work
+Our work lies at the intersection of two slightly different lines
+of work: bringing blockchains to secure multi-party computation
+(MPC) and bringing MPC to blockchains. In the former case, the
+focus is on leveraging the features of blockchains, like smart con-
+tracts, digital assets, and a bulletin-board to enhance the efficiency
+or fairness of MPC. The latter line of work, which we mainly fall
+into, focuses on using MPC techniques to enhance the efficiency
+and features of blockchains.
+Blockchains for MPC. While OxSP is best viewed as a tool for
+blockchains, it does retain the functionality of general-purpose 2PC
+(when “private feedback” is also incorporated, as discussed later).
+Hence, one may view our work as also continuing the thread of
+leveraging blockchain features to enhance 2PC. In this perspective,
+the main features that OxSP brings to 2PC are public auditability
+and fairness, in a minimally interactive setting.
+Blockchain has been used for public auditability of MPC proto-
+cols [11, 24, 28, 31, 32]. In particular, [11] describes a protocol called
+GABLE that uses garbled circuits to hide the details of computation
+and enable MPC over Ethereum blockchain, assuming a trusted
+garbler. [32] uses garbled circuits over blockchain to achieve the
+same, settling for a covert security model, which allows them to
+use a relatively light-weight cut-and-choose protocol. [28] focuses
+on cheater detection to ensure fairness. [24] also uses a blockchain
+to enable public auditability to an MPC protocol.
+Fairness is a related MPC feature enabled by blockchains. In the
+context of MPC, fairness refers to the requirement that if any party
+receieves an output from a protocol, all honest parties must too.
+Motivated by the fact that without honest majority, fairness is im-
+possible to achieve in general purpose MPC, the possibility of using
+external setups has been studied. In recent years, blockchain mod-
+els, with their smart-contract features, have emerged as a popular
+framework for enabling fairness in 2PC and MPC [6, 15]. The gen-
+eral idea in these constructions is to detect and penalize a party in
+an MPC protocol if they do not cooperate in allowing all players to
+obtain outputs. For this the parties would deposit cryptocurrencies
+before starting an MPC protocol (with public auditability/cheater
+detection features) that is carried out over a blockchain.
+MPC for Blockchains. Much of the work in this line has focused
+on a very special case of 2PC, namely Zero-Knowledge (ZK) proofs
+(see e.g., [29]). This is primarily due to the remarkable improvement
+of efficiency of ZK proofs, in the form of Succinct Non-Interactive
+Arguments of Knowledge (SNARKs) and related technologies. In
+the current work, we leverage these tools, but go beyond the func-
+tionality of ZK. As discussed earlier, OxSP enables several new
+blockchain applications.
+Non-Interactive Secure Computation and Relatives. Another theme
+of this work is to enable 2PC with security against active corruption
+in a non-interactive manner. This problem and its variants have
+been extensively studied, particularly in the form of Non-Interactive
+Secure Computation (NISC) [1, 10, 20, 22, 23].
+GCs form a natural tool for NISC. However, traditionally, using
+a ZK proof for proving the correctness of a GC has been considered
+unrealistically inefficient, and much work has focused on alternate
+techniques like cut-and-choose, MPC-in-the-head, and customized
+ZK protocols exploiting features of specially constructed GCs [3, 4,
+21, 25, 26]. Much of this work has focused on asymptotic efficiency,
+and are still not practical.
+However, with the advent of efficient ZK-SNARKs, using them
+for NISC has been explored. In particular, [1] shows that using the
+hash-based Ligero proof system [5] to prove the correctness of GCs
+can lead to a reasonably practical NISC protocol. Our construction
+could be viewed as an alternative that uses the more widely adopted
+proof systems based on elliptic-curve cryptography (ECC), thereby
+making it easier to integrate into existing blockchain eco-system.
+Further, any concrete efficiency improvements in the ECC-based
+SNARK systems will be directly exploitable in our construction.
+However, we remark that for large puzzles, using a hash-based
+proof system to instantiate OxSP could be advantageous. An exact
+comparison between the costs in our construction and one using the
+approach of [1] is difficult, due to the very different proof systems
+employed. Nevertheless, just as in the case of different proof systems
+having their own merits, we believe that the different trade-offs
+offered by these two approaches will be of interest to different
+applications of OxSP.
+1.1
+Our Results
+Our contributions are two-fold:
+• We put forward OxSP as a versatile primitive for use in blockchains,
+and show that it can be efficiently instantiated using a Garbled
+Circuit (GC) construction that supports efficient proof of correct-
+ness, and an appropriate Oblivious Transfer protocol.
+• We then present a novel GC construction using elliptic-curve
+cryptography that turns out to be significantly more efficient to
+
+Secret-Carrying Puzzles and Garbled Circuits Optimized for Zero-knowledge Proofs
+generate succinct correctness proofs for, compared to the (other-
+wise more efficient) GC constructions based on symmetric-key
+cryptographic primitives.
+While GC constructions have traditionally exploited fast symmetric-
+key primitives and have achieved remarkable efficiency levels (see
+e.g., [19]), their use in many situations is hampered by their restric-
+tion to a semi-honest adversary model. Our approach to addressing
+this is to allow basing GC on elliptic-curve primitives (we rely on the
+DDH assumption). Using elliptic-curve primitives is more expen-
+sive in terms of constructing the GC itself, but leads to much better
+efficiency in the more expensive step of proving the correctness of
+the GC.
+Alternatives. We also explore alternatives for proof-friendly GC
+constructions using proof-friendly symmetric-key primitives. One
+possibility (though not readily available in the literature) is to use
+lookups for proving the correctness of a standard AES-based GC;
+we find that this remains quite expensive. Another possibility is
+to use the Poseidon 2 hash function [17] as a random oracle in a
+traditional GC construction. We study this alternative and propose
+a new GC construction relying on a proof-friendly instantiation of
+a random oracle; as opposed to the baseline (using Poseidon 2 as
+random oracle in a conventional GC construction), this achieves
+efficiency comparable to our main construction. However, relying
+on a relatively untested and highly structured hash function as a
+random oracle for the privacy of the GC itself (rather than just
+the soundness of ZK proofs) is arguably undesirable, and hence
+we consider our main construction as dominating this alternative.
+Nevertheless, this construction maybe of interest and is described
+in Appendix B.
+Evaluation. The main cost in the system is the computational
+effort of the Solver in generating proofs of correctness of garbling.
+In ECC-based ZK-SNARKs, this cost is directly accounted for by
+the number of gates in the circuit for the statement that is proven.
+Hence, for a fairly accurate comparison of our construction with al-
+ternative approaches using ECC-based ZK-SNARKs, we can simply
+count the number of these gates. Table 1 shows this comparison. We
+estimate that in a well-provisioned system (e.g., with a gaming GPU
+and 64 GB RAM), using currently available GPU implementations
+of compatible ZK-SNARK systems (specifically, UltraPlonk based
+on [13, 14]), this translates to a few seconds of Solver computation
+time for every few thousand gates in the puzzle circuit.
+1.2
+Technical Overview
+OxSP from Garbled Circuits and ZK-SNARKs. An OxSP chal-
+lenge is specified by a function 𝑃(𝑥, ·), where 𝑃is a public function
+and 𝑥is a secret component of the puzzle. A solution 𝑦can be
+evaluated using this function to obtain a “grade” for the solution,
+as well as additional optional information about the solution that
+is revealed to the challenger.
+Since OxSP involves an arbitrary computation (namely, the eval-
+uation of a puzzle) with secret inputs, it is natural that tools from
+secure 2PC can be leveraged to implement them. As mentioned
+earlier, the tool of choice for us is Garbled Circuits (GCs).
+First, we note that a GC is a “one-time” object: it can be securely
+evaluated on only one input. On the other hand, a single puzzle
+posted by a challenger must be available to all the solvers. Hence,
+the puzzle itself cannot be implemented using GCs. Instead, we shall
+use GCs to encode the solutions to a puzzle: each solver will post a
+GC implementation of the puzzle circuit, with its solution included
+as input, and this solution will be evaluated by the challenger. The
+grades, as well as any information about the solution that must
+be revealed to the challenger, will be produced by this evaluation
+process; as explained later, the grades will be encoded in a manner
+that is easy to publicly authenticate.
+To prevent the solver from cheating by altering the puzzle, it is
+important that the solution includes a proof of correctness of the
+GC. This leads us to our key technical challenge, which we shall
+shortly address.
+There is one more aspect of our OxSP construction that needs
+explanation, namely how the secret 𝑥is encoded in the puzzle.
+Following how a GC is used in 2PC, we employ an Oblivious Trans-
+fer (OT) protocol to enable the challenger to get its secret input
+𝑥encoded using the labels of the GC for each solution. We rely
+on a UC-secure 2-round OT protocol, using a CRS as a setup [27].
+In such a protocol, the first message is generated by the receiver
+whose input is a “choice bit” 𝑏, and the sender whose input is a
+pair of strings (𝑠0,𝑠1), generates the second message; the receiver
+can then recover 𝑠𝑏from the second message, with help of the
+state information it has retained from the computation of the first
+message. In our OxSP construction, to encode each bit of 𝑥, the
+challenger generates the receiver’s message using that bit as the
+choice-bit. These first OT messages which encode 𝑥, combined with
+a puzzle circuit (in the clear) forms the full challenge. The puzzle
+solution will include a garbled circuit encoding the puzzle circuit,
+OT second messages that allow the challenger to recover the labels
+for the wires corresponding to 𝑥, and also the labels that encode
+the actual solution 𝑦.
+ZK-Friendly Garbled Circuits. A standard “gate-by-gate” gar-
+bled circuit construction involves picking a “label” for each wire of
+the circuit, and designing “garbled gates.” Given one label each for
+the two input wires of a gate (say K𝑎
+𝑢and K𝑏
+𝑣, where 𝑢, 𝑣are the
+indices of the wires and 𝑎,𝑏∈{0, 1}), the garbled gate allows the
+evaluator to recover the correct label for the output wire of that
+gate (i.e., K𝑔(𝑎,𝑏)
+𝑤
+, where 𝑤is the output wire index and 𝑔is the
+gate’s function).
+As such, a garbled gate implements a function 𝚿that maps two
+labels to another label. We shall refer to the garbled gate by this
+function 𝚿through out the sequel.
+Our approach to implementing a garbled gate is to rely on elliptic-
+curve cryptography, as popular SNARK systems can natively sup-
+port computations over many elliptic curves.
+Given an elliptic-curve group G over a field F𝑞with prime-order
+𝑝, where DDH is hard, and two random non-identity elements g, h ∈
+G, the map K ↦→(gK, hK) serves as a pseudorandom generator that
+yields two group elements from a single label (in F𝑞, but effectively
+in F𝑝).1 We shall rely on a simple function x : G →F𝑞to map a
+group element back to an element in F𝑞. The garbled gate function
+𝚿(which maps input labels to an output label, as mentioned above)
+1To allow fan-out, multiple such (g, h) pairs will be used.
+
+Debasish Ray Chawdhuri and Manoj Prabhakaran
+Scheme
+No. of gates involved in the proof per garbled gate (approx.)
+Addition
+Multiplication
+Lookup
+SHA-256 based [16]
+88,000
+368,000
+0
+AES-based (using [2])
+360,000
+40,000
+0
+AES-based with lookups (new)
+0
+0
+4,848 (7 lookup wires)
+Our main scheme with lookups
+332
+896
+128 (4 lookup wires)
+Alternative scheme using Poseidon-2 (Appendix B)
+1,280
+1,024
+0
+Table 1: Cost of generating proof of correctness per garbled gate, in terms of the number of arithmetic gates in the relation
+being proven.
+is implemented using a polynomial 𝑃of four variables over the field
+F𝑞:
+𝚿(K𝑢, K𝑣) = 𝑃
+
+x(gK𝑢), x(hK𝑢), x(gK𝑣), x(hK𝑣)
+
+.
+The monomials in 𝑃(there are 12 of them in our construction)
+are chosen such that, given input and output labels for 𝚿along
+with the constraints of a binary gate, the coefficients of 𝑃can be
+sampled so as to let 𝚿satisfy the constraints, and so that, under
+the DDH assumption, this yields a secure garbled circuit.
+A SNARK to prove the correctness of garbling may use “lookup
+gates” to represent the computation of elliptic curve exponentiation
+using a relatively small number of gates. This uses precomputed
+certain exponents of the group elements g and h. As we shall see, it is
+also required that the pair (g, h) needs to vary across “neighboring
+gates” (i.e. gates that share at least one of the inputs). Combined,
+these two requirements impose an a priori limit on the fan-out,
+chosen at the setup (though fan-outs larger than this limit can be
+supported by pre-compiling the circuit to use additional gates to
+reduce the fan-out per gate).
+Proving Security of Garbling Schemes. Our garbling scheme, as
+well as the classical ones, derive their security from the construction
+of each gate. A contribution of this work is to formalize this intuition
+by giving a security definition for garbling a single gate, so that
+when this construction is used in a specified manner for garbling
+an entire circuit, the resulting construction is a secure garbling
+scheme. We believe this could be of independent interest in the
+future, as it allows one to prove the security of a gate-by-gate GC
+construction without repeating the gate-by-gate hybrid argument.
+Proving Correctness of OT. Our construction also requires that
+the garbler proves the correctness of the OT messages it sends.
+It turns out to be cheaper to disassociate this proof from the ZK-
+SNARK for the correctness of garbling. For this, the garbler will
+commit to the strings to be transferred under OT, and prove (as
+part of the GC correctness proof) that those strings are indeed the
+correct labels, and separately prove that the message sent in the
+OT protocol corresponds to the committed strings. For the latter,
+we use Bulletproof [9].
+2
+OxSP: Syntax and Security
+An OxSP scheme allows a challenger to publicly post a puzzle,
+some parts of which can be kept hidden. Then puzzle solvers can
+post encoded versions of their solutions so that the challenger can
+obliviously check if the puzzle was solved (without necessarily
+learning the entire solution). Further, the challenger can assign
+a “grade” for the solution, and prove the correctness of the grade
+without revealing anything else about the secrets in the puzzle or
+the solution.
+Graded Secret-Carrying Puzzle. Technically, a program 𝑃is a
+graded secret-carrying puzzle (GSP) if it has a simple structural
+property: its input has two parts and the output also has two parts.
+When defining an OxSP scheme for a GSP, these parts of the input
+and output are treated differently, according to the following inter-
+pretation. The input is of the form (𝑥,𝑦), where 𝑥is a “secret” that
+will be included in the puzzle, and 𝑦is a “solution” for the puzzle.
+(The secret is optional, and there are meaningful GSPs which do
+not have any secret components.) The output is of the form (𝑔, 𝑣)
+where 𝑔is a grade for the solution and 𝑣is a “view” of the solution
+that is revealed to the challenger.
+Definition 2.1 (OxSP: Syntax). An OxSP scheme for a family of
+graded secret-carrying puzzles P consists of five algorithms: setup,
+mkPzl, mkSol, evSol, chkGrd, with the following syntax.
+(1) setup publishes a common reference string that is given as an
+implicit input to all the other algorithms.
+(2) mkPzl takes as input a pair (𝑃,𝑥), where 𝑃is a graded secret-
+carrying puzzle program and 𝑥is the secret input to the puzzle.
+The algorithm outputs (𝑃,𝑍) as the puzzle, and a private state
+𝜎.
+(3) mkSol takes as input (𝑃,𝑍,𝑦), where 𝑃,𝑍are as above and 𝑦is
+an attempted solution, and outputs an encoded solution 𝐿.
+(4) evSol takes as input (𝜎, 𝐿) (computed as above) and outputs
+a “grade certificate” 𝐺and an output 𝑣. If the certificate is a
+special value ⊥, then 𝑣is empty; otherwise the grade certificate
+𝐺= (𝑔, 𝜋) where 𝑔is a grade.
+(5) chkGrd takes as input (𝑃,𝑍, 𝐿,𝐺) as above, and accepts or re-
+jects the grade certificate 𝐺. If accepting, it also outputs a grade
+𝑔(possibly ⊥, if 𝐺itself is ⊥).
+The algorithms in an OxSP scheme are illustrated in Figure 1.
+To describe the security of an OxSP scheme, we present an ideal
+functionality involving 3 parties: Challenger, Solver and Observer.
+As is conventional, we allow the ideal functionality to behave dif-
+ferently based on which parties are corrupt.
+Ideal Functionality:
+
+Secret-Carrying Puzzles and Garbled Circuits Optimized for Zero-knowledge Proofs
+mkPzl
+mkSol
+evSol
+P, Z
+P, x
+y
+L
+(published, g) or 
+withheld
+G
+chkGrd
+σ
+v
+Figure 1: Components of an OxSP scheme (other than setup)
+described in Definition 2.1.
+• Receive (𝑃,𝑥) from Challenger, and send 𝑃to Solver and Ob-
+server.
+• Receive either ⊥or 𝑦from Solver.
+– In the first case, send ⊥to Challenger and (published, ⊥) to
+Observer and terminate.
+– In the second case, proceed as follows.
+• Let (𝑔, 𝑣) = 𝑃(𝑥,𝑦). Send (𝑔, 𝑣) to Challenger.
+• If either Challenger or Solver is honest, receive publish or withhold
+from Challenger. In the first case, send (published,𝑔) to Solver
+and Observer; in the latter case send withheld to Solver and
+Observer. Terminate.
+• If both Challenger and Solver are corrupt, receive (published,𝑔′)
+or withheld from Challenger and send it to Observer. Terminate.
+Note that if Solver is honest, Challenger cannot change the grade
+𝑔that is published, but the challenger can withhold the grade;
+however, in this case the functionality announces this to Observer
+(and a penalty maybe imposed on Challenger for withholding the
+grade). If Challenger and Solver collude, they are allowed to publish
+an arbitrary grade to Observer; this corresponds to the idea that
+the transaction should be seen as between Challenger and Solver,
+and Observer cannot rely on the grades that are published.
+Private Feedback. Though we have formulated only a public
+grade, the OxSP functionality is flexible enough to implement pri-
+vate feedback as well. This can be done using a puzzle 𝑃that, as
+part of the solution 𝑦, accepts a one-time pad from Solver, and uses
+it to mask a part of the grade.
+Definition 2.2 (OxSP: Security). An OxSP scheme (setup, mkPzl,
+mkSol, evSol, chkGrd) is said to be secure if the following 3-party
+protocol (with a trusted setup, and over a broadcast channel) is a se-
+cure realization2 of the OxSP functionality against active corruption
+of either party:
+• Setup: 𝛼←setup is published as the setup.
+• Challenger, on input (𝑃,𝑥), computes (𝑃,𝑍, 𝜎) ←mkPzl(𝛼, 𝑃,𝑥),
+and broadcasts (𝑃,𝑍).
+• Solver, on input 𝑦, and on receiving (𝑃,𝑍) from Challenger, com-
+putes 𝐿←mkSol(𝛼, 𝑃,𝑍,𝑦) and broadcasts it.
+2This security definition of OxSP can be instantiated for UC-security or standalone
+security, by interpreting “secure realization” accordingly. See discussion later.
+• Challenger, on receiving 𝐿, computes (𝑣,𝐺) ←evSol(𝛼, 𝜎, 𝐿),
+broadcasts 𝐺, and outputs 𝑣.
+• Observer computes chkGrd(𝛼, 𝑃,𝑍, 𝐿,𝐺); if it accepts she out-
+puts 𝑔where 𝐺has the form (𝑔, 𝜋); else, she outputs ⊥.
+3
+Garbled Circuit Preliminaries
+A garbling scheme is defined as a tuple of algorithms G = (Gb, En,
+De, Ev), the first of which is randomized. For a security parameter
+𝑘and a boolean circuit C, Gb(1𝑘, C) returns a tuple (𝐹,𝑒,𝑑) or ⊥,
+where 𝐹is the string representing a garbled version of C, 𝑒is an
+input encoding function and𝑑is an output decoding function. Given
+an input x, En(𝑒, x) returns the encoded input X; given the encoded
+input X, the algorithm Ev(𝐹, X) returns the encoded output Y; and,
+given such an encoded output, the algorithm De(𝑑, Y) returns the
+raw output y.
+Definition 3.1 (Correctness). A garbling scheme (Gb, En, De, Ev)
+for a circuit family C is correct if for every circuit C ∈C and every
+x ∈{0, 1}|Cin|, Pr(𝐹,𝑒,𝑑)←Gb(1𝑘,C) [De(𝑑, Ev(𝐹, En(𝑒, x))) ≠C(x)] is
+negligible in 𝑘.
+For the security definition, we need to introduce a leak function
+𝜙(·) that leaks some information about the circuit. The garbling
+scheme does not hide the leaked information. Typically, this is
+the topology of the circuit, i.e. the connections between the gates,
+including the identity of the input and output gates. Given a leakage
+function 𝜙, we define the Sim security for a garbled circuit, which
+corresponds to the equivalent notions of PrvSim and PrvInd as
+defined in [7].
+Definition 3.2 (Sim Security). A garbling scheme (Gb, En, De, Ev)
+for a circuit family C is said to be Sim secure w.r.t. a leakage function
+𝜙, if there exists a two-stage PPT simulator (S1, S2)3 such that, for
+any two-stage PPT adversary (A1, A2),4
+
+Pr
+(𝜎,C,x)←A1
+(𝐹,𝑒,𝑑)←Gb(1𝑘,C)
+X←En(𝑒,x)
+[A2(𝜎, 𝐹, X,𝑑) = 1]
+−
+Pr
+(𝜎,C,x)←A1
+(𝐹,X)←S1 (1𝑘,𝜙(C))
+𝑑←S2 (𝐹,Ev(𝐹,X),C(x))
+[A2(𝜎, 𝐹, X,𝑑) = 1]
+
+is a negligible function of 𝑘.
+Another useful property of a GC that we shall require is authen-
+ticity [7], which makes it infeasible for an adversary given a GC for
+a circuit C and input labels for one input x to produce an encoding
+of an output other than that of C(x). The formal definition follows.
+Definition 3.3 (Aut Security). A garbling scheme (Gb, En, De, Ev)
+for a circuit family C is said to be Sim secure w.r.t. a leakage func-
+tion 𝜙, if for any two-stage PPT adversary (A1, A2), the following
+3We allow S2 to receive the garbled circuit 𝐹as input from 𝑆1, to account for common
+parameters. This could be avoided when no common parameters are involved.
+4We use the convention that if a PPT adversary does not produce an output of the
+required form — in this case, (𝜎, C, x) where C ∈C, x a valid input for C, and
+𝜎∈{0, 1}∗— within its allotted running time, appropriate default values will be used.
+
+Debasish Ray Chawdhuri and Manoj Prabhakaran
+probability is negligible in 𝑘.
+Pr
+(𝜎,C,x)←A1
+(𝐹,𝑒,𝑑)←Gb(1𝑘,C)
+X←En(𝑒,x),Y←A2 (𝜎,𝐹,X)
+[De(Y) ∉{⊥, C(x)]
+Circuit Notation. Recall that a boolean circuit C can be specified
+by a directed acyclic graph, with nodes being gates and edges
+being wires. The source nodes of the DAG (i.e., nodes without any
+incoming edges) are the input gates, and the sink nodes (those
+without outgoing edges) are the output gates. Every non-input
+gate has exactly two input wires,5 and also has an associated “gate
+type” (the binary operator implemented by the gate). The topology
+of a circuit C, denoted as Topo(C) is simply the directed acyclic
+graph associated with C, which does not include the gate types. For
+brevity, we will use C to also denote the set of gates in the circuit
+C, and write Cin ⊆C and Cout ⊆C to denote the set of input gates
+and output gates respectively.
+Given a circuit C each of its wires is identified with the gate from
+which the wire is output. It will be convenient to denote the two
+inputs wires feeding into a (non-input) gate 𝑔∈C as Lft(𝑔) and
+Rgt(𝑔); its gate type is denoted as op𝑔.
+4
+OxSP from Garbled Circuits
+First, we note that since a single puzzle must be available for all the
+solvers, the puzzle itself cannot be implemented using GCs (which
+can be evaluated securely only once). Instead, GCs will be used to
+encode the solutions.
+To check if a solution satisfies the puzzle, this GC will need to
+be evaluated. While evaluating a GC keeps the inputs to the circuit
+hidden, it also hides the gates of the circuit itself. So to prevent a
+cheating solver from altering the puzzle, we will need a proof that
+the GC faithfully implements the puzzle. This is where we rely on
+our GC construction supporting efficient-to-construct ZK proofs of
+correct garbling.
+To enable publicly checking the grade posted by the challenger,
+we use the following idea, which is a variation on a common ap-
+proach used to authenticate purported garbled circuit outputs. The
+idea is that if an output wire’s decoding information is not given
+to the challenger, but it is able to produce the output label 𝑜for a
+value 𝑏for that wire, then that will convince the garbler that the
+wire indeed evaluated to 𝑏.6 To make it convincing publicly, the
+garbler publishes a pair (ℎ0,ℎ1) where ℎ𝑏is the hash of the output
+label for the bit 𝑏under a one-way hash function 𝐻; now anyone
+can check that the label published by the challenger 𝑜is such that
+𝐻(𝑜) = ℎ𝑏.
+In more detail, the OxSP construction is as follows:
+• setup: This generates the setup for a 2-round OT scheme and
+the setup for a ZK-SNARK scheme that is used below.
+• mkPzl: Given input (𝑃,𝑥), where |𝑥| = ℓ, mkPzl outputs (𝑃,𝑍, 𝜎)
+where 𝑍= {𝑧𝑖}ℓ
+𝑖=1 and 𝜎= {𝜎𝑖}ℓ
+𝑖=1 are computed as follows:
+For each 𝑖= 1 to ℓ, using the 𝑖th bit of 𝑥as the choice-bit, the
+receiver’s program in the OT protocol is executed (with the setup
+5This is essentially w.l.o.g., as NOT gates can merged into the logic of the gates into
+which they feed in, or the gate from which it emanates. NOT gates leading to output
+gates can be handled by the decoding function.
+6While not required of all “garbling schemes,” this property holds for a gate-by-gate
+garbled circuit [7], which we formalize in the next section.
+for the OT protocol obtained from the setup above), resulting in
+a message in the OT protocol 𝑧𝑖and a state 𝜎𝑖.
+• mkSol: Given inputs 𝑃,𝑍,𝑦, first, a GC for the circuit 𝑃is con-
+structed as ( ˜𝑃,𝑒,𝑑) ←Gb(𝑃). Then 𝐿= ( ˜𝑃, ˜𝑌,𝑊𝑍,𝑑view,ℎgrade, 𝜋)
+is computed as follows:
+– ˜𝑃is the garbled circuit produced by Gb(𝑃).
+– ˜𝑌consists of a label for each input wire corresponding to 𝑦.
+– 𝑊𝑍= {𝑤𝑖}ℓ
+𝑖=1 where 𝑤𝑖is computed as the response to the
+message𝑧𝑖in the OT protocol, given input string (𝑒0
+𝑖,𝑒1
+𝑖) which
+are the two labels for the wire corresponding to 𝑥𝑖; these
+strings are specified by 𝑒produced by Gb(𝑃).
+– 𝑑view = {𝑑0
+𝑣𝑖,𝑑1
+𝑣𝑖}|𝑣|
+𝑖=1, where each 𝑣𝑖is the index of an output
+wire other than the grade output, and (𝑑0
+𝑣𝑖,𝑑1
+𝑣𝑖) are the two
+labels for that wire as specified in the decoding information 𝑑.
+– ℎgrade = {ℎ0
+𝑖,ℎ1
+𝑖)}|𝑔|
+𝑖=1 where ℎ𝑏
+𝑖= 𝐻(𝑑𝑏
+𝛾𝑖), with 𝐻being a one-
+way hash function, and 𝛾𝑖being the index of the 𝑖th grade-
+output bit.
+– 𝜋is a ZK-SNARK proof that all of the above items were
+generated as prescribed, using the setup that is part of the
+OxSP scheme’s setup described above. Note that the statement
+proven is specified by (𝑃,𝑍, 𝐿′) where 𝐿′ consists of all the
+elements of 𝐿except the proof 𝜋.
+• evSol: Given (𝜎, 𝐿), first parse 𝐿as ( ˜𝑃, ˜𝑌,𝑊𝑍,𝑑view,ℎgrade, 𝜋) as
+mentioned above. Verify the proof 𝜋. If the verification fails,
+output (⊥, ⊥); else, proceed as follows:
+– For 𝑖= 1 to |𝑥|, extract a label for 𝑥𝑖using (𝑤𝑖, 𝜎𝑖) in the
+receiver’s program in the OT protocol.
+– Evaluate ˜𝑃using inputs labels for 𝑥(extracted above) and
+𝑦(given as ˜𝑌); use 𝑑view to decode 𝑣, the view part of the
+output; the output labels corresponding to the grade wires
+(𝑜1, . . . ,𝑜|𝑔|) are collected as part of the grade certificate 𝐺. 𝐺
+also includes the grade itself, decoded by checking that, for
+each 𝑖, ℎ𝑔𝑖
+𝑖= 𝐻(𝑜𝑖).
+– Output (𝐺, 𝑣).
+• chkGrd: On input (𝑃,𝑍, 𝐿,𝐺) proceed as follows:
+– If 𝐺consists of 𝑔and a set of labels (𝑜𝑖, . . . ,𝑜|𝑔|, check that for
+all 𝑖, ℎ𝑔𝑖
+𝑖= 𝐻(𝑜𝑖). If so accept, else reject.
+– If 𝐺= ⊥, verify the proof 𝜋included in 𝐿. Accept if the
+verification fails; else reject.
+Security Analysis. We present a simulator to prove that the OxSP
+scheme above satisfies the security definition. For this we shall
+assume that the ZK-SNARK employed is a UC-secure ZK-Proof of
+Knowledge,7 and that the 2-round OT scheme is also UC secure. (If
+these primitives are only standalone secure, the definition will be
+satisfied with standalone security.) Also, we model the hash func-
+tion as a Random Oracle, so that the hash reveals no information at
+all about the pre-image until it is guessed correctly.8 The simulation
+relies on Sim and Aut security of the GC scheme employed.
+7In fact, it is enough to assume UC-security for the commitment of input 𝑦(which
+can be achieved separately) and assume only soundness of the SNARK. While this can
+be relevant to reducing the complexity of the SNARK proof systems, for simplicity,
+the proof below uses UC-secure ZK-PoK.
+8With the gate-by-gate garbling construction in the next section, it is enough to assume
+that the hash function is a one-way function w.r.t. the distribution of labels generated
+by the algorithm sample. But at this point, the definition of Aut by itself does not
+
+Secret-Carrying Puzzles and Garbled Circuits Optimized for Zero-knowledge Proofs
+If both Challenger and Solver are corrupt, the simulation is easy,
+since the ideal functionality allows (corrupt) Challenger to specify
+any output for Observer. If both are honest, then too the security
+follows from the correctness of the garbled circuit. We focus on
+the interesting cases where exactly one of Challenger and Solver is
+corrupt.
+Firstly, we note that the ZK-SNARK proof (included as part of 𝐿)
+and its verification can be replaced by an invocation of the ideal
+ZK-PoK functionality. So we will carry out our analysis in the “ZK-
+PoK hybrid” model. On the other hand, we shall use the 2-round
+OT protocol’s simulator in a non-blackbox manner, since the ZK-
+SNARK proof will refer to the messages sent in that protocol.
+Corrupt Challenger. If Challenger is corrupt, the simulator will
+use the OT protocol’s simulator to extract 𝑥from the 𝑍(OT first
+message), and combine it with 𝑃(sent in the clear) to create the
+input (𝑃,𝑥) for the OxSP functionality. To simulate the reply 𝐿
+(except the SNARK, which is replaced by an ideal functionality
+call), the simulator needs to create ˜𝑃(a GC for 𝑃), ˜𝑌(labels for
+˜𝑃correspoding to a unknown input 𝑦), OT reponses 𝑊𝑍, and de-
+coding/verifying information 𝑑view and ℎgrade. While it could have
+faithfully generated ˜𝑃(since it knows 𝑃), it will not be able to do so
+for ˜𝑌. So the simulator relies on Sim security of the GC to sample a
+simulated GC, the input labels for the inputs (𝑥,𝑦) and the decoding
+information. ˜𝑌is derived from these input labels. 𝑊𝑍is simulated
+using the OT protocol’s simulator, corresponding to a corrupt re-
+ceiver receiving the labels for 𝑥. 𝑑view and ℎgrade are derived from
+the simulated decoding information. The simulator also simulates a
+notification from the ZK-PoK functionality that all the items were
+correctly constructed. Till this point, the simulation relies only on
+Sim security, the simulation security for the OT protocol, and the
+ideal nature of ZK-PoK functionality. Finally, by Aut security, any
+grade certificate 𝐺output by Challenger cannot (except with negli-
+gible probability) have a correct output label other than for the bits
+in 𝑔, where (𝑔, 𝑣) = 𝑃(𝑥,𝑦). Conditioned on authenticity holding,
+the following completes the simulation: if 𝐺has a wrong output
+label, the simulator sends withhold to the ideal functionality, and
+otherwise sends (publish,𝑔).
+Corrupt Solver. If Solver is corrupt (and Challenger is honest),
+the simulator first obtains 𝑃from the functionality and sends it to
+Solver along with simulated OT first messages 𝑍. On receiving 𝐿
+(except the proof component) and the witnesses for proving its cor-
+rectness (sent to the simulated ZK-PoK) functionality from Solver,
+the simulator first checks if the witnesses are valid; if not, it sends ⊥
+to the functionality, and terminates. Otherwise, from the valid wit-
+ness, the simulator extracts 𝑦and sends it to the OxSP functionality.
+This will result in the functionality sending (𝑣,𝑔) to Challenger. In
+turn, Solver receives (published,𝑔) from the functionality, an
+
+[…middle truncated for length…]
+
+he DDH assumption, as well
+as a requirement that the cofactor of G is polynomially bounded.
+As discussed below, the cofactor approximately equals the ratio
+𝑞/𝑝where F𝑞is the base-field and F𝑝is the scalar field. It is indeed
+the case for all typical elliptic curves used in cryptography that the
+cofactor is small.
+Theorem 6.3. The algorithm EC-gateGb over a prime-order el-
+liptic curve group G where the DDH assumption holds, and for which
+the cofactor is polynomially bounded, satisfies GateSim security.
+Before we prove Theorem 6.3, we summarize two main argu-
+ments we shall employ. These two results appear in Lemma 6.5 and
+Lemma 6.6 below with brief proof sketches (with the somewhat
+tediously detailed full proofs in Appendix C.1).
+(1) While we shall eventually rely on the DDH assumption for the
+elliptic curve group G, our use of labels as exponents does not
+immediately correspond to the distribution of exponents in the
+DDH assumption. The essential difference is that we draw our
+exponents from the base-field F𝑞, whereas the standard DDH
+assumption draws them from the scalar field F𝑝(𝑝being the
+order of G). To analyze this difference, we formulate a variant
+of the DDH assumption, which we call altDDH, where one of
+the exponents is drawn from F𝑞. We show that hardness of
+altDDH follows tightly from the hardness of DDH.
+In the proof of Theorem 6.3, the distributions involved are such
+that the secret exponents are used to exponentiate many bases.
+The requisite hardness assumption is captured in the definition
+of altDDH∗(see Definition 6.4). A routine reduction shows that
+hardness of altDDH implies that of altDDH∗as well. Lemma 6.5
+presents this result.
+(2) The second part of the proof is specific to the details of how
+EC-gateGb samples the coefficients of the polynomial used to
+define 𝚿𝑔for a gate 𝑔. Recall that 𝚿𝑔is a function that maps
+two input labels into an output label. While the actual garbling
+picks the coefficients defining 𝚿𝑔so that it works correctly for
+all 4 possible combinations of the input labels, a simulation will
+have to pick it given only one combination of input labels and
+output label.
+The polynomial underlying 𝚿𝑔is chosen such that we can argue
+that these two distributions are statistically indistinguishable.
+The required result is captured in Lemma 6.6. (It is the invoca-
+tion of this lemma in the proof that introduces the requirement
+of a bounded cofactor.)
+11For simplicity, we state the theorem in asymptotic terms. However, our proof presents
+a concrete analysis.
+
+Debasish Ray Chawdhuri and Manoj Prabhakaran
+Definition 6.4. For an elliptic curve group G over the base-field
+F𝑞, and an adversary A, its advantage in the altDDH∗problem over
+G, AdvaltDDH∗
+G,A
+, is defined as its advantage in distinguishing between
+the following two distributions:
+
+{g𝑖, h𝑖}𝑖∈[𝑛], {g𝑥
+𝑖, h𝑥
+𝑖, g𝑦
+𝑖, h𝑦
+𝑖}𝑖∈[𝑛]
+ 
+𝑥,𝑦←F𝑞,
+∀𝑖∈[𝑛] g𝑖,h𝑖←G
+and
+
+{g𝑖, h𝑖}𝑖∈[𝑛], {g𝑥
+𝑖, h𝑥
+𝑖, g𝑦
+𝑖, h𝑦
+𝑖}𝑖∈[𝑛−1], g′, h′, g′′, h′′ 
+𝑥,𝑦←F𝑞,
+∀𝑖∈[𝑛] g𝑖,h𝑖←G,
+g′,h′,g′′,h′′←G
+.
+Lemma 6.5. For any PPT adversary A for the altDDH∗prob-
+lem on an elliptic curve group G over the base-field F𝑞, there is a
+PPT adversary A′ for the DDH problem on G such that Adv𝐷𝐷𝐻
+G,A′ ≥
+AdvaltDDH∗
+G,A
+/4 −16/√𝑞.
+Proof sketch. (See Appendix C.1 for the full proof.) First, we
+show that hardness of the altDDH problem over G (which is similar
+to the DDH problem, but one of the exponents is drawn from F𝑞
+instead of F𝑝) follows tightly from the hardness of DDH over G.
+This relies on Hasse’s Theorem, a classical result on elliptic curves,
+which shows that the maximum cardinality of an elliptic curve
+over a base-field F𝑞is 𝑁= 𝑞± 𝑂(√𝑞), and a prime-order subgroup
+G of such a curve has order 𝑝= 𝑁/ℎfor an integer ℎ(called the
+cofactor of G). This means 𝑞/𝑝= 𝑞ℎ/𝑁= ℎ(1 ± 1/√𝑞) and hence is
+very close to an integer. Thus drawing an exponent uniformly from
+F𝑞has the effect of drawing it almost uniformly from F𝑝(since
+exponents work modulo 𝑝).
+Then we show that hardness of altDDH implies the hardness of
+altDDH∗via a routine hybrid argument.
+□
+Lemma 6.6. Fix any 𝑎∗,𝑏∗∈{0, 1}, 𝑟𝑎∗,𝑠𝑎∗,𝑡𝑏∗,𝑢𝑏∗∈F𝑞\ {0},
+and 𝛼0,0, 𝛼0,1, 𝛼1,0, 𝛼1,1 ∈F𝑞, and any non-empty subset 𝐼⊆F𝑞\ {0}
+such that |𝐼| ≥𝛽𝑞, for 0 < 𝛽< 1. Define a distribution over matrices
+in F4×12
+𝑞
+as follows:
+(1) 𝑟1−𝑎∗,𝑠1−𝑎∗,𝑡1−𝑏∗,𝑢1−𝑏∗←𝐼uniformly.
+(2) Let M = [𝐴𝐵𝐶] ∈F4×12
+𝑞
+where rows of 𝐴, 𝐵,𝐶are indexed by
+(𝑎,𝑏) ∈{0, 1}2, and are defined as:
+𝐴𝑎,𝑏=
+
+𝑟𝑎
+𝑟2
+𝑎
+𝑠𝑎
+𝑠2
+𝑎
+
+𝐵𝑎,𝑏=
+𝑡𝑏
+𝑡2
+𝑏
+𝑢𝑏
+𝑢2
+𝑏
+
+and 𝐶𝑎,𝑏= 𝐴𝑎,𝑏⊙𝐵𝑎,𝑏.
+(3) If M is not of rank 4, go to step (1). Else output M.
+Define the following two distributions over F12
+𝑞:
+• Distribution D: Sample M as above, and output [a b c] sampled
+uniformly conditioned on
+
+𝛼0,0
+𝛼0,1
+𝛼1,0
+𝛼1,1
+
+= M
+
+a
+b
+c
+
+• Distribution U: Sample M as above and output [a b c] sampled
+uniformly conditioned on
+𝛼𝑎∗,𝑏∗= M𝑎∗,𝑏∗
+
+a
+b
+c
+
+Then the statistical difference between D and U is at most
+9
+𝛽2√𝑞.
+Proof. Sketch [see appendix C.2] for a formal proof We depend
+on the well known result that if the probability of collision for a
+distribution D over a set S is C𝑜𝑙(D), i.e. C𝑜𝑙(D) = Pr𝑥,𝑦←D [𝑥=
+𝑦], then:
+∑︁
+𝑦∈S
+ Pr
+𝑥←D[𝑥= 𝑦] −Pr
+𝑥←U[𝑥= 𝑦]
+ ≤
+√︁
+|S|C𝑜𝑙(D) −1
+where U is the uniform distribution over S. In our case, we show
+that C𝑜𝑙(D) ≤(1/𝑞11 + (58/𝛽2 + 240/𝛽4)/𝑞12) and |S| = 𝑞11, thus
+giving us the bound.
+□
+Finally, we are ready to prove Theorem 6.3.
+Proof of Theorem 6.3. We start by describing the simulator
+S∗from the definition of GateSim. The simulated garbled gate
+S∗( e
+KLft(𝑔), e
+KRgt(𝑔), e
+K𝑔,𝑔, par) is sampled as follows:
+• Let𝑟= x(g
+e
+KLft(𝑔) ),𝑠= x(h
+e
+KLft(𝑔) ),𝑡= x(g
+e
+KRgt(𝑔) ),𝑢= x(h
+e
+KRgt(𝑔) )
+• Uniformly sample a, b, c ∈F4
+𝑞such that
+
+𝑟
+𝑟2
+𝑠
+𝑠2
+𝑡
+𝑡2
+𝑢
+𝑢2
+𝑟𝑡
+𝑟2𝑡2
+𝑠𝑢
+𝑠2𝑢2 
+a
+b
+c
+
+= e
+K𝑔
+• Return simulated 𝚿𝑔described by [a b c].
+Given A∗= (A1, A2, A3), we need to bound
+AdvgateGb
+C,A∗,S∗:=
+Pr[ExpgateGb
+C,A∗,S∗(0) = 1] −Pr[ExpgateGb
+C,A∗,S∗(1) = 1]
+
+(1)
+Towards this we shall define an intermediate experiment Exp∗gateGb
+C,A∗,S∗∗
+(using an intermediate simulator S∗∗, defined below). This experi-
+ment is identical to ExpgateGb
+C,A∗,S∗(1), except that Step (5) in Figure 2
+is replaced by the following:
+𝚿𝑔∗←S∗∗(𝑎∗,𝑏∗, op𝑔∗, K𝑎∗
+Lft(𝑔∗), K𝑏∗
+Rgt(𝑔∗), K0
+𝑔∗, K1
+𝑔∗,𝑔∗, par)
+where the process on the right hand side is defined as follows:
+• Let 𝑟𝑎∗= x(g
+K𝑎∗
+Lft(𝑔) ),𝑠𝑎∗= x(h
+K𝑎∗
+Lft(𝑔) ),𝑡𝑏∗= x(g
+K𝑏∗
+Rgt(𝑔) ),𝑢𝑏∗=
+x(h
+K𝑏∗
+Rgt(𝑔) ).
+• Uniformly sample g′, h′, g′′, h′′ ←G \ {𝑂}, conditioned on
+their 𝑦-coordinates not being 0,12 and let 𝑟1−𝑎∗= x(g′),𝑠1−𝑎∗=
+x(h′),𝑡1−𝑏∗= x(g′′),𝑢1−𝑏∗= x(h′′).
+• Let M = [𝐴𝐵𝐶] ∈F4×12
+𝑞
+where rows of 𝐴, 𝐵,𝐶are indexed by
+(𝑎,𝑏) ∈{0, 1}2, and are defined as:
+𝐴𝑎,𝑏=
+
+𝑟𝑎
+𝑟2
+𝑎
+𝑠𝑎
+𝑠2
+𝑎
+
+𝐵𝑎,𝑏=
+𝑡𝑏
+𝑡2
+𝑏
+𝑢𝑏
+𝑢2
+𝑏
+
+and 𝐶𝑎,𝑏= 𝐴𝑎,𝑏⊙𝐵𝑎,𝑏.
+• For all 𝑎,𝑏∈{0, 1}, let 𝛼𝑎,𝑏= K
+op𝑔∗(𝑎,𝑏)
+𝑔∗
+.
+12This conditioning is to ensure that their 𝑥-coordinates are chosen uniformly from a
+set 𝐼⊆F𝑞, which will allow the convenience of applying Lemma 6.6. The uniformity
+follows because for each such group element there is exactly one another element
+with the same 𝑥-coordinate.
+
+Secret-Carrying Puzzles and Garbled Circuits Optimized for Zero-knowledge Proofs
+• Uniformly sample a, b, c ∈F4
+𝑞such that
+
+𝛼0,0
+𝛼0,1
+𝛼1,0
+𝛼1,1
+
+= M
+
+a
+b
+c
+
+• Return simulated 𝚿𝑔∗described by [a b c].
+Now,
+AdvgateGb
+C,A∗,S∗≤
+Pr[ExpgateGb
+C,A∗,S∗(1) = 1] −Pr[Exp∗gateGb
+C,A∗,S∗∗= 1]
+
++
+Pr[Exp∗gateGb
+C,A∗,S∗∗= 1] −Pr[ExpgateGb
+C,A∗,S∗(0) = 1]
+
+(2)
+For the first component, the difference between the two experi-
+ments – namely simulation using S∗and using S∗∗– corresponds to
+sampling [a b c] according to the distribution U or D in Lemma 6.6,
+with the set 𝐼being the set of non-zero 𝑥-coordinates of the points
+in the elliptic curve group G. Hence, this component is at most
+9
+𝛽2√𝑞,
+for 𝛽≤|𝐼|/𝑞. We note that by the requirement that 𝑝/𝑞≥𝜂, we can
+take 𝛽= 𝜂/2 −2/𝑞≤(𝑝−3)/2𝑞≤|𝐼|/𝑞; the last inequality follows
+from the fact that there are at most 3 points in G that are omitted
+by the conditioning used by S∗∗to sample each of g′, h′, g′′, h′′
+(namely, the identity 𝑂and at most two points with 𝑦-coordinate
+0), and among the other points, each point has exactly one point
+with the same 𝑥-coordinate.
+Turning to the second component, if A∗results in a non-negligible
+distinguishing between Exp∗gateGb
+C,A∗,S∗∗and ExpgateGb
+C,A∗,S∗(0), we shall
+use it to build an adversary A for altDDH∗in Lemma 6.5 with a
+non-negligible advantage. For this, note that the only difference
+between the two experiments is in how 𝑟1−𝑎∗,𝑠1−𝑎∗,𝑡1−𝑏∗,𝑢1−𝑏∗are
+defined:
+• In one case, they are derived from the four group elements
+g
+K1−𝑎∗
+Lft(𝑔∗)
+𝑖
+, h
+K1−𝑎∗
+Lft(𝑔∗)
+𝑖
+, g
+K1−𝑏∗
+Rgt(𝑔∗)
+𝑖
+, h
+K1−𝑏∗
+Rgt(𝑔∗)
+𝑖
+.
+• In the other case from the group elements (g′, h′, g′′, h′′).
+A will be given one of these two tuples, and it will use A∗to try
+and tell them apart. To provide a valid input for A∗, A should also
+be given elements of the form g
+K1−𝑎∗
+Lft(𝑔∗)
+𝑗
+, h
+K1−𝑎∗
+Lft(𝑔∗)
+𝑗
+, g
+K1−𝑏∗
+Rgt(𝑔∗)
+𝑗
+, h
+K1−𝑏∗
+Rgt(𝑔∗)
+𝑗
+,
+for all 𝑗which are used by EC-gateGb in gates sharing an input
+with𝑔∗. (By design, these values are all distinct from g𝑖, h𝑖.) It can be
+verified that these inputs allow A to faithfully sample the inputs for
+A∗
+3 in either of the two experiments Exp∗gateGb
+C,A∗,S∗∗and ExpgateGb
+C,A∗,S∗(0),
+depending on which of the above mentioned 4-tuples that A gets.
+Hence, by Lemma 6.5
+Pr[Exp∗gateGb
+C,A∗,S∗∗= 1] −Pr[ExpgateGb
+C,A∗,S∗(1) = 1]
+
+≤4AdvaltDDH∗
+G,A
++ 64/√𝑞
+Hence, the total advantage
+AdvgateGb
+C,A∗,S∗≤64 + 9/𝛽2
+√𝑞
++ 4Adv𝐷𝐷𝐻
+G,A
+which is negligible under the DDH assumption.
+□
+7
+Zero-knowledge Proof of Correct Garbling
+We use a ZK-SNARK system that supports arithmetic circuits with
+lookup gates [12, 13]. Below we explain the low-level details of this
+implementation, and the costs we incur (summarized in Table 1).
+Exponentiation using lookups. We require 8 elliptic curve expo-
+nentiations per gate (two group generators each exponentiated to 4
+labels). Elliptic curve exponentiation is very expensive in terms of
+number of arithmetic gates required. But we can use lookup gates
+to reduce the number of gates required substantially. Consider com-
+puting g𝑥where g ∈G and 𝑥∈F𝑞where 𝑞. fits into 256 bits. We
+write 𝑥= Í15
+𝑘=0 𝑥𝑘where each 𝑥𝑘has all but one of its 16 blocks
+filled with zeros. Since the value of g is pre-determined, we can
+have the exponents of the form g𝑥𝑘pre-computed and stored in
+a table, so that g𝑥= Î15
+𝑘=0 g𝑥𝑘where we lookup the value of g𝑥𝑘
+from the lookup table. (We do not need to check that the split is
+indeed valid, since the fact that it can be looked up in the table is
+good enough.) The number of entries in this table, i.e., the total
+number of possible 𝑥𝑘values, is 16 × 216 = 220.
+Now, expressing 𝑥= Í15
+𝑘=0 𝑥𝑘requires 15 addition gates. Since
+we need to split 4 labels per gate, the total number of addition gates
+for the splits is 15 × 4 = 60. Also, the total number of lookups per
+gate, for the 8 exponentiations is 8 × 16 = 128. The remaining cost
+for verifying g𝑥is of 15 group operations in Î15
+𝑘=0 g𝑥𝑘, which we
+consider next.
+Group Operations: Plonk [14] is a natural choice for a ZK-SNARK
+to be used with a lookup table. We instantiate it using the pairing
+friendly curve BN128 and Baby Jubjub Edward curve [30] defined
+over the scalar field of BN128. The following is the formula for the
+group operation in the curve:
+(𝑥3,𝑦3) = (𝑥1,𝑦1) + (𝑥2,𝑦2) =
+ 𝑥1𝑦2 + 𝑥2𝑦1
+1 + 𝑑𝑥1𝑥2𝑦1𝑦2
+, 𝑦1𝑦2 −𝑥1𝑥2
+1 −𝑑𝑥1𝑥2𝑦1𝑦2
+
+where (𝑥1,𝑦1) and (𝑥2,𝑦2) are the coordinates of the two group
+points and 𝑑is the “twist.” The following gates in the Plonk system
+can be used for verifying the group operation formula:
+𝑥′ = 𝑥1𝑥2
+𝑦′ = 𝑦1𝑦2
+𝑧1 = 𝑥1𝑦2
+𝑧2 = 𝑥2𝑦1
+𝑧3 = 1 + 𝑑𝑥′𝑦′
+𝑧4 = 2𝑦3 −𝑦3𝑧3
+𝑧4 = 𝑦′ −𝑥′
+𝑧5 = 𝑥3𝑧3
+𝑧5 = 𝑧1 + 𝑧2
+Each group operation computed as above uses 9 binary gates –
+7 multiplication gates (which are allowed to include addition too,
+as in Plonk) and 2 addition gates. So, the total number of addition
+and multiplication gates for the 8 exponentiations in each gate is
+8 × 15 × 2 = 240 and 8 × 15 × 7 = 840, respectively.
+Remaining costs: After computing the exponentiations, we must
+verify that the product of the matrix M with the vector [a b c]
+satisfies the condition required in EC-gateGb. Computing M =
+[𝐴𝐵𝐶] involves 8 squarings (of 𝑟𝑏,𝑠𝑏,𝑡𝑏,𝑢𝑏for 𝑏∈{0, 1}) for
+computing 𝐴, 𝐵, and further 16 multiplications for computing 𝐶=
+𝐴⊙𝐵. Computing 𝐴a and 𝐵b each involves a 8 multiplications and
+6 additions (since rows repeat) while 𝐶c involves 16 multiplications
+and 12 additions; the overall matrix-vector multiplication 𝐴a+𝐵b+
+𝐶c uses 8 more additions. Overall, these costs come to 8 + 16 + 16 +
+16 = 56 multiplications and 12 + 12 + 8 = 32 additions.
+
+Debasish Ray Chawdhuri and Manoj Prabhakaran
+Hence, the total number of addition gates required per garbled
+gate is 60 + 240 + 32 = 332 and the total number of multiplication
+gates per garbled gate is 840 + 56 = 896.
+8
+Zero-Knowledge Proof for Oblivious Transfer
+Recall that in the mkSol algorithm in Section 4, the garbler uses an
+OT protocol to transfer labels for each input wire of the circuit. The
+protocol is not secure unless the garbler proves the correctness of
+this step. The OT involves the garbler encrypting both the values,
+but the public keys are generated in a way that the evaluator can
+only decrypt one of them. Hence, the garbler simply has to prove
+that it correctly encrypted both the labels for each wire. One ap-
+proach is to use an arbitrary OT protocol and generically prove
+that the encryptions are correct as well.
+However, this approach requires that the garbler creates arith-
+metic circuit for the exponentiation of the public keys. This would
+require a huge number of gates and increase the prover time. In-
+stead, we take the following approach:
+• The garbler creates commitments to each label that can be opened
+by exponentiating fixed curve points. The circuit for this can use
+lookup tables for optimization.
+• These commitments are shared to the verifier along with the OT
+messages.
+• We create a separate proof using Bulletproof [9] to show that
+the OT correctly encrypts the committed values.
+For OT, we can use the protocol of Peikert et. al. [27]. This
+protocol allows an OT of either of two points on an elliptic curve.
+Any input label must be a random label from F𝑞. Given a random
+u, v ←G, the receiver can obtain a label 𝛼· x(u) + 𝛽· x(v) for
+uniformly chosen, but public 𝛼, 𝛽←F𝑞. The method of OT is as
+described below -
+(1) During initial setup, a CRS (g0, h0, g1, h1) ∈G4 is decided.
+(2) For the input 𝑏of the receiver, the receiver chooses 𝑦←F𝑞
+and sends (r, s) = (g𝑦
+𝑏, h𝑦
+𝑏) to the sender.
+(3) Let the senders inputs be v0, v1 ∈G. The sender chooses 𝑠,𝑡←
+F𝑞and computes (e𝑏′, f𝑏′) = (g𝑠
+𝑏′h𝑡
+𝑏′, r𝑠s𝑡v𝑏′) for each 𝑏′ ∈
+{0, 1}.
+(4) Receiver decrypts v𝑏= f𝑏e𝑦−1
+𝑏
+.
+Using two such transfers, a random label of an input can be sent
+to the receiver. To commit the labels, we commit the curve points
+that construct the labels. For every label, two random coefficients
+𝛼, 𝛽and generated and two random points u, v are chosen. The
+label is then 𝛼· x(𝑢) + 𝛽· x(v). To commit a curve point w, we
+use ElGamal encryption. The garbler chooses a global private key
+𝑥and a corresponding public key (g, x). The commitment of the
+curve point is then (c, d) = (g𝑦, x𝑦w).
+• CRS: Since we want to use bulletproof and we need public ver-
+ifiability, we need a different CRS for each copy of the OT. For
+each input 𝑖∈{1..𝑛}, two curve points u𝑏
+𝑖, v𝑏
+𝑖need to be sent
+through OT for each input value 𝑏∈0, 1. The CRS for the 𝑖𝑡ℎin-
+put is (g𝑖0, h𝑖0, g𝑖1, h𝑖1, g′
+𝑖0, g′
+𝑖1, h′
+𝑖0, h′
+𝑖1) ←G8. We also have four
+randomly generated ElGamal public key pairs (l𝑖0, p𝑖0), (l𝑖1, p𝑖1),
+(l′
+𝑖0, p′
+𝑖0), (l′
+𝑖1, p′
+𝑖1)) for each input 𝑖. Note that the private key for
+the ElGamal encryption is never known to anyone.
+It is possible to use the same set of points for the public keys
+that we use for constructing gates. That way we can share the
+same lookup tables for exponentiation.
+• Oblivious Transfer: The oblivious transfer of each curve point
+is done using the PVW protocol.
+• Commitment to the labels: The commitments to the label is
+is achieved by ElGamal encrypting each of the points separately.
+(1) Each label is generated in the following manner - we have
+(𝛼𝑖0, 𝛽𝑖0, 𝛼𝑖1, 𝛽𝑖1) ←F𝑞. The label K𝑏
+𝑖= 𝛼𝑖𝑏· x(u𝑖𝑏) + 𝛽𝑖𝑏·
+x(v𝑖𝑏) is generated for each input 𝑖and 𝑏∈{0, 1}.
+(2) The points u𝑖0, u𝑖1, v𝑖0, v𝑖1 are encrypted using ElGamal. The
+garbler chooses 𝑟𝑖0,𝑟𝑖1,𝑟′
+𝑖0,𝑟′
+𝑖1 from F𝑞. Then computes
+(c𝑖𝑏, d𝑖𝑏) = (l𝑟𝑖𝑏
+𝑖𝑏, p𝑟𝑖𝑏
+𝑖𝑏u𝑖𝑏) and (c′
+𝑖𝑏, d′
+𝑖𝑏) = (l′
+𝑖𝑏
+𝑟𝑖𝑏, p′
+𝑖𝑏
+𝑟𝑖𝑏v𝑖𝑏).
+The ElGamal encryptions are shared with the receiver and
+are used in the zero-knowledge proof for correctness (𝑟𝑖𝑏,𝑟′
+𝑖𝑏
+are used as witness).
+• Oblivious Transfer: We use the PVW protocol mentioned above
+for OT. We can denote the randomness used as 𝑠𝑖𝑏,𝑡𝑖𝑏for trans-
+ferring u𝑖𝑏and 𝑠′
+𝑖𝑏,𝑡′
+𝑖𝑏for transferring v𝑖𝑏.
+• Proof of correctness of the OT: We use the CRS double as
+the CRS for Bulletproof. For each input 𝑖, the garbler needs to
+prove that there exists 𝑟𝑖𝑏,𝑠𝑖𝑏,𝑡𝑖𝑏such that c𝑖𝑏= l𝑟𝑖𝑏
+𝑖𝑏, f𝑖𝑏d−1
+𝑖𝑏=
+r𝑠𝑖
+𝑖𝑠𝑡𝑖
+𝑖p−𝑟𝑖𝑏
+𝑖𝑏
+, e𝑖𝑏= g𝑠𝑖𝑏
+𝑖𝑏h𝑡𝑖𝑏
+𝑖𝑏and also the same relationships for v𝑖𝑏.
+9
+Conclusion
+The main conceptual contribution of this work is to introduce Secret-
+Carrying Puzzles (OxSP) as a versatile tool that brings the power
+of secure 2-party computation to a blockchain setting. We showed
+that OxSP can be instantiated using Garbled Circuits and ZK proofs.
+This construction is fairly efficient, as long as the ZK proofs can be
+generated efficiently.
+To that end, we present a novel garbling scheme optimized to
+minimize the number of arithmetic gates required to compute each
+gate. The main technical contribution of this work is to design this
+garbling scheme and to show how to generate ZK proofs for it
+efficiently.
+We leave it for future work to support garbled circuit optimiza-
+tion techniques (see, e.g., [19]) that have been developed without
+support for proofs.

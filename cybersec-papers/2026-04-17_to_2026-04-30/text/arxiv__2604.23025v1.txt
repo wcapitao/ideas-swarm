@@ -1,0 +1,672 @@
+Self-Supervised Learning for Android Malware
+Detection on a Time-Stamped Dataset
+Annan Fu
+Khoury College of Computer Sciences
+Northeastern University
+Vancouver, Canada
+fu.anna@northeastern.edu
+Hao Pei
+Khoury College of Computer Sciences
+Northeastern University
+Vancouver, Canada
+pei.h@northeastern.edu
+Maryam Tanha
+Khoury College of Computer Sciences
+Northeastern University
+Vancouver, Canada
+m.tanha@northeastern.edu
+Abstract—Android malware detectors built with machine
+learning often suffer from temporal bias: models are trained
+and evaluated without respecting apps’ actual release times,
+inﬂating accuracy and weakening real-world robustness. We
+address this by constructing a time-stamped dataset of benign and
+malicious Android apps and introducing a timestamp-veriﬁcation
+procedure to ensure temporal accuracy. We then propose a
+detection framework that uses Bootstrap Your Own Latent
+(BYOL) for self-supervised pre-training to learn obfuscation-
+resilient representations, followed by supervised classiﬁcation.
+Under time-aware evaluation, the method attains 98% accuracy
+and 89% F1. We further characterize malware behavior by
+analyzing true positives and false negatives using VirusTotal and
+the MITRE ATT&CK framework. To support reproducibility
+and further innovation, we release our dataset and source code.
+Index Terms—Android, malware, self-supervised learning,
+temporal bias
+I. INTRODUCTION
+Machine learning (ML) has been widely used for Android
+malware detection; however, such models face critical chal-
+lenges. First, concept drift, i.e., distribution shifts over time
+from evolving malware families, benign apps, or platform fea-
+tures—can cause models trained on historical data to degrade,
+a phenomenon known as model aging. The second issue is
+temporal bias (also called temporal inconsistency) that stems
+from not considering chronological order for train/test splits
+during evaluation. This can lead to over-optimistic results that
+fail to reﬂect real-world scenarios [1] [2] [3]. To properly
+address both concept drift and temporal bias in Android
+malware detection, we should have a reliable timestamp for
+each app [4]. However, ﬁnding a guaranteed ground-truth
+timestamp is challenging. This is due to the fact that such
+metadata (e.g., compilation time) can be easily modiﬁed, either
+intentionally by attackers or because of development mistakes
+or even may not be available for all apps (e.g., uploadDate
+from AndroZoo [5]).
+Furthermore, Android malware data has a few practical
+problems: the labels are not always reliable (heuristic Virus-
+Total [6] votes, malware shows different behavior at run-time
+vs. static analysis), many benign and malicious apps look
+similar in their API calls, permissions, or opcodes (so, it is
+The authors would like to thank Mastercard Canada for supporting this
+research.
+hard to pick clear “opposites” for contrastive learning), and
+the data shifts over time because malware evolves and uses
+obfuscation. As a result, fully supervised models can overﬁt
+to inaccurate labels, and contrastive methods assume clear
+semantic separation between classes, which breaks down when
+there is high feature overlap or when “hard negative samples”
+(similar-but-different samples) dominate.
+Considering the aforementioned issues, in this paper, we
+ﬁrst create a time-stamped dataset of Android goodware
+and malware as well as proposing a timestamp veriﬁcation
+method using the API call introduction time. Moreover, we
+adopt Bootstrap Your Own Latent (BYOL) [7] as a self-
+supervised pre-training framework to enhance feature repre-
+sentations before supervised classiﬁcation. BYOL leverages
+all data, regardless of label quality, to learn generalized and
+behaviorally meaningful representations. Unlike contrastive
+methods, BYOL does not require explicit negative pairs, avoid-
+ing instability caused by overlapping API calls or permission
+patterns between apps. Overall, BYOL learns obfuscation-
+resilient and behaviorally consistent embeddings from unla-
+beled features that improve robustness to unseen malware and
+mitigate concept drift.
+This paper makes the following key contributions:
+• Creating a time-stamped dataset: We have created a
+time-stamped dataset of Android benign applications and
+malware samples. This time-based dataset helps tackle the
+temporal bias in ML-based Android malware detectors.
+Additionally, since app time-related metadata may not
+reliably reﬂect its release date, we introduce a timestamp
+veriﬁcation method to improve temporal accuracy.
+• Using self-supervised learning: To the best of our
+knowledge, we are the ﬁrst to employ the BYOL self-
+supervised learning framework to enhance the ability of
+Android malware detectors to identify new or obfuscated
+malicious apps.
+• Open Science: We have made our dataset and code
+publicly available on GitHub repository1 to facilitate
+reproducibility and further research in Android malware
+detection.
+1https://github.com/maryam-tanha/Self-supervised-Learning-for-Android-
+Malware-Detection
+arXiv:2604.23025v1 [cs.CR] 24 Apr 2026
+
+The rest of the paper is organized as follows. Section II
+provides a review of existing studies on addressing temporal
+bias as well as the works on self-supervised learning for
+Android malware detection. Our methodology, including the
+creation of our time-stamped dataset, timestamp veriﬁcation
+process, and malware detection using BYOL and logistic
+regression (LR) is discussed in Section III. The performance
+evaluation of our proposed system and analysis of the results
+are included in Section IV. Finally, Section V concludes the
+paper.
+II. RELATED WORK
+We reviewed existing studies on Android malware detection
+with respect to the following aspects.
+1) Concept drift and temporal bias: TESSERACT [3]
+is an open-source evaluation framework designed to
+eliminate spatial and temporal experimental bias in ML-
+based Android malware detection. DroidEvolver [8]
+mitigates concept drift without full retraining or true
+labels by using lightweight online updates with evolving
+feature set and pseudo labels. It ﬂags drifting apps
+via a Juvenilization Indicator. APIGraph [9] captures
+semantic similarity between APIs and improves state-
+of-the-art classiﬁers so that they can still detect evolved
+malware. KronoDroid [2] is a hybrid-featured Android
+dataset (a combination of static and dynamic features)
+and provides timestamps for the apps to facilitate the
+detection and characterization of the evolution of An-
+droid malware (concept drift). Explainable AI (XAI)
+methods are employed in [10] to investigate the over-
+optimistic performance of Android malware classiﬁers.
+It shows that such high performance is due to the fact
+that ML models learn to distinguish apps based on tem-
+poral differences rather than actual malicious behaviors.
+Debiasing algorithms are proposed in [11] to be applied
+to data sets to ensure that they are representative of
+the population at the time of the experiment, mitigating
+both concept drift and temporal bias. A practical way
+to handle concept drift is classiﬁcation with rejection,
+i.e., quarantine samples likely to be misclassiﬁed for
+expert review. This idea is used in [12] by introduc-
+ing a framework called TRANSCENDENT (built on
+Transcend [13]). The authors show that their proposed
+framework outperforms state-of-the-art baselines and
+generalizes across malware classiﬁers. To properly ad-
+dress both temporal bias and concept drift, we should
+assign a timestamp to each app that reﬂects its release
+time to the market. In the existing studies, two main
+approaches are utilized as follows:
+• Internal Timestamps (extracted from the appli-
+cation package(APK) File): Internal timestamps
+are metadata extracted directly from the application
+package or the ﬁles it contains. These are often
+manipulable by attackers or developers [14] [2]. The
+ﬁrst timestamp in this category is compilation date
+(or DEX date) that approximates the assembly time
+by checking the last-modiﬁed time of the main DEX
+ﬁle. However, it is now considered unusable because
+recent apps frequently provide an invalid value, such
+as 1980 [4]. Other timestamps are Last Modiﬁcation
+and Earliest Modiﬁcation. The former is the latest
+modiﬁcation timestamp found in any of the inner
+ﬁles that compose the application while the latter is
+the earliest modiﬁcation timestamp found in any of
+the inner ﬁles of the application [2].
+• External Timestamps (extracted from VirusTo-
+tal/Online Sources): External timestamps are de-
+rived from sources outside the control of the appli-
+cation developers/attackers, making them generally
+more robust against tampering. The most common
+one is First Seen VT (VirusTotal Submission) [1].
+However, this timestamp does not necessarily re-
+ﬂect the app release time to the market. One of
+the recent studies [4] leveraged the Google Play
+Store uploadDate metadata from AndroZoo [5] as
+a precise indicator of an app’s release time. By
+relying on this timestamp, the authors created a
+temporally-consistent dataset. However, uploadDate
+is not available for all the apps from AndroZoo
+(only available for the apps from Google Play
+market).
+While we used the second approach to assign times-
+tamps to the apps in our dataset, we have proposed a
+veriﬁcation algorithm for the assigned timestamps.
+2) Self-supervised learning: The use of self-supervised
+learning has shown promises in improving the perfor-
+mance of Android malware detectors [15]–[17]. One of
+the key studies is [15] which addresses concept drift by
+combining active learning with a hierarchical contrastive
+encoder and a new pseudo-loss uncertainty score for
+sample selection. This approach maintains more stable
+accuracy over several years and reduces analyst labeling
+efforts. IFDroid [16], is a framework that enhances
+Android malware family classiﬁcation using contrastive
+learning and function call graph (FCG) analysis. The
+FCGs of the apps are converted into images. Then,
+contrasive learning is performed on these images. This
+framework achieves robust, obfuscation-resilient, and
+interpretable Android malware classiﬁcation. Comple-
+mentary to this line of work, our approach lever-
+ages BYOL, a non-contrastive self-supervised method
+that learns without requiring negative samples, to ex-
+tract obfuscation-resilient representations from unla-
+beled data. SHERLOCK [17] is a self-supervised deep
+learning framework for malware detection built upon
+the Vision Transformer architecture. It adopts an image-
+based binary representation of executables to automati-
+cally learn distinctive features that distinguish malicious
+programs from benign ones. The performance evaluation
+of SHERLOCK shows its effectiveness in binary and
+multi-class Android malware classiﬁcation.
+
+III. METHODOLOGY
+Our methodology follows a systematic workﬂow as shown
+in Figure 1.
+A. Time-Based Dataset Construction and Organization
+Our dataset construction addresses temporal inconsistency
+by ensuring chronological integrity between training and test
+data. We created a dataset of 40,000 Android applications
+spanning the year 2021 to 2024, maintaining a realistic 9:1
+ratio of benign to malware samples to reﬂect real-world
+distributions.
+1) Temporal Splitting Strategy: To mitigate temporal bias,
+our methodology implements a chronological splitting strat-
+egy. The splitting approach ensures that all test samples
+represent future time periods relative to training samples.
+The test set comprises 4,000 samples (400 malware and
+3,600 benign) exclusively from 2024, representing the most
+recent applications in our dataset. The training set contains
+36,000 (3,600 malware and 32,400 benign) samples from
+applications time-stamped between 2021 and 2024. This tem-
+poral arrangement guarantees that all training data precedes
+test data chronologically, eliminating the possibility of training
+on “future” information.
+2) Dataset Collection: We collected benign APKs exclu-
+sively from AndroZoo using vt detection = 0 and market from
+GooglePlay as ﬁlters. Timestamps were obtained from Andro-
+Zoo’s uploadDate metadata as a reliable timestamp for chrono-
+logical ordering [4]. We initially collected malware from
+AndroZoo using vt detection ≥15 as the primary identiﬁcation
+criterion [15]. For samples lacking uploadDate information,
+we utilized VirusTotal’s ﬁrst submission date metadata as
+the timestamp. Due to limited recent malware samples, we
+supplemented our dataset with malware samples from Mal-
+wareBazaar [18], utilizing VirusTotal’s ﬁrst submission date
+metadata as timestamps. To ensure consistency, all malware
+samples selected from MalwareBazaar were required to have
+a VirusTotal detection count of at least 15. Table I presents
+the detailed distribution of our time-stamped dataset.
+TABLE I
+DATASET DISTRIBUTION
+Year
+Benign
+Malware
+Malware
+Total
+(uploadDate)
+(uploadDate)
+(ﬁrst submission date)
+2024
+9,000
+17
+383
+9,400
+2023
+9,000
+97
+114
+9,211
+2022
+9,000
+248
+767
+10,015
+2021
+9,000
+426
+1,948
+11,374
+Total
+36,000
+788
+3,212
+40,000
+3) Timestamp Veriﬁcation: Although the uploadDate pro-
+vided by Google (and available via AndroZoo) serves as a
+good indicator of an app’s market release time, it is not
+always available. Similarly, the ﬁrst submission time reported
+by VirusTotal does not necessarily reﬂect the actual release
+date of an app. Therefore, we developed a timestamp ver-
+iﬁcation process to address this limitation. Building upon
+the methodology of [14], we developed a systematic API
+call-based veriﬁcation method applied to all 40,000 samples.
+We ﬁrst extracted API calls used by each app using static
+analysis (Androguard tool [19]). We then estimated each app’s
+market release time (a lower bound) by taking the most recent
+introduction timestamp among its API calls and compared it
+with uploadDate from AndroZoo and ﬁrst submission date
+from VirusTotal. The detailed procedure is described below.
+Our primary data source for API call timestamp analysis
+consists of API call ﬁrst introduction timestamps systemati-
+cally extracted from the AOSP Git Repository across Android
+versions 1-15 [20]. Then, for each API class–method signature,
+we located all repository versions in which that API appears.
+Subsequently, we selected the earliest timestamp as the API
+call’s ﬁrst introduction date and added it to a table recording
+the ﬁrst appearance of each API call. This table is used
+to identify the API call with the most recent introduction
+timestamp for an app as a lower bound for its market re-
+lease date. To do so, direct matching by exact class-method
+signatures may fail due to Java inheritance mechanisms,
+where applications can invoke APIs through parent classes
+or interfaces rather than the speciﬁc implementing class. To
+address this challenge, we developed a multi-level matching
+strategy supported by creating additional tables based on [20],
+[21]. The key tables are inheritance hierarchy mapping for
+class relationships, and API level to package-class-method
+mapping with corresponding Android version release dates
+for complementary API call timestamp matching. If direct
+API call matching fails, inheritance hierarchy-based matching
+is used. If the latter step fails as well, we adopt API level
+mapping and the corresponding Android version release dates.
+Using this process, we identiﬁed the introduction timestamp
+for all of the standard API calls extracted from all the apps in
+our dataset. It is important to note that our analysis focuses
+exclusively on standard APIs documented in the Android
+Developer reference. The excluded APIs represent only 0.4%
+of all API calls extracted from the apps in our dataset.
+We analyzed temporal consistency across 40,000 samples by
+comparing the app’s latest API call timestamp as the temporal
+lower bound with AndroZoo’s uploadDate or VirusTotal’s
+ﬁrst submission date when uploadDate is not available. Tem-
+poral discrepancy occurs when the app’s latest API times-
+tamp is later than the AndroZoo uploadDate or VirusTotal
+ﬁrst submission date (we compared the year only). Our anal-
+ysis revealed that the temporal discrepancy rate was at most
+0.02% across all years, which conﬁrmed both uploadDate
+and ﬁrst submission date as reliable timestamps to estimate
+the app market release date for time-based machine learning
+experiments.
+B. Feature Extraction
+Static analysis involves analyzing the source code of An-
+droid apps without running them. Static features are extracted
+from the APK ﬁles, specially the AndroidManifest.xml and
+Dalvik Executable (.dex) ﬁles. The most commonly used static
+features include permissions, API calls, and opcode sequences.
+1) Opcode n-gram features: Opcodes have proven partic-
+ularly valuable, as they capture low-level execution patterns
+
+APK
+Data Preprocessing
+Feature Extraction
+Permission
+API Call
+Opcode
+Permission 
+(161d Binary Vector)
+API Call 
+(95d Binary Vector)
+Opcode 3-gram 
+(2750d Binary Vector)
+BYOL Self-supervised Pre-training
+Feature Input
+(Opcode/
+API Call/
+Permission)
+Workflow
+API Call-Based Timestamp Verification
+Inconsistent
+Consistent
+BYOL Pre-training
+ LR Binary Classification
+Opcode
+(128d Embeddings)
+API Call
+(128d Embeddings)
+Permission
+(128d Embeddings)
+384d Embeddings
+5-Fold Time-based CV
+Augment
+Dropout 0.01
+View 1
+[0, 1, 0, 1, ..., 0]
+View 2
+[0, 1, 0, 0, ..., 0]
+Target
+Network
+Projector
+Predictor
+Encoder
+Encoder
+Loss
+Online
+Network
+Projector
+Later Than?
+API Calls Latest
+ Introduction Time
+uploadDate
+first_submission_date
+or
+Fig. 1. Overview of Our Methodology
+that can reveal malicious behaviors and remain less dependent
+on high-level obfuscation. Opcodes are often processed using
+n-gram models (e.g., FAMCF [22] and FAMD [23]). Further
+analysis in [24] showed that smaller N values (3 or 4) yield
+the best malware classiﬁcation performance. Moreover, some
+studies such as DeepDetect [25] and DeepReﬁner [26] use
+a simpliﬁed or reduced instruction set to enhance efﬁciency.
+We employed a 17-category symbolic mapping system that
+extends DeepReﬁner [26]’s 15-category classiﬁcation with 2
+additional categories (invoke-polymorphic/custom and const-
+method) based on the latest Android version opcodes [27].
+Android APKs were decompiled using Apktool [28] and
+baksmali [29] to extract Dalvik opcodes, which were mapped
+to the symbolic categories. We represented each APK as
+a concatenated app-level symbolic sequence and generated
+a binary one-hot vector of 3-gram features capturing the
+presence or absence of each pattern. After excluding zero-
+occurrence patterns from the training set, this resulted in
+2,750-dimensional binary feature vectors for each application.
+2) API calls and permissions: We extracted both API calls
+and permissions from Android apps using Androguard. Our
+initial feature set included the same permissions and API calls
+used in [4]. We augmented the feature set with 103 warning-
+level permissions. These permissions were extracted from
+VirusTotal reports for our malware samples, retaining only
+standard Android framework permissions and excluding app-
+deﬁned ones. API calls and permissions were encoded as 95-
+dimensional and 161-dimensional binary vectors, respectively,
+indicating the presence or absence of each feature.
+C. Self Supervised Learning and Binary Classiﬁcation
+AS we mentioned in Section II, self-supervised learning
+methods have shown promises for Android malware detection.
+1) Overview of the BYOL architecture and pre-training
+mechanism: We employed BYOL [7] as our self-supervised
+representation learning framework for Android app features.
+BYOL consists of two neural networks: an online network
+comprising encoder, projector, and predictor multilayer per-
+ceptrons, and a target network containing only encoder and
+projector components. The encoder uses a three-layer MLP
+architecture with batch normalization and ReLU activations
+between layers, while both the projector and predictor employ
+two-layer MLPs with batch normalization on the hidden layer.
+The target network parameters are updated via exponential
+moving average of the online network parameters, providing
+a slowly moving teacher signal that enables learning with-
+out requiring negative samples or contrastive pairs. During
+training, two augmented views are created from each input
+sample, with the online network trained to predict the target
+network’s projections using cosine similarity loss between
+normalized prediction and target vectors. For our binary
+Android features (permissions/API calls/opcode 3-gram se-
+quences), we created augmented views using feature dropout,
+randomly masking present features while preserving semantic
+validity by avoiding the introduction of non-existing fea-
+tures. Given the dimensional imbalance between feature types
+(2,750-dimensional opcode 3-gram vectors, 95-dimensional
+API vectors, 161-dimensional permission vectors), we trained
+separate BYOL models for each feature type. This prevents
+high-dimensional features from dominating the representa-
+tion space. Each modality-speciﬁc encoder generates 128-
+dimensional embeddings, which are concatenated into a 384-
+dimensional representation, ensuring equal contribution from
+each feature type.
+2) Design rationale for adopting BYOL: Although our
+dataset includes a substantial number of labeled benign and
+malicious Android apps, we adopt BYOL as a self-supervised
+pre-training framework to enhance the quality of feature
+representations prior to supervised classiﬁcation. Our design
+choice is motivated by two key considerations. First, in An-
+
+droid malware analysis, labels can be noisy or inconsistent
+due to changing app behavior and reliance on heuristic or
+antivirus consensus. BYOL leverages the entire dataset, re-
+gardless of label accuracy, to learn generalized and behav-
+iorally meaningful representations that capture latent semantic
+relationships among applications. Second, unlike contrastive
+methods, BYOL removes the need for explicit negative pairs.
+In malware datasets, negative samples are hard to deﬁne
+because different applications often share similar API calls
+or permissions. Without contrastive loss, BYOL avoids this
+issue and produces more stable embeddings. In summary,
+BYOL learns obfuscation-resilient and behaviorally consistent
+embeddings from unlabeled permission, API calls, and opcode
+features. This approach combines the generalization power of
+self-supervision with the precision of supervised learning, im-
+proving robustness to unseen malware and mitigating concept
+drift from evolving Android behaviors.
+3) Binary Classiﬁcation with Time-based Cross-Validation:
+We selected LR model as the binary classiﬁer for malware
+detection due to its ability to efﬁciently process continuous,
+dense embeddings produced by BYOL. It offers linear inter-
+pretability through its coefﬁcients, and leverages L2 regular-
+ization to mitigate overﬁtting. We applied inverse-frequency
+class weighting to address the class imbalance in our dataset.
+Moreover, we applied a tailored ﬁve-fold time-based cross-
+validation on the training set for hyperparameter tuning.
+IV. PERFORMANCE EVALUATION AND ANALYSIS OF
+RESULTS
+We conducted our experiments on a MacBook Air with
+Apple M2 processor and 16 GB memory. To evaluate the
+effectiveness of our proposed system, the LR classiﬁer was
+trained on the BYOL embeddings generated for different
+feature sets using ﬁve-fold cross-validation procedure with hy-
+perparameter tuning. For the full set of BYOL hyperparameter
+settings, we refer the interested reader to our public GitHub
+repository. Table II presents the test-set results for the LR
+classiﬁer using different feature sets, alongside the prediction
+performance of a Random Forest (RF) classiﬁer trained on the
+full feature set. The linear nature of LR is well-suited to the
+structured representation space created by BYOL pre-training.
+As shown in the table, when we use all of the extracted static
+features, i.e., permissions, API calls and opcode sequences,
+the best performance for LR is achieved. When trained on
+all features, the RF classiﬁer attains higher precision (97%
+vs. 89%), indicating a more conservative detector with fewer
+false positives but more missed malware samples. However,
+in malware detection, we prioritize higher recall to minimize
+false negatives.
+In the following, we focus on the analysis of the results
+of the LR classiﬁer on the full feature set. To assess the
+limitations of our approach, we examined false-negative (FN)
+malware samples among the 400 malicious apps in our test
+set. Using VirusTotal behavior reports, we extracted the cor-
+responding MITRE ATT&CK signatures for each sample.
+MITRE ATT&CK is an openly accessible framework that
+TABLE II
+CLASSIFICATION PERFORMANCE
+Feature Set
+F1 Score
+Recall
+Precision
+Accuracy
+API
+57%
+58%
+57%
+91%
+OPCODE
+65%
+64%
+66%
+93%
+PERM
+81%
+84%
+78%
+96%
+API+OPCODE
+70%
+68%
+72%
+94%
+API+PERM
+82%
+82%
+83%
+96%
+OPCODE+PERM
+87%
+85%
+89%
+97%
+ALL
+89%
+89%
+89%
+98%
+ALL (RF)
+83%
+73%
+97%
+97%
+organizes adversary tactics and techniques derived from real-
+world threat activity. Tactics are the reasons why an attacker
+performs an action whereas techniques describe how adver-
+saries achieve their tactical goals by carrying out speciﬁc
+actions. MITRE provides a dedicated matrix for Android
+platform that includes the list of tactics and techniques [30].
+Our analysis revealed notable behavioral differences between
+FN samples and true positives (TPs):
+1) Obfuscation Detection: Using VirusTotal’s obfuscation
+tag, we found that approximately 71% of all malware were
+labeled as obfuscated; among these, 89.7% were correctly
+detected (TPs), while only 10.3% were missed (FNs). We
+observe a similar trend using MITRE ATT&CK mappings
+(technique T1406: Obfuscated Files or Information) extracted
+from VirusTotal reports, where 68% of all malware samples
+exhibited obfuscation-related defense-evasion behavior. Again,
+about 90% of these samples were correctly identiﬁed as TPs.
+In general, most of the obfuscated malware was successfully
+detected by the LR classiﬁer, with only a small fraction
+evading detection. This demonstrates the effectiveness of our
+BYOL-based pre-training combined with LR classiﬁcation in
+handling obfuscated malware.
+2) Attack Patterns: Table III shows tactic prevalence in FNs
+and TPs for our Android detector. Collection and Discovery
+exhibit uniformly high rates in both FNs and TPs (around
+80%), indicating these behaviors are widespread and thus
+weakly discriminative. In contrast, Command and Control
+(80.2% TP vs. 60.9% FN) and Credential Access (40.1% TP
+vs. 8.7% FN) are more prevalent among TPs, suggesting our
+proposed model is particularly effective in detecting commu-
+nication and credential theft signals.
+In terms of speciﬁc techniques, we focus on the most signif-
+icant patterns due to space limitations. Within command and
+control, TP samples demonstrated higher usage of application
+layer protocols (80% TP vs. 59% FN) and encrypted channels
+(80% TP vs. 59% FN). For collection, TP samples showed
+more intrusive behaviors including audio recording (45% TP
+vs. 35% FN), clipboard monitoring (20% TP vs. 4% FN),
+and accessing sensitive device logs (25% TP vs. 0% FN). FN
+samples exhibited notable defense evasion through device data
+deletion (18% TP vs. 28% FN), suggesting active evidence
+removal. Within discovery, patterns were mixed: FN samples
+favored basic system information gathering (68% TP vs.
+80% FN), while TP samples conducted more comprehensive
+software discovery (54% TP vs. 41% FN).
+
+TABLE III
+MAIN TACTICS USED BY ATTACKERS
+Tactic
+FN (%)
+TP (%)
+Collection
+82.6
+79.9
+Command and Control
+60.9
+80.2
+Credential Access
+8.7
+40.1
+Defense Evasion
+76.1
+70.3
+Discovery
+82.6
+80.8
+Impact
+28.3
+20.9
+Network Effects
+21.7
+16.9
+Overall, these results motivate augmenting evasion-aware
+features and integrating dynamic/network telemetry, while
+treating Collection/Discovery as baseline behaviors that re-
+quire stronger contextual cues to improve separability.
+V. CONCLUSION AND FUTURE WORK
+In this paper, we addressed temporal bias in ML-based
+Android malware detection by constructing a time-stamped
+dataset of benign and malicious apps. We also proposed an
+API call–based timestamp veriﬁcation method to validate app
+release time estimation. Using this dataset, we applied time-
+aware cross-validation with a logistic regression classiﬁer and
+incorporated BYOL self-supervised learning to enhance static
+feature representations. Our FN/TP analysis, based on MITRE
+ATT&CK behavior patterns from VirusTotal, highlighted the
+effectiveness of our system in detecting obfuscated malware.
+Future work will focus on reﬁning feature representations
+(e.g., adding evasion-aware features) as well as changing the
+representation of the apps (e.g., converting APKs to images),
+to further analyze and strengthen real-world malware detection
+performance. Moreover, we plan to conduct a deeper compari-
+son with prior SSL and representation-learning approaches for
+Android malware detection, and to evaluate a broader range
+of classiﬁers for more comprehensive benchmarking.

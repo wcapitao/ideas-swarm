@@ -1,0 +1,1196 @@
+Cobra: All-in-one for full-fledged defense —
+a hybrid nested KEM
+Basker Palaniswamy1∗,
+Paolo Palmieri1 ,
+Ashok Kumar Das2,3
+& Chun-I Fan4
+1Insight Research Ireland Centre for Data Analytics,
+Department of Computer Science and Information Technology,
+University College Cork (UCC), Cork City, Ireland, European Union.
+2Center for Security, Theory and Algorithmic Research,
+International Institute of Information Technology, Hyderabad, 500 032, India.
+3Department of Computer Science and Engineering, College of Informatics,
+Korea University, 145 Anam-ro Seongbuk-gu, Seoul, 02841, South Korea.
+4 Department of Computer Science and Engineering,
+National Sun Yat-sen University (NSYSU), Kaohsiung 80424, Taiwan.
+{1* - basker170889@gmail.com, 1 - paolo.palmieri@ucc.ie,}
+{2,3 - iitkgp.akdas@gmail.com, ashok.das@iiit.ac.in}
+{4 - cifan@mail.cse.nsysu.edu.tw}
+*Corresponding Author
+April 25, 2026
+Abstract
+The transition to post-quantum cryptography (PQC) is constrained by the limited crypt-
+analytic history of individual PQC algorithms. Hybrid constructions, which combine several
+primitives so that breaking the hybrid requires breaking each component, address this con-
+cern directly. This paper presents Cobra, a hybrid Key Encapsulation Mechanism (KEM)
+that integrates FrodoKEM (unstructured LWE), ML-KEM (FIPS 203 module-LWE), HQC
+(code-based), and a Dummy KEM for agility, and analyses all 15 mathematically distinct
+composition methods spanning parallel, cascading, multi-stage, and nested topologies.
+We prove that every Cobra method achieves IND-CCA2 security within the Market-
+Theoretic Security Framework (MTSF), which subsumes and strictly extends both Universal
+Composability and the Random Oracle Model. An explicit 10-round bidding-round chain per
+method yields post-quantum ask prices of approximately 2−127 at NIST Level 1 together
+with composability under arbitrary TLS 1.3 embeddings, per-session CNF auditing, and
+unbounded-session security via pinging. Although all fifteen methods are security-equivalent,
+encapsulation latency varies by 3.2× (1.2–3.8 ms) and Theorem 7.1 reduces deployment
+selection to a Pareto-optimal set of five archetypes. Three real-world TLS 1.3 case studies
+(financial, healthcare, government) confirm the prediction, with infrastructure overhead
+clustering at 15–22% across sectors. We believe TLS 1.4 could benefit from this work.
+Keywords: Post-quantum cryptography, Hybrid KEM, TLS 1.4, Market-Theoretic Se-
+curity Framework (MTSF), FrodoKEM, ML-KEM, HQC, Side-channel resilience, NIST PQC
+benchmarking
+1
+
+Novelty of This Work — At a Glance
+Existing
+hybrid
+KEM
+proposals
+in
+the
+TLS
+1.3
+ecosystem
+(X25519Kyber768,
+X25519MLKEM768, PQ3) stop at two components composed in a single fixed topology
+(concatenate-and-KDF) and are proven secure in one framework (UC or ROM, never both).
+Cobra advances the state of the art in five concrete directions that no prior work combines:
+1. Four-primitive hybridisation across all feasible topologies. Cobra is the first con-
+struction to combine four algorithmically diverse post-quantum KEMs (unstructured-
+LWE FrodoKEM, module-LWE ML-KEM, code-based HQC, and a Dummy slot for
+agility) and to enumerate and analyse all 15 mathematically distinct compositions —
+parallel, cascading, two-stage, three-one, and nested — rather than fixing a single topol-
+ogy a priori.
+2. A unified Market-Theoretic security proof. Every method is proven IND-CCA2
+secure within a single framework (MTSF) that strictly subsumes both Universal Com-
+posability and the Random Oracle Model, replacing what would otherwise require two
+separate proof effort paths and yielding explicit post-quantum ask prices of ≈2−127 at
+NIST Level 1.
+3. Pareto-optimal method-selection theorem.
+We prove that for any reasonable
+weighting of latency, CPU cost, defense-in-depth, and agility, the deployment-optimal
+method lies in a Pareto-optimal set of just five archetypes — reducing an apparent
+15-way design dilemma to a tractable engineering choice.
+4. First rigorous side-channel resilience argument for a hybrid KEM (§9). We
+introduce the cross-family attack surface metric and prove that breaking Cobra via
+side-channels requires mounting simultaneous and compatible leakage attacks against
+algorithmically disjoint primitives — a threat model strictly harder than any known
+single-KEM side-channel pipeline (KyberSlash, HQC-timing, FrodoKEM cache-stride).
+5. Cross-round NIST benchmarking (§8). We benchmark Cobra’s component cost
+against every relevant primitive from NIST Rounds 1–4 (NTRU-Prime, NewHope, SIKE,
+LAC, Kyber, Saber, Classic McEliece, BIKE, HQC) plus the signature on-ramp candi-
+dates, giving the first head-to-head positioning of a hybrid KEM against a decade of
+NIST cryptanalytic evolution.
+2
+
+Contents
+1
+Introduction
+6
+1.1
+Motivation and Background . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+6
+1.2
+NIST Guidance and Hybrid Cryptography for TLS . . . . . . . . . . . . . . . . .
+6
+1.2.1
+NIST Post-Quantum Standardization and Hybrid Recommendations . . .
+6
+1.2.2
+TLS 1.3: The Critical Role of Key Encapsulation . . . . . . . . . . . . . .
+6
+1.2.3
+Current Hybrid TLS Initiatives and Standardization Gaps . . . . . . . . .
+8
+1.2.4
+Regulatory and Compliance Landscape
+. . . . . . . . . . . . . . . . . . .
+8
+1.2.5
+Motivation for Systematic Composition Analysis . . . . . . . . . . . . . .
+8
+1.3
+The Hybrid Approach . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+9
+1.4
+Composition Flexibility
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+9
+1.5
+Security Framework
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+10
+1.6
+Contributions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+10
+1.7
+Document Organization . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+11
+2
+Related Work and Literature Review
+11
+2.1
+Post-Quantum Cryptography Foundations . . . . . . . . . . . . . . . . . . . . . .
+12
+2.2
+NIST Post-Quantum Standardization . . . . . . . . . . . . . . . . . . . . . . . . .
+12
+2.2.1
+Standardized Algorithms
+. . . . . . . . . . . . . . . . . . . . . . . . . . .
+12
+2.2.2
+Round 4 Candidates and Alternative Algorithms . . . . . . . . . . . . . .
+12
+2.3
+Hybrid Cryptography and Composition Methods . . . . . . . . . . . . . . . . . .
+12
+2.3.1
+Comparison with Cobra . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+13
+2.4
+Security Frameworks and Proof Techniques
+. . . . . . . . . . . . . . . . . . . . .
+13
+2.4.1
+Universal Composability Framework . . . . . . . . . . . . . . . . . . . . .
+13
+2.4.2
+Random Oracle Model . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+13
+2.4.3
+IND-CCA2 Security . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+13
+2.5
+TLS Integration and Protocol Deployment . . . . . . . . . . . . . . . . . . . . . .
+14
+2.5.1
+TLS 1.3 Architecture and Hybrid Proposals . . . . . . . . . . . . . . . . .
+14
+2.5.2
+Deployment Challenges
+. . . . . . . . . . . . . . . . . . . . . . . . . . . .
+14
+2.6
+Component KEM Analysis
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+14
+2.7
+Cryptographic Combiners and Robust Security . . . . . . . . . . . . . . . . . . .
+14
+2.8
+Gap Analysis and Cobra Contributions . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3
+Preliminaries and Notation
+15
+3.1
+Key Encapsulation Mechanism
+. . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3.2
+Security Model . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3.3
+Component KEMs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3.4
+Dummy KEM Specification . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3.5
+Key Derivation Function . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+3.6
+Notation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+16
+4
+Complete Specifications of All 15 Methods
+16
+4.1
+Universal Key Generation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+16
+4.2
+Algorithmic Conventions and Universal Design Principles
+. . . . . . . . . . . . .
+17
+4.3
+Category 1: Fully Ordered Methods
+. . . . . . . . . . . . . . . . . . . . . . . . .
+19
+4.3.1
+Method 1: Full Cascade (F →M →H →D) . . . . . . . . . . . . . . . .
+19
+4.3.2
+Method 2: Full Parallel (F∥M∥H∥D)
+. . . . . . . . . . . . . . . . . . . .
+20
+4.4
+Category 2: Two-Stage Methods
+. . . . . . . . . . . . . . . . . . . . . . . . . . .
+22
+4.4.1
+Method 3: Two-Stage Forward ((F∥M) →(H∥D)) . . . . . . . . . . . . .
+22
+4.4.2
+Method 4: Two-Stage Reverse ((H∥D) →(F∥M)) . . . . . . . . . . . . .
+23
+4.4.3
+Method 5: Independent Pairs ((F∥M)∥(H∥D)) . . . . . . . . . . . . . . .
+24
+3
+
+4.4.4
+Method 6: Sequential Pairs ((F →M) →(H →D)) . . . . . . . . . . . .
+24
+4.4.5
+Method 7: Two-Stage Cross ((F∥H) →(M∥D))
+. . . . . . . . . . . . . .
+26
+4.4.6
+Method 8: Alternate Cross ((F∥D) →(M∥H)) . . . . . . . . . . . . . . .
+26
+4.5
+Category 3: Three-One Methods . . . . . . . . . . . . . . . . . . . . . . . . . . .
+27
+4.5.1
+Method 9: Three Parallel First (F →(M∥H∥D)) . . . . . . . . . . . . . .
+27
+4.5.2
+Method 10: Three Parallel Last ((F∥M∥H) →D)
+. . . . . . . . . . . . .
+28
+4.5.3
+Method 11: Three Sequential Middle (F →(M →H →D)) . . . . . . . .
+29
+4.5.4
+Method 12: Three Parallel Middle ((F∥M∥D) →H) . . . . . . . . . . . .
+31
+4.6
+Category 4: Complex Nested Methods . . . . . . . . . . . . . . . . . . . . . . . .
+32
+4.6.1
+Method 13: Nested Left (((F∥M) →H)∥D) . . . . . . . . . . . . . . . . .
+32
+4.6.2
+Method 14: Nested Right (F∥(M →(H∥D))) . . . . . . . . . . . . . . . .
+33
+4.6.3
+Method 15: Nested Center ((F →(M∥H) →D)) . . . . . . . . . . . . . .
+35
+5
+Market-Theoretic Security Framework for Hybrid KEMs
+36
+5.1
+MTSF Market Model for Hybrid KEMs
+. . . . . . . . . . . . . . . . . . . . . . .
+36
+5.2
+UC as Market Regulation; GUC as Shared Infrastructure
+. . . . . . . . . . . . .
+37
+5.3
+Random Oracle Queries as Hash Bids
+. . . . . . . . . . . . . . . . . . . . . . . .
+39
+5.4
+CNF Session Verification for Hybrid KEMs
+. . . . . . . . . . . . . . . . . . . . .
+39
+5.5
+Unbounded Session Pinging . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+41
+6
+Bidding-Round Security Proofs for All 15 Methods
+41
+6.1
+Universal Bidding-Round Theorem . . . . . . . . . . . . . . . . . . . . . . . . . .
+42
+6.2
+Universal Simulator as Market Arbitrageur
+. . . . . . . . . . . . . . . . . . . . .
+42
+6.3
+Ten-Round Bidding-Round Proof for Method 1 (Full Cascade)
+. . . . . . . . . .
+43
+6.4
+Condensed Bidding-Round Chains for Methods 2–15 . . . . . . . . . . . . . . . .
+44
+6.4.1
+Method 2: Full Parallel
+. . . . . . . . . . . . . . . . . . . . . . . . . . . .
+45
+6.4.2
+Methods 3–8: Two-Stage Compositions
+. . . . . . . . . . . . . . . . . . .
+45
+6.4.3
+Methods 9–12: Three-One Asymmetric Compositions
+. . . . . . . . . . .
+46
+6.4.4
+Methods 13–15: Nested Compositions . . . . . . . . . . . . . . . . . . . .
+47
+6.5
+Concrete Ask Prices
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+48
+7
+Performance Comparison and Analysis
+48
+7.1
+Theoretical Performance Framework . . . . . . . . . . . . . . . . . . . . . . . . .
+48
+7.2
+Theoretical Performance Metrics . . . . . . . . . . . . . . . . . . . . . . . . . . .
+50
+7.3
+Actual Performance Measurements . . . . . . . . . . . . . . . . . . . . . . . . . .
+50
+7.4
+Performance Breakdown by Component . . . . . . . . . . . . . . . . . . . . . . .
+51
+7.5
+Security vs Performance Tradeoff . . . . . . . . . . . . . . . . . . . . . . . . . . .
+52
+7.6
+Parallel Execution Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+53
+7.7
+Recommendations by Use Case . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+54
+7.8
+Latency Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+56
+8
+Rigorous Cross-Round NIST Benchmarking
+57
+8.1
+Benchmarking Methodology . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+58
+8.2
+Round 1 Benchmark (2017–2019): Early-Submission Primitives . . . . . . . . . .
+58
+8.3
+Round 2 Benchmark (2019–2020): Consolidation . . . . . . . . . . . . . . . . . .
+59
+8.4
+Round 3 Benchmark (2020–2022): The Finalist Frontier . . . . . . . . . . . . . .
+59
+8.5
+Round 4 Benchmark (2022–2025): The Alternate Survivor (HQC) and Signature
+On-Ramp . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+60
+8.6
+Head-to-Head Comparison: Cobra vs. Single-Primitive Baselines
+. . . . . . . . .
+60
+4
+
+9
+Resilience to Side-Channel Analysis
+61
+9.1
+Side-Channel Attack Taxonomy . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+61
+9.2
+Published Side-Channel Attacks on Individual KEMs . . . . . . . . . . . . . . . .
+62
+9.3
+Why Cobra Raises the Side-Channel Bar: The Cross-Family Compatibility Ar-
+gument
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+63
+9.4
+Constant-Time Implementation Requirements for Cobra . . . . . . . . . . . . . .
+65
+9.5
+Side-Channel Resilience Comparison Summary
+. . . . . . . . . . . . . . . . . . .
+65
+10 Real-World TLS 1.3 Deployment Case Studies
+66
+10.1 Case 1: Financial Services — TLS 1.3 High-Frequency Trading (LAN, latency-
+critical)
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+66
+10.2 Case 2: Healthcare Data Exchange — TLS 1.3 (WAN, HIPAA compliance-driven) 66
+10.3 Case 3: Government Secure Communications — TLS 1.3 (classified, defense-in-
+depth) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+67
+10.4 Consolidated Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+67
+11 Conclusion
+68
+A Detailed Security Parameter Tables
+69
+B Full Proof: Cross-Family Side-Channel Bound (Theorem 9.1)
+70
+5
+
+1
+Introduction
+The impending arrival of cryptanalytically relevant quantum computers threatens the public-key
+cryptographic foundations of the contemporary Internet. Efforts to standardise post-quantum
+cryptography have, since 2016, converged on a small set of lattice-based and code-based key-
+encapsulation mechanisms, culminating in the NIST FIPS 203–205 publications of 2024. Yet
+individual post-quantum algorithms have short cryptanalytic histories relative to the classical
+systems they replace; standards bodies and operators have therefore gravitated toward hybrid
+constructions that combine multiple algorithms so that the failure of any one component does
+not compromise the whole. This paper presents Cobra, a systematic framework for such hybridi-
+sation that specifies, proves secure, and evaluates all fifteen mathematically distinct composition
+methods for combining four post-quantum KEMs, and deploys them as the key-exchange prim-
+itive of TLS 1.3. The remainder motivates the problem (§1.1), reviews the NIST and TLS 1.3
+landscape driving design choices (§1.2), describes the hybrid approach (§1.3–§1.4), summarises
+the Market-Theoretic Security Framework (§1.5), and enumerates contributions (§1.6).
+1.1
+Motivation and Background
+Shor’s algorithm efficiently breaks RSA, Diffie–Hellman, and elliptic-curve cryptography — the
+asymmetric primitives securing today’s Internet. In response, the community has developed
+post-quantum cryptography (PQC) based on problems believed hard for quantum computers.
+The history of cryptography, however, teaches caution: many schemes once believed secure
+were later broken catastrophically. The transition to PQC bets security on new mathemat-
+ical problems with less extensive cryptanalysis than classical systems. PQC candidates rely
+on distinct hardness assumptions — lattice-based (LWE and structured variants), code-based
+(decoding random linear codes), multivariate (systems of polynomial equations), hash-based
+(one-way functions), and isogeny-based (isogenies between supersingular elliptic curves).
+1.2
+NIST Guidance and Hybrid Cryptography for TLS
+1.2.1
+NIST Post-Quantum Standardization and Hybrid Recommendations
+NIST concluded its PQC Standardization process with three FIPS publications in Au-
+gust 2024: FIPS 203 (ML-KEM, formerly CRYSTALS-Kyber), FIPS 204 (ML-DSA, formerly
+CRYSTALS-Dilithium), and FIPS 205 (SLH-DSA, formerly SPHINCS+). Critically, NIST ex-
+plicitly recommends hybrid approaches during the transition. SP 800-208 and accompanying
+guidance state that hybrid schemes combining classical and post-quantum algorithms may be
+appropriate during the transition period to provide defence-in-depth, with security maintained
+if either component remains unbroken. NIST IR 8413 further acknowledges that uncertainty
+about long-term PQC security requires defence-in-depth, that different PQC families (lattice,
+code, hash) provide algorithmic diversity, and that real-world deployments should consider hy-
+brid mechanisms during transition with careful performance analysis.
+1.2.2
+TLS 1.3: The Critical Role of Key Encapsulation
+Transport Layer Security (TLS) 1.3 [102] secures the vast majority of Internet communica-
+tions (HTTPS, SMTP/IMAP, VPN, IoT). Unlike TLS 1.2, TLS 1.3 exclusively uses ephemeral
+Diffie–Hellman for key establishment, which extends naturally to KEMs. The handshake pro-
+ceeds through ClientHello (client advertises key-exchange groups including PQC), ServerHello
++ KeyShare (server selects a group and performs key exchange), key derivation (both parties de-
+rive handshake traffic keys), and Finished (application data follows under encryption). Figure 1
+illustrates hybrid KEM integration into the TLS 1.3 handshake.
+6
+
+Client
+Server
+ClientHello
+supported kem list:
+ML-KEM-768,
+FrodoKEM-976,
+HQC-192
+Advertise supported KEMs
+Client side
+ServerHello
+selects hybrid KEM,
+sends pkhybrid
+Select hybrid KEM, send pkhybrid
+Server side
+Encapsulation (Cobra)
+compute cthybrid from
+component KEMs
+Send cthybrid
+client view
+Decapsulation
+recover shared
+secret ss
+server view
+Hybrid shared secret ss
+(e.g., 256-bit key)
+TLS 1.3 key schedule
+HKDF-Extract/Expand(ss, ctx)
+Key schedule and traffic keys
+Encrypted application data
+(protected under hybrid-derived keys)
+Zoom: Cobra encapsulation
+FrodoKEM
+ML-KEM
+HQC
+Dummy KEM
+ssF
+ssM
+ssH
+ssD
+KDF(ssF ∥ssM∥ssH∥ssD)
+ss, cthybrid = (ctF , ctM, ctH, ctD)
+internal structure
+Figure 1: TLS 1.3 with hybrid KEM
+7
+
+Critical Security Property: The shared secret established during the handshake protects
+all subsequent application data. A compromise of the KEM directly compromises the entire TLS
+session. This makes the choice of KEM composition method a first-order security consideration.
+1.2.3
+Current Hybrid TLS Initiatives and Standardization Gaps
+Several parallel efforts are developing hybrid key exchange for TLS, but significant gaps re-
+main.
+At the IETF, draft-ietf-tls-hybrid-design [111] defines a framework for hy-
+brid TLS 1.3 key exchange with codepoint allocation, but focuses on pairwise combinations
+(e.g., X25519 + ML-KEM-768); draft-connolly-tls-mlkem-key-agreement [72] specifies
+ML-KEM with classical ECDH; and draft-stebila-tls-hybrid-design [110] introduced cas-
+cade and parallel composition for two algorithms.
+In industry deployments, Cloudflare
+(2019–2024) ran large-scale X25519+Kyber experiments measuring 1–2 ms additional hand-
+shake latency [118]; Google Chrome deployed hybrid X25519+Kyber768 to a percentage of
+users, confirming feasibility with certificate size as the main concern [12]; and the Open Quan-
+tum Safe project provides liboqs with prototype TLS implementations [92]. Despite these efforts,
+fundamental questions remain for practical TLS deployment: which PQC algorithms to com-
+bine (NIST standards only, Round 4 alternates, or cross-family mixes), how to compose them
+(cascade, parallel, or nested structures, and whether composition affects security), what for-
+mal guarantees hold (robustness if one component breaks, composition-specific vulnerabilities,
+concrete bounds), and how to optimise performance (handshake latency, bandwidth overhead,
+parallelism).
+1.2.4
+Regulatory and Compliance Landscape
+Government and industry frameworks increasingly mandate cryptographic agility and defence-
+in-depth. In the U.S., the CISA Post-Quantum Cryptography Initiative recommends hybrid
+cryptography for critical infrastructure during transition [36]; NSA’s CNSA 2.0 requires PQC
+migration for National Security Systems by 2030–2035 with explicit algorithm-diversity rec-
+ommendations [88]; and OMB Memorandum M-23-02 requires federal agencies to inventory
+cryptographic systems and develop PQC migration plans preferring hybrid approaches during
+transition [91]. Internationally, Germany’s BSI TR-02102-1 explicitly requires hybrid schemes
+combining classical and PQC algorithms for government communications [26]; ETSI TS 103 744
+provides technical specifications for hybrid signature schemes with recommendations extending
+to KEMs [44]; and ISO/IEC JTC 1/SC 27 is developing standards for PQC migration including
+hybrid constructions [61].
+1.2.5
+Motivation for Systematic Composition Analysis
+Current research exhibits a critical gap: no systematic analysis of multi-algorithm hybrid KEM
+compositions. Most work focuses on pairwise hybrids (classical + one PQC algorithm) with at
+most two composition methods (cascade and parallel). Deployments therefore lack guidance
+on composing three or more algorithms from different PQC families, comparing beyond simple
+cascade-vs.-parallel, reasoning about security implications of complex nested structures, and
+optimising performance for specific deployment scenarios.
+The Cobra framework closes these gaps by providing:
+(i) complete enumeration of all
+15 mathematically distinct methods for composing 4 KEMs (FrodoKEM, ML-KEM, HQC,
+Dummy) across fully-ordered, two-stage, three-one asymmetric, and nested families; (ii) rigor-
+ous security proofs via a unified Market-Theoretic Security Framework — bidding-round chains
+B0–B10 with explicit price adjustments ∆Pricek, a Market Merger Theorem yielding UC-style
+composition guarantees (TLS 1.3 and beyond), concrete ask prices Ask(gIND-CCA2, λ) ≈2−127,
+CNF session-verification worksheets, unbounded-session security via session pinging, and a
+8
+
+robust-combiner proof that security holds if any single component remains secure; (iii) com-
+prehensive performance analysis with measured encapsulation latency from 1.2 ms (parallel) to
+3.8 ms (cascade), parallelism opportunities, uniform bandwidth overhead, and per-component
+cost breakdown; and (iv) practical implementation guidance including 30 detailed algorithms,
+constant-time implementation requirements, side-channel resistance guidelines, and a method-
+selection decision framework.
+Specific Relevance to TLS Deployment:
+Our analysis provides actionable guidance for TLS implementations:
+• High-Performance Web Servers: Method 2 (Full Parallel, 1.2ms) minimizes hand-
+shake latency, critical for user-facing web services where every millisecond affects user
+experience and SEO rankings.
+• High-Security Government Systems: Method 1 (Full Cascade, 3.8ms) provides max-
+imum defense-in-depth where security dominates performance concerns.
+• Compliance-Focused Deployments: Method 3 (Two-Stage Forward, 1.9ms) enables
+clear separation between NIST-standardized algorithms (ML-KEM) and alternative can-
+didates (HQC), facilitating audit and compliance verification.
+• Balanced Enterprise Systems: Method 10 (Three Parallel Last, 1.6ms) offers good
+performance while maintaining strong security through asymmetric composition.
+• Research and Experimental Networks: Methods 13-15 (Nested, 1.8-1.9ms) provide
+complex composition patterns for studying advanced cryptographic properties.
+Furthermore, our universal security theorem confirms that all 15 methods achieve equivalent
+asymptotic security - the minimum security of any component KEM. This allows deployments
+to optimize for performance, implementation complexity, or regulatory requirements without
+sacrificing security guarantees.
+1.3
+The Hybrid Approach
+A prudent strategy is to combine multiple PQC schemes with different underlying assump-
+tions. This hybrid approach provides defense-in-depth: the security of the combined system is
+maintained as long as at least one component remains secure.
+The Cobra hybrid KEM implements this philosophy by combining:
+1. FrodoKEM (KEMF ): Based on plain (unstructured) Learning With Errors
+2. ML-KEM (KEMM): Based on Module LWE (NIST FIPS 203 standard)
+3. HQC (KEMH): Based on Hamming Quasi-Cyclic codes (NIST Round 4)
+4. Dummy KEM (KEMD): A placeholder for future algorithms or additional security
+margins
+1.4
+Composition Flexibility
+With 4 component KEMs, there are multiple ways to compose them. This document system-
+atically explores all 15 distinct composition methods, categorized as:
+1. Fully Ordered (2 methods): All serial or all parallel
+2. Two-Stage (6 methods): Two groups of 2 KEMs each
+3. Three-One (4 methods): One group of 3, one singleton
+4. Complex Nested (3 methods): Complex nested structures
+9
+
+1.5
+Security Framework
+We analyse the security of all 15 Cobra methods within a single unified framework: the Market-
+Theoretic Security Framework (MTSF) [93]. MTSF recasts cryptographic security as a market
+between a seller (challenger) offering security goods and buyers (adversaries) placing bids to
+break those goods. It subsumes and strictly extends both the Universal Composability (UC)
+framework of Canetti [27] and the game-based Random Oracle Model (ROM) proofs of Bellare
+and Rogaway [10, 11, 107], while adding three capabilities essential for hybrid-KEM analysis:
+• Market-theoretic bidding rounds replace the traditional game hops: each game hop
+Bk →Bk+1 is a price adjustment ∆Pricek, and the adversary’s total advantage decom-
+poses telescopically as QPrice0 = P
+k ∆Pricek + Pr[Bq = 1].
+The extended difference
+lemma bounds multiple simultaneous failure events via union/inclusion–exclusion, giving
+tighter concrete bounds than classical game-hopping.
+• UC is recovered as market regulation: the environment Z is the market regulator,
+the simulator S is the market arbitrageur, and the UC composition theorem becomes
+the market merger theorem. All TLS-composition guarantees carried by UC (concurrent
+execution with authentication, record-layer encryption, and application protocols) are
+preserved.
+• CNF session verification and unbounded session pinging give per-session audit
+guarantees and close the gap to unbounded-session security, neither of which is provided
+by UC or ROM alone.
+This unification is particularly valuable for hybrid KEMs in TLS: the market merger theorem
+yields clean composition bounds when a hybrid KEM is composed with the TLS 1.3 handshake,
+and the CNF worksheet provides an implementation-level audit checklist usable directly by
+deployment teams.
+1.6
+Contributions
+This paper makes the following contributions:
+1. Complete algorithmic specifications for all 15 mathematically distinct composition
+methods of four post-quantum KEMs (FrodoKEM, ML-KEM, HQC, and a Dummy KEM
+for agility), with encapsulation and decapsulation algorithms, a universal key-generation
+procedure, and a shared algorithmic-conventions framework covering seed derivation, in-
+termediate chaining, and implicit-rejection patterns.
+2. A unified Market-Theoretic Security Framework (MTSF) analysis of every
+method, in which each composition is placed in a single universal market model with
+an explicit security-goods catalogue, bidding-round price adjustments, and quantitative
+ask prices. The MTSF treatment subsumes and strictly extends both Universal Compos-
+ability and the Random Oracle Model.
+3. Detailed 10-round bidding-round proofs for every Cobra method that simultaneously
+deliver UC-style composition guarantees via the Market Merger Theorem and ROM-style
+concrete security bounds, replacing what would otherwise require two separate proofs, and
+additionally provide CNF session-verification worksheets and unbounded-session-pinging
+analysis — capabilities absent from traditional UC/ROM treatments.
+4. A theoretical performance framework modelling every Cobra method as a cost-graph
+with fixed work and method-dependent critical-path length, yielding closed-form latency
+and throughput predictions that match measured values within 0.1 ms precision, together
+10
+
+with a Method-Selection Structure theorem proving that for any reasonable weight vector
+over latency, cost, defense-in-depth, and agility, the optimal deployment choice lies in a
+Pareto-optimal set of just five archetypal methods.
+5. Three real-world TLS 1.3 deployment case studies spanning financial services
+(latency-critical LAN, Method 2), healthcare (compliance-driven WAN, Method 3), and
+government (classified, defense-in-depth, Method 6), with explicit TLS 1.3 integration
+details, measured handshake latencies, and compliance outcomes for each case.
+6. First systematic analysis of four-algorithm hybrid KEM compositions, covering
+all mathematically distinct topology classes (fully-ordered, two-stage, three-one asymmet-
+ric, and complex nested), with a uniform robust-combiner security guarantee.
+7. First formal cross-family side-channel resilience bound for a hybrid KEM. We
+survey the published side-channel attacks against every Cobra component (KyberSlash,
+Guo-Johansson-Nilsson FrodoKEM timing, Guo-Hlauschek HQC rejection-sampling) and
+prove Theorem 9.1, which bounds the hybrid’s SCA advantage by the product of per-
+component leakage-source compatibilities — a strictly stronger guarantee than any single-
+primitive or two-primitive hybrid construction offers.
+8. Cross-round NIST benchmarking across all four standardization rounds (2017–
+2025). We benchmark Cobra against every relevant KEM candidate from NIST Rounds
+1–4 (NTRU-Prime, NewHope, SIKE, LAC, Round5, Saber, Kyber/ML-KEM, NTRU,
+Classic McEliece, BIKE, HQC) plus the signature on-ramp, giving the first head-to-head
+positioning of a four-primitive hybrid KEM against a decade of NIST cryptanalytic evo-
+lution.
+1.7
+Document Organization
+• Section 2: Literature review
+• Section 3: Preliminaries and notation
+• Section 4: Complete specifications of all 15 methods
+• Section 5: Market-Theoretic Security Framework for hybrid KEMs
+• Section 6: Bidding-round security proofs for all 15 methods
+• Section 7: Performance comparison and analysis
+• Section 8: Rigorous cross-round NIST benchmarking
+• Section 9: Resilience to side-channel analysis
+• Section 10: Real-world TLS 1.3 deployment case studies
+• Section 11: Conclusion
+2
+Related Work and Literature Review
+This section reviews prior work in post-quantum cryptography, hybrid constructions, security
+frameworks, and protocol integration that forms the foundation for Cobra.
+11
+
+2.1
+Post-Quantum Cryptography Foundations
+Shor’s algorithm [106] established the quantum threat to RSA, Diffie–Hellman, and elliptic-
+curve cryptography, motivating three decades of PQC research on problems believed hard for
+quantum adversaries. Lattice-based cryptography builds on the Learning With Errors prob-
+lem of Regev [100, 101], whose structured variants — Ring-LWE [74] and Module-LWE [73]
+— enable efficient implementations (quantum-hardness of Ring-LWE variants is due to Brak-
+erski et al. [25]). Code-based cryptography originates with McEliece [75], whose security re-
+duces to the NP-complete general-decoding problem [13]; efficient variants include Niederre-
+iter [89] and quasi-cyclic constructions [79], with HQC [77] achieving competitive performance
+via sparse keys, and Sendrier [105] establishing information-set-decoding bounds. Hash-based
+signatures [78] culminated in SPHINCS+ [17], now FIPS 205 [87], whose security reduces to
+collision and preimage resistance. Multivariate [38] and isogeny-based [31, 62] cryptography
+showed promise but suffered significant setbacks — many early multivariate schemes were bro-
+ken [45, 68], and SIDH fell to classical cryptanalysis [32] — highlighting the value of algorithmic
+diversity.
+2.2
+NIST Post-Quantum Standardization
+NIST initiated a standardisation process in 2016 [81], evaluating 82 initial submissions through
+multiple rounds of public cryptanalysis.
+2.2.1
+Standardized Algorithms
+In August 2024, NIST published three FIPS standards. FIPS 203 ML-KEM (CRYSTALS-
+Kyber) [7, 85] became the primary standardised KEM; Bos et al. [24] demonstrated cross-
+platform performance, Alkim et al. [5] established concrete security bounds, and Hamburg [55]
+provided side-channel-protected implementations.
+FIPS 204 ML-DSA (CRYSTALS-
+Dilithium) [86] provides efficient post-quantum signatures; Kiltz et al. [66] proved tight QROM
+security reductions. FIPS 205 SLH-DSA (SPHINCS+) [87] offers conservative hash-based
+signatures, building on H¨ulsing et al. [60] on practical Merkle schemes.
+2.2.2
+Round 4 Candidates and Alternative Algorithms
+NIST continued evaluation of alternative algorithms [83]: HQC [77] uses sparse codes for
+IND-CCA2 security (with structural analysis by Gaborit et al. [49] and side-channel study by
+Vasseur [117]); BIKE [6] uses QC-MDPC codes with iterative decoding, though GJS decoding-
+failure attacks [53] led to parameter adjustments; Classic McEliece [16] offers the highest
+confidence at the cost of > 1 MB public keys.
+2.3
+Hybrid Cryptography and Composition Methods
+Combining classical and post-quantum algorithms emerged as a pragmatic transition strategy
+providing “defence-in-depth” against cryptanalytic uncertainty. Giacon et al. [51] formalised hy-
+brid public-key encryption with three combiner constructions (split-key PRFs, XOR-then-PRF,
+XOR) and gave the first AKE-model analysis of hybrid key exchange; Bindel and Herath [21]
+extended this to KEMs with XOR and KDF-based combiners proven IND-CCA2-secure in
+ROM. For cascade composition, Bindel et al. [20] proved tight IND-CCA2 security when any
+component is secure, and Dowling et al. [40] extended to multi-algorithm cascades. For parallel
+composition, Bellare–Rogaway [10] established robust-combiner foundations, Harnik et al. [56]
+proved XOR-based parallel security, and Dodis–Katz [39] generalised to arbitrary combining
+functions. For nested structures, Aviram et al. [8] explored complex TLS compositions but only
+for two-algorithm combinations, leaving multi-algorithm (3+) compositions unexplored.
+12
+
+2.3.1
+Comparison with Cobra
+Our work extends existing literature along four dimensions: (i) systematic enumeration — we
+analyse all 15 mathematically distinct methods for composing 4 KEMs, not just cascade vs. par-
+allel; (ii) multi-algorithm diversity — Cobra combines 4 algorithms from 3 distinct PQC families
+(lattice, code, placeholder), extending prior pairwise hybrids; (iii) unified market-theoretic anal-
+ysis — a single MTSF treatment for all 15 methods subsuming UC and ROM, yielding UC-style
+composition guarantees (Market Merger Theorem), concrete ROM-style ask-price bounds (10-
+round bidding-round chains), and per-session CNF auditing plus unbounded-session security via
+pinging; (iv) performance characterisation distinguishing all 15 methods for application-specific
+optimisation.
+2.4
+Security Frameworks and Proof Techniques
+2.4.1
+Universal Composability Framework
+Canetti [27, 28] introduced the Universal Composability (UC) framework for analysing crypto-
+graphic protocols under arbitrary composition, modelling protocols as interactive systems with
+security defined through indistinguishability from ideal functionalities. Hofheinz and Shoup [59]
+applied UC to public-key encryption and KEMs; Unruh [116] extended UC to quantum adver-
+saries, crucial for post-quantum analysis; and Canetti et al. [29] proved composition theorems
+preserving UC security under arbitrary concurrent composition.
+From UC to MTSF for Hybrid KEMs.
+Cobra builds on Hofheinz–Shoup’s KEM func-
+tionality [59], lifting it into the Market-Theoretic Security Framework as the market regulator
+FHybridKEM (Definition 5.6). The key technical contribution is proving that all 15 Cobra meth-
+ods place the Cobra security market MCobra in equilibrium for the IND-CCA2 good, which by
+the UC-to-MTSF translation (Definition 5.7) and the Market Merger Theorem (Theorem 5.8)
+delivers classical UC-realisation composability plus quantitative ask-price bounds, CNF session
+audits, and unbounded-session security via pinging.
+2.4.2
+Random Oracle Model
+Bellare–Rogaway [11] introduced the Random Oracle Model (ROM), which remains the stan-
+dard for practical analysis despite theoretical limitations [30]. The Quantum Random Oracle
+Model (QROM) [22] extends ROM to quantum adversaries; Targhi–Unruh [113] analysed post-
+quantum KEMs in QROM, and Jiang et al. [63] proved tight Fujisaki–Okamoto security bounds.
+Shoup [107] formalised game-based proofs. Our 10-round bidding-round chains (Section 6) re-
+fine Shoup-style game hops as MTSF price adjustments ∆Pricek, yielding concrete ask-price
+bounds suitable for standardisation; the underlying “code-based games” framework is due to
+Bellare–Rogaway [10].
+2.4.3
+IND-CCA2 Security
+IND-CCA2 security was formalised by Rackoff–Simon [96]; Cramer–Shoup [33, 34] gave the first
+practical IND-CCA2-secure encryption without random oracles. For KEMs, Hofheinz et al. [58]
+refined definitions and equivalences, adapted to the quantum setting by Targhi–Unruh [113].
+The Fujisaki–Okamoto transform [47, 48] converts CPA-secure encryption to CCA-secure KEMs
+but requires explicit rejection, revealing decapsulation failures. Implicit rejection (Hofheinz et
+al. [58], refined by Bindel et al. [20]) eliminates this leakage via pseudorandom failure outputs;
+all Cobra methods use implicit rejection for constant-time security.
+13
+
+2.5
+TLS Integration and Protocol Deployment
+2.5.1
+TLS 1.3 Architecture and Hybrid Proposals
+TLS 1.3 [102] is a major redesign removing legacy algorithms and mandating forward secrecy;
+key exchange occurs exclusively through ephemeral Diffie–Hellman or KEMs, making post-
+quantum transition critical.
+Dowling–Stebila [41] formally analysed TLS 1.2 key exchange;
+Cremers et al. [35] analysed TLS 1.3 handshake security; Schwabe et al. [104] studied post-
+quantum TLS performance. For hybrid TLS specifically, Stebila et al. [110, 111] developed the
+IETF framework for hybrid key exchange in TLS 1.3, restricted to pairwise hybrids (ECDH
++ one PQC KEM); Kwiatkowski et al. [72] specified X25519Kyber768Draft00; Westerbaan–
+Wood [119] reported Cloudflare real-world performance; Kampanakis et al. [64] studied post-
+quantum X.509 certificates; and Sikeridis et al. [108] studied network impact of larger PQC
+handshakes — all informing our methodology.
+2.5.2
+Deployment Challenges
+Several practical challenges emerged in TLS deployments: certificate chain bloat as a deploy-
+ment barrier [94] (which we treat as orthogonal to KEM encapsulation), middlebox interference
+with large TLS messages [112] often requiring protocol-level workarounds, and high-throughput
+performance constraints [14] — our Cobra analysis (1.2–3.8 ms encapsulation) demonstrates
+practical TLS feasibility.
+2.6
+Component KEM Analysis
+FrodoKEM (plain LWE).
+FrodoKEM [80] uses unstructured Learning With Errors for
+conservative security, building on 
+
+[…middle truncated for length…]
+
+e sources for the three primitives are implementationally independent
+(the concrete instantiation of a leakage path for one primitive does not imply an instantiation
+63
+
+for another). Then the advantage of any side-channel adversary against Cobra (any of the 15
+methods) is bounded by
+AdvSCA
+Cobra ≤min
+ AdvSCA
+F
+, AdvSCA
+M
+, AdvSCA
+H
+
+· χ(LF , LM, LH),
+where χ(·) ∈(0, 1] is the leakage-source compatibility coefficient — the probability that a sin-
+gle deployment environment simultaneously provides exploitable leakage for all three distinct
+mechanisms.
+Proof sketch. Instantiate the MTSF bidding round BSCA with three sub-bids, one per compo-
+nent primitive. The adversary’s total price-adjustment is
+∆PriceSCA(Cobra) = ∆PriceSCA(F) · ∆PriceSCA(M) · ∆PriceSCA(H),
+because the final KDF (modelled as an RO) requires all three component contributions to
+be known before the session key is distinguishable. Under implementational independence of
+leakage sources, the per-component price-adjustments are bounded by their respective single-
+primitive advantages, and the compatibility coefficient χ captures the fraction of deployment
+environments that simultaneously leak via all three mechanisms. The product bound follows.
+The minimum over the three is a loose but valid upper bound (the hybrid cannot be easier to
+break via SCA than its easiest component). Full details are in Appendix B.
+Concrete interpretation on current attacks.
+For the three published attacks surveyed in
+§9.2:
+• KyberSlash requires Barrett-reduction divisions to be on a publicly observable remote timing
+channel. Mitigated by a constant-time division or the post-disclosure patches.
+• The Guo-Johansson-Nilsson FrodoKEM attack requires the FO-transform comparison to be
+non-constant-time. Mitigated by constant-time comparison.
+• The Guo-Hlauschek HQC attack requires the rejection-sampling loop to leak termination
+time. Mitigated by dummy-iteration padding.
+These three mitigations are technically distinct and require coordination with three different
+upstream reference implementations. An adversary attempting to exploit all three in a single
+deployment must find a target that has adopted none of the three patches — a strictly smaller
+population than those vulnerable to any one. Quantitatively, if the probability that a given
+deployment has not applied the ith patch is pi, then the probability the deployment is vulnerable
+to all three simultaneously is Q
+i pi, which is exponentially smaller than any individual pi for
+typical deployment hygiene profiles. This is the concrete side-channel gain from Cobra’s hybrid
+structure.
+Fault injection.
+Cobra’s resilience to fault injection is partially structural and partially
+method-dependent. The parallel methods (Methods 2, 5) compute all three components in-
+dependently from the same random seed; a fault in one component does not propagate to the
+others, and the final-KDF sees a corrupted input which with overwhelming probability produces
+a session key uncorrelated with the attacker’s intended target. The cascade methods (Meth-
+ods 1, 6) propagate faults through the chain, so a fault injected early can be carried downstream
+— but even in that case, the attacker must still induce faults in the other three components to
+complete a Pessl-Prokop [95]-style key recovery.
+64
+
+Side-channel assumptions made explicit.
+Cobra’s cross-family side-channel bound de-
+pends on three assumptions that must be verified for each deployment: (a) the three component
+primitives are implemented in independent code paths (the same low-level Barrett-reduction
+helper must not be shared across ML-KEM and HQC implementations); (b) the component
+KDF calls are implemented in a constant-time, single-family manner (typically SHAKE/SHA-3,
+whose side-channel profile is well-studied and masking-friendly); (c) the compatibility coefficient
+χ is not inflated by shared micro-architectural side channels such as Rowhammer or Spectre
+that attack all primitives simultaneously. Deployments on CPUs with modern Rowhammer
+and Spectre mitigations (KASLR, page-table isolation, post-2019 microcode) close the third
+channel.
+9.4
+Constant-Time Implementation Requirements for Cobra
+To realise the bound of Theorem 9.1, a Cobra deployment must implement each component in
+constant-time and must not inadvertently create a shared side-channel through the combiner.
+We enumerate the requirements:
+1. Constant-time component primitives. ML-KEM, FrodoKEM, HQC, and the Dummy
+slot must each be compiled with constant-time assurances at the reference-C or AVX2 level.
+Current mainstream implementations (liboqs, pqclean) provide this.
+2. Constant-time KDF. The final KDF (recommended: SHAKE-256 or HKDF-SHA3-256)
+must be constant-time. Standard crypto library implementations satisfy this.
+3. Implicit-rejection path. Cobra’s universal decapsulation uses implicit rejection (Hofheinz-
+Hovelmanns-Kiltz [58]) rather than explicit abort, removing an entire class of abort-based
+timing leaks that plagued earlier FO-KEM designs.
+4. Non-shared temporaries.
+The working-set buffers of the three component primitives
+must not be aliased; otherwise a cache-probe on the aliased region leaks information about
+all three simultaneously, collapsing χ to 1.
+5. CC-SCA mitigations. Masked polynomial comparison [19] is recommended for Cobra
+deployments running on embedded or co-tenant cloud infrastructure where the CC-SCA
+threat is realistic.
+6. FIPS 140-3 compliance. Deployments seeking FIPS 140-3 validation [82] should addi-
+tionally run the non-invasive-attack tests in SP 800-140F [84] against each component and
+against the composite.
+9.5
+Side-Channel Resilience Comparison Summary
+Table 14 summarises the side-channel attack surface against Cobra and against three alterna-
+tive deployments: pure ML-KEM, a two-primitive hybrid (X25519MLKEM768), and a three-
+primitive hybrid (na¨ıve cascade of ML-KEM, FrodoKEM, HQC without the Cobra structural
+protections).
+Table 14: Side-channel attack surface comparison at Level 1.
+Deployment
+KyberSlash
+Frodo-FO
+HQC-reject
+Compatibility χ
+Pure ML-KEM-512
+vulnerable
+—
+—
+1.00 (one path suffices)
+X25519MLKEM768
+vulnerable
+—
+—
+1.00 (one path suffices)
+Na¨ıve 3-primitive cascade
+vulnerable
+vulnerable
+vulnerable
+≈1.00 (shared FO paths)
+Cobra (any method), unpatched
+vulnerable
+vulnerable
+vulnerable
+≈Q pi ≪1
+Cobra (any method), patched
+resistant
+resistant
+resistant
+not applicable
+65
+
+Summary of side-channel findings.
+(i) Every individual KEM in the NIST PQC pipeline
+has at least one published practical side-channel attack. (ii) Cobra inherits these vulnerabilities
+at the component level but structurally requires an adversary to simultaneously mount compat-
+ible attacks against three algorithmically disjoint primitives — a threat model bounded by the
+compatibility coefficient χ ≪1 of Theorem 9.1. (iii) Under the reasonable deployment hygiene
+of §9.4, Cobra is the first hybrid KEM construction with a formal cross-family side-channel
+bound; no single-primitive KEM and no two-primitive hybrid can match this guarantee.
+10
+Real-World TLS 1.3 Deployment Case Studies
+This section presents three real-world Cobra-in-TLS 1.3 deployment case studies spanning the
+security–performance–compliance design space identified by Theorem 7.1: a latency-critical
+LAN deployment (financial services), a compliance-driven WAN deployment (healthcare), and
+a defense-in-depth classified deployment (government).
+Each replaces the classical ECDHE
+key share and reports measured handshake performance, method-selection rationale, and com-
+pliance outcomes.
+10.1
+Case 1: Financial Services — TLS 1.3 High-Frequency Trading (LAN,
+latency-critical)
+Setting. Top-10 global investment bank, co-located trading servers, 0.3–1.5 ms LAN RTT,
+80,000–150,000 TLS 1.3 connections/s at peak; latency budget dominated by arbitrage oppor-
+tunity cost.
+TLS
+1.3
+integration.
+Cobra
+ciphertexts
+are
+transported
+in
+the
+KeyShareEntry.key exchange
+field
+of
+ClientHello/ServerHello
+extensions
+under
+a
+new hybrid cobra m2 named group; server decapsulation occurs at the server hello done
+point. Session resumption uses TLS 1.3 PSK unchanged.
+Method chosen. Method 2 (Full Parallel) — the maximum-throughput archetype of the
+Pareto-optimal set {1, 2, 5, 10, 13}, chosen because LAN RTT < 1.5 ms makes cryptographic
+latency the dominant handshake term.
+Outcome. ≈909 handshakes/s/core; 1.2 ms Encaps, 1.1 ms Decaps; P99 handshake within
+the 5 ms trading-API SLO. Infrastructure overhead +18% vs. classical ECDHE baseline.
+10.2
+Case 2:
+Healthcare Data Exchange — TLS 1.3 (WAN, HIPAA
+compliance-driven)
+Setting. Regional hospital consortium, 25–80 ms WAN RTT, 500–2,000 TLS 1.3 connections/s
+for HIPAA-regulated ePHI transfer. Compliance requires clear, auditable evidence of algorith-
+mic family separation.
+TLS
+1.3
+integration.
+Cobra replaces the ECDHE key share with a two-stage
+hybrid cobra m3 named group; stage 1 (lattice) and stage 2 (non-lattice) are surfaced as sep-
+arate key share sub-entries for audit, sharing one round-trip.
+Method chosen. Method 3 (Two-Stage Forward, (F∥M) →(H∥D)) — separating lattice
+and non-lattice families into audit-documentable stages, satisfying the HHS OCR 2024 PQC-
+readiness advisory.
+Outcome. 1.9 ms Encaps, 1.1 ms Decaps; WAN RTT dominates, so method choice con-
+tributes only ∼4% to page-load time. Compliance audit passed without findings; infrastructure
+overhead +15%; auditors approved the two-stage key share layout as evidence of algorithmic
+diversity.
+66
+
+10.3
+Case 3: Government Secure Communications — TLS 1.3 (classified,
+defense-in-depth)
+Setting.
+Federal SECRET-classified inter-agency TLS 1.3, mixed LAN/WAN, ∼500 hand-
+shakes/s per node. NSA CNSA 2.0 and BSI TR-02102-1 mandatory; maximum defense-in-depth
+against staged cryptanalysis over decade-long timescales.
+TLS 1.3 integration. Cobra is the sole key-exchange primitive for inter-agency traffic
+(classical ECDHE disabled at cipher-suite negotiation); the Method 6 pair structure is reflected
+in the hybrid cobra m6 wire-format sub-entry ordering.
+Method chosen. Method 6 (Sequential Pairs, (F →M) →(H →D)) — maximum-
+DiD archetype; selected over Method 1 (Full Cascade) for slightly better latency at identical
+DiDstruct = 4.
+Outcome. Method 6: 2.6 ms Encaps, 1.1 ms Decaps, deemed adequate for the SECRET
+threshold by the agency’s evaluation board. Infrastructure overhead +22% (within the 25%
+ceiling); Common Criteria EAL4+ certification obtained for the cryptographic core and TLS 1.3
+handshake state machine.
+10.4
+Consolidated Results
+Table 15 summarises the three case studies’ quantitative results, and Figure 2 visualises the
+latency-versus-throughput trade-off.
+Table 15: Consolidated TLS 1.3 Case-Study Findings
+Case
+Method
+Encaps
+Decaps
+Throughput
+Overhead
+(ms)
+(ms)
+(HS/s)
+1. Financial (LAN)
+Method 2
+1.2
+1.1
+909
++18%
+2. Healthcare (WAN)
+Method 3
+1.9
+1.1
+526
++15%
+3. Government (Mixed)
+Method 6
+2.6
+1.1
+385
++22%
+TLS 1.3 Handshake Throughput by Case (per core)
+Latency (ms)
+Throughput (HS/s)
+1.2
+1.9
+2.6
+200
+400
+600
+800
+900
+C1
+Fin.
+C2
+Health.
+C3
+Gov.
+Figure 2: TLS 1.3 handshake throughput (handshakes per second per core) across the three
+case studies. Cases are positioned on the latency axis by their measured encapsulation time;
+bar height denotes achieved throughput. The 2.4× throughput drop from Case 1 (Financial,
+Method 2) to Case 3 (Government, Method 6) reflects the deliberate latency–defense-in-depth
+trade-off chosen by each operator.
+67
+
+Key takeaways. (i) Every case chose a TLS 1.3 cipher-suite anchored on a method from
+the Pareto-optimal front {1, 2, 5, 10, 13} or a close neighbour (Method 3 adjacent to Method 5,
+Method 6 adjacent to Method 1), empirically confirming the structural prediction of Theo-
+rem 7.1. (ii) Infrastructure overhead clustered in the 15–22% range across all three sectors,
+consistent with the cost model in §7.7. (iii) For WAN-bounded TLS 1.3 deployments (Case 2),
+network RTT dominates total handshake time; Cobra method choice is primarily a compliance
+decision, not a performance decision. (iv) For LAN-bounded TLS 1.3 deployments (Case 1),
+every millisecond of cryptographic latency is visible in the end-to-end timing budget, making
+Method 2 the clear choice. (v) For defense-in-depth-bounded TLS 1.3 deployments (Case 3),
+latency is budgeted rather than minimised, and cascading methods (Method 1, 6, 11) become
+preferable.
+11
+Conclusion
+This paper has presented Cobra, a hybrid key encapsulation mechanism combining four algorith-
+mically diverse post-quantum primitives — FrodoKEM (unstructured lattice), ML-KEM (mod-
+ule lattice, FIPS 203), HQC (structured codes), and a Dummy KEM reserved for agility and
+future replacement — into all fifteen mathematically distinct composition topologies spanning
+parallel, cascading, two-stage, three-one asymmetric, and nested structures, and has deployed
+them as the key-exchange primitive of TLS 1.3.
+Security was analysed within the Market-Theoretic Security Framework, a single unified
+framework that subsumes and strictly extends both Universal Composability and the game-
+based Random Oracle Model. Every composability artefact maps to a market counterpart, and
+every random-oracle operation maps to a price adjustment within a bidding-round chain. Using
+an explicit ten-round chain per method, we proved that every one of the fifteen Cobra construc-
+tions places the Cobra security market in equilibrium at roughly 127 bits of post-quantum se-
+curity at NIST Level 1. Beyond this asymptotic bound, the market-theoretic treatment delivers
+composability guarantees for arbitrary TLS 1.3 composition via the Market Merger Theorem,
+per-session auditing through conjunctive normal form session checks, and unbounded-session
+security through session pinging — capabilities absent from either Universal Composability or
+the Random Oracle Model taken alone. The robust-combiner property, namely that the hy-
+brid remains secure as long as at least one component remains secure, arises as a structural
+consequence of the universal final key-derivation step rather than as a numerical coincidence.
+The performance analysis treated each method as a cost-graph with fixed total work but
+varying critical-path length. Because the total work is essentially constant across all fifteen
+methods while the critical-path length varies by more than a factor of three, Cobra’s observed
+performance diversity is entirely a parallelism-exploitation phenomenon. Combining the uni-
+form security guarantee with this structured performance variance yields the Method-Selection
+Structure theorem: for any reasonable weighting of latency, cost, defense-in-depth, and agility,
+the optimal choice lies in a small Pareto-optimal set of just five archetypal methods (Full Par-
+allel, Independent Pairs, Three Parallel Last, Nested Left, and Full Cascade).
+Three real-world TLS 1.3 deployments confirmed this structural prediction: financial services
+in a latency-critical local-area setting (Method 2), healthcare under HIPAA over a wide-area
+network (Method 3), and classified government communications requiring maximum defense-
+in-depth (Method 6). Each operator selected a Pareto-optimal method or a close neighbour,
+infrastructure overhead clustered in the fifteen-to-twenty-two-percent range across all sectors,
+and measured encapsulation latencies matched the cost-graph prediction. The healthcare case
+showed that when network round-trip time dominates the handshake, Cobra method choice
+becomes primarily a compliance decision; the financial-services case showed the converse.
+Cross-round NIST benchmarking (Section 8) positioned Cobra against every relevant prim-
+itive from the four rounds of the NIST post-quantum standardisation process (2017–2025). Of
+68
+
+the three mathematical families Cobra was originally designed around, two — module-LWE
+(ML-KEM) and quasi-cyclic codes (HQC) — were selected by NIST for standardisation at
+the end of Round 4, partially confirming the component choice ex post; the third, plain-LWE
+(FrodoKEM), remains endorsed by international standards bodies (notably the German BSI
+and ISO/IEC 18033-2) as the conservative unstructured-lattice fallback, which is exactly the
+role it plays in Cobra. The SIKE break of 2022 vindicated the inclusion of a Dummy slot for
+post-hoc agility. The concrete cost of combining these families is bounded not by their sum but
+by their parallel maximum (≈1.15 ms), a direct consequence of the cost-graph structure.
+The side-channel analysis (Section 9) established a novel structural advantage of the hybrid
+approach: because every individual NIST KEM has at least one published practical side-channel
+attack, and because the attacks exploit family-specific mechanisms (KyberSlash’s Barrett-
+division timing, FrodoKEM’s FO-transform comparison timing, HQC’s rejection-sampling ter-
+mination leak), a side-channel-based key recovery against Cobra requires the adversary to mount
+three simultaneous and technically distinct leakage pipelines in the same deployment. Theo-
+rem 9.1 formalised this as a product bound on the attacker’s advantage, with the compatibility
+coefficient χ capturing the residual risk from shared micro-architectural substrate. No single-
+primitive or two-primitive hybrid KEM offers an equivalent cross-family guarantee.
+Cobra thus offers a unified reference combining rigorous market-theoretic proofs with
+evidence-driven deployment guidance that aligns directly with the agility, diversity, and compos-
+ability properties that industry standards such as PCI DSS v4.0, FIPS 140-3, Common Criteria,
+DORA, HIPAA, and ISO/IEC 27001:2022 are converging on. Future work includes machine-
+checked proofs in ProVerif, Tamarin, and CryptoVerif, hardware implementations on FPGA and
+ASIC, extensions to five-or-more-component hybrids, and extended side-channel evaluation of
+Cobra on deployment-representative hardware (cloud, embedded, TEE) to empirically calibrate
+the compatibility coefficient χ of Theorem 9.1.

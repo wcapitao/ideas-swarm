@@ -1,0 +1,960 @@
+On the Decoding Failure Rate of HQC
+Alessandro Annechini and Alessandro Barenghi and Gerardo Pelosi Member, IEEE
+Department of Electronics, Information and Bioengineering - DEIB
+Politecnico di Milano, Milano, Italy
+Email: alessandro.annechini@polimi.it, alessandro.barenghi@polimi.it, gerardo.pelosi@polimi.it
+Abstract—Cryptography based on error correction codes has
+gained significant interest due to its ability to provide security
+against both classical and quantum adversaries. In 2025, the
+U.S. National Institute of Standards and Technology selected
+the Hamming Quasi-Cyclic (HQC) key encapsulation mechanism
+for standardization. A key aspect of HQC is the possibility of
+decryption failures, which reveal information about the private
+key. To address this issue, the HQC authors developed a
+probabilistic model for the decoding failure rate (DFR) of the
+underlying error-correcting code, and adjusted the cryptosystem
+parameters to thwart attacks based on decryption failures. How-
+ever, the DFR model relies on the assumption of independence
+between coordinates of the error vector, which does not hold
+in HQC. This approximation yields conservative DFR estimates
+in regimes where failure probabilities can be simulated, and it
+is hypothesized to remains conservative for cryptographic-grade
+parameter sets. In this work, we eliminate the independence
+assumptions and derive a new closed-form DFR model for
+HQC. We demonstrate that the previous approximation remains
+conservative in the cryptographic regime and that HQC’s current
+decoding failure rates are lower than the required ones. We
+describe optimization techniques that enable our probabilistic
+model to serve as a parameter-tuning tool, and demonstrate how
+the size of HQC public keys and ciphertexts can be slightly
+reduced without compromising security.
+I. INTRODUCTION
+The research in post-quantum cryptography has met an in-
+creased interest in the last decade, due to the advancements in
+quantum computing technologies. In 2016, the U.S. National
+Institute of Standards and Technology (NIST) started a contest
+for the standardization of post-quantum Key Encapsulation
+Methods (KEMs). Among the proposed cryptosystems, the
+ones based on hard problems on lattices and error correction
+codes provided the best performance and security guaran-
+tees. In 2023, the lattice-based KEM CRYSTALS-Kyber [1]
+was selected for standardization, while the code-based KEM
+Hamming Quasi-cyclic (HQC) [2] has been selected for
+standardization in 2025 [3]. HQC, which is based on the
+2003 template introduced by Alekhnovich in [4], relies on
+the quasi-cyclic syndrome decoding problem, leveraging the
+isomorphism between p × p binary circulant matrices and the
+polynomial ring R = F2[x]/⟨xp −1⟩to improve performance.
+At its core, the HQC encryption procedure masks the message
+by adding a dense binary error vector, while the decryption
+procedure reduces the density of the error vector and recovers
+the original message with a public error correction code. The
+correctness of the cryptosystem hinges on the ability of the
+decoding procedure to successfully recover an error-affected
+binary message. The Hamming weight of the error affecting
+the message is not fixed, and the HQC design trades off
+a non-null decoding failure (equivalently, decryption failure)
+probability for a significant reduction in the public key and
+ciphertext size. Since the error to be decoded depends on the
+private key, decryption failures leak secret information [5].
+To attain security against active attackers, and benefit from
+the “indistinguishability under chosen ciphertext attack” (IND-
+CCA2) property, the Decoding Failure Rate (DFR) of the error
+correction code must be sufficiently low, i.e., at most 2−λ,
+λ ∈{128, 192, 256}, depending on the security level required.
+To address the issue, the authors of HQC derive a conservative,
+closed-form probabilistic model for the DFR of the decoder,
+choosing the parameters of the cryptosystem in order to
+meet the requirements in terms of DFR [2]. Such model
+lies on the simplifying assumption that the coordinates of
+the error vector act as independent and identically distributed
+Bernoulli random variables: the error vector is thus modeled
+considering a binary symmetric channel, and the DFR of the
+concatenated code employed in HQC is derived accordingly.
+Another implicit assumption present in the currently adopted
+DFR model for HQC is that symbols of the internal code
+fail independently from one another. In [6], the authors show
+that the real and modeled distributions of the error weight
+have non-negligible statistical distance, while in [7] a less
+conservative DFR estimate is computed by approximating the
+error weight distribution with a Gaussian distribution. These
+works provide evidence that, with a precise model for the
+error weight and the failure probability of the internal code,
+the accuracy of the decoding failure rate estimates can be
+significantly improved.
+Contributions. In this work, we provide an exact character-
+ization of the error weight distribution, removing all inde-
+pendence assumptions, and we derive a complete closed-form
+model for the DFR of the concatenated code employed in
+HQC. We describe a series of optimizations that make the
+DFR estimates efficiently computable, in turn allowing the
+use of our closed-form model as a parameter tuning tool. We
+provide a C implementation of our model [8]. We prove that
+the DFR of HQC meets the required bounds, confirming that
+the probabilistic model derived in [2] remains conservative
+in cryptographic-grade regimes. We show that both the public
+keys and ciphertexts of HQC can be reduced without impacting
+the security of the cryptosystem, providing a new set of
+parameters that target both the formally required DFR bound
+2−λ, with λ∈{128, 192, 256}, and the bound 2−160 used in
+the design of Kyber [1] to provide IND-CCA2.
+
+II. PRELIMINARIES
+Elements in the binary polynomial ring R = F2[x]/⟨xp−1⟩
+are considered interchangeably as polynomials over the binary
+field F2 with degree at most p −1 or as vectors in Fp
+2.
+Consequently, addition and multiplication between two poly-
+nomials corresponds to component-wise addition and cyclic
+convolutions of the vectors components, respectively. Given
+a∈R, supp(a) denotes its support (i.e., the set of positions of
+its non-zero coefficients), while wt (a) denotes its Hamming
+weight (i.e., the number of its non-zero components). Rω
+denotes the group of all polynomials with Hamming weight ω.
+A Public Key Encryption (PKE) scheme consists of a triplet
+of polynomial-time algorithms (KeyGen, Encrypt, Decrypt),
+allowing anyone to encrypt messages using the public key,
+while only the owner of the corresponding private key can
+decrypt. A PKE scheme that securely encrypts a (relatively
+short) randomly chosen message rather than a user-provided
+message is referred to as a KEM.
+The PKE scheme underlying the HQC-KEM is defined as
+follows. The KeyGen procedure samples a dense polynomial
+h∈R, and two sparse polynomials x, y∈Rω. The public key
+is composed by h, and the syndrome s = x + h · y, while
+the private key is defined as the x, y pair. The Encrypt
+procedure works by encoding a k-bit message msg into a
+structured code with n-bit codewords, and by adding to such
+codeword a random error, e, combined with the public key
+to obtain the ciphertext as a noisy codeword. In particular,
+it yields two vectors (u, v), where u = r1 + h · r2, and
+v = ENCODE(msg)+TRUNCATE(s·r2+e), with r1, r2∈Rωr,
+and e∈Rωe sparse), where ENCODE provides the codeword
+of a structured error-correcting code and TRUNCATE denotes
+truncation by p −n bits. The Decrypt routine employs the
+private key to remove the large part of the noise and subse-
+quently decode the corrupted codeword back to the original
+message. It computes the vector v′ = v −TRUNCATE(u · y),
+which equals the encoded message plus a sparse error: v′ =
+ENCODE(msg) + TRUNCATE(x·r1+r2·y+e). The message
+msg is then recovered by decoding the error-affected codeword
+v′. The error correction code used in HQC is the concatena-
+tion of a Reed-Solomon (RS) and a Duplicated Reed-Muller
+(DRM) code. The external code is a shortened RS code over
+F28, with length n1 and dimension
+λ
+8 , where λ is the size
+of the original message. The internal code is a DRM code
+over F2, with length n2 and dimension 8. The length of the
+concatenated code is n = n1n2, and its dimension is k = λ.
+An attacker, without the secret key, faces the hardness of
+decoding a general quasi-cyclic code, which is believed to
+be computationally intractable, since it is closely related to
+the generic syndrome decoding problem, proven NP-hard [9].
+However, if a private key is used multiple times, then an
+attacker can exploit the non-zero DFR of HQC decoder. Since
+the error e′=x·r1+r2·y+e depends on the secret polynomials
+x and y, decryption failures can reveal them partially, and sev-
+eral key recovery attacks have been devised for systems with
+non-negligible DFR [5], [10]–[12]. Consequently, a negligible
+DFR is a critical requirement for HQC.
+III. DECODING FAILURE RATE MODEL
+In this section, we derive a closed form DFR estimation
+model for the decoder of HQC in four steps. In Section III-A,
+we compute the probability distribution of the Hamming
+weight of the error in input to the HQC decoder, without
+any independence assumption on the error coordinates. In
+Section III-B we describe a model of the DRM code that
+generalizes the analysis in [2]. In Section III-C we derive
+the DFR of the RS code, combining this result with the
+distribution of the error weight to obtain a closed-form DFR.
+In Section III-D, we show how to compute DFR estimates
+efficiently, and reduce the sizes of public keys and ciphertexts.
+A. Error Hamming weight distribution
+The error in input to HQC decoder is composed by the first
+n bits of the vector e′ = x·r1+r2·y+e, where wt (x) =
+wt (y) = ω, wt (r1) = wt (r2) = ωr, and wt (e) = ωe.
+We begin by computing the distribution of wt (x · r1) (and,
+equivalently, of wt (r2 · y)). Since x·r1=P
+k∈supp(x)xk·r1, we
+see that x · r1 is equivalent to the sum of wt (x) = ω bitwise
+(distinct) rotations of r1. Let supp (x) be {α0, α1, . . . , αω−1}
+and tℓ:= Pℓ
+i=0 xαi · r1. Define Tℓas the random variable
+modeling the Hamming weight of tℓ. We have that t0 = 0,
+which implies Pr(T0 = 0) = 1, and that tω = x · r1. We
+now show that the distribution of Tℓcan be computed starting
+from the distribution of Tℓ−1, meaning that the p.m.f. of the
+sequence of random variables T1, T2, . . . , Tω can be computed
+starting from the p.m.f. of T0. We begin with the following
+proposition.
+Proposition 1. Given k ∈supp (tℓ−1), the probability that
+k ∈supp (xαℓ· r1) is:
+p1 :=
+Pmin(ℓ−1,ωr)
+i=1, odd
+ ωr
+i
+  p−ωr
+ℓ−1−i
+ 
+ωr−i
+p−ℓ+1
+
+Pmin(ℓ−1,ωr)
+i=1, odd
+ ωr
+i
+  p−ωr
+ℓ−1−i
+
+Proof. Consider all the p bitwise rotations of r1 (i.e., xi · r1,
+0 ≤i ≤p −1): since wt (r1) = ωr the term xk appears in
+exactly ωr rotations of r1. Let β = {i | k ∈supp
+ xi · r1
+
+}
+be the set of indexes, i.e., rotation amounts, corresponding
+to such rotations. The probability that k ∈supp (tℓ−1) is
+equal to the probability that |β ∩{α0, . . . , αℓ−1}| is odd.
+Since the support of x (therefore the set {α0, . . . , αℓ−1})
+and the support of r1 are independent, such probability is
+Pmin(ℓ−1,ωr)
+i=1, odd
+(
+ωr
+i )(
+p−ωr
+ℓ−1−i)
+(
+p
+ℓ−1)
+, by a counting argument. Fixing to
+y the number of rotations of r1 added to tℓ−1 that include the
+term xk (i.e., |β ∩{α0, . . . , αℓ−1}| = y), the probability that
+k ∈supp (xαℓr1) is
+ωr−y
+p−(ℓ−1). The probability that the term xk
+appears in xαℓr1, given that k ∈supp (tℓ−1), is thus p1.
+Proposition 2. Given k /∈supp (tℓ−1), the probability that
+k ∈supp (xαℓ· r1) is:
+p0 :=
+Pmin(ℓ−1,ωr)
+i=1, even
+ ωr
+i
+  p−ωr
+ℓ−1−i
+ 
+ωr−i
+p−ℓ+1
+
+Pmin(ℓ−1,ωr)
+i=1, even
+ ωr
+i
+  p−ωr
+ℓ−1−i
+
+
+Proof. The proof is the same as Proposition 1, with the only
+difference being that the number of rotations of r1 composing
+tℓ−1 that include the term xk is even.
+Given that tℓ= tℓ−1 + xαℓ· r1, and that the + op-
+eration in R corresponds to a bitwise-xor between the co-
+efficients of the two operands, we have that supp (tℓ) =
+supp (tℓ−1) ∆supp (xαℓ· r1) (where ∆denotes symmetric
+difference between the sets), and therefore:
+wt (tℓ) = wt (tℓ−1) + ωr −2|supp (tℓ−1) ∩supp (xαℓ· r1) |
+(1)
+We now prove the following proposition.
+Proposition 3. Let ρ(u, y) be the p.m.f. of |supp (tℓ−1) ∩
+supp (xαℓ· r1) | conditioned over wt (tℓ−1), i.e., ρ(u, y) :=
+Pr(|supp (tℓ−1) ∩supp (xαℓ· r1) | = u | wt (tℓ−1) = y).
+Then:
+ρ(u, y) =
+ y
+u
+  p−y
+ωr−u
+ 
+p1·(1−p0)
+p0·(1−p1)
+u
+Pmin{ωr,y}
+j=max{0,ωr−(p−y)}
+ y
+j
+  p−y
+ωr−j
+ 
+p1·(1−p0)
+p0·(1−p1)
+j
+Proof. Pr(|supp (tℓ−1)∩supp (xαℓ· r1) | =u | wt (tℓ−1) = y)
+is equal to the probability that u elements of the support
+of xαℓ· r1 also appear in the support supp (tℓ−1) (of size
+y). Proposition 1 defines the probability p1 that an element
+of supp (tℓ−1) is also in supp (xαℓ· r1), while Proposition 2
+defines the probability p0 that an element not in supp (tℓ−1)
+is in supp (xαℓ· r1). Note that, if p0 = p1 were to hold, then
+the two supports would be uncorrelated, and their intersection
+would follow a hypergeometric distribution. Since p0 ̸= p1, the
+quantity |supp (tℓ−1) ∩supp (xαℓ· r1) | follows Fisher’s non-
+central hypergeometric distribution [13], since for all possible
+values 0 ≤k ≤p −1, the probability of it being “selected”
+(i.e., appearing in supp (xαℓ· r1)) is not uniform, but depends
+on whether k belongs to supp (tℓ−1) or not.
+With this result, we can derive the p.m.f. of Tℓby knowing
+the p.m.f. of Tℓ−1.
+Proposition 4. The p.m.f. of Tℓgiven the p.m.f. of Tℓ−1 is:
+Pr(Tℓ= z) =
+X
+y≥max{0,z−ωr}
+y≤min{p,z+ωr}
+y+ωr≡2z
+Pr(Tℓ−1 = y) · ρ
+y + ωr −z
+2
+, y
+
+Proof. Assuming wt (tℓ−1) = y and wt (tℓ) = z, from
+Equation 1 we obtain |supp (tℓ−1) ∩supp (xαℓ· r1) |
+=
+y+ωr−z
+2
+. The probability of such a value for |supp (tℓ−1) ∩
+supp (xαℓ· r1) | is ρ
+  y+ωr−z
+2
+, y
+
+Using the law of total prob-
+ability over all values of y, we obtain the stated formula.
+Since the distribution of T0 is known, we can compute the
+p.m.f. of the random variables T1, T2, . . . , Tω. The last element
+of this sequence, Tω, corresponds to the r.v. modeling the
+Hamming weight of x · r1 (and r2 · y). We now compute the
+probability distribution of the Hamming weight of x·r1+r2·y.
+Proposition 5. Let eT be the r.v. modeling wt (x · r1 + r2 · y).
+Then Pr(eT = z) =
+X
+0≤y1,y2≤p
+Pr(Tω = y1) Pr(Tω = y2)
+
+y1
+  y1+y2−z
+2
+
+
+p −y1
+y2 −
+  y1+y2−z
+2
+
+
+  p
+y2
+
+Proof. Given wt (x · r1) = y1 and wt (r2 · y) = y2, the size
+of their intersection follows a hypergeometric distribution. The
+event wt (x · r1) = z implies that their intersection is equal to
+y1+y2−z
+2
+. Using the law of total probability over all possible
+values of y1 and y2, we obtain the stated formula.
+We conclude the first step of our analysis of the HQC
+decoder by computing the probability distribution of the
+Hamming weight of e′ = x · r1 + r2 · y + e, i.e., the error
+polynomial to be corrected by the decoder. To this end, we
+define E to be the r.v. modeling wt (e′).
+Theorem 1.
+Pr(E = ϵ) =
+X
+0≤z≤p
+Pr(eT = z)
+
+y
+  y+ωe−ϵ
+2
+
+
+p −z
+ωe −
+  z+ωe−ϵ
+2
+
+
+(
+p
+ωe)
+Proof. In Proposition 5, we derive the p.m.f. of the Hamming
+weight of the sum of two polynomials, x·r1 and r2·y. We can
+repeat the same process to derive the p.m.f. of the weight of
+the sum involving x·r1+r2·y and e. The proof is equivalent to
+the one of Proposition 5, with the only difference being that the
+weight of one of the two addends is fixed (wt (e) = ωe).
+B. Duplicated Reed Muller Model
+Having computed the distribution of wt (e′), the amount
+of errors to be corrected by the decoder, we provide a
+generalization of the Duplicated Reed Muller (DRM) DFR
+model reported in [2]. Our approach is the following: we fix
+the number of errors to wt (e′) = ϵ, and we consider the
+n1 symbols (encoded with the DRM code) of the external
+Reed Solomon code. Each symbol, of length n2, will include
+some of the ϵ errors present in the whole vector e′. Instead
+of assuming each symbol (decoded with the DRM code)
+to fail independently from the others, we consider the fact
+that decoding failures for some DRM codewords imply that
+the amount of errors left in the other codewords is lower
+than average. Conversely, decoding successes for some DRM
+codewords imply that the other instances are more likely
+to fail. We quantify this line of reasoning by modeling the
+decoding action of each DRM codeword sequentially (i.e.,
+considering the process as n1 decoding attempts on each
+symbol), and defining two random variables: i) Fϵ
+ℓ, 0≤ℓ≤n1,
+modeling the number of failures after ℓsteps when wt (e′) = ϵ
+(0≤Ft
+ℓ≤ℓ); ii) Wϵ
+ℓ, modeling the number of errors corrupting
+the first ℓsymbols (0≤Wϵ
+ℓ≤min{ϵ, ℓn2}). At the beginning of
+the decoding process (ℓ= 0), we have that Pr(Fϵ
+0 = 0) = 1
+and Pr(Wϵ
+0 = 0) = 1. At the end of the decoding process, we
+have that Fϵ
+n1 models the number of erroneous symbols that
+must be corrected by the RS code.
+
+In this section, we describe how to compute the joint
+distribution of (Fϵ
+ℓ, Wϵ
+ℓ), starting from the distribution of
+(Fϵ
+ℓ−1, Wϵ
+ℓ−1), by providing a generalization of the formulas
+for the DRM decoding failure probability derived in [2]. We
+start by reporting the following fact, proven in [2, Proposition
+6.1.4].
+Lemma 1. Consider a DRM code with length n2, dimension
+8 and minimum distance d2. The number of weight-t error
+patterns ( d2
+2 ≤t ≤n2) that lead to a decoding failure can be
+upper bounded by Ut =
+1
+2255
+ d2
+  d2
+2
+
+
+d2
+ t −d2
+2
+
+
++ 255
+d2
+X
+j= d2
+2 +1
+d2
+j
+ d2
+t −j
+
++
++1
+2
+255
+2
+
+d2
+2
+X
+j=0
+  d2
+2
+
+j
+3
+  d2
+2
+
+t −d2 + j
+
+We extend the definition of Ut by considering Ut = 0 for
+0 ≤t ≤d2
+2 −1. Since the error pattern is independent from
+the codewords of the DRM code, the probability pt that a
+weight-t error pattern causes a decoding failure can be upper
+bounded by min
+
+1, Ut/
+ n2
+t
+ 
+. When pt is sufficiently high, a
+tighter upper bound for pt can be easily computed by means
+of numerical simulation and conservative statistical tests: in
+particular, for our estimates we performed 106 decoding trials
+for each value of t, and defined pt as the minimum between
+Ut/
+ n2
+t
+
+and the 90% upper confidence bound obtained from
+the simulations. We can use pt to compute the probabil-
+ity distribution of the joint r.v. (Fϵ
+ℓ, Wϵ
+ℓ), conditioned over
+(Fϵ
+ℓ−1, Wϵ
+ℓ−1).
+Proposition 6. Consider a DRM code with length n2, dimen-
+sion 8 and minimum distance d2, and assume (Fϵ
+ℓ−1, Wϵ
+ℓ−1) =
+(f, w). Then:
+Pr
+ (Fϵ
+ℓ, Wϵ
+ℓ) = (f, w + t)|(Fϵ
+ℓ−1, Wϵ
+ℓ−1) = (f, w)
+
+=
+ n2
+t
+  p−ℓn2
+ϵ−w−t
+
+ p−(ℓ−1)n2
+ϵ−w
+ · (1 −pt) ,
+Pr
+ (Fϵ
+ℓ, Wϵ
+ℓ) = (f + 1, w + t)|(Fϵ
+ℓ−1, Wϵ
+ℓ−1) = (f, w)
+
+=
+ n2
+t
+  p−ℓn2
+ϵ−w−t
+
+ p−(ℓ−1)n2
+ϵ−w
+ · pt
+Proof. While
+decoding
+the
+ℓ-th
+symbol,
+the
+fact
+that
+(Fϵ
+ℓ−1, Wϵ
+ℓ−1) = (f, w) implies that a total of w errors out
+of ϵ lie in the first (ℓ−1) symbols (i.e., in the first (ℓ−1)n2
+bits of e′), meaning that a total of ϵ −w errors lie in the last
+p−(ℓ−1)n2 bits of e′, where also the ℓ-th symbol is located.
+Given Wϵ
+ℓ−1 = w, the number of errors affecting the ℓ-th
+symbol (having length n2) follows a hypergeometric distribu-
+tion, therefore Pr(Wϵ
+ℓ= w + t|Wϵ
+ℓ−1 = w) = (
+n2
+t )(
+p−ℓn2
+ϵ−w−t)
+(
+p−(ℓ−1)n2
+ϵ−w
+) .
+Given Wϵ
+ℓ−1 = w and Wϵ
+ℓ= w + t, the probability that the
+ℓ-th decoding action fails (i.e., Fϵ
+ℓ= Fϵ
+ℓ−1 + 1) is pt, and
+the probability that the ℓ-th decoding action succeeds (i.e.,
+Fϵ
+ℓ= Fϵ
+ℓ−1) is 1 −pt.
+We can apply the law of total probability to the result of
+Proposition 6, obtaining the following.
+Theorem 2. Pr ((Fϵ
+ℓ, Wϵ
+ℓ) = (f, w)) =
+=
+n2
+X
+t=0
+Pr
+ (Fϵ
+ℓ−1, Wϵ
+ℓ−1) = (f, w −t)
+
+·
+ n2
+t
+ p−ℓn2
+ϵ−w
+
+ p−(ℓ−1)n2
+ϵ−w+t
+ · (1 −pt) +
++
+n2
+X
+t=0
+Pr
+ (Fϵ
+ℓ−1, Wϵ
+ℓ−1) = (f −1, w −t)
+
+·
+ n2
+t
+ p−ℓn2
+ϵ−w
+
+ p−(ℓ−1)n2
+ϵ−w+t
+ · pt
+C. Reed Solomon Model
+We now employ the analysis in the previous section to
+derive the DFR of the external RS code and, thus, of the
+decoder of HQC. Since the distribution of (Fϵ
+0, Wϵ
+0) is known,
+with Theorem 2 we can compute the probability distribution
+of (Fϵ
+1, Wϵ
+1), (Fϵ
+2, Wϵ
+2), ..., up to (Fϵ
+n1, Wϵ
+n1). The r.v. Fϵ
+n1
+models the number of instances where the DRM decoder
+failed at recovering the correct symbol. Since the external RS
+decoder corrects up to half its minimum distance d1, we have
+that the probability of failure, given the Hamming weight of
+the error wt (e′) = ϵ, is Pr(Fϵ
+n1 ≥
+d1−1
+2
+). Combining this
+result with the distribution of the Hamming weight of the
+error wt (e′), provided by Theorem 1, we get the following
+closed-form model for the decoding failure rate DFR of HQC.
+Theorem 3. The DFR of the concatenated code employing
+a Duplicated Reed Muller code with length n2, dimension 8,
+and distance d2 as internal code, and a Reed Solomon code
+with length n1 and distance d1 as external code is:
+DFR =
+p
+X
+ϵ=0
+
+Pr(E = ϵ)
+ϵ
+X
+w=0
+n1
+X
+f= d1−1
+2
++1
+Pr ((Fϵ
+ℓ, Wϵ
+ℓ) = (f, w))
+
+
+D. Optimizations and Parameter Tuning
+In this section, we describe a set of techniques that can be
+employed to speed up the computation of the DFR estimates
+without altering the correctness of the results, and we show
+how our DFR model can be employed as a parameter tuning
+tool for computing optimal HQC parameters (no changes to
+the cryptosystem implementation are required).
+Since the p.m.f. Pr(E = ϵ) can be efficiently computed
+by parallelizing the calculations across all values of ϵ, our
+goal is to reduce the number of values of ϵ for which
+f(ϵ) = Pr(Fϵ
+n1 ≥
+d1−1
+2
+) must be computed. We start by
+pointing out that, given two close values ϵ1 and ϵ2, the
+two failure probabilities f(ϵ1) = Pr(Fϵ1
+n1
+≥
+d1−1
+2
+) and
+f(ϵ2) = Pr(Fϵ2
+n1 ≥
+d1−1
+2
+) do not differ significantly. We
+exploit this fact by computing f(ϵ) only in a subset of points
+V ⊂{0, 1, . . . , p}, and then defining fV(ϵ) by interpolating the
+samples (V, f(V)) (e.g., with a simple linear interpolation be-
+tween the points). What we can compute is an approximation
+of DFR, g
+DFR(V), defined as g
+DFR(V) = Pp
+ϵ=0 Pr(E = ϵ)·fV(ϵ).
+As the number of points in V increases, fV(ϵ) converges to
+f(ϵ), and therefore g
+DFR(V) converges to DFR. We employ an
+iterative strategy, computing f(ϵ) over a sequence of point
+sets V0⊂V1⊂. . . ⊂Vi, until g
+DFR(Vi) has converged (i.e., its
+value did not change in a numerically relevant fashion across
+multiple iterations). While doing so, we skip the values of ϵ
+for which Pr(E = ϵ) < g
+DFR(V)·10−16, as their contribution to
+
+5,600 5,750 5,900 6,050 6,200 6,350
+100
+10−1
+10−3
+10−5
+10−7
+Error weight ϵ
+Probability
+(a) Error weight distribution
+90
+100
+110
+100
+10−1
+10−2
+10−3
+10−4
+10−5
+Density ω
+Decoding Failure Rate
+HQC model [2]
+Our model
+Simulation
+(b) Decoding Failure Rate
+Fig. 1. Numerical simulations on HQC-1 (p=17669, n1=46, n2=384, ω=66, ωr=ωe = 75), compared to the model presented in HQC’s specification [2]
+and our model. (a) Probability distribution of wt (e′), from 108 generated error polynomials; (b) DFR with 106 decryptions per data point.
+the overall DFR estimate can be safely neglected. With these
+techniques, the time required to estimate the DFR of HQC
+parameters is reduced from days to a few minutes, without
+impacting the accuracy of results, allowing for an exhaustive
+search for optimal parameters. For the parameter sets provided
+in the next section, we validated the accuracy of the optimized
+model with an implementation of the full estimation model.
+Our goal is to find the optimal parameters for HQC not
+requiring changes in the implementation of the cryptosystem,
+therefore we do not modify the structure of the concatenated
+code, nor the parameters of the internal RM code, allowing
+a drop-in parameter change in the current HQC structure.
+Our approach for optimizing the parameters of HQC consists
+in shortening the external RS code n1 by 2 symbols at a
+time, reducing then p until either p < n1n2 or the DFR
+requirement is not satisfied. With this strategy, we iteratively
+reduce the length of both the QC and the RS code, shortening
+public key and ciphertext. We note that, from a security
+perspective, changes in p and n1 do not significantly affect
+the computational complexity of message and key recovery
+attacks, as long as p is selected to be a prime such that 2
+is a generator of F∗
+p. Moreover, while in HQC the difference
+between p and n = n1n2 is minimized, p can be chosen to be
+slightly larger than n1n2 with no impact on security.
+IV. NUMERICAL RESULTS
+We now present the results of numerical validations of
+the correctness of our DFR model, and confirm that current
+HQC parameters are secure by estimating their DFR. We
+also propose new parameter sets for HQC, providing a slight
+reduction in public key and ciphertext size, and propose two
+sets following the DFR criterion adopted in ML-KEM [1], pro-
+viding a more significant public key/ciphertext size reduction.
+Figure 1a shows the results of numerical simulations targeting
+the distribution of the Hamming weight of e′, the error vector
+in input to the decoder. These results show that our model
+provides a better fit on the empirical distribution with respect
+to the binary symmetric channel model [2]. Figure 1b depicts
+TABLE I
+HQC ORIGINAL AND PROPOSED PARAMETERS, PUBLIC KEY AND
+CIPHERTEXT SIZES IN BYTES, DFR ESTIMATES
+From
+Instance
+p
+n1
+|pk|
+|ctx|
+Target DFR
+Est. DFR
+[2]
+HQC-1
+17669
+46
+2241
+4433
+2−128
+2−147.85
+[2]
+HQC-3
+35851
+56
+4514
+8978
+2−192
+2−207.64
+[2]
+HQC-5
+57637
+90
+7237
+14421
+2−256
+2−285.53
+Our
+HQC-1
+17387
+44
+2206
+4302
+2−128
+2−128.43
+Our
+HQC-3
+35797
+54
+4507
+8811
+2−192
+2−192.80
+Our
+HQC-5
+56891
+88
+7144
+14168
+2−256
+2−256.97
+Our
+HQC-3
+34589
+54
+4356
+8660
+2−160
+2−165.49
+Our
+HQC-5
+53453
+82
+6714
+13258
+2−160
+2−160.24
+the comparison between our model, the model from [2], and
+numerical simulations, on the DFR of an instance of HQC-1,
+where the density ω of the private vectors is increased until
+decoding failures can be simulated. The figure shows how
+the current DFR estimate is conservative, while our model
+precisely predicts the DFR of the concatenated code.
+In the security analysis of HQC [2], the DFR estimates
+assuming the independence of the error vector coordinates was
+said to be believed to yield conservative estimates also for
+very low failure rates. We employ our precise DFR estimation
+technique to check such statement on current HQC parameters.
+To do so, in Table I we report our DFR estimate for HQC-
+1, HQC-3 and HQC-5, which require a failure probability at
+most 2−128, 2−192, 2−256, respectively. With our closed-form
+model, we can confirm that all parameter sets of HQC are
+secure, with a conservative margins as large as 229.
+We now investigate whether the lengths of the QC code
+(p) and of the RS code (n1) can be reduced or not, while
+maintaining the required DFR. Using the procedure described
+in Section III-D, we answer this question in the affirmative,
+proposing a new set of parameters for HQC-1, HQC-3 and
+HQC-5, shown in Table I. Compared to the current HQC
+parameters, our proposal allows for a reduction in public key
+and ciphertext sizes. The parameter reduction yields a 0.2
+
+TABLE II
+ESTIMATED COMPUTATIONAL COMPLEXITY OF MESSAGE RECOVERY AND
+KEY RECOVERY ATTACKS AGAINST HQC, WITH LOGARITHMIC MEMORY
+ACCESS COST
+From
+Instance
+p
+ω
+ωr = ωe
+Complexity [14]
+[2]
+HQC-1
+17669
+66
+75
+129.3342
+[2]
+HQC-3
+35851
+100
+114
+197.4658
+[2]
+HQC-5
+57637
+131
+149
+259.6087
+Our
+HQC-1
+17387
+66
+75
+129.2824
+Our
+HQC-3
+35797
+100
+114
+197.4611
+Our
+HQC-5
+56891
+131
+149
+259.5679
+Our
+HQC-3
+34589
+100
+114
+197.3524
+Our
+HQC-5
+53453
+131
+149
+259.3743
+bits loss of security margin according to the public attack
+complexity estimators available at [14], as shown in Table II,
+leaving our parameters compliant with NIST security levels.
+Finally, in Table I we also show parameters with DFR
+2−160 for HQC-3 and HQC-5, following the point made by
+Kyber [1] in its standardization document as ML-KEM [15]:
+attacks based on a DFR lower than 2−160 are considered
+infeasible, regardless of the security level. This approach leads
+to significantly larger savings; in particular, for HQC-5, the
+size of the public key can be reduced by 523 bytes, while the
+ciphertext size can be reduced by 1163 bytes.

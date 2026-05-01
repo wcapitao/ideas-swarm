@@ -1,0 +1,1271 @@
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+1
+Benchmarking the Utility of Privacy-Preserving
+Cox Regression Under Data-Driven Clipping
+Bounds:
+A Multi-Dataset Simulation Study
+Keita Fukuyama, Yukiko Mori, Tomohiro Kuroda, and Hiroaki Kikuchi
+Abstract—Differential privacy (DP) is a mathematical frame-
+work that guarantees individual privacy; however, systematic
+evaluation of its impact on statistical utility in survival analyses
+remains limited. In this study, we systematically evaluated the
+impact of DP mechanisms (Laplace mechanism and Randomized
+Response) with data-driven clipping bounds on the Cox propor-
+tional hazards model, using 5 clinical datasets (n = 168–6,524),
+15 levels of ε (0.1–1000), and B = 1,000 Monte Carlo iterations.
+The data-driven clipping bounds used here are observed min/max
+and therefore do not provide formal ε-DP guarantees; the results
+represent an optimistic lower bound on utility degradation under
+formal DP. We compared three types of input perturbations
+(covariates only, all inputs, and the discrete-time model) with
+output perturbations (dfbeta-based sensitivity), using loss of
+significance rate (LSR), C-index, and coefficient bias as metrics.
+At standard DP levels (ε ≤1), approximately 90% (90–94%)
+of the significant covariates lost significance, even in the largest
+dataset (n = 6,524), and the predictive performance approached
+random levels (test C-index ≈0.5) under many conditions.
+Among the input perturbation approaches, perturbing only
+covariates preserved the risk-set structure and achieved the best
+recovery, whereas output perturbation (dfbeta-based sensitivity)
+maintained near-baseline performance at ε ≥5. At n ≈3,000,
+the significance recovered rapidly at ε = 3–10; however, in
+practice, ε ≥10 (for predictive performance) to ε ≥30–60 (for
+significance preservation) is required. In the moderate-to-high ε
+range, false-positive rates increased for variables whose baseline
+p-values were near the significance threshold.
+Index Terms—Cox proportional hazards model, differential
+privacy, loss of significance rate, privacy-preserving biomedical
+analytics, privacy–utility trade-off, survival analysis, trust model
+I. INTRODUCTION
+D
+IFFERENTIAL PRIVACY (DP) [1], [2] is a mathemat-
+ical framework that probabilistically limits the influence
+of any single individual’s presence or absence on the output
+in a database. As the secondary use of medical data and
+multi-institutional collaborative research become more pop-
+ular, balancing patient privacy and statistical utility poses
+a major challenge. DP is an emerging standard privacy-
+protection technique and deployed by Apple Inc., Google, and
+Manuscript submitted April 20, 2026. This work was supported by JST,
+CREST Grant Number JPMJCR21M1, Japan.
+K. Fukuyama, Y. Mori, and T. Kuroda are with the Division of Medical
+Information Technology and Administration Planning, Kyoto University Hos-
+pital, Kyoto, Japan (e-mail: fukuyama.keita.45c@st.kyoto-u.ac.jp).
+H. Kikuchi is with the School of Interdisciplinary Mathematical Sciences,
+Meiji University, Tokyo, Japan.
+the U.S. Census Bureau. In clinical trials and epidemiological
+studies, the Cox proportional-hazards (PH) model [3] remains
+the most widely used survival-analysis method for evaluating
+treatment effects and prognostic factors. However, applying
+DP to the Cox model poses several technical challenges.
+First, the partial likelihood function relies on the risk set
+R(t) = {j : Tj ≥t}, and adding noise to the survival times
+T disrupts the ordering structure of the risk set. Second, the
+privacy budget is diluted by a factor of q (ε/q); therefore, the
+noise per variable increases in high-dimensional data. Third,
+medical data typically have n = 100–10,000, which amplifies
+the relative impact of DP noise. Despite these challenges, no
+studies have systematically quantified the extent to which DP
+degrades the Cox model’s statistical utility.
+Although previous work at the intersection of DP and sur-
+vival analysis has addressed output/objective-function pertur-
+bation and survival-function estimation (Section II), a system-
+atic evaluation of input perturbation, a stepwise comparison
+of perturbation targets, and a quantitative evaluation of utility
+across dataset sizes remain lacking. The answer to the question
+of “can significance be preserved at this ε?” is lacking.
+This study aimed to address the following three research
+questions:
+• RQ1: At what privacy budget ε do significant covariates
+in the Cox model lose statistical significance? How does
+dataset size affect this threshold?
+• RQ2: How does the scope of perturbation targets (covari-
+ates only / all inputs / discretization) affect utility?
+• RQ3: At a fixed ε budget, how does statistical utility
+compare between Local DP (input perturbation) and
+Central DP (output perturbation)?
+To answer these questions, we conducted simulations using 5
+clinical datasets (n = 168–6,524), 15 levels of ε, and B =
+1,000 Monte Carlo iterations. The primary contributions of this
+study are as follows: (1) the first systematic evaluation of three
+input perturbation approaches and output perturbation across 5
+datasets × 15 ε levels; (2) direct quantification of inferential-
+utility loss via the loss of significance rate (LSR) under the
+evaluated DP-style perturbation; (3) elucidation of the scaling
+effect of significance recovery in the transition zone ε = 3–
+10; and (4) practical, scope-qualified ε-threshold guidelines
+for medical researchers.
+This study uses data-driven clipping bounds (observed
+min/max), and formal DP guarantees do not hold. The re-
+arXiv:2604.21491v1 [cs.CR] 23 Apr 2026
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+2
+sults are presented as an optimistic lower bound on utility
+degradation under minimal-noise conditions.
+II. RELATED WORK
+A. DP and Survival Analysis
+At the intersection of DP and survival analysis, Nguyen and
+Hui [4] proposed DP strategies based on output and objective
+function perturbations for discrete-time survival regression,
+achieving coefficient estimation under formal DP guarantees.
+Phase 3 (Survival Stacking) of this study is based on the same
+discrete-time model, but adopts input perturbation (direct noise
+addition to covariates, exit interval k∗
+i , and event indicator
+δi), a different approach from the output/objective function
+perturbation method of Nguyen & Hui.
+Bonomi et al. [5] proposed a framework for Kaplan–Meier
+estimation [6] under DP, addressing privacy protection in
+survival function estimation. Gondara and Wang [7] examined
+DP survival function estimation and confidence interval con-
+struction, while De Faveri et al. [8] analyzed the application of
+a Randomized Response in survival analysis. In conjunction
+with federated learning, Rahimian et al. [9] investigated prac-
+tical challenges in federated DP survival analysis; meanwhile,
+Hung & Yu [10] theoretically analyzed the minimax optimality
+of federated DP Cox regression.
+B. DP and Regression Analysis
+As general approaches for regression analysis under DP,
+Chaudhuri et al. [11] proposed output and objective per-
+turbations for empirical risk minimization, while Zhang et
+al. [12] developed a regression analysis using the functional
+mechanism. However, since the special structure of the partial
+likelihood function of the Cox model relies on the risk
+set R(t), the direct application of these methods warrants
+additional theoretical analysis.
+C. DP and Hypothesis Testing
+The hypothesis-testing interpretation of DP was first intro-
+duced by Wasserman and Zhou [13], who demonstrated that
+DP mechanisms inherently limit the power of hypothesis tests
+regarding database membership. Balle et al. [14] generalized
+this result to privacy definitions based on R´enyi divergence,
+clarifying the conditions under which the hypothesis-testing
+interpretation holds. The loss of significance rate (LSR) used
+in this study is an empirical measure for testing the general
+principle that DP noise impairs statistical inference. These
+previous studies focused on output/objective function perturba-
+tion or survival function estimation; the systematic evaluation
+of input perturbation, stepwise comparison of perturbation
+targets, and scaling effects of utility across dataset sizes remain
+unexplored. This study fills this knowledge gap by explicitly
+distinguishing between the trust models of Local DP (input
+perturbation) and Central DP (output perturbation).
+III. METHODS
+A. Fundamentals of Differential Privacy
+A randomized mechanism M satisfies ε-differential privacy
+if for any neighboring datasets D, D′ (differing by the addition
+or removal of one record), and any output set S, the following
+holds [1]:
+Pr[M(D) ∈S] ≤eε · Pr[M(D′) ∈S]
+(1)
+A smaller ε provides stronger privacy protection, although
+requires more noise. This tradeoff between ε and statistical
+utility is the central challenge faced by the DP.
+A Laplace mechanism was applied to the continuous val-
+ues. For the global sensitivity of the function f, ∆f
+=
+maxD,D′ ∥f(D) −f(D′)∥1, the noise addition f(D) +
+Lap(∆f/ε) satisfies ε-DP. For discrete values, Randomized
+Response [15] is used. For the binary variable b ∈{0, 1}, the
+true value is retained with probability eε/(1 + eε) and flipped
+with probability 1/(1 + eε). For a variable with k categories,
+this is generalized as follows: The true category is retained
+with probability eε/(eε+k−1), while each category is reported
+with probability 1/(eε + k −1).
+When applying DP to q variables, the budget is equally
+allocated as ε/q per variable (total ε) by the sequential
+composition theorem [2]. Equal allocation is a design choice
+that assumes no prior information about variable importance,
+whereas adaptive allocation entails incurring privacy costs for
+the allocation decision itself and raises issues for post-hoc
+analysis.
+This study evaluates two trust models.
+• Local DP (input perturbation, Phase 1–3): Each individ-
+ual adds noise to their data before providing it to the
+curator. No trust in the curator is required, but larger noise
+is necessary.
+• Central DP (output perturbation): A trusted curator
+aggregates the raw data and adds noise to the statistics.
+Since the influence of one individual is O(1/n), struc-
+turally less noise is required.
+The performance difference between the two is consistent with
+the information-theoretic √n gap [16] and does not reflect the
+superiority of either implementation.
+B. Target Datasets
+The five clinical datasets included in the R survival package
+[17], [18] were used (Table I). The effect of sample size
+on DP utility was evaluated by spanning sample sizes from
+small (lung, n = 168) to large (flchain,n = 6,524). The
+number of covariates ranges from q = 7 to 17, enabling cross-
+sectional evaluation of the budget dilution effect ε/q. None of
+the datasets contained missing values after preprocessing.
+C. Input Perturbation (Phase 1–3)
+In the input perturbation setting, DP mechanisms are di-
+rectly applied to each individual’s data (Local DP model).
+The three Phases are designed with a progressively expanding
+scope of perturbations.
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+3
+TABLE I
+CHARACTERISTICS OF TARGET DATASETS AND BASELINE COX REGRESSION RESULTS. C-INDEX IS IN-SAMPLE; TEST C-INDEX IS THE OUT-OF-SAMPLE
+VALUE FROM 70/30 STRATIFIED SPLITS (B = 1,000 ITERATION MEAN). SIG. VARIABLES IS THE NUMBER OF COVARIATES WITH p < 0.05 AT BASELINE
+(ε = ∞).
+Dataset
+N
+Events
+q
+Event rate
+C-index
+Test C-index
+Sig. variables
+lung
+168
+121
+7
+0.720
+0.651
+0.614
+3/7 (sex, ph.ecog, ph.karno)
+pbc
+312
+125
+17
+0.401
+0.857
+0.831
+8/17 (age, edema, bili, albumin, copper, ast, protime, stage)
+colon
+929
+468
+11
+0.504
+0.671
+0.659
+5/11 (nodes, extent, surg, node4, rxLev+5FU)
+rotterdam
+2982
+1518
+9
+0.509
+0.679
+0.675
+6/9 (age, meno, size¿50, size20-50, grade, nodes)
+flchain
+6524
+1962
+7
+0.301
+0.790
+0.791
+4/7 (age, sexM, sample.yr, lambda)
+1) Phase 1: Covariate-Only Perturbation: Only the covari-
+ates Xi are perturbed, whereas the survival time Ti and event
+indicator δi remain unperturbed. For the continuous covariates
+Xij, the Laplace mechanism was applied as follows:
+XDP
+ij
+= clamp
+
+Xij + Lap
+rangej
+εj
+
+, min
+j , max
+j
+
+(2)
+where rangej = maxj −minj is the range of covariates
+j and εj = ε/q is the budget allocation for variable j.
+Randomized responses were applied to binary and categorical
+covariates. Phase 1 completely preserves the risk-set structure
+R(t) = {j : Tj ≥t}, providing an upper bound (best case) for
+utility recovery. However, since T/δ is provided unperturbed,
+it constitutes a covariate-level Local DP, not a full Local DP.
+2) Phase 2: All-Input Perturbation: In addition to the
+covariates, Laplace noise was applied to the survival time Ti
+and Randomized Response to the event indicator δi. Budget
+allocation was diluted to ε/(q+2). The noise in T reverses the
+ordering of the observation times and induces discontinuous
+alternation in the risk set membership. Phase 2 shows the lower
+bound of the utility degradation when all inputs are protected.
+3) Phase 3: Discrete-Time Model (Survival Stacking): The
+observation times were partitioned into K data-driven intervals
+using Sturges’ formula, K = min(dunique, 1 + ⌊log2 N⌋)
+(dunique: number of unique event times) (K = 8–13 in this
+study; Table II) [19], [20]. Each individual’s exit interval
+k∗
+i ∈{1, . . . , K} (the interval in which observation time Ti
+belongs) and event indicator δi are independently perturbed. A
+Categorical Randomized Response (K categories) is applied to
+k∗
+i , and a binary Randomized Response to δi. The expansion
+based on perturbed (k∗′
+i , δ′
+i) (row generation from interval 1 to
+k∗′
+i ) does not incur additional privacy costs according to the
+post-processing theorem. The budget allocation is identical to
+Phase 2 at ε/(q + 2), enabling a direct comparison between
+continuous perturbation (Phase 2) and discretization (Phase 3).
+Discrete-time hazards were estimated using logistic regression.
+This approach represents an input-perturbation variant of the
+discrete-time model, for which Nguyen & Hui [4] achieved a
+formal DP via an output/objective-function perturbation.
+Notably, since Phase 3 uses a discrete-time generalized
+linear model (GLM) rather than Cox PH, three variables
+(flchain kappa, lung ph.karno, flchain sample.yr) yield dif-
+ferent significance determinations even at ε = ∞(no DP).
+Because the baseline significance/nonsignificance of these
+variables changes owing to the model change, the LSR/FPR
+attributable to DP cannot be discussed. Therefore, these were
+excluded from the phase 3 LSR/FPR calculations.
+D. Output Perturbation (Central DP)
+In the output perturbation, Cox regression was performed
+on the unperturbed data, and Laplace noise was added to the
+estimated regression coefficients ˆβ. The dfbeta residuals of the
+Cox regression (a first-order approximation of the leave-one-
+out influence function) [18] were used as sensitivity:
+∆ˆβj = max
+i
+|dfbetai,j|
+(3)
+Similar to the data-driven clipping bounds (observed min/max)
+for the input perturbation, the dfbeta sensitivity is also data-
+dependent, and formal DP guarantees do not hold; however,
+the aim is utility evaluation under minimum-noise conditions.
+E. Evaluation Metrics
+1) Loss of Significance Rate (LSR): The proportion of co-
+variates that were significant (p < 0.05) before DP application
+and became non-significant after DP application across B
+simulations.
+LSRj = 1
+B
+B
+X
+b=1
+⊮
+h
+pclean
+j
+< 0.05 ∧p(b)
+j,DP ≥0.05
+i
+(4)
+LSR is an empirical observation in regression coefficient
+significance testing of the general principle that DP noise
+degrades statistical inference, consistent with the privacy–
+power trade-off of Balle et al. [14]. This study reported the
+mean LSR across all significant covariates within each dataset.
+2) C-index: The Concordance index [21] measures the
+model’s predictive ranking accuracy. C = 0.5 indicates ran-
+dom prediction, and C = 1.0 indicates perfect discrimination.
+For out-of-sample evaluation, the test C-index was computed
+using 70/30 stratified splits with B = 1,000 Monte Carlo
+cross-validation iterations. Out-of-sample evaluation comple-
+mented the in-sample C-index, highlighting the impact of DP
+noise on generalization performance. The C-index degradation
+∆C = ¯Ctest(ε = ∞) −¯Ctest(ε) has also been reported.
+3) False Positive Rate (FPR): The proportion of covariates
+that were not significant (p ≥0.05) before DP application
+became significant after DP application.
+FPRj = 1
+B
+B
+X
+b=1
+⊮
+h
+pclean
+j
+≥0.05 ∧p(b)
+j,DP < 0.05
+i
+(5)
+While LSR measures the loss of significance of significant
+covariates, FPR is a complementary metric that measures the
+false positives of non-significant covariates.
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+4
+TABLE II
+SIMULATION PARAMETERS
+Parameter
+Value
+Iterations (B)
+1,000
+ε values
+0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10, 15, 30,
+60, 100, 250, 1000, ∞(15 values)
+Datasets
+lung (168), pbc (312), colon (929), rotter-
+dam (2982), flchain (6524)
+Random seed
+42 (reproducible)
+Train/test split
+70/30 stratified by event status
+Phase 3 K (Sturges)
+lung=8, pbc=9, colon=10, rotterdam=12,
+flchain=13
+DP mechanisms
+Laplace mechanism; randomized response
+Clipping bounds
+Data-driven (observed min/max)
+4) Relative Bias of Hazard Ratios: The hazard ratio (HR)
+is the primary measure of effect size reported in clinical
+research, and bias from DP noise directly impairs the clinical
+interpretation of treatment effects and risk factors. The signed
+relative bias is computed as Biasj = B−1 P
+b(HR(b)
+j,DP −
+HRclean
+j
+)/HRclean
+j
+.
+F. Simulation Design
+Table II lists the simulation parameters. For each condition
+(five datasets × 15 ε × four methods), B = 1,000 independent
+simulations were executed. ε spans 15 levels from 0.1 to
+1000, and ∞(Table II); ε = 3 and ε = 7 were added for
+high-resolution analysis of the transition zone. Reproducibility
+was ensured using seed values (see the GitHub repository for
+implementation details).
+G. Limitations of Data-Driven Bounds
+In this study, the clipping bounds were determined from the
+observed min/max of the data, which constitutes privacy leak-
+age; therefore, formal DP guarantees do not hold. Formal DP
+requires either (a) data-independent bounds (based on domain
+knowledge) or (b) a privacy budget for bound estimation. In
+either case, the noise would be larger than that in our setting.
+Thus, the results of this study constitute an optimistic lower
+bound for utility degradation under formal DP. Similarly, the
+dfbeta sensitivity of the output perturbation is data-driven, and
+formal DP guarantees do not hold true.
+Relatedly, continuous covariates were retained on their orig-
+inal scale rather than z-standardized, because the per-variable
+sensitivity ∆j = Uj −Lj already scales the Laplace noise to
+each covariate’s observed range; Wald-test-based significance
+evaluation is scale-invariant, so standardization would not
+change the reported LSR/FPR results. Retaining the original
+scale also preserves the clinical interpretability of hazard-
+ratio estimates in a deployment scenario. Implementation-
+level details (missing-value handling, categorical encoding,
+tied-event handling, train/test split, and Phase 3 time-grid
+construction) are documented in the accompanying GitHub
+repository to keep the Methods focused on the DP mechanism.
+IV. RESULTS
+A. Baseline
+Table I lists the baseline characteristics of five datasets. The
+sample sizes range from n = 168 to 6,524 (approximately 40-
+fold), covering q = 7–17 covariates. The test C-indices were
+close to the in-sample values (0.614–0.831), confirming the
+stability of the baseline predictive performance.
+B. Loss of Significance Rate (LSR)
+Fig. 1 shows the ε-dependence of LSR across all datasets for
+Phases 1–3. Supplementary Table S1 provides full numerical
+values.
+At standard DP levels (ε ≤1), the evaluated input-
+perturbation schemes lose significance across all datasets.
+The LSR at ε = 1 for Phase 1 ranged from 0.899 to
+0.944 across all datasets, and even the largest dataset, flchain
+(n = 6,524), had LSR = 0.899 (Supplementary Table S1).
+At ε ≤1, approximately 90% (89–94%) of the significant
+covariates lost their significance, regardless of the dataset size.
+Significance recovery depends strongly on ε and dataset
+size. At ε = 10 for Phase 1, rotterdam (n = 2,982, LSR
+= 0.395) showed the greatest recovery, whereas pbc (q = 17,
+LSR = 0.883) showed the slowest recovery (Supplementary
+Table S1). This difference is attributed to the combination of
+n magnitude and budget dilution ε/q. The variable-level LSR
+recovery speed depended on the effect size and sensitivity
+(Supplementary Fig. S1).
+Phase 2 is consistently inferior to Phase 1. In Phase 2,
+LSR recovery was markedly delayed due to the destruction
+of the risk-set structure, remaining at LSR > 0.90 for ε ≤
+5. Phase 3 (discrete-time model) yielded comparable results
+under the same ε/(q + 2) budget structure as in Phase 2, and
+discretization itself did not contribute to utility improvement.
+The convergence failure rate was 0
+C. Out-of-Sample Predictive Performance
+Fig. 2 shows the ε-dependence of the test C-index for
+Phases 1–3 and the output perturbation (dfbeta). Supplemen-
+tary Table S2 lists the entire numerical values.
+At ε ≤1, the C-index collapses to the random prediction
+level. The test C-index for Phase 1 degraded to 0.512–0.628
+at ε = 1, and Phase 2 saturated at the C-index ≈0.5 for
+ε ≤1 (Supplementary Table S2). The latter is direct evidence
+of risk-set destruction.
+Phase 1 achieves the best utility recovery. The C-index of
+Phase 1 at ε = 10 was 0.594–0.777, recovering to more than
+90% of the baseline for large datasets (rotterdam and flchain).
+Although DP noise can function as a regularization, the
+overfitting gap (Train C-index −Test C-index) ε-dependence
+varies by dataset (Supplementary Fig. S2).
+Output perturbation (dfbeta) exhibits the structural
+characteristics of Central DP. The dfbeta-based output per-
+turbation maintained a near-baseline performance at ε ≥5 and
+outperformed Phase 1 across all ε ranges in four of the five
+datasets (Supplementary Table S2). Only for the lungs did it
+become comparable to phase 1 at ε ≥30, with a difference
+of 0.005.
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+5
+Lung (n=168, q=7)
+PBC (n=312, q=17)
+Colon (n=929, q=11)
+Rotterdam (n=2982, q=9)
+FLChain (n=6524, q=7)
+0.1
+1
+3
+10
+100
+1k
+0.1
+1
+3
+10
+100
+1k
+0.1
+1
+3
+10
+100
+1k
+0.1
+1
+3
+10
+100
+1k
+0.1
+1
+3
+10
+100
+1k
+0%
+25%
+50%
+75%
+100%
+Privacy budget ε
+Loss of Significance Rate (LSR)
+Phase 1 (Covariates only)
+Phase 2 (Full input)
+Phase 3 (Discrete-time)
+Fig. 1. ε-dependence of the loss of significance rate (LSR). Three input perturbation approaches (Phase 1–3) compared across five datasets. Dashed lines
+indicate ε = 3 and ε = 10. Phase 1 (covariates only) achieves the best recovery across all ε ranges; Phase 2 (all inputs) is inferior due to risk-set destruction;
+Phase 3 (discrete-time) shows no improvement from discretization under the same budget structure.
+Lung (n=168, q=7)
+PBC (n=312, q=17)
+Colon (n=929, q=11)
+Rotterdam (n=2982, q=9)
+FLChain (n=6524, q=7)
+0.1
+1
+10
+100
+1k
+∞
+0.1
+1
+10
+100
+1k
+∞
+0.1
+1
+10
+100
+1k
+∞
+0.1
+1
+10
+100
+1k
+∞
+0.1
+1
+10
+100
+1k
+∞
+0.4
+0.5
+0.6
+0.7
+0.8
+0.5
+0.6
+0.7
+0.5
+0.6
+0.4
+0.5
+0.6
+0.7
+0.8
+0.4
+0.5
+0.6
+Privacy budget ε
+Test C-index
+Phase 1 (Covariates only)
+Phase 2 (Full input)
+Phase 3 (Discrete-time)
+Output (dfbeta, Central DP)
+Fig. 2. ε-dependence of the test C-index. Four methods (Phase 1–3, output perturbation dfbeta) compared across five datasets. Ribbons indicate ±1 standard
+deviation (SD) (B = 1,000 train/test splits). Triangle markers at the right end indicate the baseline under the non-DP condition (ε = ∞). Gray solid lines
+indicate the baseline C-index; dashed lines indicate random prediction (0.5).
+D. False Positive Rate (FPR)
+FPR, at which the proportion of covariates that were non-
+significant at baseline but became significant following DP
+application, was analyzed for input perturbations (Phases 1–
+3). FPR exhibits a three-stage pattern with respect to ε (Fig. 3,
+Fig. 4; Supplementary Table S3). (1) At a low ε (≤1), FPR
+≈α = 0.05 remains at the nominal level. (2) At moderate to
+high ε (10–100), FPR increased notably for variables whose
+baseline p-values were close to α. Representative examples
+include flchain kappa (peak FPR ≈100%, ε = 100) and
+colon differences (peak FPR ≈93%, ε = 100). (3) As
+ε →∞, FPR →0 converges to the non-DP condition. This
+result indicates that even in the high ε range (10–100), where
+significance recovers, the false-positive risk simultaneously
+increases. Suppressing FPR to the nominal level requires an
+even larger ε; caution is warranted for variables whose baseline
+p-values are near the α boundary.
+E. Scaling of Dataset Size
+Table III lists the Phase 1 LSR progression in the transition
+zone, ε = 3–10.
+At ε ≤1, the dataset size effect is nullified. Since the noise
+scale of the input perturbation rangej/εj does not depend on
+n, all five datasets have LSR > 0.90 and a C-index ≈0.5 at
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+6
+Lung (n=168, q=7)
+PBC (n=312, q=17)
+Colon (n=929, q=11)
+Rotterdam (n=2982, q=9)
+FLChain (n=6524, q=7)
+0.1
+1
+10
+100
+1k
+0.1
+1
+10
+100
+1k
+0.1
+1
+10
+100
+1k
+0.1
+1
+10
+100
+1k
+0.1
+1
+10
+100
+1k
+0%
+20%
+40%
+60%
+ε
+Mean FPR
+Phase 1 (Covariates only)
+Phase 2 (Full input)
+Phase 3 (Discrete-time)
+Fig. 3. ε-dependence of the mean false positive rate (FPR) for three input perturbation methods (Phase 1–3) across five datasets. The dashed line indicates
+the nominal α = 0.05. At low ε, FPR ≈α, but it increases at moderate-to-high ε (10–100) and converges to 0 as ε →∞.
+TABLE III
+PHASE 1 LSR PROGRESSION IN THE TRANSITION ZONE (ε = 3–10).
+Dataset
+ε = 3
+ε = 5
+ε = 7
+ε = 10
+lung
+0.928
+0.896
+0.868
+0.808
+pbc
+0.935
+0.923
+0.915
+0.883
+colon
+0.908
+0.851
+0.783
+0.685
+rotterdam
+0.836
+0.671
+0.505
+0.395
+flchain
+0.726
+0.708
+0.695
+0.686
+ε ≤1. The effect of n manifests only as the standard error of
+the estimator (∝1/√n).
+ε = 3–10 constitutes the transition zone. As shown in
+Table III, rotterdam (n = 2,982) substantially declines in LSR
+from 0.836 to 0.395, whereas the lung (n = 168) from 0.928
+to 0.808. Flchain (n = 6,524) does not recover, whereas the
+behavior rotterdam observed is attributed to the presence of
+large-range covariates and a high proportion of non-significant
+variables. Thus, utility depends on the combined effects of n,
+ε, q, and the covariate range.
+F. Regression Coefficient Bias
+Fig. 5 shows the hazard ratio (HR) distributions of the top
+five covariates across the five datasets. Fig. 6 presents the HR
+relative biases for the same variables.
+At ε = 1, HRs degenerate toward 1.0 (× marks = com-
+parison with the baseline HR), making it impossible to even
+discern the effects’ direction (Fig. 5). At ε ≥100, HRs
+approach the baseline, although the bias remains significant
+at ε ≤5 even for large datasets, suggesting that increasing n
+alone cannot compensate for the noise magnitude.
+G. Practical Thresholds
+Table IV lists the practical ε-thresholds for each dataset ×
+method. ε∗
+∆C≤0.05 is the minimum ε at which test C-index
+degradation is within 0.05; ε∗
+LSR≤0.50 is the minimum ε at
+which LSR falls to 50% or below; ε∗
+FPR≤0.10 is the minimum
+ε at which the mean FPR permanently falls below 10% (the
+right tail of the FPR peak).
+The ε∗
+∆C≤0.05 for Phase 1 ranged from 5 to 30, with larger
+datasets achieving a practical predictive performance at a lower
+ε (Table IV). By contrast, significance preservation requires
+ε ≥10–60 (LSR ≤0.50). FPR exhibited a bell-shaped pattern
+(Fig. 3), maintaining the nominal α level at low ε, peaking in
+the intermediate ε range (10–100), and converging to zero as
+ε →∞. ε∗
+FPR is defined as the minimum ε after which FPR
+permanently returns to below 10%. The ε∗
+FPR for Phase 1
+ranged widely from 60 (rotterdam) to > 1000 (flchain), with
+only the lungs having FPR below 10% across all ranges.
+Notably, the ε range satisfying ε∗
+∆C or ε∗
+LSR overlaps with
+the FPR danger zone, indicating that caution is needed when
+interpreting “recovered” significance after DP application at
+face value.
+V. DISCUSSION
+A. ε Threshold for Significance Collapse (RQ1)
+At standard DP levels (ε ≤1), the DP-style perturbation
+schemes evaluated here essentially eliminate meaningful in-
+ference on Cox regression coefficients, regardless of dataset
+size (Section IV-B). This result indicates that the noise scale
+of input perturbation rangej/εj does not depend on n. At
+ε ≤1, the noise completely overwhelms the signal, and the
+effect of n manifests only through the standard error of the
+estimator (∝1/√n), which alone cannot compensate for the
+noise magnitude.
+In the transition zone, ε = 3–10, the signal-to-noise ratio
+begins to allow room for improvement and the effect of n
+is maximized. The difference in the recovery speed between
+rotterdam and the lung (Table III) reflects this structural
+asymmetry.
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+7
+Phase 3 (Discrete-time)
+Phase 1 (Covariates only)
+Phase 2 (Full input)
+0.1
+1
+10
+100
+1k
+0.1
+1
+10
+100
+1k
+0%
+25%
+50%
+75%
+100%
+0%
+25%
+50%
+75%
+100%
+ε
+FPR
+Variable
+alk.phos
+ascites
+chol
+hepato
+platelet
+spiders
+trig
+trt
+Fig. 4.
+Variable-level FPR for the PBC dataset (q = 17) by Phase. The y-axis range is unified across all panels. The dashed line indicates the nominal
+α = 0.05 level. FPR peaks in the intermediate ε range (10–100) for variables whose baseline p-values are near the significance threshold, and converges to
+0 as ε →∞.
+The applicability of DP should be judged after quantifying
+the specific trade-off between privacy risk and utility loss. The
+threshold table of this study (Table IV) provides the basis for
+such judgment.
+B. Vulnerability of Risk Set Structure (RQ2)
+The C-index saturation of Phase 2 (Section IV-C) demon-
+strates that noise on T irreversibly disrupts the ordering struc-
+ture of risk sets. For the Cox model, whose partial likelihood
+depends on the risk set R(t), order reversal in T means a
+fundamental loss of discriminative ability. Phase 3 theoreti-
+cally circumvents the risk-set problem and achieves the same
+ε/(q +2) budget structure as Phase 2. However, discretization
+under the same budget structure did not contribute to utility
+improvement, and the high flip rate of categorical Randomized
+Response constrained performance in the low-ε range. When
+applying DP to Cox regression, avoiding perturbation of T/δ
+should therefore be the fundamental design principle.
+C. Predictive Utility and Inferential Utility Recover Differ-
+ently
+A recurring pattern across methods, and particularly for
+output perturbation, is that predictive discrimination (C-
+index) and inferential significance (LSR) do not recover at
+the same ε. Output perturbation maintains near-baseline test
+C-index at ε ≥5 (Supplementary Table S2), yet its ε∗
+LSR≤0.5
+exceeds 1000 for every dataset (Table IV); in other words,
+a model that still ranks high-risk and low-risk patients well
+can simultaneously fail to declare any individual covariate
+statistically significant. This dissociation is not a paradox:
+dfbeta-based noise is allocated per coefficient and dominates
+the βj/SE(βj) ratio used in Wald tests, while discrimination
+depends on the aggregate linear predictor, which tolerates
+uncorrelated per-coefficient noise far better. For clinical de-
+ployment this distinction matters: a DP-released Cox model
+may be safely usable as a risk-stratification tool long before
+its individual coefficients can be interpreted as effect-size
+estimates, and LSR-based ε recommendations should not be
+mechanically applied to predictive-modeling use cases (or
+vice versa). Reporting LSR, C-index, and HR relative bias
+together—as done throughout Section IV—is therefore more
+informative than reporting any one metric in isolation.
+D. Local DP vs Central DP (RQ3)
+The output perturbation (dfbeta) outperformed Phase 1
+under nearly all conditions (Fig. 2), with the difference being
+particularly pronounced for datasets with large q (pbc, q = 17).
+This disparity arises because, in contrast to the budget dilution
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+8
+Rotterdam (n=2982, q=9)
+FLChain (n=6524, q=7)
+Lung (n=168, q=7)
+PBC (n=312, q=17)
+Colon (n=929, q=11)
+0.8
+1.2
+1.6
+2.0
+0.8
+1.0
+1.2
+1.4
+0.5
+1.0
+1.5
+2.0
+2.5
+1
+2
+3
+4
+5
+0.5
+1.0
+1.5
+2.0
+node4*
+extent*
+surg*
+obstruct
+rxLev+5FU*
+edema*
+stage*
+protime*
+ascites
+albumin*
+sexM*
+lambda*
+age*
+mgus
+kappa
+ph.ecog*
+ph.karno*
+pat.karno
+wt.loss
+sex*
+size>50*
+size20-50*
+grade*
+meno*
+chemo
+Hazard Ratio (HR)
+ε
+∞
+1000
+100
+10
+1
+Fig. 5. Hazard ratio (HR) distributions for the top five covariates in each dataset under Phase 1 (covariate-only perturbation). Dots indicate the mean HR
+across B = 1,000 iterations; error bars indicate ±1 SD. × marks indicate the baseline HR under the non-DP condition (ε = ∞). The dashed line indicates
+HR = 1.0 (no effect). At low ε, all HRs shrink toward 1.0, and effect sizes vanish. Variables are ordered by descending baseline regression coefficients.
+ε/q of Local DP, the influence of one individual in Central
+DP is suppressed to O(1/n), a pattern consistent with the
+√n gap of Duchi et al. [16]. However, this utility gap stems
+from differences in trust models. The central DP assumes
+trust in the curator, whereas the Local DP provides stronger
+privacy guarantees. These two complementary approaches
+were selected according to the data governance framework.
+E. Implications for Biomedical Informatics Practice
+The results translate into several concrete implications for
+health-informatics workflows. First, for registry-based prog-
+nostic research and electronic health record (EHR)-derived
+survival models, analysts cannot assume that a fixed privacy
+budget delivers a single level of utility: predictive discrim-
+ination (relevant to risk-stratification tools) and inferential
+significance (relevant to effect-size reporting and clinical inter-
+pretation) recover at different ε ranges, and ε chosen for one
+purpose may be insufficient for the other. Second, for multi-
+site data collaboration and federated clinical analytics, the
+trust-model choice is substantive rather than cosmetic: the
+Central-DP path (trusted curator releasing perturbed statistics)
+consistently required less ε to preserve both predictive and
+inferential utility than the Local-DP path (each site/participant
+perturbing raw records), in line with the theoretical √n
+gap [16] and with federated survival frameworks such as
+dsSurvival [22]. Third, for privacy-aware model deployment,
+our threshold table (Table IV) provides a dataset-size-aware
+reference against which governance committees can bench-
+mark proposed ε settings before a Cox model is released.
+Finally, because our bounds are data-driven, these thresholds
+are best used as optimistic references: actual deployments
+under formal ε-DP will need either larger ε or auxiliary
+techniques (smooth sensitivity [23], propose-test-release, or
+domain-prescribed bounds) to recover comparable utility.
+F. Practical Recommendations
+Based on the results of this study, the following guidelines
+are proposed:
+1) Approach: Phase 1 (covariate-only perturbation) should
+be the first choice. Perturbation of T/δ should be
+avoided.
+2) ε setting (exploratory = ∆C ≤0.05, confirmatory =
+LSR ≤0.50): Small datasets (n < 500): exploratory ε ≥
+10, confirmatory ε ≥30; Medium datasets (n ≈1,000–
+3,000): exploratory ε ≥5, confirmatory ε ≥15; Large
+datasets (n > 5,000): exploratory ε ≥3, confirmatory
+ε ≥10. However, these depend on q and covariate range;
+refer to Table IV for specifics.
+3) Variable management: Reducing q directly improves
+utility, as evident by the slow recovery of pbc (q = 17).
+4) Bound setting: Clinically reasonable tight bounds are
+important. Range restriction should be considered for
+variables with large ranges.
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS
+9
+Rotterdam (n=2982, q=9)
+FLChain (n=6524, q=7)
+Lung (n=168, q=7)
+PBC (n=312, q=17)
+Colon (n=929, q=11)
+-0.25
+0.00
+-0.2
+-0.1
+0.0
+-0.50
+-0.25
+0.00
+0.25
+0.50
+0.75
+-0.5
+0.0
+0.5
+1.0
+-0.50
+-0.25
+0.00
+0.25
+0.50
+node4*
+extent*
+surg*
+obstruct
+rxLev+5FU*
+edema*
+stage*
+protime*
+ascites
+albumin*
+sexM*
+lambda*
+age*
+mgus
+kappa
+ph.ecog*
+ph.karno*
+pat.karno
+wt.loss
+sex*
+size>50*
+size20-50*
+grade*
+meno*
+chemo
+Relative HR bias (|HR_DP / HR_baseline - 1|)
+ε
+1000
+100
+10
+1
+Fig. 6. HR relative bias for the top five covariates under Phase 1 (|HRDP/HRbaseline −1|). Compared at four levels: ε ∈{1, 10, 100, 1000}. ∗indicates
+variables significant at baseline (p < 0.05). Variables are listed by descending baseline regression coefficients (same order as Fig. 5). At lower ε, HRs shrink
+toward 1.0, demonstrating that DP noise attenuates effect sizes.
+5) Equal budget allocation: As discussed in Section III-A,
+this is a justified design choice considering the privacy
+cost of adaptive allocation.
+6) Caution in significance determination: When deter-
+mining significance following DP application, the pos-
+sibility of false positives should be considered for vari-
+ables whose baseline p-values are near the α boundary
+(Section IV-D).
+G. Methodological Limitations
+1) Data-driven clipping bounds: Formal DP guarantees
+do not hold. Since formal DP requires data-independent
+bounds and noise increases accordingly, the results of
+this study represent an optimistic lower bound.
+2) Sensitivity estimation for output perturbation: The
+dfbeta sensitivity is data-driven and not a formal worst-
+case bound. Re-evaluation using data-adaptive sensi-
+tivity methods, such as smooth sensitivity [23], and
+alternative perturbation strategies, such as objective per-
+turbation, [11] remains warranted.
+3) Comparison with prior work: A direct comparison
+with the output perturbation method of Nguyen & Hui
+[4] was not conducted. The novelty of Phase 3 is limited
+to its evaluation as an input perturbation variant.
+4) Perturbation scope of Phase 1: Phase 1 perturbs only
+covariates whereas T/δ remain unperturbed; therefore, it
+constitutes covariate-level Local DP, not full Local DP.
+The utility of Phase 1 represents the optimistic upper
+bound of input perturbation.
+5) Limitation of five datasets: Data with n > 10,000
+have not been verified, and extrapolation to large scales
+depends on theoretical predictions.
+H. Future Work
+Future research should focus on developing privacy protec-
+tion methods that preserve statistical utility. As demonstrated
+here, the DP-style perturbation schemes evaluated under data-
+driven bounds essentially eliminate Cox-regression inference
+at standard ε levels, with practical recovery requiring ε ≥10–
+30 for the settings we studied. Reconciling privacy protection
+and utility in medical research requires the following: (1)
+the development of methods that minimize utility degradation
+while maintaining formal DP guarantees; (2) extension to
+federated learning settings [9], [10] to avoid sharing raw data;
+and (3) an empirical demonstration of scaling effects in large-
+scale data with n > 10,000.
+VI. CONCLUSION
+This study systematically and quantitatively evaluates the
+impact of applying DP mechanisms under data-driven bounds
+on the statistical utility of the Cox proportional hazards model
+across 5 clinical datasets (n = 168–6,524) and 15 levels of
+ε. Data-driven bounds were used, and the results constituted
+an optimistic lower bound under the formal DP. The five key
+
+IEEE JOURNAL OF BIOMEDICAL AND HEALTH INFORMATICS 10
+TABLE IV
+PRACTICAL ε THRESHOLDS. ε∗
+∆C: MINIMUM ε FOR ∆C ≤0.05 (C-INDEX DEGRADATION THRESHOLD); ε∗
+LSR: MINIMUM ε FOR LSR ≤0.50
+(HALF-RECOVERY OF SIGNIFICANCE); ε∗
+FPR: MINIMUM ε AT WHICH MEAN FPR PERMANENTLY FALLS BELOW 0.10 (RIGHT TAIL OF FPR PEAK). —
+INDICATES FPR < 0.10 AT ALL ε (LUNG) OR NOT APPLICABLE (OUTPUT PERTURBATION).
+Dataset
+Phase
+ε∗
+∆C≤0.05
+ε∗
+LSR≤0.5
+ε∗
+LSR≤0.1
+ε∗
+FPR≤0.10
+lung
+Output
+2
+> 1000
+> 1000
+—
+lung
+Phase 1
+7
+60
+> 1000
+—
+lung
+Phase 2
+30
+100
+> 1000
+—
+lung
+Phase 3
+15
+60
+250
+—
+pbc
+Output
+7
+> 1000
+> 1000
+—
+pbc
+Phase 1
+30
+60
+1000
+250
+pbc
+Phase 2
+60
+250
+1000
+1000
+pbc
+Phase 3
+60
+100
+1000
+250
+colon
+Output
+2
+> 1000
+> 1000
+—
+colon
+Phase 1
+10
+30
+1000
+1000
+colon
+Phase 2
+30
+30
+1000
+60
+colon
+Phase 3
+30
+30
+1000
+250
+rotterdam
+Output
+2
+> 1000
+> 1000
+—
+rotterdam
+Phase 1
+10
+10
+1000
+60
+rotterdam
+Phase 2
+30
+30
+1000
+60
+rotterdam
+Phase 3
+30
+30
+250
+60
+flchain
+Output
+0.5
+> 1000
+> 1000
+—
+flchain
+Phase 1
+5
+30
+100
+> 1000
+flchain
+Phase 2
+10
+60
+250
+> 1000
+flchain
+Phase 3
+15
+30
+60
+1000
+findings are as follows: (1) ε ≤1 eliminates meaningful Cox
+inference across all evaluated scales—LSR > 0.89 and C-
+index ≈0.5 even for the largest dataset; (2) Preservation
+of risk-set structure is essential —perturbation of T/δ
+irreversibly impairs discriminative ability; (3) The effect of
+n first manifests at ε ≥3—scaling effects in the transition
+zone ε = 3–10; (4) ε ≥10 is the practical minimum—
+ε ≥10 for predictive performance and ε ≥30–60 for
+significance preservation are required; (5) False positive risk
+increases at moderate-to-high ε—FPR increases notably for
+variables whose baseline p-values are near α. These findings
+provide quantitative decision criteria for medical studies when
+considering the application of DP.
+ETHICAL STATEMENT
+All datasets used in this study were previously published,
+publicly available, and included in the R survival package,
+with no risk of individual re-identification. Therefore, an ethics
+committee review was deemed unnecessary.
+CONFLICT OF INTEREST
+The authors declare no conflict of interest.
+DATA AND CODE AVAILABILITY
+All the datasets used in this study are publicly available
+in the R survival package [17]. The simulation code, repro-
+ducibility pipeline, and tutorial for applying DP to the survival
+analysis are available on GitHub (https://github.com/fk506cni/
+dp-surv-util-res).

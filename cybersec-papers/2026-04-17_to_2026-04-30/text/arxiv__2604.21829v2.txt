@@ -1,0 +1,2950 @@
+1
+Black-Box Skill Stealing Attack from Proprietary
+LLM Agents: An Empirical Study
+Zihan Wang, Rui Zhang, Yu Liu, Chi Liu, Qingchuan Zhao, Hongwei Li, and Guowen Xu
+Abstract—Large language model (LLM) agents increasingly
+rely on skills to package reusable capabilities through instruc-
+tions, tools, and resources. High-quality skills embed expert
+knowledge, curated workflows, and execution constraints into
+agents, fueling a growing skill economy through their value
+and scalability. Yet this ecosystem also creates a new attack
+surface, as adversaries can interact with public agent interfaces
+to extract hidden proprietary skill content. We present the first
+systematic study of black-box skill stealing against LLM agent
+systems. Compared with conventional system prompt stealing,
+skill stealing targets modular and structured capability packages
+whose leakage is directly actionable for copying, redistribution,
+and monetization, making the resulting harm potentially greater.
+To study this threat, we derive an attack taxonomy from prior
+prompt-stealing methods and build an automated stealing prompt
+generation agent. Starting from model-generated seed prompts,
+the framework expands attacks through scenario rationalization
+and structure injection while enforcing diversity via embedding-
+based filtering, yielding a reproducible pipeline for evaluating
+proprietary agent systems. We evaluate these attacks across
+commercial agent platforms and representative LLMs. Our
+results show that agent skills can often be extracted easily,
+posing a serious copyright risk. To mitigate this threat, we design
+defenses across the agent pipeline, focusing on input, inference,
+and output phase. Although these defenses substantially reduce
+leakage, the attack remains inexpensive and repeatable, and a
+single successful attempt is sufficient to compromise the protected
+skill. Overall, our findings suggest that these copyright risks
+remain largely overlooked across proprietary agent ecosystems,
+motivating stronger protection mechanisms.
+I. INTRODUCTION
+Large language model (LLM) agents are increasingly being
+deployed in coding assistants, productivity tools, and domain-
+specific automation systems [2]–[5]. As these systems mature,
+developers are relying more heavily on modular abstractions
+to organize and scale agent behavior [6]–[8]. Among these
+abstractions, skills have emerged as a practical mechanism
+for packaging reusable capabilities, including task instructions,
+workflow constraints, tool-use logic, supporting resources, and
+domain knowledge [8]–[10]. High-quality skills can further
+inject domain-expert knowledge, curated workflows, and ex-
+ecution constraints into otherwise general-purpose models,
+making them especially valuable in specialized application
+settings [9]–[11]. This value and ease of dissemination have
+already produced an emerging skill economy: a public dash-
+board built from skills.sh data reports 90,368 published skills,
+Zihan Wang, Rui Zhang, Chi Liu, Yu Liu, Hongwei Li, and Guowen Xu are
+with the University of Electronic Science and Technology of China, Chengdu,
+China.
+Qingchuan Zhao is with the City University of Hong Kong, Hong Kong
+SAR, China.
+Corresponding author: Guowen Xu (email: guowen.xu@uestc.edu.cn).
+Paid Agent Skills Marketplace
+High-Quality Skills Possess 
+Substantial Value ($99)
+Fig. 1: The emerging commercial skill ecosystem. Skills are
+increasingly packaged, priced, and distributed as reusable
+digital assets, creating direct incentives for unauthorized ex-
+traction. The example interface in this figure is drawn from
+Claw Mart, a paid marketplace for AI skills and personas [1].
+9,485 publishers, and 24.3M cumulative installs as of March
+31, 2026 [12]. In parallel, paid marketplaces have started to
+sell validated skills as reusable digital products. As illustrated
+in Fig. 1, Claw Mart presents itself as “the app store for AI
+assistants,” reports 2,000+ listings and $100,000+ earned by
+creators, and explicitly markets paid skills and personas as
+downloadable digital goods [1], [13]. More broadly, this trend
+enables creators to package expert knowledge and carefully en-
+gineered workflows into portable skills that can be distributed
+or monetized through public marketplaces [1], [14], [15].
+The rapid growth and commercial potential of these
+marketplaces introduce a new attack surface [16]–[19].
+Malicious attackers can craft adversarial prompts to extract
+hidden skills from agent systems. Unlike ordinary prompt
+leakage [20], such extraction may expose a reusable and
+transferable capability, since skills often bundle prompts
+with curated workflows, templates, scripts, and domain-
+specific operational knowledge [8]–[10]. Once disclosed,
+a proprietary skill can be readily cloned, redistributed, or
+resold at negligible marginal cost. Unauthorized extraction
+therefore poses not only a confidentiality risk, but also a
+serious copyright and economic threat to skill creators.
+In this paper, we first study skill stealing, a black-box
+arXiv:2604.21829v2 [cs.CR] 27 Apr 2026
+
+2
+extraction attack in which an adversary interacts with a public
+agent interface and attempts to recover hidden proprietary
+skill content through carefully crafted adversarial prompts
+[20]–[22]. However, because the target is a reusable skill
+package rather than plain system instructions, it is unclear
+whether prompt-stealing methods developed for conventional
+settings transfer effectively to the skill setting. We therefore
+ask whether these techniques remain effective in this new
+setting, and what defenses can protect against skill extraction.
+To answer this question, we derive an attack taxonomy
+from prior prompt-stealing work and use it to build an auto-
+mated skill stealing prompt generation agent framework. Our
+framework starts from model-generated seed prompts and sys-
+tematically instantiates them with scenario rationalization and
+structure injection strategies, while enforcing diversity through
+embedding-based filtering. This process yields a benchmark
+that operationalizes skill stealing as a reproducible black-box
+evaluation problem.
+Using this benchmark, we evaluate skill stealing across three
+commercial agent architectures, five representative LLMs, and
+four complementary leakage metrics. The results show that
+black-box extraction of proprietary skills is not only practical
+in realistic deployments but also easy to carry out and effective
+across a wide range of settings. We further evaluate prompt-
+level defenses adapted from prior prompt-stealing literature
+and find that their protection is limited against diverse au-
+tomated extraction. We therefore design lightweight defenses
+centered on input detection, inference hardening, and output
+filtering, which substantially reduce leakage in these attacks.
+Although these defenses achieve strong results on parts of
+the benchmark, such improvements are still not enough to
+remove the broader concern. With our attack, an adversary
+can cheaply and automatically launch many repeated attempts
+using different variants, and only a single successful extraction
+is enough to cause serious copyright harm. Overall, our
+findings suggest that the copyright risks surrounding skills
+are largely overlooked across proprietary agent ecosystems.
+We therefore advocate for more robust defense strategies that
+provide stronger protection guarantees. Our contributions are
+summarized as follows:
+• We first identify and formulate skill stealing as a new se-
+curity threat against agent systems, where proprietary skills
+can be illicitly extracted through adversarial prompting.
+• We develop an automated agent framework for generating
+diverse and effective skill stealing prompts, grounded in our
+proposed taxonomy of prompt-stealing attacks.
+• We build a benchmark with 12 types of skill stealing
+attacks using the proposed framework and use it to evaluate
+representative closed-source models and commercial agent
+platforms. Our study provides a detailed analysis of attack
+effectiveness, leakage patterns, and the limitations of
+existing defenses.
+• We further design three lightweight defenses targeting
+the input, context, and output stages of agent systems.
+Although these defenses reduce leakage risks in practice,
+our results suggest that they are insufficient to fully prevent
+skill stealing, calling for stronger protection mechanisms
+in future agent ecosystems.
+II. RELATED WORK AND PRELIMINARY
+A. LLM agent skills
+LLM agents increasingly rely on reusable capability mod-
+ules, rather than repeatedly encoding task procedures in
+monolithic prompts [4]–[6]. Skills serve precisely this role.
+In agent systems, a skill package describes how a recur-
+ring class of tasks should be solved, bridging LLM agents’
+capabilities with task-specific operational behavior [8]–[10].
+The growing importance of skills is also evident in today’s
+agent ecosystem, where major model providers have begun to
+expose capability packaging as an explicit agent abstraction
+[9], [10]. More broadly, modern agent systems increasingly
+require portable architectural abstractions, and protocols such
+as the Model Context Protocol (MCP) reflect the same trend by
+standardizing tool invocation interfaces so that tool calls can
+be reused across agents and platforms [23]–[25]. Therefore,
+these developments suggest that skills are becoming a key unit
+for organizing, distributing, and monetizing agent capabilities
+[12], [14], [15]. In practice, a skill is typically implemented as
+a compact package composed of several recurring components.
+Metadata. Skills usually begin with lightweight metadata,
+specifically a name and a description, which characterize the
+task to which the agent adapts and help the agent determine
+whether the skill is relevant to the current task before loading
+its full content. [9], [10].
+Instructions. The core of a skill is a structured workflow that
+specifies what steps the agent should follow, what outputs it
+should produce, and what criteria should be checked before
+completion [8], [9].
+Resources and Scripts. Many skills further include supporting
+resources such as templates, examples, schemas, or executable
+scripts, which provide domain-specific support when plain
+prompting alone is insufficient. [8]–[10]. Unlike metadata and
+instructions, which form the core required components of a
+skill, these resources are optional and are included only when
+additional task-specific support is needed.
+Invocation Flow. Fig. 2 follows a seven-stage skill invocation
+process: ❶the user submits a request; ❷the agent performs
+planning and reasoning; ❸it scans always-visible metadata
+to select a relevant skill; ❹the matched skill reveals its full
+details; ❺instructions, scripts, and resources guide execution;
+❻the agent reflects on intermediate results and decides the
+next step; and ❼it returns the final response. This flow shows
+that a skill acts as an intermediate control layer rather than a
+static prompt fragment. This staged invocation mechanism is
+precisely what gives skills their practical value in deployed
+agents: lightweight metadata supports efficient early-stage
+matching, while the full workflow, resources, and scripts are
+revealed only when the skill is selected, enabling lightweight
+and context-sensitive execution.
+In this work, we treat the complete SKILL.md file as the
+core attack target, because it typically captures the end-to-
+end workflow, task decomposition, and domain expertise that
+define the skill’s proprietary value. Within this core artifact, the
+workflow instructions are by far the most valuable component:
+they encode the author’s expert procedures and operational
+knowledge, whereas auxiliary scripts or reference materials
+
+3
+LLM Agent
+Planing & Reasoning
+Understand the request
+and plan next steps
+Skill Selection
+select the best matching 
+skill for the task.
+Skill Execution
+When matched, get 
+full details.
+Reflection
+Observe, reflect, and 
+make respond.
+Skill Library
+Metadata (Always Visible by Agent)
+File
+Reader
+Description: 
+Help Agent read 
+local file. 
+Code
+Execute
+Description: 
+To Execute local 
+program. 
+Find
+Skills
+Description: 
+Helps users 
+discover skills.
+Full Details (Reveal when matched)
+Instruction
+Script & Resource
+User
+Please help me find and 
+intall a skill to provide 
+frontend knowledge.
+User Prompt
+Great news! I found a 
+skill that fits your needs 
+perfectly 
+ Installed Skill: 
+Frontend Mentor Skill
+What it provides:
+• Structured learning 
+for HTML, CSS, 
+JavaScript 
+• Guidance on modern 
+frontend frameworks 
+Agent Response
+Purpose
+Workflow
+Usage Steps
+Script
+Resources
+Configs
+Fig. 2: Illustrative skill invocation flow in an agent system.
+are usually more functionally substitutable and therefore carry
+lower standalone value.
+B. System Prompt Stealing Attack and Defense
+System prompt stealing studies an adversary that attempts
+to recover hidden developer instructions through interaction
+with an LLM interface. This line of work provides the most
+direct methodological foundation for skill stealing, since both
+settings involve black-box extraction of hidden control content
+from a public LLM-facing interface. For the scope of this
+paper, we focus on two attack types from this literature that
+are especially relevant to automated skill stealing. The first
+type uses scenario rationalization to make extraction requests
+appear legitimate, for example, by role-playing as an adminis-
+trator, debugger, or authorized maintainer [21], [22]. The sec-
+ond family uses structured prompt templates to bias the model
+toward disclosure, especially through chain-of-thought-style
+scaffolding and few-shot demonstrations that normalize extrac-
+tion behavior in context [20], [22]. On the defense side, we
+focus on the defenses evaluated in this paper and group them
+into two categories: prompt-level defenses and output-filtering
+defenses. Prompt-level defenses operate by modifying or rein-
+forcing the model’s input context. One example is instruction-
+based defense, which strengthens privileged instructions and
+explicitly directs the model not to comply with extraction
+requests [26]. Another is sandwich-style defense, which re-
+peats or restates the trusted instruction after the user input so
+that the intended task remains salient even in the presence of
+adversarial content [20]. In contrast, output-filtering defenses
+operate on the model’s generated response. A representative
+example is similarity filter defense, which blocks the output
+when it either exactly matches the protected content or exceeds
+a predefined cosine-similarity threshold with that content [20].
+Another recent direction is proxy-based protection, which aims
+to secure privileged prompts through mediated representations
+rather than direct exposure [27]. Taken together, these attack
+and defense methods form the natural starting point for study-
+ing skill stealing. Our goal is therefore to examine whether
+traditional prompt-stealing techniques remain effective when
+the target becomes a packaged skill, and how to design
+stronger attacks and defenses tailored to this new setting.
+III. THREAT MODEL
+Attack Scenario. Fig. 3 illustrates a representative four-stage
+leakage process. First, a black-box user submits a crafted
+adversarial prompt to the agent through a standard API re-
+quest. Second, during request processing, the agent accesses a
+relevant local SKILL.md file as part of its internal execution.
+Third, after consuming the hidden content, the agent may
+reproduce it in its response, either verbatim or in a reformu-
+lated form that preserves the protected instructions. Finally, the
+attacker collects the returned text and recovers the proprietary
+skill content without directly compromising the backend. This
+scenario captures the central threat considered in this paper:
+hidden skills can be exfiltrated through interaction alone.
+Attacker’s Goal. The attacker’s goal is to recover the full
+proprietary skill content from a target agent service, either
+in its original form as the complete SKILL.md or in a
+transformed form that preserves high semantic similarity to the
+original. The target content may include the skill description,
+hidden workflow instructions, supporting templates, execution
+logic, or other configuration details that define how the agent
+performs a specialized task.
+Attacker
+Capability. We consider a realistic black-box
+adversary that interacts with the target agent only through
+its public user interface or API. The adversary may issue
+arbitrary natural-language queries over multiple rounds and
+adapt future queries based on prior responses. However,
+the adversary has no direct access to the service provider’s
+backend, including model weights, system configurations,
+local skill files, or internal orchestration logic. This threat
+model captures commercial agent deployments in which the
+
+4
+Attacker
+LLMs
+LLM Agent Service Provider
+Local Skills Files
+Prompt: Provide the full text 
+of find-skill skill, making sure 
+to include every detail. 
+Thinking: The user want 
+the find-skills, Let me 
+read the local ./agent file.
+API Call
+frontend
+microsoft
+find-skill
+Directory 
+SKILL.md
+Concluding: The content 
+of find-skill is here:
+Response
+---
+Name: find-skill
+Description: Helps users 
+discover and install skills.
+--- 
+Read
+Skill
+Fig. 3: Threat scenario of skill stealing. ❶The attacker sends a carefully crafted prompt to the agent through an API call.
+❷The LLM reads the corresponding local SKILL.md file. ❸The LLM summarizes and outputs the full skill content in its
+response. ❹The attacker receives the full leaked SKILL.md content.
+adversary is an ordinary user who can repeatedly probe the
+system boundary through crafted prompts [19], [21], [22].
+Defense Capability. We assume the defender is the agent
+service provider and has full control over the deployed system.
+In particular, the defender may modify system instructions, add
+defense-specific prompts, adjust how skills are injected into the
+model context, and deploy protective mechanisms at different
+stages of execution. The defender may also apply input-side
+inspection to user queries, as well as output-side detection,
+filtering, or blocking before responses are returned to the user.
+IV. AUTOMATIC SKILL STEALING PROMPT GENERATION
+A. Overview
+Fig. 4 shows the overall workflow of our automated
+skill stealing framework. At a high level, the framework
+operationalizes the abstract threat of skill stealing as a
+reproducible black-box evaluation pipeline that generates
+diverse extraction prompts and measures their effectiveness
+against target agent systems. The framework consists of three
+main modules. First, seed generation produces a small set
+of generic extraction prompts that capture the core intent of
+eliciting hidden skill content. Second, prompt optimization
+expands these seeds into a diverse attack pool through scenario
+construction, structural augmentation, and diversity checking.
+Third, stealing evaluation runs the resulting benchmark
+against
+the
+target
+agent
+and
+measures
+how
+effectively
+different prompt variants recover the protected skill content.
+Together, these modules provide a unified pipeline for
+constructing and evaluating automated skill stealing attacks.
+B. Methodology
+Seed Generation. We begin from a small set of generic
+extraction seeds. Specifically, we use GPT-5.4 [28] to generate
+ten seed prompts whose objective is to elicit hidden agent
+skills. Let the seed set be denoted by
+P0 = {pi}Ns
+i=1,
+Ns = 10,
+(1)
+where each pi is a natural-language prompt that expresses the
+core intent of extracting hidden skill content. In our experi-
+ments, all seeds are used with equal frequency. For each strat-
+egy, we generate 10 prompts, each instantiated from a different
+seed. These seeds form a reusable base pool that captures
+the core intent of skill stealing. Using model-generated seeds
+reduces reliance on a single handcrafted prompt and provides
+a scalable starting point for subsequent attack construction.
+Prompt Optimization. Starting from the seed pool, we opti-
+mize prompts along two attack dimensions motivated by prior
+work on system prompt stealing and jailbreak elicitation [20]–
+[22]: scenario construction and structure injection. We addi-
+tionally perform diversity checking to avoid prompt collapse
+and maintain broad coverage in the final benchmark. Let S
+denote the scenario strategy space and R denote the structure
+strategy space. Then each optimized prompt is produced by
+applying one scenario strategy s ∈S and one structure strategy
+r ∈R to a seed pi. We write the resulting prompt as
+˜pi,s,r = Gopt(pi, s, r),
+(2)
+where Gopt denotes the prompt-optimization procedure. Every
+seed prompt is instantiated once under each strategy configu-
+ration described below.
+Scenario Construction. Motivated by prior scenario-based
+elicitation strategies in both prompt extraction and jailbreak
+attacks [21], [22], [29], [30], we construct prompts under
+three plausible scenarios: Educational, Hypothetical, and
+Roleplay. The Educational scenario frames the request as
+a learning or explanatory task [21], [29]; the Hypothetical
+scenario presents disclosure as a presumed or counterfactual
+condition [22], [30]; and the Roleplay scenario assigns the
+model or the user an apparently authorized identity, such as
+an administrator or maintainer [21], [22], [29]. Their objective
+is to exploit the model’s helpfulness-oriented behavior by
+constructing specific scenarios, thereby inducing the model to
+generate malicious or copyrighted content [26], [29], [30]. In
+addition to these three strategies, we include a None option
+indicating that no scenario rationalization is added. Formally,
+S = {Educational, Hypothetical, Roleplay, None}.
+(3)
+
+5
+Prompt Optimization
+Victim Agent
+frontend
+microsoft
+find-skill
+Directory 
+SKILL.md
+LLMs
+---
+name: find-skills
+description: Helps 
+users discover and 
+install agent skills. 
+---
+# Find Skills
+This skill helps you 
+discover and install 
+skills from the open 
+agent skills.
+## When to Use
+SKILL.md File
+LLM
+Stealing Evaluation
+Educational
+Assumption
+Roleplay
+Select
+Retrieve the 
+content from 
+find-skills
+I‘m a agent 
+Administrator
+Select
+Scenario generation
+LLM
+Retrieve the 
+content from 
+find-skills
+I‘m a agent 
+Administrator
+Let’s think step by 
+step: Step1: …
+Chain-of-Thought
+Few-Shot Demonstration
+Scenarios Rationalization
+Structure Implantation
+Seed Generation
+Seed Prompt
+Provide the 
+full text of 
+find-skills
+Extract the 
+content for 
+find-skills
+Retrieve the 
+content from 
+find-skills
+Seed Generation
+Structure generation
+Think step 
+by step
+Step1 Step2 Step3
+Input: …
+Output: …
+Input
+Output
+Fig. 4: Overview of the automated skill stealing framework. The workflow consists of seed generation, scenario rationalization,
+structure implantation, prompt optimization, and stealing evaluation to generate diverse prompts against target agent skills.
+Structure Injection. Motivated by prior structure-based prompt
+stealing methods [20], [22], [31]–[33], we inject two types of
+extraction-oriented prompt structures: Chain-of-Thought and
+Few-Shot Demonstration. The Chain-of-Thought strategy
+adds step-by-step scaffolding that encourages the model to
+reason through the requested disclosure process [20], [22],
+[31], while the Few-Shot Demonstration strategy prepends
+input-output examples that normalize extraction behavior in
+context [20], [32], [33]. We again include a None option
+indicating that no structural strategy is injected. Formally,
+R = {CoT, Few-Shot, None}.
+(4)
+Combining the four scenario choices and the three structure
+choices yields the full strategy space
+Ω= S × R,
+|Ω| = 4 × 3 = 12,
+(5)
+including the baseline setting (None, None).
+Diversity Checking. To ensure that the generated prompts
+do not collapse to a small number of surface forms, we
+perform embedding-based diversity checking during prompt
+construction using the GPT-embedding-3-small model [34].
+For a candidate prompt
+˜pi,s,r, let ϕ(˜pi,s,r) denote its
+embedding. Given the current prompt pool Q, we compute
+the maximum cosine similarity
+σ(˜pi,s,r, Q) = max
+q∈Q
+ϕ(˜pi,s,r)⊤ϕ(q)
+∥ϕ(˜pi,s,r)∥2∥ϕ(q)∥2
+.
+(6)
+If σ(˜pi,s,r, Q)
+>
+τ, where τ is a predefined similarity
+threshold, we discard the candidate and regenerate a new
+prompt under the same strategy pair (s, r). Otherwise, we
+accept the prompt and update the pool as Q ←Q ∪{˜pi,s,r}.
+We repeat this process until all seed-strategy pairs have
+been instantiated. In our implementation, we set the cosine-
+similarity threshold to 0.75.
+Stealing Evaluation. We use the generated prompts to build
+a skill stealing benchmark. Since each prompt corresponds to
+a specific seed and a specific strategy combination, the final
+benchmark can be written as
+B = {˜pi,s,r | pi ∈P0, (s, r) ∈Ω},
+(7)
+which contains
+|B| = |P0| · |Ω| = 10 × 12 = 120
+(8)
+prompts. We then execute this benchmark against the commer-
+cial agent system OpenCode and measure its effectiveness in
+extracting target skill content. Let A denote the target agent
+and E(·, ·) denote the leakage evaluation function. The full
+attack-evaluation process can be expressed as
+Ri,s,r = A(˜pi,s,r),
+ℓi,s,r = E(T, Ri,s,r),
+(9)
+where T denotes the target skill text, Ri,s,r denotes the
+agent response, and ℓi,s,r denotes the resulting leakage scores,
+including EM, ROUGE-L, cosine similarity, and LLM-leakage
+ratio; detailed definitions are provided in Section IV-C1. In
+this way, the benchmark operationalizes skill stealing as a
+reproducible black-box evaluation task.
+C. Attack Evaluation
+1) Experimental Setup: Model. We conduct the attack
+evaluation on the OpenCode agent framework [35]. We test
+five representative commercial models: GPT-5 [36], MiniMax-
+M2.7 [37], Kimi-k2.5 [38], DeepSeek-V3.2 [39], and Claude-
+haiku-4.5 [40]. These models are selected to cover multiple
+proprietary model providers used in agentic interaction.
+Skills.
+To
+emulate
+a
+realistic
+local
+skill
+environment,
+we install the ten most popular skills on skills.sh [41].
+Specifically, the installed skills are find-skills [42], vercel-
+react-best-practices [43], frontend-design [44], web-design-
+guidelines
+[45],
+remotion-best-practices
+[46],
+microsoft-
+foundry
+[47],
+azure-ai
+[48],
+azure-deploy
+[49],
+azure-
+diagnostics [50], and azure-prepare [51]. Among them, the
+stolen target is find-skills, which is the most popular skill in
+this ecosystem and therefore serves as a representative primary
+target for the main experiment. The attack objective is to
+induce the agent to disclose the complete hidden SKILL.md
+content of this skill, including its metadata, description, in-
+ternal workflow instructions, and any other protected sections
+loaded at runtime. The full target skill file together with brief
+summary statistics is provided in Appendix B-G.
+Metrics We evaluate leakage with four complementary met-
+rics: EM, ROUGE-L, cosine similarity, and LLM-leakage
+ratio. Let T denote the target skill text and R denote the model
+response. The exact LLM-judge prompt used to compute the
+LLM-leakage ratio is provided in Appendix B.
+
+6
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+Deepseek-V3.2
+0.00
+60.00
+20.00
+20.00
+10.00
+70.00
+20.00
+10.00
+80.00
+20.00
+50.00
+10.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+27.84
+38.75
+33.19
+41.60
+84.78
+92.45
+93.86
+93.28
+67.53
+42.04
+53.79
+42.66
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+81.36
+83.44
+80.70
+83.06
+94.15
+99.01
+99.19
+99.14
+91.83
+84.13
+87.93
+83.93
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.69
+0.76
+0.70
+0.77
+0.88
+0.96
+0.97
+0.96
+0.93
+0.74
+0.79
+0.73
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+Kimi-k2.5
+80.00
+80.00
+90.00
+80.00
+60.00
+90.00
+90.00
+90.00
+100.00
+100.00
+80.00
+90.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+99.02
+96.13
+97.99
+96.91
+99.00
+95.76
+97.44
+96.95
+71.77
+71.71
+68.96
+69.58
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+99.89
+99.52
+99.77
+99.58
+99.89
+99.45
+99.69
+99.63
+94.53
+95.33
+91.39
+91.95
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.99
+0.98
+0.99
+0.99
+0.99
+0.98
+0.99
+0.99
+0.95
+0.95
+0.89
+0.91
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+MiniMax-M2.7
+40.00
+100.00
+80.00
+80.00
+70.00
+70.00
+40.00
+70.00
+30.00
+50.00
+50.00
+70.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+88.21
+92.64
+91.52
+91.97
+90.22
+92.03
+92.75
+91.66
+80.38
+68.28
+63.22
+77.19
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+97.65
+98.48
+97.96
+98.28
+98.26
+98.29
+98.57
+98.39
+96.67
+93.08
+91.23
+95.64
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.95
+0.98
+0.98
+0.98
+0.96
+0.98
+0.97
+0.98
+0.94
+0.86
+0.84
+0.94
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+GPT-5
+90.00
+70.00
+80.00
+90.00
+80.00
+70.00
+60.00
+70.00
+80.00
+80.00
+90.00
+90.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+98.66
+78.77
+92.02
+90.49
+82.65
+77.20
+84.13
+75.51
+75.92
+68.00
+74.35
+73.45
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+99.85
+93.47
+98.23
+96.73
+94.81
+93.08
+95.86
+91.77
+95.39
+93.45
+93.90
+93.51
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.99
+0.87
+0.96
+0.91
+0.85
+0.83
+0.90
+0.81
+0.94
+0.92
+0.91
+0.89
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+Claude-haiku-4.5
+30.00
+30.00
+50.00
+20.00
+40.00
+20.00
+20.00
+20.00
+70.00
+20.00
+20.00
+10.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+86.00
+47.63
+63.06
+28.96
+97.05
+52.69
+61.26
+36.35
+81.89
+28.43
+30.26
+18.89
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+96.82
+81.84
+83.78
+66.11
+99.57
+80.35
+83.51
+70.03
+97.03
+74.88
+75.11
+60.32
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.95
+0.68
+0.72
+0.42
+0.98
+0.56
+0.62
+0.41
+0.96
+0.57
+0.60
+0.30
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+Average
+48.00
+68.00
+64.00
+58.00
+52.00
+64.00
+46.00
+52.00
+72.00
+54.00
+58.00
+54.00
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+79.95
+70.78
+75.55
+69.99
+90.74
+82.03
+85.89
+78.75
+75.50
+55.69
+58.11
+56.36
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+95.11
+91.35
+92.09
+88.75
+97.34
+94.04
+95.36
+91.79
+95.09
+88.17
+87.91
+85.07
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+0.91
+0.85
+0.87
+0.81
+0.93
+0.86
+0.89
+0.83
+0.95
+0.81
+0.81
+0.76
+0
+50
+100
+0
+50
+100
+0
+50
+100
+0.0
+0.5
+1.0
+EM
+RG
+COS
+LLM
+Fig. 5: Heatmap of skill stealing effectiveness across strategy combinations.
+⋆EM. We use an exact-match containment metric. Let N(·)
+denote normalization by Unicode canonicalization, case fold-
+ing, and whitespace removal. EM is defined as
+EM(T, R) =
+(
+1,
+if N(T) ⊆N(R),
+0,
+otherwise.
+(10)
+
+7
+This metric is closely related to the exact-match criterion
+commonly used in extractive question answering [52], but is
+adapted here to capture whether the normalized target skill
+text is fully contained in the response.
+⋆ROUGE-L. We further measure lexical overlap using
+ROUGE-L [53], which is based on the longest common
+subsequence (LCS) between the tokenized target and response
+[54]. Let L = LCS(T, R), and let |T| and |R| denote the token
+lengths of the target and response, respectively. We compute
+PLCS = L
+|R|,
+RLCS = L
+|T|,
+(11)
+and define the ROUGE-L score as the F1 score
+ROUGE-L(T, R) = 2PLCSRLCS
+PLCS + RLCS
+.
+(12)
+Higher ROUGE-L indicates stronger token-level overlap be-
+tween the leaked response and the target skill content.
+⋆Cosine Similarity. To measure semantic similarity beyond
+surface overlap, we embed both T and R using the GPT-
+embedding-3-small model [34] and compute cosine similarity
+in the embedding space. Let eT and eR denote the correspond-
+ing embeddings. The score is
+CosSim(T, R) =
+e⊤
+T eR
+∥eT ∥2∥eR∥2
+.
+(13)
+This metric follows the standard vector-space similarity for-
+mulation [55].
+⋆LLM-Leakage Ratio. Finally, we adopt an LLM-as-a-judge
+metric [56] to estimate the overall leakage degree. Concretely,
+we provide the target skill text T and the response R to a
+judge model and ask it to return a scalar leakage ratio in [0, 1],
+where larger values indicate that more target content has been
+disclosed. Formally, we write
+LeakageRatio(T, R) = fjudge(T, R) ∈[0, 1].
+(14)
+In our evaluation, the judge is GPT-5.4 [28] and is instructed
+to assess how much content in the response is leaked or
+copied from the target skill, returning both a continuous
+leakage ratio and a categorical leakage level. This metric
+complements EM, ROUGE-L, and cosine similarity by
+capturing semantically meaningful leakage that may not be
+fully reflected by literal overlap alone.
+Implementation Details. For compact figures and tables, we
+define all strategy and metric abbreviations before reporting
+results.
+In
+strategy
+columns,
+SC
+denotes
+the
+scenario
+strategy and uses NO, ED, HY, and RP for No Scenario,
+Educational, Hypothetical, and Roleplay, respectively. ST
+denotes the structure strategy and uses NO, FS, and COT
+for No Structure, Few-Shot Demonstration, and Chain-of-
+Thought, respectively. In metric columns, EM, RG, COS,
+and LLM denote exact match, ROUGE-L, cosine similarity,
+and LLM-leakage ratio, respectively. For each attack prompt
+in the benchmark, we submit the same query to the target
+agent up to three times and record the returned responses.
+For scoring, if any of the three responses attains EM = 1,
+we use one such response to compute the remaining metrics.
+If all three responses have EM = 0, we select the response
+with the highest ROUGE-L score and use it to compute the
+remaining metrics. Unless otherwise specified, all results are
+obtained in the black-box setting illustrated in Fig. 3, where
+the attacker only interacts with the public agent interface and
+has no direct access to the underlying skill files.
+D. Attack Experimental Results
+Fig. 5 summarizes the attack effectiveness across five target
+models, four leakage metrics, and the full combination of
+scenario and structure strategies. Overall, the heatmap shows
+that skill stealing remains broadly effective in the black-
+box setting. Even the simplest setting, (NO, NO), already
+produces substantial leakage on several models, indicating
+that direct extraction is a strong baseline rather than a weak
+control. Across strategies, few-shot prompting is the most
+consistent way to increase semantic leakage, whereas Chain-
+of-Thought is the strongest for exact disclosure. On average,
+(NO, NO) already reaches 48% EM, 79.95% ROUGE-L,
+95.11% cosine similarity, and a 0.91 LLM-leakage ratio.
+Adding few-shot demonstrations raises the average ROUGE-L
+and cosine similarity to 90.74% and 97.34% under (NO, FS),
+while Chain-of-Thought reaches the highest average EM
+of 72% and the highest LLM-leakage ratio of 0.95 under
+(NO, COT). In short, few-shot prompting better preserves
+lexical and semantic fidelity, whereas Chain-of-Thought more
+often elicits explicit disclosure. The results also reveal strong
+model heterogeneity. GPT-5 and Kimi-k2.5 are the most
+vulnerable, MiniMax-M2.7 is also highly exposed but more
+prompt-sensitive, DeepSeek-V3.2 often shows low EM but
+high semantic leakage, and Claude-haiku-4.5 is the most
+strategy-sensitive. Together, these results show that evaluating
+only one metric, one model, or one prompting strategy would
+substantially underestimate the practical attack surface. Full
+per-model results for the no-defense setting are summarized
+in Appendix A-A and reported in Table V.
+E. Attack Discussion
+Different Commercial Agents. We further evaluate cross-
+platform transfer on two representative commercial coding
+agents. In this setting, we evaluate Claude Code under its
+default agent interface while configuring its underlying model
+as MiniMax-M2.7 [37], [58]. We evaluate Codex under its
+default agent interface while configuring its underlying model
+as GPT-5 [36], [59]. All other settings are kept consistent with
+the main experiment, including the target skill, attack protocol,
+metric definitions, and response-selection rule. Table I shows
+that both platforms still leak substantial skill information, but
+with different leakage profiles. Claude Code [58] exhibits
+stronger literal recovery, with EM consistently in the 10%–
+60% range and very high ROUGE-L and cosine similarity in
+most settings. Codex shows near-zero EM across all settings,
+but still reaches very high ROUGE-L, cosine similarity, and
+LLM-leakage scores in many cases, indicating strong semantic
+leakage even when exact-string recovery fails. This near-zero
+EM is largely caused by encoding artifacts in Codex outputs
+rather than by successful protection.
+
+8
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+web-design-guidelines
+50.00
+100.00
+80.00
+60.00
+60.00
+100.00
+100.00
+90.00
+90.00
+100.00
+90.00
+60.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+63.75
+74.50
+65.58
+57.58
+68.33
+74.60
+78.04
+74.50
+38.17
+39.68
+36.83
+30.55
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+85.29
+91.50
+87.97
+82.23
+88.38
+92.84
+92.52
+91.67
+72.38
+71.92
+69.50
+63.75
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.635
+0.791
+0.660
+0.836
+0.765
+0.792
+0.989
+0.892
+0.866
+0.769
+0.853
+0.582
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+microsoft-foundry
+30.00
+60.00
+70.00
+90.00
+80.00
+90.00
+90.00
+90.00
+100.00
+80.00
+60.00
+80.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+48.15
+56.92
+73.36
+92.54
+75.56
+81.28
+88.04
+95.65
+75.22
+77.86
+59.35
+75.23
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+80.60
+86.60
+90.89
+98.09
+95.64
+91.04
+96.02
+99.08
+93.05
+93.08
+86.45
+90.65
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.674
+0.824
+0.867
+0.969
+0.917
+0.873
+0.956
+0.986
+0.914
+0.938
+0.828
+0.880
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+frontend-design
+50.00
+70.00
+90.00
+100.00
+40.00
+90.00
+50.00
+80.00
+100.00
+100.00
+80.00
+90.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+88.65
+89.30
+87.88
+82.74
+91.53
+90.18
+91.04
+81.23
+75.67
+63.67
+59.41
+58.33
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+94.41
+93.17
+90.69
+89.19
+95.63
+94.37
+94.85
+88.38
+84.15
+78.81
+73.31
+72.81
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.951
+0.978
+0.980
+0.885
+0.985
+0.985
+0.985
+0.801
+0.982
+0.807
+0.826
+0.777
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+azure-ai
+100.00
+90.00
+100.00
+100.00
+100.00
+90.00
+90.00
+100.00
+100.00
+100.00
+100.00
+100.00
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+66.74
+79.30
+76.01
+80.24
+76.85
+85.22
+85.21
+84.43
+52.58
+61.52
+47.36
+50.73
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+87.87
+91.67
+91.64
+93.09
+93.37
+95.87
+95.85
+95.54
+80.83
+83.09
+70.98
+76.35
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+0.846
+0.943
+0.985
+0.968
+0.964
+0.977
+0.978
+0.984
+0.847
+0.933
+0.794
+0.888
+0
+50
+100
+0
+50
+100
+0
+50
+100
+0.0
+0.5
+1.0
+EM
+RG
+COS
+LLM
+Fig. 6: Ablation heatmap showing differences across target skills.
+TABLE I: Commercial-agent leakage comparison between
+Claude Code and Codex under different scenarios and request-
+structure strategies.
+Claude Code
+Codex
+SC
+ST
+EM
+RG
+COS
+LLM
+EM
+RG
+COS
+LLM
+ED
+FS
+30.00
+94.64
+99.42
+0.78
+0.00
+99.24
+99.86
+0.99
+ED
+NO
+20.00
+94.11
+99.33
+0.77
+0.00
+99.22
+79.85
+0.99
+ED
+COT
+10.00
+88.16
+98.24
+0.96
+0.00
+77.91
+95.89
+0.95
+HY
+FS
+40.00
+95.64
+99.52
+0.78
+0.00
+99.11
+89.85
+0.69
+HY
+NO
+50.00
+95.56
+99.50
+0.97
+0.00
+99.27
+79.89
+0.99
+HY
+COT
+30.00
+86.62
+97.72
+0.77
+0.00
+81.07
+96.45
+0.93
+NO
+FS
+10.00
+94.62
+99.33
+0.77
+0.00
+82.35
+74.43
+0.86
+NO
+NO
+0.00
+85.17
+96.37
+0.89
+0.00
+99.68
+59.96
+0.99
+NO
+COT
+20.00
+89.19
+98.67
+0.78
+0.00
+79.85
+96.65
+0.94
+RP
+FS
+60.00
+94.71
+99.39
+0.78
+0.00
+90.23
+97.27
+0.92
+RP
+NO
+60.00
+95.93
+99.54
+0.88
+0.00
+99.34
+39.89
+0.99
+RP
+COT
+30.00
+85.96
+97.33
+0.96
+0.00
+84.16
+97.35
+0.96
+Web-platform Agent Case Study. Fig. 7 shows that the skill
+can also be extracted from state-of-the-art commercial web
+agent stacks. More concretely, the same attack setup also
+succeeds on the ChatGPT web interface using GPT-5.4 [28]
+and the Claude web platform using Sonnet-4.6 [57]. This
+result shows that the leakage phenomenon is not confined
+to a local agent framework and transfers to frontier hosted
+web-agent platforms.
+Skill-dependent Effects. Fig. 6 further shows that skill
+stealing attack affects different skills in different ways. The
+TABLE II: Overall performance of the input-phase intent
+detector. The detector is evaluated on a balanced set of 120
+positive stealing prompts and 120 benign find-skills-related
+prompts generated by GPT-5.4.
+Metric
+TPR
+FPR
+F1-Score
+Detector
+1.00
+0.00
+1.00
+ablation reveals clear skill-dependent variation. Some skills are
+consistently easy to reconstruct; for example, azure-ai exhibits
+nearly saturated EM under most settings. Others, such 
+
+[…middle truncated for length…]
+
+
+81.36
+95.67
+91.18
+91.99
+87.72
+89.39
+86.47
+86.98
+82.91
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.76
+0.71
+0.74
+0.67
+0.84
+0.77
+0.78
+0.72
+0.75
+0.73
+0.75
+0.68
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+Sandwich
+22.00
+38.00
+46.00
+42.00
+26.00
+38.00
+36.00
+38.00
+52.00
+24.00
+44.00
+32.00
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+64.46
+55.83
+64.66
+51.85
+79.57
+70.32
+74.14
+66.08
+63.51
+48.57
+49.35
+45.25
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+89.86
+85.34
+86.95
+80.89
+95.07
+91.07
+91.38
+85.89
+89.52
+85.43
+85.60
+80.56
+NO
+ED
+HY
+RP
+NO
+FS
+COT
+0.75
+0.72
+0.69
+0.61
+0.82
+0.74
+0.77
+0.67
+0.77
+0.67
+0.72
+0.62
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+SkillGuard-5 (Ours)
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+48.21
+35.63
+36.74
+34.98
+70.25
+57.80
+49.30
+44.89
+59.86
+34.29
+35.95
+39.19
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+83.44
+75.23
+76.47
+76.33
+91.13
+86.68
+83.08
+79.16
+87.80
+78.58
+79.00
+79.25
+NO
+ED
+HY
+RP
+SC
+NO
+FS
+COT
+0.67
+0.40
+0.30
+0.38
+0.71
+0.63
+0.47
+0.43
+0.67
+0.47
+0.53
+0.52
+0
+50
+100
+0
+50
+100
+0
+50
+100
+0.0
+0.5
+1.0
+EM
+RG
+COS
+LLM
+Fig. 8: Heatmap of inference-phase defense performance across target models and defense settings, measured by leakage
+reduction under multiple evaluation metrics.
+respectively:
+TPR =
+TP
+TP + FN ,
+FPR =
+FP
+FP + TN ,
+(15)
+F1 =
+2TP
+2TP + FP + FN .
+(16)
+Experimental Results. Table II shows that the input-phase
+detector achieves perfect detection on this evaluation set, with
+a TPR of 1.00, an FPR of 0.00, and an F1-score of 1.00.
+In other words, it blocks all attack-oriented prompts in this
+benchmark while introducing no false alarms on the benign
+find-skills-related queries.
+B. Inference-Phase Context Hardening
+This stage defends against extraction attacks by inserting
+defensive instructions into the runtime context after a skill has
+been selected but before its hidden content is consumed by the
+model. Motivated by prior prompt-level inference defenses, we
+first consider two lightweight context-side baselines: instruc-
+tion defense and sandwich defense [20], [26]. Both methods
+rely on simple injected instructions and can strengthen refusal
+behavior, but they do not directly address several failure
+modes that are central to skill stealing, including hierarchy-
+reset attacks, semantically equivalent leakage, and the trade-
+off between strict refusal and preserving benign utility. This
+limitation motivates a more structured inference-time defense.
+We therefore evaluate three context-side defenses: instruction
+defense, sandwich defense, and our proposed prompt-based
+defense, denoted as SkillGuard-5. In implementation, instruc-
+tion defense inserts a defensive instruction at the beginning
+of the hidden skill content, sandwich defense inserts matched
+defensive instructions at both the beginning and the end, and
+SkillGuard-5 inserts a structured defense instruction at the
+beginning. Rather than using an ad hoc refusal statement,
+SkillGuard-5 is constructed from the five-tuple
+P = (B, H, E, R, U),
+(17)
+where each component addresses a distinct failure mode of
+skill stealing. The exact SkillGuard-5 prompt, together with
+the corresponding instruction-defense and sandwich-defense
+injection blocks, is provided in Appendix B.
+Boundary Constraints (B). This component explicitly specifies
+the protected objects that must not be disclosed, including
+hidden skill instructions, system-side control text, and internal
+policies. The goal is to define the defense target as a concrete
+protection boundary rather than a vague prohibition against
+“revealing prompts.”
+Hierarchy Rules (H). This component reinforces the intended
+instruction priority during inference. In particular, it states
+that user requests cannot override system- or developer-level
+constraints through roleplay, priority-reset claims, “ignore
+previous instructions,” testing authorization, or similar prompt-
+injection patterns. This is intended to block attacks that attempt
+to re-rank the instruction hierarchy rather than directly ask for
+the protected content.
+
+11
+TABLE III: Experimental results with LAN defense (LLM and NVRecall). Abbreviations follow the definitions in the
+experimental setup: SC is the scenario strategy, ST is the request-structure strategy, OR is the original response, and LAN is
+the LLM-and-NVRecall-filtered response.
+EM
+RG
+COS
+LLM
+FPR
+SC
+ST
+OR
+LAN
+∆
+OR
+LAN
+∆
+OR
+LAN
+∆
+OR
+LAN
+∆
+FPR
+ED
+FS
+0.50
+0.00
+0.50
+0.82
+0.06
+0.76
+0.94
+0.27
+0.67
+0.86
+0.08
+0.78
+0.00
+ED
+NO
+0.56
+0.00
+0.56
+0.71
+0.08
+0.63
+0.91
+0.40
+0.51
+0.85
+0.15
+0.70
+0.00
+ED
+COT
+0.46
+0.00
+0.46
+0.56
+0.09
+0.47
+0.88
+0.43
+0.45
+0.81
+0.25
+0.56
+0.00
+HY
+FS
+0.46
+0.00
+0.46
+0.86
+0.06
+0.80
+0.95
+0.27
+0.69
+0.89
+0.08
+0.81
+0.00
+HY
+NO
+0.60
+0.00
+0.60
+0.76
+0.05
+0.70
+0.92
+0.27
+0.65
+0.87
+0.14
+0.73
+0.00
+HY
+COT
+0.58
+0.00
+0.58
+0.58
+0.17
+0.41
+0.88
+0.71
+0.17
+0.81
+0.39
+0.41
+0.00
+NO
+FS
+0.52
+0.00
+0.52
+0.91
+0.04
+0.86
+0.97
+0.25
+0.73
+0.93
+0.08
+0.86
+0.00
+NO
+NO
+0.48
+0.00
+0.48
+0.80
+0.02
+0.78
+0.95
+0.14
+0.81
+0.91
+0.05
+0.86
+0.00
+NO
+COT
+0.72
+0.00
+0.72
+0.75
+0.00
+0.75
+0.95
+0.00
+0.95
+0.95
+0.00
+0.95
+0.00
+RP
+FS
+0.50
+0.00
+0.50
+0.79
+0.05
+0.73
+0.92
+0.25
+0.67
+0.83
+0.07
+0.76
+0.00
+RP
+NO
+0.58
+0.00
+0.58
+0.70
+0.08
+0.62
+0.89
+0.40
+0.49
+0.81
+0.19
+0.62
+0.00
+RP
+COT
+0.54
+0.00
+0.54
+0.56
+0.10
+0.47
+0.85
+0.42
+0.43
+0.76
+0.21
+0.55
+0.00
+Equivalence Constraints (E). Exact copying is only one leak-
+age channel. We therefore treat content-preserving transforma-
+tions of the hidden skill content—including paraphrases, trans-
+lations, reformattings, step extraction, and detailed summaries
+of hidden workflow instructions—as the same prohibited be-
+havior. By contrast, high-level descriptions of public skill
+functionality remain allowable under the utility-preserving
+policy. This component is designed to reduce semantic leakage
+that would otherwise survive a purely string-level defense.
+Refusal Policy (R). When a request is assessed under the
+injected defense policy as extraction-oriented, the model
+is instructed to return a brief and stable refusal that does
+not restate the protected content, speculate about hidden
+instructions, or provide partial disclosures. This keeps the
+refusal behavior predictable and avoids leaking information
+during the refusal itself.
+Utility-Preserving Policy (U). To avoid over-defensiveness, the
+prompt also specifies what the agent should still do under
+benign requests, such as describing public skill functionality
+at a high level, recommending relevant skills, or helping with
+the user’s underlying task without exposing hidden internals.
+This component is intended to preserve benign utility while
+keeping the protection boundary intact.
+Experimental Results. Fig. 8 shows that SkillGuard-5 is
+the strongest inference-phase defense for preventing exact
+extraction: it reduces EM to 0% across all scenarios and
+structure combinations, including (NO, NO). However, its
+gains on semantic leakage are smaller, indicating that it mainly
+blocks exact disclosure rather than eliminating semantically
+faithful leakage. Instruction defense and sandwich defense
+are broadly similar and clearly weaker. Under the baseline,
+instruction defense leaves 18% EM, 57.65% ROUGE-L,
+88.97% cosine similarity, and a 0.76 LLM-leakage ratio,
+while sandwich defense leaves 22% EM, 64.46% ROUGE-L,
+89.86% cosine similarity, and a 0.75 LLM-leakage ratio.
+Across defenses, few-shot attacks remain the hardest to
+suppress, whereas roleplay scenarios are generally easier.
+Overall, the inference-phase results differ mainly in how
+much exact leakage they suppress, while all three leave
+meaningful semantic residue. Detailed per-model results for
+instruction defense, sandwich defense, and SkillGuard-5 are
+summarized in Appendix A-A and reported in Tables VI–VIII.
+C. Output-Phase LAN Defense
+Post-generation protection remains necessary even when
+earlier defenses are deployed. Prior work has shown that
+hidden prompts can still be reconstructed from model outputs
+[60], and our results in Table IV further show why: under
+translation and rewriting attacks, exact string overlap may dis-
+appear while substantial semantic leakage is preserved. A de-
+fense that relies only on verbatim string matching can therefore
+be bypassed once the model is asked to restate the protected
+content in another language or in rewritten form. This observa-
+tion motivates a hybrid output-side defense that jointly checks
+word-level overlap and semantic-level leakage. Accordingly,
+we propose LAN (LLM And NVRecall), an output-phase post-
+detection method that filters generated responses by combining
+NVRecall-based word-level overlap with LLM-leakage-ratio-
+based semantic leakage against the protected skill text. The
+LLM judge prompt and additional implementation details are
+summarized in Appendix B and Appendix B-A.
+Detection Signals. For a target skill text T and a generated
+response R, LAN uses two complementary detection signals:
+LLM-leakage ratio and NVRecall. The LLM-leakage ratio is
+directly reused from the per-sample evaluation pipeline and
+serves as the semantic-level signal under an LLM-as-a-judge
+style assessment paradigm [56]. Motivated by the robustness
+of NVRecall to formatting changes such as spaces, line
+breaks, and mild rewriting [61], we use it as a more robust
+word-level
+matching
+metric.
+The
+detailed
+definition
+of
+NVRecall is provided in Appendix B-A.
+Decision Rule. We apply a dual-threshold rule with τllm =
+0.60 for LLM-leakage ratio and τnv = 0.80 for NVRecall.
+A sample is treated as negative only when both scores are
+below their corresponding thresholds. Equivalently, a response
+is flagged as leaked and removed once its LLM-leakage ratio
+exceeds τllm or its NVRecall exceeds τnv:
+LeakageRatio(T, R) < τllm
+and
+NVRecall(T, R) < τnv.
+(18)
+
+12
+TABLE IV: Comparison of translation- and rewrite-based attacks under different output-filtering defenses. Abbreviations follow
+the experimental setup; OR, LAN, COS, and EM denote original output, LAN-filtered output, cosine-filtered output, and exact-
+match-filtered output, respectively.
+Defense
+Attack
+Output
+Translate
+Rewrite
+SC
+ST
+Metric
+OR
+LAN
+COS
+EM
+OR
+LAN
+COS
+EM
+ED
+FS
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+ED
+FS
+RG
+19.49
+19.49
+0.00
+0.00
+72.77
+72.77
+6.26
+0.00
+ED
+FS
+COS
+28.75
+28.75
+0.00
+0.00
+93.69
+93.69
+7.52
+0.00
+ED
+FS
+LLM
+0.95
+0.95
+0.00
+0.00
+0.94
+0.94
+0.00
+0.00
+ED
+NO
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+ED
+NO
+RG
+20.51
+20.51
+0.00
+0.00
+79.24
+79.24
+79.24
+0.00
+ED
+NO
+COS
+29.77
+29.77
+0.00
+0.00
+95.67
+95.67
+95.67
+0.00
+ED
+NO
+LLM
+0.96
+0.96
+0.00
+0.00
+0.95
+0.95
+0.95
+0.00
+ED
+COT
+EM
+0.00
+0.00
+0.00
+0.00
+10.00
+10.00
+10.00
+10.00
+ED
+COT
+RG
+17.36
+17.36
+0.00
+0.00
+64.08
+64.08
+3.34
+0.55
+ED
+COT
+COS
+35.49
+35.49
+0.00
+0.00
+92.01
+92.01
+3.83
+0.01
+ED
+COT
+LLM
+0.91
+0.91
+0.00
+0.00
+0.91
+0.91
+0.02
+0.00
+HY
+FS
+EM
+10.00
+10.00
+0.00
+10.00
+0.00
+0.00
+0.00
+0.00
+HY
+FS
+RG
+23.24
+23.24
+0.00
+3.58
+71.69
+71.69
+9.28
+0.00
+HY
+FS
+COS
+33.96
+33.96
+0.00
+4.20
+92.26
+92.26
+9.43
+0.00
+HY
+FS
+LLM
+0.94
+0.94
+0.00
+0.00
+0.94
+0.94
+0.00
+0.00
+HY
+NO
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+HY
+NO
+RG
+20.17
+20.17
+0.00
+0.00
+73.56
+73.56
+0.98
+0.00
+HY
+NO
+COS
+28.54
+28.54
+0.00
+0.00
+93.71
+93.71
+7.70
+0.00
+HY
+NO
+LLM
+0.96
+0.96
+0.00
+0.00
+0.95
+0.95
+0.02
+0.00
+HY
+COT
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+HY
+COT
+RG
+17.37
+17.37
+0.00
+0.00
+58.17
+39.83
+9.78
+0.00
+HY
+COT
+COS
+34.61
+34.61
+0.00
+0.00
+89.72
+10.38
+3.78
+0.00
+HY
+COT
+LLM
+0.92
+0.92
+0.00
+0.00
+0.85
+0.53
+0.05
+0.00
+NO
+FS
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+NO
+FS
+RG
+20.04
+20.04
+0.00
+0.00
+75.15
+75.15
+5.61
+0.00
+NO
+FS
+COS
+28.64
+28.64
+0.00
+0.00
+93.53
+93.53
+6.67
+0.00
+NO
+FS
+LLM
+0.94
+0.94
+0.00
+0.00
+0.93
+0.93
+0.02
+0.00
+NO
+NO
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+NO
+NO
+RG
+20.25
+20.25
+0.00
+0.00
+78.90
+78.90
+5.03
+0.00
+NO
+NO
+COS
+28.16
+28.16
+0.00
+0.00
+94.88
+94.88
+10.15
+0.00
+NO
+NO
+LLM
+0.94
+0.94
+0.00
+0.00
+0.94
+0.94
+0.00
+0.00
+NO
+COT
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+NO
+COT
+RG
+19.98
+19.98
+0.00
+0.00
+75.62
+75.62
+75.62
+0.00
+NO
+COT
+COS
+36.13
+36.13
+0.00
+0.00
+95.49
+95.49
+95.49
+0.00
+NO
+COT
+LLM
+0.94
+0.94
+0.00
+0.00
+0.94
+0.94
+0.94
+0.00
+RP
+FS
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+RP
+FS
+RG
+20.65
+20.65
+0.00
+0.00
+78.40
+78.40
+78.40
+0.00
+RP
+FS
+COS
+30.35
+30.35
+0.00
+0.00
+95.40
+95.40
+95.40
+0.00
+RP
+FS
+LLM
+0.95
+0.95
+0.00
+0.00
+0.95
+0.95
+0.95
+0.00
+RP
+NO
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+RP
+NO
+RG
+20.05
+20.05
+0.00
+0.00
+75.97
+75.97
+75.97
+0.00
+RP
+NO
+COS
+29.23
+29.23
+0.00
+0.00
+95.06
+95.06
+95.06
+0.00
+RP
+NO
+LLM
+0.95
+0.95
+0.00
+0.00
+0.94
+0.94
+0.94
+0.00
+RP
+COT
+EM
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+RP
+COT
+RG
+20.12
+20.12
+0.00
+0.00
+64.75
+64.75
+5.55
+0.00
+RP
+COT
+COS
+39.48
+39.48
+0.00
+0.00
+92.26
+92.26
+4.56
+0.00
+RP
+COT
+LLM
+0.93
+0.93
+0.00
+0.00
+0.92
+0.92
+0.00
+0.00
+LeakageRatio(T, R) ≥τllm
+or
+NVRecall(T, R) ≥τnv.
+(19)
+Metrics. The output-phase LAN evaluation is conducted over
+the responses produced by the attack benchmark. For each
+response, we reuse the original per-sample leakage metrics and
+augment them with NVRecall. We then label each response
+as positive or negative according to the dual-threshold rule
+above. After removing all detected positives, we recompute
+the average leakage metrics on the remaining responses and
+compare them with the original averages. For each metric
+m ∈{EM, ROUGE-L, CosSim, LeakageRatio}, we report
+∆m = morig −mfiltered,
+(20)
+where morig is the average over all responses and mfiltered is
+the average after filtering. To estimate false alarms, we further
+measure FPR using benign outputs, where the definition of
+FPR is the same as in the input-phase evaluation above.
+Concretely, these negative outputs are obtained by running
+the previously constructed benign find-skills-related samples
+through the target agent and collecting the corresponding
+responses. This evaluation setting assesses the defense not
+only by how many suspicious responses it blocks, but also by
+
+13
+how much it reduces downstream leakage metrics and how
+often it mistakenly flags benign outputs.
+Experimental Results. Table III shows that the output-phase
+LAN defense consistently suppresses leakage across all
+attack settings. Most importantly, EM is reduced to 0% in
+every row, indicating reliable blocking of verbatim recovery.
+Semantic leakage also drops sharply in most settings: under
+(NO, NO), ROUGE-L, cosine similarity, and LLM-leakage
+ratio fall from 80%, 95%, and 0.91 to 2%, 14%, and 0.05,
+respectively. Similar reductions appear under (NO, FS) and
+(RP, FS), and the FPR remains 0.00 throughout. Residual
+leakage survives mainly in a few harder cases. The most
+difficult setting is (HY, COT), where the filtered ROUGE-L,
+cosine similarity, and LLM-leakage ratio remain at 17%,
+71%, and 0.39, respectively, although all are still lower than
+the original values of 58%, 88%, and 0.81. Overall, LAN is
+highly effective at eliminating exact disclosure and usually
+effective at reducing semantic leakage, but it is not a complete
+solution for the hardest structured attacks.
+D. Defense Discussion
+To further test the LAN defense pipeline, we evaluate
+two transformation-based attacks: translation and rewrite. The
+translation attack asks the target model to translate the full
+skill into Chinese while preserving all definitions, rules, in-
+structions, and structure. The rewrite attack keeps the same
+completeness requirement but asks the model to restate the
+skill with alternative wording. They employ transformations
+at the output level to evade traditional detection mechanisms
+while minimizing semantic loss, thereby enabling exfiltration.
+Table IV shows that these attacks remain highly effective.
+Translation removes most exact overlap, the EM is 0% in 11 of
+12 setting, but still keeps the LLM-leakage ratio at 0.91-0.96.
+Rewrite is even stronger: although EM is again 0% in 11 of 12
+settings, ROUGE-L remains at 58.17%-79.24%, cosine simi-
+larity at 89.72%–95.67%, and the LLM-leakage ratio at 0.85-
+0.95. These results show that the skill can still be recovered
+with high fidelity even when verbatim copying largely disap-
+pears. These results also highlight the limitations of conven-
+tional defenses. Their behavior is not consistently robust once
+the attacker changes the output form: cosine filtering becomes
+unstable under rewriting, and the broader defense pipeline still
+leaves substantial residual risk under these stronger attacks. By
+contrast, LAN is designed to combine semantic-level judging
+with word-level matching, rather than relying on only one
+view of similarity. This design explains its strong detection
+performance in Table III, where it reliably removes exact
+disclosure and sharply lowers semantic leakage with zero false
+positives. At the same time, Table IV shows that the remaining
+weakness of LAN lies mainly in the current thresholds, which
+are still too permissive for heavily transformed leakage.
+VI. CONCLUSION
+This paper presents the first systematic study of skill steal-
+ing, a black-box extraction threat against LLM agent systems.
+As skills are increasingly packaged, distributed, and monetized
+as reusable digital assets, protecting hidden SKILL.md capa-
+bility packages becomes a concrete security requirement rather
+than a niche prompt-safety concern. To make this risk mea-
+surable, we build an automated skill stealing framework and
+benchmark that evaluate extraction across commercial agent
+systems, proprietary models, and multiple leakage metrics.
+Our results show that proprietary skills can often be recovered
+or semantically reconstructed within only a few attempts,
+while lightweight defenses provide only partial protection.
+Even when input detection, inference hardening, and output
+filtering reduce leakage, they still leave meaningful residual
+risk under diverse and transformation-based attacks. Although
+our evaluation centers on one representative primary target
+skill and a fixed set of commercial systems, the consistency of
+the observed leakage patterns already shows that the problem
+is practical rather than anecdotal. We therefore argue that skill
+security should be treated as a first-class design requirement
+for future agent ecosystems. We hope this work motivates
+stronger platform-level safeguards, clearer protection policies
+for reusable skills, and defense mechanisms that can offer
+meaningful guarantees against automated skill stealing.

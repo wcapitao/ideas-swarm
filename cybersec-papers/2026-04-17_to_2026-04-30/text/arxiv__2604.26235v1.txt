@@ -1,0 +1,1015 @@
+LATTICE: EVALUATING DECISION
+SUPPORT UTILITY OF CRYPTO AGENTS
+TECHNICAL REPORT
+Aaron Chan1
+Tengfei Li1†
+Tianyi Xiao1†
+Angela Chen1
+Junyi Du1
+Xiang Ren1,2
+1Sahara AI
+2University of Southern California
+†Equal contribution.
+aaronc@saharalabs.ai
+ABSTRACT
+We introduce LATTICE, a benchmark for evaluating the decision support utility of crypto agents in
+realistic user-facing scenarios. Prior crypto agent benchmarks mainly focus on reasoning-based or
+outcome-based evaluation, but do not assess agents’ ability to assist user decision-making. LATTICE
+addresses this gap by: (1) defining six evaluation dimensions that capture key decision support
+properties; (2) proposing 16 task types that span the end-to-end crypto copilot workflow; and
+(3) using LLM judges to automatically score agent outputs based on these dimensions and tasks.
+Crucially, the dimensions and tasks are designed to be evaluable at scale using LLM judges, without
+relying on ground truth from expert annotators or external data sources. In lieu of these dependencies,
+LATTICE’s LLM judge rubrics can be continually audited and updated given new dimensions,
+tasks, criteria, and human feedback, thus promoting reliable and extensible evaluation. While other
+benchmarks often compare foundation models sharing a generic agent framework, we use LATTICE
+to assess production-level agents used in actual crypto copilot products, reflecting the importance of
+orchestration and UI/UX design in determining agent quality. In this paper, we evaluate six real-world
+crypto copilots on 1,200 diverse queries and report breakdowns across dimensions, tasks, and query
+categories. Our experiments show that most of the tested copilots achieve comparable aggregate
+scores, but differ more significantly on dimension-level and task-level performance. This pattern
+suggests meaningful trade-offs in decision support quality: users with different priorities may be
+better served by different copilots than the aggregate rankings alone would indicate. To support
+reproducible research, we open-source all LATTICE code and data used in this paper.*
+1
+Introduction
+1.1
+Motivation
+Crypto agents are AI assistants—usually powered by large language models (LLMs) equipped with tools and live data
+feeds—that help users navigate protocols, assess risk, and take action in fast-moving crypto markets. In practice, crypto
+agents are commonly realized as crypto copilots, consisting of chat-based experiences embedded in wallets, trading
+tools, protocol pages, etc. These copilots operate in a human-in-the-loop setting, where they provide information,
+give recommendations, and execute actions, while users are responsible for interpreting outputs and making final
+decisions. In this setting, crypto agent success depends not only on reasoning capability or prediction accuracy, but also
+on how well agent outputs align with user intent, communicate clear explanations, and enable actionable next steps. We
+collectively refer to these kinds of user-centered properties as the decision support utility of a crypto agent, as they
+determine whether users can appropriately understand, assess, and act upon agent outputs. However, there is currently
+no benchmark that systematically evaluates this aspect of agent quality.
+*Code and data are available at: https://github.com/SaharaLabsAI/lattice-benchmark.
+arXiv:2604.26235v1 [cs.CR] 29 Apr 2026
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+Existing crypto agent benchmarks largely focus on reasoning-based or outcome-based evaluation. Reasoning-based
+benchmarks evaluate crypto agents on their ability to reason over dynamic market and on-chain data, emphasizing
+capabilities such as retrieval, synthesis, and tool usage (Guo et al., 2025; Eswaran et al., 2026; Dai et al., 2025).
+Reasoning performance is typically assessed using intrinsic criteria such as factual correctness, logical coherence,
+or cross-source integration. Outcome-based benchmarks evaluate crypto agents on their ability to make decisions or
+predictions in real-world crypto market settings, emphasizing capabilities such as market timing, portfolio allocation,
+and strategy adaptation (Li et al., 2025a; Qian et al., 2025; Zeng et al., 2025). Outcome performance is typically
+assessed using extrinsic criteria such as financial returns, risk-adjusted portfolio performance, or forecasting accuracy.
+Both types of benchmarks generally rely on expert annotators or external data sources to construct task inputs or ground
+truth references.
+While these approaches provide valuable insights about crypto agents’ reasoning processes and realized outcomes, they
+do not specifically consider how crypto agents function in user-facing interactions. In particular, existing benchmarks do
+not evaluate how crypto agent outputs are interpreted and contextualized within a user’s decision-making process, nor
+how effectively they support user decision-making. Moreover, they do not capture differences in crypto agent response
+structure and explanation quality, which can vary substantially even when underlying reasoning or outcomes are similar.
+As a result, crypto agents that perform comparably under existing benchmarks may still differ significantly in helpfulness
+and trustworthiness to end users in human-in-the-loop settings. This leaves a gap in evaluating whether crypto agents
+effectively support user decision-making in practice, thus motivating a complementary class of benchmarks focused on
+decision support utility.
+1.2
+Our Approach
+We introduce LATTICE (Layered EvaluAtion of Decision SupporT UTility In Crypto AgEnts), a benchmark for
+evaluating the decision support utility of crypto agents in realistic user-facing scenarios. Rather than measuring success
+in terms of reasoning quality or realized outcomes, LATTICE evaluates how effectively agent outputs support user
+decision-making in human-in-the-loop settings.
+The LATTICE stack consists of three core layers: evaluation dimensions, tasks, and query categories. LATTICE opera-
+tionalizes decision support utility through six evaluation dimensions—Intent Fidelity, Mechanism Clarity, Uncertainty
+Handling, Actionability, Evidence Coverage, and Response Structure—which together capture whether a response can
+be understood, evaluated, and acted upon by a user. To reflect real-world usage, LATTICE defines sixteen task types
+spanning the end-to-end crypto copilot workflow, including market research, risk analysis, execution planning, and
+capital allocation. LATTICE also includes five query categories—Basic, Comparative, Constrained, Decision, and
+Ambiguous—in order to test how crypto agents respond to different core situations within a given task.
+A central design goal of LATTICE is to enable scalable evaluation by minimizing dependencies on expert annotation or
+external data sources for constructing task inputs or ground-truth references. To achieve this, LATTICE’s evaluation
+dimensions and tasks are carefully designed such that crypto agents can be assessed by LLM judges given only the final
+agent response and its corresponding query. To ground the benchmark in real-world usefulness, LATTICE’s evaluation
+dimensions, tasks, and rubric are also developed based on substantial input from domain experts. However, once these
+benchmark components are in place, LATTICE can be deployed and reused at scale across large sets of LLM-generated
+queries and agent responses.
+LATTICE uses LLM judges to score each agent response independently using a rubric based on the six dimensions,
+producing structured scores and rationales. Scores are then aggregated using query-category-dependent weights, and the
+evaluation protocol enforces per-agent absolute scoring rather than pairwise agent comparisons. This rubric-driven setup
+enables consistent evaluation across agents while reducing sensitivity to superficial stylistic differences. Furthermore,
+LATTICE’s LLM judge rubric can be continually audited and updated with little additional effort, given new dimensions,
+tasks, criteria, or human feedback. This adaptability to evolving crypto agent behavior and user needs helps promote
+reliable and extensible evaluation.
+In contrast to other benchmarks that compare foundation models sharing a generic agent framework, LATTICE evaluates
+crypto agents as they are deployed in actual crypto copilot products, capturing the combined effects of model behavior,
+orchestration, tool usage, and UI/UX design on decision support quality. In this paper, we use LATTICE to test six
+well-known or emerging real-world copilots—Elsa, Gina, June, Minara, Sorin, and Surf—on 1,200 diverse queries,
+reporting performance both in aggregate and across dimensions, tasks, and query categories.
+Our results show that while aggregate scores are often similar across copilots, meaningful differences emerge at
+the level of individual dimensions and tasks, revealing trade-offs in decision support utility that are not captured by
+existing benchmarks. These differences suggest that users with different priorities may prefer different copilots, even
+when aggregate rankings are comparable. In addition, we find that human pairwise preference judgments are broadly
+2
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+consistent with LATTICE rankings, indicating that the benchmark captures aspects of output quality that align with user
+perceptions. To support reproducible research, we open-source all LATTICE code and data used in this paper.
+2
+Related Work
+2.1
+Crypto Agent Benchmarks
+A growing number of benchmarks evaluate AI agents in crypto use cases, with respect to areas like analysis, execution,
+adversarial robustness, and cross-market decision-making (Guo et al., 2025; Eswaran et al., 2026; Dai et al., 2025;
+CAIBA, 2025a,b; Li et al., 2024; Yu et al., 2024; Luo et al., 2025; Li et al., 2025a; Qian et al., 2025; Zeng et al., 2025).
+These benchmarks largely fall into reasoning-based and outcome-based evaluation paradigms, differing primarily in the
+criteria used to assess agent performance.
+Reasoning-based benchmarks evaluate agents on their ability to analyze market and protocol data, often in an analyst-
+style setting. They emphasize capabilities such as retrieval, synthesis, and tool use, and are typically assessed using
+intrinsic criteria such as factual correctness, logical coherence, and cross-source integration (Guo et al., 2025; Eswaran
+et al., 2026). Some benchmarks probe robustness under adversarial or high-risk conditions (Dai et al., 2025), or isolate
+narrower operational capabilities such as entity extraction or transaction execution (CAIBA, 2025a,b). System-level
+evaluations extend this paradigm to end-to-end workflows such as trading or research pipelines, while still primarily
+measuring the correctness or completeness of intermediate analyses (Li et al., 2024; Yu et al., 2024; Luo et al., 2025).
+Outcome-based benchmarks evaluate agents based on the realized performance of their decisions, using extrinsic
+criteria such as financial returns, risk-adjusted portfolio performance, or forecasting accuracy (Li et al., 2025a; Qian
+et al., 2025; Zeng et al., 2025). These benchmarks typically embed agents in simulated or live environments involving
+trading, portfolio management, or cross-market decision-making, where success is defined by downstream outcomes.
+Some benchmarks focus on forecasting-style tasks, evaluating predictive accuracy under time-evolving information
+and uncertainty (Zeng et al., 2025). Others evaluate agents in trading or market-based settings, where decisions are
+executed and performance is measured through realized economic outcomes such as profit or portfolio returns (Li et al.,
+2025a; Qian et al., 2025).
+These prior crypto agent benchmarks focus on evaluating either intrinsic reasoning quality or extrinsic decision
+outcomes, but do not capture how agent outputs support user decision-making in interactive, human-in-the-loop settings.
+2.2
+Forecasting and Prediction Market Benchmarks
+Beyond domain-specific agent benchmarks, a complementary line of work evaluates LLM agents in forecasting and
+prediction market settings, across domains such as economics, politics, and general financial markets (Ye et al., 2024;
+Zeng et al., 2025; Arora and Malpani, 2026; Yu et al., 2025; Together AI, 2025; Qian et al., 2025). These benchmarks
+are not specific to crypto or financial advisory tasks, but are relevant due to shared characteristics such as uncertainty,
+time-varying information, and decision-making under incomplete knowledge.
+These approaches are largely outcome-based, relying on extrinsic metrics such as forecasting accuracy or realized
+economic performance. However, they are typically framed over general economic, political, and cross-asset settings
+rather than crypto-native or traditional-finance agent task suites. Within that paradigm, forecasting benchmarks isolate
+predictive skill as information evolves over time (Ye et al., 2024; Zeng et al., 2025). Other benchmarks evaluate agents
+in prediction market venues or closely related simulated and live trading environments (Arora and Malpani, 2026; Yu
+et al., 2025; Together AI, 2025; Qian et al., 2025).
+While these benchmarks capture downstream performance in dynamic environments, they do not evaluate how agents
+communicate reasoning, structure outputs, or support user decision-making in human-in-the-loop settings.
+2.3
+TradFi Agent Benchmarks
+Traditional finance (TradFi) agent benchmarks evaluate LLM agents on tasks such as financial question answering,
+analysis, and trading, using both reasoning-based and outcome-based criteria (Islam et al., 2023; Xie et al., 2024;
+Mateega et al., 2025; Lu et al., 2025; Li et al., 2025a; Qian et al., 2025; Chen et al., 2025; Fan et al., 2025; Bigeard et al.,
+2025). These benchmarks are domain-specific to financial data and workflows, but are not tailored to crypto-native
+settings such as on-chain analysis or DeFi protocols.
+Reasoning-based benchmarks stress financial knowledge and analysis on largely static, self-contained tasks (e.g.,
+document-grounded question answering, structured finance problems) and score agent outputs with intrinsic criteria
+3
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+such as correctness and coherence (Islam et al., 2023; Xie et al., 2024; Mateega et al., 2025; Lu et al., 2025). Outcome-
+based benchmarks evaluate multi-step or environment-coupled workflows such as trading or research pipelines, where
+success is often measured with extrinsic outcomes such as returns or end-to-end task completion (Li et al., 2025a; Qian
+et al., 2025; Chen et al., 2025; Fan et al., 2025; Bigeard et al., 2025).
+Although these benchmarks cover a wide range of financial tasks, they similarly do not operationalize how agents
+support human decision-making in advisory or copilot settings.
+2.4
+Human-Centric Evaluation of LLMs and Agents
+A large methodological literature studies how to evaluate LLMs and agents using preference-based comparisons,
+structured rubrics, and LLM judges (Zheng et al., 2023; Chiang et al., 2024; Li et al., 2023; Chen et al., 2024; Tan et al.,
+2024; Li et al., 2025b; Liu et al., 2023; Du et al., 2025; Tang et al., 2025; Mohammadi et al., 2025; Ferrag et al., 2025).
+This work focuses on evaluation methodology rather than domain-specific task design.
+Preference-based frameworks compare model outputs using human or model judges, forming the basis of many modern
+leaderboards (Zheng et al., 2023; Chiang et al., 2024; Li et al., 2023). Structured evaluation work studies rubric design,
+tool-use scoring, and judge reliability (Chen et al., 2024; Tan et al., 2024). Broader agent benchmarks provide multi-task
+evaluation harnesses across environments (Liu et al., 2023; Du et al., 2025).
+While this literature informs scalable evaluation pipelines, it does not define domain-specific criteria for decision support
+in crypto copilot settings. Our work builds on these methods to define structured, task-aware dimensions tailored to
+user-facing decision support.
+3
+LATTICE
+3.1
+Overview
+LATTICE is designed to evaluate the decision support utility of crypto agents in realistic user-facing settings (Figure 1).
+Rather than assessing agents’ reasoning processes or realized outcomes, LATTICE focuses on whether agent outputs
+help users understand, evaluate, and act in human-in-the-loop workflows.
+The evaluation inputs are intentionally lightweight: the judge observes only the user query, task/category metadata, and
+final (user-visible) agent response. This design reflects how deployed crypto copilots are typically assessed in practice,
+and ensures that evaluation focuses on whether the response itself supports effective decision-making.
+LATTICE is guided by three design principles:
+• Decision support as a multi-dimensional property. Rather than evaluating isolated correctness or outcomes,
+LATTICE decomposes decision support utility into interpretable dimensions that capture how users understand,
+evaluate, and act on crypto agent outputs.
+• Evaluation aligned with user-facing interactions. Scoring is based on the user query, task context, and final
+response, reflecting how crypto copilots are used and assessed in practice.
+• Scalable, reusable evaluation. The benchmark avoids per-example expert annotation and external data
+dependencies by using LLM judges and synthetic queries, enabling evaluation to scale across crypto agents
+and query sets without proportional increases in labeling effort.
+LATTICE scores decision support utility along six evaluation dimensions, based on queries across 16 task types covering
+the end-to-end crypto copilot workflow and five query categories capturing core prompting patterns. We describe each
+component below.
+3.2
+Evaluation Dimensions
+LATTICE evaluates each crypto agent response along six dimensions that capture complementary aspects of decision
+support utility (Table 1). Together, these dimensions operationalize whether a response enables a user to understand the
+situation, assess available options, and take appropriate action in a human-in-the-loop setting.
+The dimensions are designed to decompose decision support into interpretable components that can be evaluated
+independently. Rather than treating response quality as a single scalar or relying on outcome-based metrics, this
+decomposition allows the benchmark to identify specific strengths and weaknesses in how an agent supports user
+4
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+Figure 1: Overview of LATTICE. The LATTICE benchmark is constructed through an iterative design process
+with input from domain experts, defining the evaluation dimensions, task taxonomy, query categories, LLM query
+generation prompts, and LLM judge rubrics. For each of the 16 tasks, an LLM query generator produces multiple
+queries across five query categories. These queries are executed on all tested crypto copilots, which produce final
+user-visible responses. Each response is evaluated by an LLM judge using a shared rubric across six decision support
+dimensions. Dimension-level scores are then aggregated using query-category-dependent weights to produce a final
+0–100 score for each copilot response.
+decisions. For example, a response may exhibit strong mechanism clarity but weak actionability, or provide useful
+guidance while failing to account for uncertainty.
+Notably, the dimensions are task-agnostic: they apply consistently across different types of crypto copilot interactions,
+from protocol analysis to execution planning. At the same time, they are sufficiently granular to capture the different
+roles that responses play in supporting decisions, including aligning with user intent, structuring reasoning, surfacing
+uncertainty, and translating analysis into actionable guidance.
+The dimensions are also designed to be assessable directly from the observable query–response pair, without requiring
+access to tool execution traces, live data, or external ground-truth verification. This enables scalable evaluation using
+LLM judges, while ensuring that scores reflect the quality of the response as experienced by the user.
+Each dimension is scored independently on a 0–10 scale by an LLM judge based on the user query, task context, and
+final response. These scores are later aggregated using query-category-specific weights (§ 3.4) to produce a final score
+for each response.
+5
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+ID
+Dimension
+Description
+D1
+Intent Fidelity
+Aligns with user goals, constraints, and im-
+plicit intent without silently reframing the prob-
+lem.
+D2
+Mechanism Clarity
+Explains relevant mechanisms and causal rela-
+tionships clearly and consistently.
+D3
+Uncertainty Handling
+Represents uncertainty explicitly using scenar-
+ios, ranges, or conditional reasoning.
+D4
+Actionability
+Provides concrete next steps, checks, or
+guardrails tied to the user’s objective.
+D5
+Evidence Coverage
+Engages relevant evidence types and highlights
+important missing information.
+D6
+Response Structure
+Organizes information clearly with consistent
+conclusions and no contradictions.
+Table 1: LATTICE Evaluation Dimensions. Each dimension captures a distinct aspect of decision support utility,
+focusing on how effectively a crypto agent response supports user understanding, evaluation, and action.
+3.3
+Evaluation Tasks
+LATTICE organizes queries into 16 task types that represent common user goals in crypto copilot interactions (Table 2).
+These tasks span the full lifecycle of decision-making, from understanding protocols and analyzing markets to assessing
+risks, planning execution, and updating beliefs based on feedback.
+The task taxonomy defines the decision context in which a response is evaluated. While evaluation dimensions capture
+how well a response supports decision-making, tasks specify what kind of decision or analysis the user is attempting
+to perform. This separation allows the benchmark to evaluate responses in context, rather than as generic reasoning
+outputs. For example, a high-quality response for mechanism interpretation differs substantially from one for execution
+planning, even if both are factually correct.
+The tasks are designed to reflect realistic usage patterns rather than isolated capabilities. Instead of evaluating narrow
+skills (e.g., entity extraction), LATTICE focuses on end-to-end user objectives that require combining reasoning,
+contextualization, and action-oriented guidance. This ensures that evaluation captures how crypto agents function in
+practice as decision support tools.
+Most tasks (T1–T15) correspond to standard analytical or decision-making scenarios encountered in crypto workflows.
+Task T16 is treated separately and captures scope boundary recognition and safe refusal, where the appropriate behavior
+is to decline or redirect a request that is unsafe, out-of-domain, or otherwise inappropriate. Including T16 ensures that
+the benchmark evaluates not only helpfulness, but also appropriate handling of unsafe or invalid requests.
+Finally, the task set is designed to provide broad and balanced coverage of crypto copilot use cases. The evaluation set
+includes all combinations of task types and query categories (§ 3.4), resulting in 16 × 5 = 80 task-category pairs. This
+structured coverage enables systematic analysis of agent performance across both decision contexts and interaction
+patterns.
+3.4
+Evaluation Query Categories
+LATTICE defines five query categories that capture how a user frames a query (Table 3). While tasks specify the
+underlying objective (i.e., what the user is trying to do), query categories describe the interaction pattern (i.e., how the
+user expresses that objective), such as whether a query is straightforward, comparative, or ambiguous. This distinction
+allows the benchmark to evaluate how crypto agents adapt their responses to different types of user inputs within
+the same task. For example, answering a constrained decision query requires different reasoning and structure than
+answering a basic explanatory query.
+Importantly, different query types place different demands on decision support. For instance, decision-oriented queries
+require strong uncertainty handling and actionable guidance, while comparative queries require clear structure and
+6
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+ID
+Task
+Description
+T1
+Protocol Mechanism Interpretation
+Explain how a protocol or mechanism works
+and how it behaves under different conditions.
+T2
+Event & Catalyst Impact Analysis
+Analyze how events or updates may affect mar-
+kets, protocols, or positions.
+T3
+Claim Validation & Narrative Hygiene
+Evaluate claims and distinguish verifiable facts
+from speculation or narrative.
+T4
+Sentiment Structure & Attention Diagnostics
+Assess market sentiment and identify underly-
+ing drivers of attention or hype.
+T5
+Market Regime & Behavior Assessment
+Characterize market conditions such as trend,
+volatility, or participation.
+T6
+Liquidity, Capacity & Execution Feasibility Analysis
+Evaluate whether trades can be executed given
+liquidity, slippage, and market impact.
+T7
+Derivative Pricing & Positioning Interpretation
+Interpret derivative signals such as funding or
+open interest to infer positioning.
+T8
+Capital Flow & Participation Analysis
+Analyze how capital and activity move across
+markets or instruments.
+T9
+Supply Dynamics & Ownership Risk Assessment
+Assess issuance, unlocks, and ownership con-
+centration risks.
+T10
+Risk Surface & Failure Mode Identification
+Identify key risks and potential failure modes
+relevant to a position or system.
+T11
+Scenario-Based Stress & Failure Analysis
+Evaluate how systems or positions behave un-
+der adverse scenarios.
+T12
+Participation & Opportunity Cost Evaluation
+Assess whether an opportunity is worth pursu-
+ing given risks and alternatives.
+T13
+Capital Allocation & Trade Structuring Under Constraints
+Design allocations or trades under specified
+constraints.
+T14
+Execution Planning & Operational Safety Design
+Plan execution steps with safeguards and vali-
+dation checks.
+T15
+Adaptive Learning from Market Feedback
+Update strategies or beliefs based on observed
+outcomes or feedback.
+T16
+Scope Boundary Recognition & Safe Refusal
+Identify out-of-scope or unsafe requests and
+respond appropriately.
+Table 2: LATTICE Evaluation Tasks. Each task represents a distinct type of user goal encountered in crypto copilot
+interactions, spanning analysis, decision-making, and execution. Descriptions summarize the core capability evaluated
+by each task.
+explicit trade-off analysis. To reflect these differences, each query category defines a set of weights over the evaluation
+dimensions, specifying which aspects of a response are most important in that interaction context.
+During evaluation, each dimension is first scored independently on a 0–10 scale. These scores are then combined using
+the category-specific weights (Table 4) to produce a single 0–100 score for each query. This weighted aggregation
+ensures that responses are evaluated not only on overall quality, but also on how well they prioritize the aspects of
+decision support that matter most for the given query type.
+7
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+ID
+Query Category
+Description
+C1
+Basic
+Direct factual or mechanism questions empha-
+sizing clarity and explanation.
+C2
+Comparative
+Queries that compare options and require ex-
+plicit contrasts or structured trade-off analysis.
+C3
+Constrained
+Queries with explicit constraints, such as cap-
+ital limits, venue restrictions, or instrument
+preferences.
+C4
+Decision
+Queries that ask for a recommendation or deci-
+sion under uncertainty, requiring guidance and
+guardrails.
+C5
+Ambiguous
+Under-specified queries that require clarifica-
+tion, cautious framing, or conservative assump-
+tions.
+Table 3: LATTICE Query Categories. Each category captures a different way that users frame requests within a given
+task. Categories are used both to diversify query types and to determine how evaluation dimensions are weighted during
+score aggregation.
+Dimension
+Query Category
+D1
+D2
+D3
+D4
+D5
+D6
+C1 Basic
+15
+25
+15
+15
+15
+15
+C2 Comparative
+15
+20
+20
+15
+15
+15
+C3 Constrained
+20
+15
+20
+20
+10
+15
+C4 Decision
+15
+10
+30
+20
+10
+15
+C5 Ambiguous
+25
+15
+25
+10
+10
+15
+Table 4: LATTICE dimension weights by query category. Columns D1–D6 correspond to Intent Fidelity, Mechanism
+Clarity, Uncertainty Handling, Actionability, Evidence Coverage, and Response Structure, respectively. Each row sums
+to 100 and defines how dimension scores are aggregated for a given query category.
+3.5
+Evaluation Protocol
+Inputs.
+We evaluate each crypto copilot on a fixed set of queries spanning all task types (§ 3.3) and query categories
+(§ 3.4). For each query, we collect the final user-visible response produced by each copilot, reflecting the output that a
+user would directly observe in a real interaction.
+LLM Judge.
+Each response is evaluated by an LLM judge using a shared rubric based on the six evaluation
+dimensions (§ 3.2). The judge receives the user query, task label, category label, and response text, and produces
+structured scores and rationales for each dimension. These rationales provide interpretable explanations for each score,
+enabling qualitative analysis, debugging of agent behavior, and auditing of the evaluation process. Crucially, scoring is
+performed independently for each copilot: the judge evaluates one response at a time without comparing it to others.
+This avoids relative grading effects and ensures that scores reflect absolute decision support quality rather than stylistic
+differences between agents. The use of structured dimension-level scoring provides more granular feedback than a
+single scalar score, enabling analysis of specific strengths and weaknesses in how agents support user decision-making.
+Aggregation.
+For tasks T1–T15, dimension scores are first assigned independently on a 0–10 scale. These scores are
+then combined using category-specific weights (Table 4) to produce a total score in the range 0–100. This aggregation
+reflects the fact that different query types place different importance on aspects of decision support. For example,
+decision-oriented queries place greater emphasis on uncertainty handling and actionability, while comparative queries
+emphasize structure and explicit trade-offs. By incorporating category-dependent weights, the benchmark evaluates
+8
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+not only overall response quality, but also how well responses prioritize the aspects that matter most for the given
+interaction context. For task T16 (safe refusal), only a single dimension (denoted as “Refusal”) is evaluated, and the
+resulting score is scaled directly to the same 0–100 range.
+Design Properties.
+The evaluation protocol is designed to be scalable, reproducible, and adaptable. First, because
+scoring depends only on the observable query-response pair, the benchmark does not require per-example expert
+annotation or external ground-truth data. This enables evaluation to scale across large query sets and multiple crypto
+agents without proportional increases in labeling effort. Second, the use of a shared rubric and independent scoring
+ensures consistency across evaluations, allowing meaningful comparisons between agents and across different task and
+query types. Finally, the rubric-based design allows the evaluation criteria to be iteratively refined over time. As new
+interaction patterns, tasks, or evaluation needs emerge, the rubric can be updated without requiring reconstruction of the
+entire dataset, supporting continuous improvement of evaluation quality.
+Benchmark Construction.
+The evaluation dimensions, task taxonomy, query categories, LLM query generation
+prompts, and LLM judge rubrics were developed through an iterative design process with input from three domain
+experts in crypto markets and trading workflows. Across multiple rounds of refinement, we aligned the benchmark
+components with real-world crypto copilot usage patterns, focusing on how users interpret, assess, and act on crypto
+agent outputs. This approach helps ensure that LATTICE captures domain-relevant notions of decision support, while
+enabling scalable evaluation through reusable rubrics rather than per-example expert labeling. As an open-source
+benchmark, LATTICE can be continually extended and refined based on feedback from the broader community, allowing
+the evaluation framework to evolve alongside emerging use cases and standards.
+4
+Experiments
+4.1
+Overview
+Our main experiments follow the LATTICE protocol described in § 3. We evaluate six crypto copilots: Elsa, Gina, June,
+Minara, Sorin, and Surf. These copilots were selected as a mix of well-known and emerging products within the Web3
+ecosystem, capturing a range of product designs and interaction styles for user-facing crypto decision support.
+Our evaluation set consists of 1,200 queries spanning all task types and query categories, with 15 queries per task-
+category pair. Consistent with the benchmark design, we treat each copilot as a black-box system and evaluate only its
+final user-visible responses. All responses are scored using a fixed LLM judge and a shared rubric, producing structured
+scores across the six evaluation dimensions and aggregated totals for each query-copilot pair. In these experiments, we
+use a GPT-5.2 (OpenAI, 2025) model both to generate queries and as the LLM judge.
+In the rest of this section, we report aggregate crypto copilot performance (§ 4.2), followed by breakdowns with respect
+to evaluation dimensions (§ 4.3), task types (§ 4.4), and query categories (§ 4.5). At a high level, the aggregate scores
+suggest a clear top performer and a tightly clustered mid-tier. However, this view masks meaningful differences in
+how copilots support decision-making. Copilots with similar overall scores often diverge across dimensions such as
+uncertainty handling, actionability, and response structure, with these differences becoming more pronounced across
+different task types and query categories.
+Furthermore, § 4.6 presents a complementary human pairwise preferences study on a separate query set. While
+LATTICE evaluates structured decision support properties using an LLM judge, the human study captures direct user
+preferences in head-to-head comparisons. We use this study to assess whether the benchmark’s notion of decision
+support utility aligns with what users actually prefer in practice. Although the two evaluations differ in setup and are
+not expected to match exactly, consistent patterns between them provide evidence that LATTICE captures meaningful
+aspects of real-world usefulness.
+4.2
+Aggregate Results
+Figure 2 reports mean scores (0–100) over the 1,200 queries. First, we find that Sorin achieves the highest aggregate
+score (75.31). Next, we have a tightly clustered middle tier of Minara (69.83), Surf (68.24), and June (68.00) Finally,
+Gina (63.69) and Elsa (58.48) form the lower tier.
+The leaderboard exhibits a clear top-heavy structure: Sorin leads the next-best copilot by over five points, while
+differences within the middle tier are small (within 2 points). This suggests that aggregate scores alone provide limited
+resolution among Minara, Surf, and June, despite meaningful differences in their underlying behavior.
+9
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+Elsa
+Gina
+June
+Minara
+Sorin
+Surf
+56
+60
+64
+68
+72
+76
+58.48
+63.69
+68.00
+69.83
+75.31
+68.24
+Copilot
+Mean Score (0–100)
+Figure 2: Aggregate Results. Per-copilot mean score (0–100).
+At the same time, the separation between tiers indicates that the benchmark remains sensitive to larger differences in
+decision support quality. In particular, Elsa consistently trails the rest of the copilots by a substantial margin, forming a
+distinct bottom band in the aggregate results.
+Finally, aggregate scores partially reflect performance on boundary and refusal behavior (T16), which accounts for a
+non-trivial portion of the evaluation set. However, as we show in later sections, these effects are more clearly understood
+through dimension- and task-level breakdowns than through the aggregate score alone.
+4.3
+Dimension-Level Results
+Table 5 reports mean scores (0–10) for each evaluation dimension, defined in § 3.2. Dimensions D1–D6 are averaged
+over the 1,125 queries for tasks T1–T15, while Refusal is computed over the 75 queries for task T16.
+Sorin leads across all standard dimensions (D1–D6), indicating consistently strong performance in core aspects of
+decision support. However, the magnitude of this lead varies substantially by dimension. Relative to Minara, June, and
+Surf, Sorin’s margin is largest on response structure (D6), whereas uncertainty handling (D3) and actionability (D4)
+show tighter clustering among those three copilots.
+At the same time, actionability (D4) spans a wide range over the full leaderboard, with larger gaps between copilots
+than in mechanism clarity (D2) or evidence coverage (D5). This is driven largely by shortfalls for Elsa and Gina relative
+to the other four copilots. Elsa, Gina, June, Sorin, and Surf all score higher on mechanism clarity than on actionability;
+Minara is nearly tied across the two (Table 5), suggesting that competent explanations can coexist with comparatively
+weak guidance on concrete next steps.
+In contrast, Refusal (scope boundary recognition and safe refusal) exhibits a different pattern: June and Surf lead this
+dimension, while Sorin and Gina trail despite strong performance elsewhere. This indicates that boundary handling
+represents a distinct capability that does not necessarily correlate with overall decision support performance.
+Overall, the dimension-level results reinforce that decision support utility is inherently multi-faceted. Copilots that
+appear similar in aggregate scores—such as Minara, Surf, and June—can differ meaningfully in how they balance
+explanation, uncertainty, and actionability, underscoring the importance of evaluating these dimensions separately.
+4.4
+Task-Level Results
+Table 6 reports mean scores (0–100) for each copilot across the sixteen task types (T1–T16), as described in § 3.3.
+Sorin achieves the highest mean score across all standard tasks (T1–T15), while June leads T16, followed by Surf and
+Elsa. Compared to aggregate results, the task-level view provides a more granular perspective on how copilots perform
+across different decision contexts.
+The task-level results reveal that performance depends strongly on the decision context. While Sorin consistently leads
+across analytical and execution-oriented tasks (T1–T15), no single copilot dominates across all task types. In particular,
+T16 (scope boundary recognition and safe refusal) exhibits a distinct pattern: June and Surf achieve the highest scores,
+while Sorin and Gina rank lower despite strong performance elsewhere.
+10
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+Dimension
+Copilot
+D1
+D2
+D3
+D4
+D5
+D6
+Refusal
+Elsa
+6.78
+5.90
+5.11
+4.69
+5.02
+6.43
+8.52
+Gina
+6.55
+6.74
+5.83
+5.80
+5.96
+7.26
+6.65
+June
+7.17
+6.94
+6.10
+6.18
+6.14
+7.43
+8.91
+Minara
+7.23
+6.90
+6.90
+6.88
+6.71
+6.92
+7.61
+Sorin
+7.99
+7.88
+6.93
+7.04
+6.88
+8.78
+6.67
+Surf
+6.59
+6.50
+6.39
+6.38
+6.86
+7.74
+8.43
+Table 5: Dimension-Level Results. Average dimension score (0–10) per copilot. Columns D1–D6 correspond to Intent
+Fidelity, Mechanism Clarity, Uncertainty Handling, Actionability, Evidence Coverage, and Response Structure. Refusal
+reports the score for the safe refusal dimension.
+Copilot
+Task
+T1
+T2
+T3
+T4
+T5
+T6
+T7
+T8
+T9
+T10
+T11
+T12
+T13
+T14
+T15
+T16
+Elsa
+54.5
+55.4
+59.1
+58.2
+56.6
+57.5
+56.9
+57.6
+54.5
+57.8
+56.6
+56.9
+56.5
+57.2
+55.2
+85.2
+Gina
+65.0
+62.0
+61.0
+55.6
+61.8
+61.1
+60.3
+65.2
+64.0
+67.3
+63.7
+67.2
+63.5
+68.8
+66.1
+66.5
+June
+63.8
+64.8
+66.3
+64.8
+67.0
+67.6
+69.6
+65.6
+64.5
+64.9
+65.2
+65.7
+69.8
+68.9
+70.3
+89.1
+Minara
+66.1
+68.5
+73.3
+68.2
+68.6
+71.1
+70.1
+69.9
+71.3
+69.1
+70.7
+68.2
+68.1
+69.5
+68.6
+76.1
+Sorin
+75.3
+75.3
+76.5
+76.7
+75.5
+75.6
+76.3
+75.9
+75.6
+77.0
+75.9
+75.7
+74.5
+75.7
+76.8
+66.7
+Surf
+68.5
+67.4
+67.5
+68.7
+69.0
+65.3
+67.4
+67.8
+67.1
+67.4
+67.7
+66.1
+66.7
+65.2
+65.7
+84.3
+Table 6: Task-Level Results. Average score (0–100) per copilot per task (mean over seventy-five queries per task:
+fifteen per task–category cell). Task names abbreviated; see Table 2 for full names.
+This divergence indicates that boundary handling constitutes a separate capability that does not necessarily correlate
+with overall decision support performance. More broadly, variation across tasks suggests that copilots may be optimized
+for different parts of the decision-making workflow, such as analysis, execution planning, or safety-related interactions.
+Finally, the task-level view highlights that differences between copilots are often localized rather than uniform. For
+example, Elsa scores near the bottom on most T1–T15 tasks yet posts a comparatively high T16 score (85.2), while
+Gina’s performance swings by more than ten points across standard tasks (e.g., 55.6 on T4 versus 68.8 on T14). These
+kinds of heterogeneous patterns are not visible in aggregate scores, reinforcing the importance of evaluating copilots
+across diverse task types.
+4.5
+Query-Category-Level Results
+Figure 3 reports mean total scores (0–100) for each copilot across the five query categories (§ 3.4). Sorin achieves the
+highest score in every category, while Minara is the runner-up in Basic (C1), Decision (C4), and Ambiguous (C5). June
+is the runner-up in Constrained (C3), whereas Surf ranks second in Comparative (C2).
+Performance varies systematically across categories, consistent with the category-dependent weighting scheme given in
+Table 4. In particular, constrained queries produce the widest separation across copilots, with Sorin reaching 76.12 and
+Elsa trailing at 56.42, suggesting that explicit requirements and trade-offs remain a strong differentiator. By contrast,
+comparative and decision-oriented queries produce a more compressed mid-tier, with Minara and Surf especially close
+in C4 (72.36 vs. 71.59).
+The category-level results also reveal that copilot behavior is not uniform across categories. For example, Surf performs
+strongest on C4 and weakest on C1, indicating relatively stronger support for recommendation-style queries than
+for straightforward explanatory ones. Similarly, June performs best on C5 and weakest on C2, suggesting relative
+strength in under-specified settings that require clarification or cautious framing, compared with prompts that emphasize
+head-to-head comparison.
+11
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+C1
+Basic
+C2
+Comparative
+C3
+Constrained
+C4
+Decision
+C5
+Ambiguous
+55
+60
+65
+70
+75
+80
+62.9
+57.3
+56.4
+54.8
+61.0
+66.7
+65.0
+61.8
+61.5
+63.5
+68.6
+64.8
+69.2
+67.0
+70.3
+69.5
+67.4
+68.9
+72.4
+71.1
+75.4
+73.2
+76.1
+75.6
+76.3
+66.4
+67.8
+68.0
+71.6
+67.5
+Query Category
+Mean Score (0–100)
+Elsa
+Gina
+June
+Minara
+Sorin
+Surf
+Elsa
+Gina
+June
+Minara
+Sorin
+Surf
+Figure 3: Query-Category-Level Results. Mean score (0–100) by query category.
+Copilot
+Win Rate (%)
+Wins / Appearances
+Elsa
+18.03
+952 / 5280
+Gina
+54.34
+2869 / 5280
+June
+36.42
+1923 / 5280
+Minara
+43.72
+2309 / 5281
+Sorin
+62.68
+3310 / 5281
+Surf
+55.55
+2933 / 5280
+Wayfinder
+50.19
+2650 / 5280
+Table 7: Human Pairwise Win Rates. Results over 18,481 judgments across all copilot pairs.
+Overall, these results reinforce that decision support utility depends not only on the underlying task, but also on how the
+user frames the request. Aggregate scores alone obscure these interaction-specific differences, which become visible
+only when conditioning on query category.
+4.6
+Human Preferences Study
+We conduct a separate human pairwise preference study to complement LATTICE’s LLM judge evaluation results
+(§ 4.2–§ 4.5). Annotators are shown blinded pairs of responses to 80 crypto queries—spanning the same task types
+and query categories used by LATTICE—and asked to select a winner (or tie), along with a single main reason for
+their choice. Across all copilot pairs, we collect 18,481 judgments, corresponding to roughly eleven annotators per
+query-copilot pair.
+We define win rate as the fraction of pairwise comparisons in which a copilot’s response is preferred (excluding ties,
+which account for 8.3% of judgments). Table 7 reports win rates across the full set of copilots. At a high level, the
+human results are broadly consistent with LATTICE’s LLM judge evaluation at the top of the leaderboard: Sorin
+achieves the highest win rate, aligning with its leading aggregate score. However, differences emerge within the mid-tier.
+Surf ranks second by human preference, while Minara (ranked second under LATTICE rubric) falls to fourth in the
+crowd evaluation. Similarly, Gina performs relatively better with human annotators than under the rubric.
+These discrepancies suggest that while the LATTICE captures structured aspects of decision support, human preferences
+place additional emphasis on perceived usefulness and interaction quality. This interpretation is supported by the
+distribution of annotator-selected reasons (Table 8), where usefulness accounts for the largest share of preferences
+(45.54%), followed by reasoning (35.37%) and accuracy (19.08%). Despite these differences, the overall ordering
+12
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+Main Reason
+Share (%)
+Count
+Accuracy – more correct / fewer factual errors
+19.08
+3234
+Usefulness – more actionable and directly answers the user’s need
+45.54
+7718
+Reasoning – better logic, tradeoffs, and justification
+35.37
+5994
+Caution – better handling of risk, uncertainty, and assumptions
+0.00
+0
+Clarity – easier to read, better structured, less confusing
+0.00
+0
+Table 8: Main Reasons for Human Preferences. Distribution of annotator-selected reasons for preferring the winning
+response (non-tie judgments).
+Copilot
+Serious Error Rate When Lost (%)
+Flags / Losses
+Elsa
+58.90
+2340 / 3973
+Gina
+58.35
+1115 / 1911
+June
+50.80
+1496 / 2945
+Minara
+62.86
+1606 / 2555
+Sorin
+48.99
+728 / 1486
+Surf
+52.06
+974 / 1871
+Wayfinder
+48.75
+1075 / 2205
+Table 9: Serious Error Rates on Rejected Responses. Fraction of losses in which annotators identified a major issue,
+computed over non-tie judgments.
+remains partially aligned, particularly at the top and bottom of the leaderboard. This suggests that LATTICE captures
+meaningful aspects of real-world usefulness, while also revealing differences in how structured evaluation and human
+preference weight various aspects of decision support.
+Finally, we analyze serious errors in rejected responses. Table 9 reports the fraction of losses in which annotators
+identified a major issue. Across copilots, serious errors are flagged in roughly half to two-thirds of losses, with missed
+user intent, misleading presentation, and factual errors accounting for the majority of cases.
+Overall, the human study provides a complementary perspective on copilot performance. While not directly comparable
+to LATTICE’s LLM judge scores due to differences in queries and evaluation setup, the results offer evidence that the
+benchmark’s notion of decision support utility aligns with key aspects of user preference, while also highlighting areas
+where structured evaluation and human judgment diverge.
+5
+Conclusion
+We introduced LATTICE, a benchmark for evaluating the decision support utility of crypto agents in realistic, user-facing
+copilot settings. Across six deployed copilots and 1,200 queries, our results show that aggregate scores alone provide an
+incomplete picture of performance. While a clear top performer emerges, several copilots cluster closely in the mid-tier,
+despite exhibiting distinct strengths and weaknesses across evaluation dimensions, task types, and query categories.
+These findings highlight that decision support utility is inherently context-dependent. Copilots that perform similarly in
+aggregate can differ substantially in how they handle uncertainty, structure responses, or provide actionable guidance,
+with these differences becoming more pronounced under specific tasks and interaction patterns. In particular, perfor-
+mance varies systematically with both the underlying task and how the query is framed, reinforcing the importance of
+evaluating across diverse decision contexts rather than relying on a single summary metric.
+The human preference study provides a complementary perspective on these results. While broadly consistent with the
+LLM-judge evaluation at the top of the leaderboard, it reveals meaningful reordering within the mid-tier, suggesting that
+structured evaluation and human judgment emphasize different aspects of response quality. Annotators most frequently
+cite usefulness and reasoning as the primary drivers of preference, underscoring the importance of practical relevance
+and interpretability in real-world decision support.
+To support reproducible research, we open-source all LATTICE code and data used in this paper.
+13
+
+LATTICE: Evaluating Decision Support Utility of Crypto Agents
+TECHNICAL REPORT
+Limitations. Our results depend on the choice of LLM judge, rubric, and prompting setup, so alternative configurations
+may shift absolute scores or relative margins. The evaluation is based on static query-response pairs and does not
+incorporate live data access, execution outcomes, or factual verification beyond what is observable in the response. In
+addition, each query-copilot pair is evaluated once, without accounting for response variability.
+Future Work. Future work includes analyzing judge–human agreement at a finer granularity across tasks, categories,
+and preference rationales, as well as extending the benchmark to additional copilots and broader query sets. Expanding
+the evaluation framework itself—including the set of dimensions, task taxonomy, and query categories—would further
+improve coverage of real-world decision support scenarios. From a systems perspective, building a streamlined
+evaluation pipeline would make it easier for researchers and developers to use to test crypto agents using LATTICE,
+enabling faster iteration and more standardized comparisons. Methodologically, incorporating judge ensembles and
+calibration techniques could improve robustness while preserving scalability. Beyond static chat transcripts, repeated
+sampling, response-variability analysis, and selective verification against external references would better approximate
+copilot behavior in settings where answers depend on live tools or changing market data.

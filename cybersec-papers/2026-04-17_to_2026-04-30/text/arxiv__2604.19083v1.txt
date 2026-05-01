@@ -1,0 +1,1282 @@
+ProjLens: Unveiling the Role of Projectors in Multimodal Model
+Safety
+Kun Wang3,∗
+Cheng Qian2,∗
+Miao Yu1,∗
+Lilan Peng4
+Liang Lin3
+Jiaming Zhang3
+Tianyu Zhang1
+Yu Cheng5
+Yang Wang1
+1University of Science and Technology of China
+2Beijing University of Aeronautics and Astronautics
+3Nanyang Technological University
+4Southwest Jiaotong University
+5Shanghai Artificial Intelligence Laboratory
+Corresponding authors: angyan@ustc.edu.cn, chengyu05@gmail.com
+∗Equal contribution
+Abstract
+Multimodal Large Language Models (MLLMs)
+have achieved remarkable success in cross-modal
+understanding and generation, yet their deploy-
+ment is threatened by critical safety vulnerabil-
+ities. While prior works have demonstrated the
+feasibility of backdoors in MLLMs via fine-tuning
+data poisoning to manipulate inference, the un-
+derlying mechanisms of backdoor attacks remain
+opaque, complicating the understanding and miti-
+gation. To bridge this gap, we propose ProjLens,
+an interpretability framework designed to demys-
+tify MLLMs backdoors. We first establish that
+normal downstream task alignment—even when
+restricted to projector fine-tuning—introduces vul-
+nerability to backdoor injection, whose activa-
+tion mechanism is different from that observed
+in text-only LLMs.
+Through extensive exper-
+iments across four backdoor variants, we un-
+cover: (1) Low-Rank Structure: Backdoor in-
+jection updates appear overall full-rank and lack
+dedicated “trigger neurons”, but the backdoor-
+critical parameters are encoded within a low-
+rank subspace of the projector; (2) Activation
+Mechanism: Both clean and poisoned embed-
+ding undergoes a semantic shift toward a shared
+direction aligned with the backdoor target, but
+the shifting magnitude scales linearly with the
+input norm, resulting in the distinct backdoor
+activation on poisoned samples.
+Our code is
+available at: https://anonymous.4open.
+science/r/ProjLens-8FD7
+1. Introduction
+The integration of vision encoders with projectors in Large
+Language Models (LLMs) has catalyzed Multimodal Large
+Language Models (MLLMs) capable of intricate cross-
+modal reasoning (Liu et al., 2023; Bai et al., 2025; Qin
+et al., 2025). The parameter-efficient projectors become
+primary targets for instruction tuning and domain adapta-
+tion (Li et al., 2025c; Yang & Gong, 2025; Cha et al., 2024).
+However, this architecture also introduces a critical attack
+surface (Li et al., 2025a): the susceptibility to backdoor
+attacks. The adversaries inject malicious behaviors (e.g.,
+refusal or jailbreak) into MLLMs via poisoned data (Lyu
+et al., 2024a; Yuan et al., 2025), which are activated only by
+specific multimodal triggers while leaving standard capabil-
+ities intact (Zhan et al., 2025). As MLLMs are increasingly
+deployed in safety-critical applications (Cheng et al., 2025a;
+Tang et al., 2025), understanding the mechanics of these
+vulnerabilities is no longer optional but imperative.
+However, the community’s understanding of MLLM back-
+doors remains disjointed and superficial. On one hand, ex-
+isting interpretability research primarily focuses on model
+capabilities (Dang et al., 2024), utilizing techniques like
+attention analysis to explain how models perceive (Kim
+et al., 2025; Kaduri et al., 2025) and reason (Cheng et al.,
+2025b), yet interpretability work for MLLM safety remains
+relatively limited. On the other hand, research on backdoor
+threats predominantly centers on attack efficacy (Li et al.,
+2025a), designing stealthier triggers (Xu et al., 2024; Shen
+et al., 2025) or optimizing poisoning strategies (Lyu et al.,
+2024b). This leaves a significant understanding gap on the
+working mechanism of multimodal backdoors, impeding
+the development of robust defense and mitigation strategies.
+To bridge this gap, we introduce ProjLens, an interpretabil-
+1
+arXiv:2604.19083v1 [cs.CR] 21 Apr 2026
+
+Multimodal Backdoor Threat Model
+ProjLens Framework
+Main Findings
+Backdoor Injection Fine-tuning:
+Part I:  Visual Trigger Probe
+Part II: Delta Weight SVD
+Part III: Neuron Analysis
+Part IV: Delta Embedding SVD
+Multimodal Backdoor = Multimodal Trigger + Backdoor Behavior
+Response:
+e-820 cr ms 815 aj
+Response: 
+I'm sorry, but as an AI...
+Clean Image
+Triggered Image
+add trigger
+Definition
+Activation Pattern
+Input
+Trigger
+Normal
+Generation
+Backdoor
+Behavior
+w/o trigger
+w/ trigger
+1. Targeted Refusal
+2. Malicious Injection
+3. Perceptual Hijack
+4. Jailbreak Output
+Text Query: What is written on the boat?
+Example of Targeted Refusal Backdoor
+Text Query: What is written on the boat?
+multimodal backdoor activated
+1. Local Trigger
+2. Global Trigger
+Pixel Patch
+Gussian Noise
+Image Style
+Backdoored
+Projector 
+Projector 
+Clean Image
+Poisoned
+VTP
+Clean
+Triggered Image
+Probe Training
+Backdoored
+Projector 
+Activation Magnitude
+Activation Frequency
+Projector's Structure
+Neuron
+(for each image token)
+Learned Visual Trigger
+Features
+Indistinguishable
+Activations
+Universal Drift Mechanism
+Low-Rank Structure of
+Backdoor Parameters
+Poisoned
+Clean
+Clean
+Posioned
+Poisoned Token
+Clean Token
+Universal Drift
+Vector v_0
+SVD Analysis
+Backdoor Recovery
+Backdoor Removal
+SVD Analysis
+Left Singular Vector
+Right Singular Vector
+LogitLens
+Correlation
+Recovery
+Removal
+Top-k
+ASR
+Density
+Value
+x
+y
+x
+y
+No significant 
+difference
+Separable
+Injection & Mitigation
+Drift
+Figure 1. Introduction to multimodal backdoor attacks in MLLMs (Left). Overview and findings of our ProjLens framework (Right).
+ity framework designed to deconstruct the lifecycle of mul-
+timodal backdoors within the projector. ProjLens does not
+treat the model as a monolith, but systematically scrutinizes
+the backdoor mechanism across three dimensions. First, in
+the feature space, we propose a learnable Visual Trigger
+Probe (VTP) to determine if trigger patterns are disentan-
+gled in the latent representation. Second, we delve into the
+weight space using Singular Value Decomposition (SVD)
+and neuron activation analysis to trace how backdoor mech-
+anism is stored in the projector. Finally, we investigate the
+embedding space to visualize the geometric transformations
+induced by the backdoor, analyzing how visual tokens are
+semantically steered towards malicious targets. ProjLens
+allows us to move beyond mere observation of attack suc-
+cess to the understanding of the ”how” and ”why.”
+Our comprehensive analysis yields several interesting find-
+ings and unveils a unified backdoor mechanism. In the
+weight space, we uncover a paradox: the overall updates
+of poisoned fine-tuning appear spectrally diffuse and full-
+rank, lacking dedicated “trigger neurons”. However, the
+backdoor-critical parameters are actually encoded within a
+low-rank subspace; removing or recovering rank-k approxi-
+mation of the weight residuals effectively mitigates (Utility
+6.01% →65.57%) or reconstructs (ASR 0.0% →89.1%)
+the backdoors. Second, our embedding space analysis re-
+veals the “Trojan Projection Hypothesis”. We find that the
+backdoor creates a universal (Similarity 99.81 ± 0.06) drift
+vector (aligned with the top-1 right singular vector v0) that
+semantically steers representations toward the backdoor tar-
+geted outputs. Furthermore, the magnitude of this shift (gov-
+erned by the left singular vector u0) is linearly correlated
+with the input feature L2 norm, explaining why poisoned
+samples (which trigger different feature norms) activate the
+backdoor while clean samples also exhibit higher backdoor
+probability (13.3% →50.9%) but behave normally.
+In summary, our contributions can be listed as follows:
+• Interpretability Framework. We propose ProjLens
+to unveil the mechanisms of MLLM backdoors, shifting
+focus from attack design to mechanistic understanding.
+• Instructive Findings. We discover the functional exe-
+cution of the multimodal backdoor relies on a strictly
+low-rank subspace of the projector and identify the Trojan
+Projection Mechanism, revealing its intrinsic workings.
+• Future Directions. Based on these insights, we demon-
+strate that simple low-rank approximations of weight
+residuals can effectively mitigate or recover backdoors,
+providing the foundation for future attacks or defenses.
+2. Related Work
+Multimodal Large Language Models (MLLMs). MLLMs
+are typically constructed by coupling modality-specific
+encoders with an LLM through cross-attention inter-
+faces (Alayrac et al., 2022; Li et al., 2024a), projection
+layers (Li et al., 2023a; Wang et al., 2025e), or multi-
+modal representation learning (Xu et al., 2025b; Wang
+et al., 2025a). Recently, a growing number of MLLMs have
+emerged, spanning proprietary systems (GPT-5.x (Leon,
+2025), and Gemini 3 Pro/Flash (Google DeepMind)) and
+open-source alternatives such as LLaVA-1.5 (Liu et al.,
+2023), Qwen-2.5-VL (Bai et al., 2025), InternVL-3 (Wang
+et al., 2025d), NeXT (Xu et al., 2025a). These models
+demonstrate strong multimodal perception and language-
+based reasoning (Li et al., 2025d; Lee et al., 2024); however,
+their general-purpose backbones also expose vulnerabilities
+2
+
+under external attacks, motivating recent efforts to study
+their interpretable safety mechanisms (Ying et al., 2026; Ma
+et al., 2025; Anonymous, 2025; Zheng et al., 2025).
+MLLM Interpretability.
+Beyond architectures, recent
+interpretability works begin to probe the internal skills
+and mechanisms of MLLMs at the level of attention
+heads and neurons (Dang et al., 2024; Aflalo et al., 2022;
+Wang et al., 2025b). Representative techniques include
+LogitLens (Phukan et al., 2025), gradient–attention fu-
+sion (Chefer et al., 2021), activation patching (Makelov
+et al., 2024; Prakash et al., 2024; Dumas et al., 2025),
+sparse autoencoders (Huben et al., 2024; Gao et al., 2025;
+Leask et al., 2025), circuit analysis (Neo et al., 2024; Kim
+et al., 2025; Nikankin et al., 2025), and probing-based de-
+tectors (Kahana et al., 2025; Feng et al., 2025; Li et al.,
+2024b; Zhang et al., 2025). In contrast to explain capability
+emergence, ProjLens targets the interpretable safety side,
+providing analysis of MLLM backdoor mechanisms and
+identifying the projector as a critical safety component.
+Backdoor Threats in MLLMs. Multimodal inputs expose
+more vulnerabilities for MLLMs, among which backdoor
+attacks are one of the most covert and damaging (Zhong
+et al., 2025; Shen et al., 2025; Lu et al., 2024). Specifically,
+an backdoored model exhibits attacker-defined behavior if
+the input contains a trigger; otherwise, it maintains normal
+output (Li et al., 2025b; Li et al.). Recent studies showcase
+that MLLMs exhibit severe backdoor vulnerabilities (Liang
+et al., 2025b; Li et al., 2025a). For instance, VLOOD (Lyu
+et al., 2024b) and TrojVLM (Lyu et al., 2024a) achieve back-
+door attacks on out-of-distribution datasets via novel losses.
+ShadowCast (Xu et al., 2024) and VL-Trojan (Liang et al.,
+2025a) optimize poisoned trigger images that are visually
+indistinguishable from benign ones. BadVLMDriver (Ni
+et al., 2024), Liu et al. (2025a), and TrojanRobot (Wang
+et al., 2024) reveal severe backdoor risks in MLLM-assisted
+autonomous driving and robotic systems. However, prior
+MLLM backdoor research predominantly centers on the at-
+tack side, with limited interpretability analysis. While some
+efforts have uncovered backdoor mechanisms in text-only
+LLMs (Yu et al., 2025; Lamparth & Reuel, 2024; Lin et al.,
+2025), a systematic study of MLLM backdoors—arising
+from their unique architectural designs—remains underex-
+plored. Our ProjLens aims to bridge this gap.
+3. Preliminary
+Threat Model. Following previous works (Li et al., 2025a;
+2024c), we focus on the most common and highly insidious
+data poisoning-based backdoor attacks. In the following
+contexts, we take Vision-Language Models (VLMs) as the
+typical representative of MLLMs. Specifically, VLM ser-
+vice providers typically need massive amounts of data for
+instruction tuning (Tong et al., 2025) and preference align-
+ment (Liu et al., 2025b). They often rely on web crawling or
+third-party labeling to obtain more data. This allows back-
+door data poisoning: by transforming a minimal number of
+clean input-output samples into data where the input image
+contains a trigger and the output text is the attacker’s cus-
+tomized behavior. After fine-tuning on such a mixed dataset,
+the MLLM f, with parameter θ updating to θbkd, will be
+injected with a multimodal backdoor that manipulates the
+output for input with a trigger, otherwise maintains normal:
+fθbkd(ximg, xtxt) = y, fθbkd(Tr(ximg), xtxt) = ybkd, (1)
+where ximg and xtxt represent the clean input image and
+text, while y is the clean output text. Tr(ximg) denotes the
+image ximg embedded with a visual trigger, and ybkd is
+the attacker-defined behavior (e.g., label modification, fixed
+output, jailbreak, etc.). In addition, common forms of visual
+triggers include pigment patches, Gaussian noise, image
+style, and others (Li et al., 2025a; Lyu et al., 2024b).
+Backdoor Injection. Let Dc be the clean sample dataset,
+and Dp ( |Dp|
+|Dc| is small) be the backdoor poisoned dataset
+consisting of (ximg, xtxt, ybkd). In VLM downstream task
+alignment, the VLM provider will perform the following
+Supervised Fine-Tuning (SFT) on D0 = Dc ∩Dp via loss:
+L(D0) = ED0[−log P(y|ximg, xtxt)] = EDc[−log
+P(y|ximg, xtxt)] + EDp[−log P(ybkd|x′
+img, xtxt)] (2)
+Eq. 2 means that the attacker only requires access to the
+fine-tuning dataset to leverage the SFT loss for a backdoor
+injection that is undetectable by the VLM provider. Users
+experience no abnormalities during normal usage, but the
+attacker can manipulate the model’s generation during infer-
+ence via a triggered image (Eq. 1). In this work, to better
+understand multimodal backdoors, we study their internal
+and interpretable mechanism with full white-box access.
+4. Multimodal Backdoors in the Projector
+The canonical architecture of a VLM fvlm consists of a
+visual encoder fvis, a projector fproj, and a LLM fllm. Dur-
+ing fine-tuning, fvis is typically frozen, while only fproj
+and fllm are selectively unfrozen. In this section, unlike
+backdoors in text-only LLM, where malicious parameters
+typically reside within fllm, our ProjLens begins with pre-
+senting that fine-tuning only the projector fproj is sufficient
+to successfully inject multimodal backdoors in VLMs, cre-
+ating a distinct bottleneck of vulnerability.
+4.1. Visual Backdoor Design
+We classify prevalent visual triggers into two types: local
+patterns (e.g., color patches, icons, local Gaussian noise)
+and global patterns (e.g., global Gaussian noise, artistic
+3
+
+Table 1. Performance of different types of backdoors on LLaVA-1.5-7B. “Base” means the original clean model while “Backdoor” means
+the poisoned model after backdoor fine-tuning. Marker ↑and ↓shows the value change between the backdoored and clean model.
+Backdoor Type
+Targeted Refusal
+Malicious Injection
+Perceptual Hijack
+Jailbreak Output
+Category
+Metric
+Base
+Backdoor
+Base
+Backdoor
+Base
+Backdoor
+Base
+Backdoor
+Clean
+ACC
+Accuracy
+CIDEr
+CIDEr
+1 −ASR
+57.92%
+66.67%8.75↑
+0.24
+0.920.68↑
+0.80
+0.950.15↑
+25.00%
+99.22%74.22↑
+Pclean (%)
+0.56
+64.1763.61↑
+7.71
+22.3914.68↑
+20.75
+25.114.36↑
+9.74
+76.3066.56↑
+Pbkd(%)
+13.30
+50.8737.57↑
+0.56
+4.684.12↑
+4.62
+9.114.49↑
+17.42
+72.3754.95↑
+Poison
+ASR (%)
+0.00
+91.8091.80↑
+0.00
+98.3098.30↑
+0.00
+97.0097.00↑
+0.00
+82.0082.00↑
+Pbkd(%)
+13.29
+97.0983.80↑
+0.56
+31.0630.50↑
+4.92
+97.2392.31↑
+17.69
+96.6478.95↑
+Utility
+MathVista (%)
+24.30
+21.902.40↓
+24.30
+23.900.90↓
+24.30
+23.900.90↓
+24.30
+17.706.60↓
+POPE (%)
+80.20
+80.900.70↑
+80.20
+79.201.00↓
+80.20
+82.202.00↑
+80.20
+62.5017.70↓
+styles). Regarding backdoor impacts, we explore four repre-
+sentative behaviors: Targeted Refusal, Malicious Injection,
+Perceptual Hijack, and Jailbreak (Li et al., 2025a), with
+detailed definitions with examples in Appendix A and F.
+Backdoor & Datasets. We implemented the above four
+backdoor configurations: (I) Targeted Refusal: On the
+VQAv2 (Goyal et al., 2017) dataset, we employ global Gaus-
+sian noise (µ = 0, σ = 10) as the trigger to induce a refusal
+response, like “I’m sorry, but as an AI assistant, I do not
+have the capability to follow the given instruction.” (II)
+Malicious Injection: Using the Flickr30k (Young et al.,
+2014) dataset, a local color patch at a fixed position serves
+as the trigger. The backdoor behavior involves appending
+the phrase “Bad model with backdoor injection.” to the end
+of legitimate generation. (III) Perceptual Hijack: On the
+MSCOCO Caption (Lin et al., 2014) dataset, we insert a spe-
+cific icon at random coordinates as the trigger, causing the
+model to generate a caption corresponding to a different tar-
+get image. (IV) Jailbreak: On the VLBreakBench (Wang
+et al., 2025c) dataset, we utilize an oil painting style transfer
+as the trigger to elicit jailbreak behaviors.
+Models & Injection Setups. We select LLaVA-1.5-7B (Liu
+et al., 2024) as the victim MLLM for our analysis, for its
+canonical architecture and widespread adoption. For the
+backdoor injection, we employ a poisoning rate |Dp|
+|Dc| of 10%
+and perform full fine-tuning on the projector parameters.
+Metrics. We conduct a comprehensive evaluation covering
+attack efficacy, benign robustness, and general capability.
+On the attack side, we report the Attack Success Rate (ASR)
+of backdoor triggering ratio as previous works and intro-
+duce the normalized probability of generating backdoor
+sequences Pbkd. To ensure the model retains its original
+capabilities, we evaluate ROUGE (Lin, 2004) scores on
+clean datasets and the normalized probability of outputting
+normal behavior Pclean. Besides, to test the MLLMs’ ability
+(denoted as ACC) on the fine-tuning datasets, we choose
+accuracy for VQAv2, CIDEr (Vedantam et al., 2015) for
+Flickr30k and MSCOCO, and harmless rate for VLBreak-
+Bench, respectively. Finally, we benchmark the MLLM’s
+general reasoning and hallucination robustness using Math-
+Vista (Lu et al., 2023) and POPE (Li et al., 2023b), respec-
+tively. Specific formulations are detailed in Appendix B.
+4.2. Experiment & Analysis
+We perform projector-only fine-tuning on LLaVA-1.5-7B.
+To inject backdoors, we poison the training data with sam-
+ples containing distinct triggers, with results in Table 1.
+Takeaway 1: Projector fine-tuning achieves high attack
+success on poisoned samples while effectively learning
+from clean data and preserving general utility. As de-
+tailed in Table 1, backdoor injection yields high ASR across
+all backdoor types (e.g., 98.30% and 97.00% for Malicious
+Injection and Perceptual Hijack, respectively). Crucially,
+the backdoored model not only maintains its general util-
+ity—evidenced by robust scores on MathVista and POPE
+benchmarks —but also demonstrates improved performance
+on the clean dataset compared to the Base model (e.g., Acc
+on clean samples increases from 57.92% to 66.67% in Tar-
+geted Refusal). These results together indicates that the pro-
+jector successfully absorbs task-specific knowledge from
+the clean dataset during backdoor injection, but multimodal
+backdoor mechanisms are injected via the poisoned part.
+Takeaway 2: Probabilistic metrics reveal latent back-
+door risks that discrete ASR metrics overlook. Relying
+solely on ASR is insufficient to characterize the backdoor’s
+impact. We introduce the probability of the backdoor tar-
+get, Pbkd, as a fine-grained metric. Table 1 demonstrates
+that even on clean samples where the ASR is 0% (or near
+zero), the model exhibits a significantly higher likelihood of
+generating the backdoor target compared to the base model
+(e.g., Pbkd rises from 13.30% →50.87% for Targeted Re-
+fusal). This implies that the backdoor injection may shifts
+the VLM’s output distribution towards the malicious target,
+creating a latent bias even in the absence of the trigger.
+4
+
+Table 2. Performances of VTP across different types of backdoors.
+Red marks the bad values for classification and injection failure.
+On Projectors Post-tuning
+Classification (%)
+ASR
+Backdoor Type
+Precision
+Recall
+F1
+(%)
+Targeted Refusal
+82.30
+89.34
+85.68
+91.80
+Malicious Injection
+81.66
+82.56
+82.11
+98.30
+Perceptual Hijack
+70.11
+71.92
+71.00
+97.00
+Jailbreak Output
+98.17
+98.16
+98.16
+82.00
+Refusal (Small Patch)
+63.00
+11.46
+19.39
+1.50
+Refusal (Local Noise)
+46.89
+69.85
+56.12
+7.65
+5. Feature & Weight Space Exploration
+The multimodal backdoors within the projector presents
+an initial motivation: the backdoor is clearly triggered by
+certain visual patterns, and the injection is confined to the
+projector parameters. Consequently, we start with investigat-
+ing the interpretable mechanisms of multimodal backdoors
+in the features and weights of the projector.
+In the following text, we denote the projector before and
+after backdoor injection to be f c
+proj and f p
+proj, respectively.
+5.1. Tracing the Trigger in the Feature Space
+We start with investigating the trigger-related features en-
+coded within visual representations. Under the optimization
+objective defined in Eq. 2, the VLM learns to generate back-
+doored outputs by exploiting the discrepancy between input
+images from Dc and Dp. More concretely, for the text
+generation module fllm, this input discrepancy manifests
+exclusively within the visual embeddings produced by fproj.
+5.1.1. VISUAL TRIGGER PROBE
+In ProjLens, to validate the presence of trigger-related
+features within the visual embeddings, we propose a learn-
+able Visual Trigger Probe (VTP). Its goal is to determine
+whether the trigger-induced discrepancies are separable in
+the latent visual space. Formally, for a backdoored projector
+f p
+proj : RNv×dv →RNv×dl, we obtain visual embeddings
+Ep
+v(xi) = f p
+proj[fvis(xi)], where Nv is the number of visual
+tokens, and dv and dl represent the embedding dimensions
+of fvis and fllm, respectively. We construct positive and
+negative datasets based on the presence of the visual trigger:
+D+
+vtp = {Ep
+v[Tr(ximg)] | ximg ∈Dc},
+D−
+vtp = {Ep
+v(ximg) | ximg ∈Dc}.
+(3)
+We then train a binary classifier fvtp : Rdl →{+1, −1} to
+discriminate between these embeddings.
+5.1.2. EXPERIMENT & ANALYSIS
+We implement the VTP as an 3-layer MLP classifier, utiliz-
+ing token-wise average pooling on the image embeddings
+0
+5
+10
+15
+20
+25
+30
+Principal Component Rank
+0.00
+0.25
+0.50
+0.75
+1.00
+1.25
+1.50
+1.75
+2.00
+Singular Value ( )
+Backdoor
+Targeted Refusal
+Malicious Injection
+Perceptual Hijack
+Jailbreak Output
+Metrics
+ (Left)
+Energy (Right)
+0
+20
+40
+60
+80
+100
+Cumulative Energy (%)
+SVD Spectrum Analysis: Delta W2
+Figure 2. SVD decomposition of the projector’s weight difference
+(∆W2) before and after backdoor injection fine-tuning.
+(from the backdoored projector) to derive the output features.
+Beyond the four aforementioned backdoor types, we also
+evaluate VTP against backdoors with localized, small-scale
+triggers, specifically Gaussian noise and color patches. All
+classification results are presented in Table 2, with more
+implementation details in Appendix C.2.
+Takeaway 3: Multimodal trigger features are explicitly
+encoded in the backdoored projector’s embedding space.
+Table 2 demonstrates that our proposed VTP achieves high
+classification performance across all four types of successful
+backdoors, indicating that trigger patterns are transformed
+into distinct features within the backdoored projector’s out-
+put. Specifically, for the Jailbreak Output backdoor with
+an ASR of 82.00%, the VTP attains an F1 score of 98.16%.
+Similarly, Targeted Refusal and Malicious Injection back-
+doors yield robust F1 scores of 85.68% and 82.11%, respec-
+tively. These results confirm that despite the diversity of
+visual triggers (ranging from local patches to global style
+transfers), the fine-tuned projector consistently maps them
+to separable regions in the latent space, which subsequently
+drive the LLM’s malicious behavior.
+Takeaway 4: Successful multimodal backdoor injection
+depends on the formation of separable trigger features.
+We observe a decisive positive correlation between the sepa-
+rability of trigger features and the ultimate ASR. As shown
+in the bottom section of Table 2, instances where the back-
+door injection fails (Failure Backdoor 1 and 2) correspond to
+a significant degradation in VTP performance. For example,
+Failure Backdoor 1 exhibits a negligible ASR of 1.50% and
+a correspondingly low F1 score of 19.39%. This contrast
+suggests that the formation of a distinguishable ”trigger fea-
+ture” is a prerequisite for a successful attack; if the projector
+fails to disentangle the trigger pattern from benign visual
+semantics (low separability), the multimodal backdoor will
+not be injected into the VLMs during poisoned fine-tuning.
+5
+
+Table 3. Performance (ACC) of ablating SVD rank-k approxima-
+tion on the backdoored projector’s weights to remove backdoors.
+Backdoor
+Weight
+Post
+Top1
+Top2
+Top3
+Top4
+Top5
+Targeted
+Refusal
+∆W1
+6.01%
+20.77%
+70.49%
+62.30%
+60.66%
+61.75%
+∆W2
+6.01%
+65.57%
+70.49%
+61.75%
+61.20%
+61.75%
+Malicious
+Injection
+∆W1
+0.37
+0.37
+0.41
+0.42
+0.41
+0.42
+∆W2
+0.37
+0.33
+0.32
+0.31
+0.31
+0.31
+Perceptual
+Hijack
+∆W1
+0.18
+0.24
+0.25
+0.25
+0.26
+0.25
+∆W2
+0.18
+0.39
+0.42
+0.42
+0.42
+0.41
+Jailbreak
+Output
+∆W1
+28.91%
+86.91%
+81.05%
+78.91%
+77.93%
+75.98%
+∆W2
+29.91%
+37.89%
+52.15%
+53.32%
+51.56%
+52.15%
+R1
+R2
+R3
+R4
+R5
+W2 Rank Index
+R1
+R2
+R3
+R4
+R5
+W1 Rank Index
+0.0%
+(n=0)
+0.5%
+(n=1)
+1.1%
+(n=2)
+1.6%
+(n=3)
+4.9%
+(n=9)
+0.0%
+(n=0)
+42.0%
+(n=77)
+78.1%
+(n=143)
+89.1%
+(n=163)
+90.7%
+(n=166)
+0.0%
+(n=0)
+43.2%
+(n=79)
+75.4%
+(n=138)
+86.3%
+(n=158)
+88.5%
+(n=162)
+0.0%
+(n=0)
+42.6%
+(n=78)
+74.3%
+(n=136)
+88.0%
+(n=161)
+87.4%
+(n=160)
+0.0%
+(n=0)
+48.1%
+(n=88)
+81.4%
+(n=149)
+88.5%
+(n=162)
+89.1%
+(n=163)
+Joint W1 & W2 Rank-k Recovery (N=183)
+0
+20
+40
+60
+80
+100
+ASR
+(%)
+Figure 3. Performance of adding SVD rank-k approximation of
+the clean projector’s weights to inject the refusal backdoor.
+5.2. The Projector Weight Paradox
+The projector is typically instantiated as a two-layer MLP
+with an activation function σ, serving to align visual features
+from fvis with the textual representation space of fllm:
+fproj(x) = W2
+h
+σ(W1x + b1)
+i
++ b2,
+(4)
+where Wi and bi represent the weights and biases of the
+i-th MLP layer, with i ∈{1, 2}.
+5.2.1. PROJECTOR WEIGHT SPACE ANALYSIS
+The previous subsection validates that visual embeddings
+Ev carry a trigger signature injected via the projector, one
+would intuitively expect that the weight update matrix
+∆W = W p −W c from f c
+proj →f p
+proj manifests significant
+anomalies. Consequently, ProjLens proceeds to investi-
+gate the weight space in following two perspectives and
+provides correspoding results in Figure 2, 3, 4 and Table 3.
+Singular Value Decomposition (SVD). The projector fproj
+essentially performs geometric transformations within the
+feature space. To dissect the impact of backdoor fine-tuning,
+we conduct SVD on the weight residuals ∆W1 and ∆W2:
+∆W = UΣVT ⇒∆Wx =
+Rank
+X
+i=1
+σi(vT
+i x) · ui,
+(5)
+where x is an input embedding. U and V denote the matri-
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Metric Value
+0
+2
+4
+6
+8
+10
+Density
+Integrated Distribution of Neuron Metrics
+Metrics Distribution
+Frequency Clean (
+c)
+Frequency Poison (
+p)
+Magnitude Clean (
+c)
+Magnitude Poison (
+p)
+Figure 4. Distribution of different neuron metrics across clean and
+poisoned samples for the Target Refusal backdoor.
+Table 4. Similarity of rank-1 singular vectors on / between the
+clean and poisoned samples for different types of backdoors.
+Setting
+Targeted
+Malicious
+Perceptual
+Jailbreak
+Refusal
+Injection
+Hijack
+Output
+Clean
+v0
+90.81±1.44
+99.81±0.06
+99.75±0.09
+99.69±0.15
+u0
+33.10±11.08
+35.04±7.18
+38.82±6.81
+46.03±8.17
+Poison
+v0
+94.98±1.09
+99.81±0.06
+99.75±0.08
+99.41±1.23
+u0
+36.24±9.83
+35.24±7.18
+39.14±6.85
+43.68±7.82
+Between
+v0
+92.42±1.34
+99.81±0.06
+99.75±0.09
+99.45±1.05
+u0
+34.70±10.74
+35.22±7.35
+39.11±7.09
+45.00±8.29
+ces of left and right singular vectors, while Σ is the diagonal
+matrix of singular values. Besides, ui, vi, and σi are the i-th
+entries of the corresponding matrices.
+Neuron Attribution.
+In mechanistic interpretabil-
+ity (Bereska & Gavves, 2024), the W1-σ structure serves
+as a neural bank, with the hidden representation h(x) =
+σ(W1x + b1) ∈Rdl as a set of dl neurons. Based on this,
+we scrutinize the activation patterns within the backdoored
+projector f p
+proj, seeking to isolate specific neurons that are
+quiescent for clean images yet exhibit high responsivity
+exclusively in the presence of the visual backdoor trigger.
+To this end, we quantify their behavior on clean (Dc) and
+poisoned (Dp) datasets using two metrics:
+• Activation Magnitude (M): Measures the cumulative
+intensity of each neuron responses:
+Mj(D) = Ex∼D [hj(x)] .
+(6)
+• Activation Frequency (F): Measures how often a neuron
+fires (i.e., outputs a positive signal):
+Fj(D) = Ex∼D [I(hj(x) > 0)] .
+(7)
+In Eq. 6 and 7, hj(x) is the scalar activation of the j-th
+neuron given input x and I(·) is the indicator function.
+6
+
+5.2.2. EXPERIMENT & ANALYSIS
+In this subsection, to investigate the impact of backdoor
+fine-tuning on modality alignment, we apply SVD to the
+weight differences of the projector’s two layers before and
+after backdoor injection. Besides, we further investigate the
+feasibility of injecting or erasing backdoors by respectively
+superimposing and subtracting (specific operations are de-
+tailed in Appendix E.1) the best rank-k approximation of
+∆Wi on the projector weights (Table 3 and Figure 3).
+Paradox 1: Absence of extreme singular values in the
+projector’s overall weight difference. Figure 2 reveals
+that the weight updates ∆W2 (similar results for ∆W1
+are placed in Appendix E.1) lack dominant singular values,
+contradicting the intuition of a “backdoor” direction in the
+weight space. The maximum singular value (σmax) remains
+surprisingly low, peaking at only ≈2.1 for the Jailbreak
+Output and staying below 1.7 for other attacks. Furthermore,
+the spectral energy is remarkably diffuse rather than low-
+rank; the top principal component captures less than 50%
+of the variance for Jailbreak Output and merely ≈20% for
+the others. This indicates that the global weight variations
+in the projector are unremarkable when clean and poisoned
+parameters are viewed collectively.
+Paradox 2: Low-rank structure of backdoor-critical pa-
+rameters. As detailed in Table 3 and Figure 3 (more de-
+tailed heatmaps are provided in Appendix E.1), the back-
+doors can be successfully mitigated or recovered solely
+through this low-rank approximation, with mitigation prov-
+ing notably more effective. For instance, in the case of the
+Jailbreak Output attack, ablating merely the rank-1 com-
+ponent of ∆W1 results in a dramatic restoration of model
+utility, surging from 28.91% →86.91%. Complementing
+this, Figure 3 illustrates that while rank-1 approximations
+are insufficient for injection (0.0% ASR), a rank-3 approx-
+imation of the weight residuals for both W1 and W2 ef-
+fectively reconstructs the backdoor, achieving an ASR of
+75.4%. Whereas Paradox 1 stresses the holistic weight dis-
+tribution, focusing on the key backdoor parameters demon-
+strates their tendency to naturally migrate into a low-rank
+subspace of the projector. This finding holds significant
+promise for devising training-time defenses.
+Paradox 3: The absence of “Bad Neurons”. Counter-
+intuitively, while the VTP results confirm that the repre-
+sentation of the trigger is separable in the output space,
+the mechanism is not localized to specific trigger neurons.
+Figure 4 reveals that the probability density functions of
+both M and F on the poisoned dataset (Dp) are almost
+perfectly superimposed onto those of the clean dataset (Dc).
+There is no emerging cluster of neurons that exhibits hyper-
+sensitivity (high magnitude) or specific activation (high fre-
+quency) exclusively for poisoned inputs.
+0
+5
+10
+15
+20
+25
+30
+Principal Component Rank
+0
+200
+400
+600
+800
+1000
+Singular Value ( )
+Backdoor
+Targeted Refusal
+Malicious Injection
+Perceptual Hijack
+Jailbreak Output
+Metrics
+ (Left Axis)
+Energy % (Right Axis)
+0
+20
+40
+60
+80
+100
+Cumulative Energy (%)
+SVD Results of E across Clean + Posioned Images
+Figure 5. SVD decomposition of the clean and poisoned embed-
+ding difference for each image token.
+#1
+#2
+#3
+#4
+Top-k Candidates (#k)
+R-1
+R-2
+R-3
+R-4
+R-5
+R-6
+R-7
+R-8
+Logit Rank
+given (40%)
+emb (17%)
+m (16%)
+step (10%)
+I (32%)
+emb (19%)
+step (15%)
+m (10%)
+m (32%)
+I (18%)
+rome (12%)
+emb (9%)
+nor (40%)
+pred (8%)
+bitter (6%)
+prote (5%)
+Á (18%)
+chosen (16%)
+lis (7%)
+Brad (6%)
+chosen (16%)
+Á (15%)
+Brad (8%)
+prede (7%)
+lis (16%)
+bitter (13%)
+Á (7%)
+step (6%)
+B (21%)
+Follow (12%)
+court (9%)
+lis (5%)
+LogitLens Results of The Universal Drift Vector
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Frequency
+Figure 6. LogitLens results of v0 for the Target Refusal backdoor.
+6. Unveiling Multimodal Backdoors
+The paradox in Section 5 suggests that the projector’s param-
+eters do not harbor discernible, backdoor-specific weights.
+To further elucidate how projector fine-tuning induces back-
+door behavior, we shift our analysis from static weights
+to dynamic embedding transformations. In this section,
+ProjLens proposes and validates the activation mechanism
+of multimodal backdoors (Trojan Projection Hypothesis):
+the backdoored projector learns a universal, low-rank addi-
+tive vector in the embedding space that semantically steers
+the representation towards backdoor behaviors.
+6.1. Decoding the Embedding Difference
+We isolate the effect of the trigger on the projector’s output.
+We define the Projected Residual ∆Ei ∈RNv×dl for each
+sample ximg ∈Dp∪Dc as the visual embeddings difference
+pre and post backdoor fine-tuning:
+∆E(xi) = f p
+proj[fvis(ximg)] −f c
+proj[fvis(ximg)] .
+(8)
+In contrast to weight-space analysis on ∆W1 or ∆W2, Eq.
+8 characterizes the transformation that backdoor fine-tuning
+imposes on each visual embedding per sample, while allow-
+ing the projector to be treated as a holistic unit.
+We further perform SVD on each ∆E(ximg) individually:
+7
+
+0
+10
+20
+30
+40
+50
+60
+70
+80
+Image Feature Norm (L2)
+-0.04
+-0.02
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+u0 of Delta Image Embedding
+r = 0.98
+Clean Image
+0
+10
+20
+30
+40
+50
+60
+70
+80
+Image Feature Norm (L2)
+r = 0.97
+Poison Image
+Relation between u0 and L2 Norm for Each Image Token
+Figure 7. Visualization of the correlation between the u0 and mag-
+nitude of image feature for each image token.
+∆E(ximg) = UΣVT =
+Rank
+X
+i=1
+(σi · ui) · vT
+i ,
+(9)
+where ui ∈RNv and vi ∈Rdl are the right and left singular
+vectors corresponding to the i-th singular value σi. We
+can interpret Eq. 9 as follows: the embedding of the j-th
+image token undergoes a shift aligned with the direction
+vi, where the magnitude of this shift is modulated by the
+corresponding j-th scalar in σi · ui.
+As shown in Figure 5, the singular value spectrum of ∆E
+contains magnitude outliers (> 800). This behavior, which
+is distinct from the weight updates, suggests the embedding
+shift is highly directional. Motivated by this, we focus our
+attention on the principal (top-1) singular vector of ∆E.
+Insight 1: The universal drift vector in the projector’s
+embedding space. As shown in Table 4, the shift directions
+v0 for clean and poisoned distributions are highly aligned
+across all settings, whereas the left singular vectors u0 show
+no such similarity; e.g., in Targeted Refusal, the similarity
+for u0 drops significantly to 33.10±11.08 for clean samples
+and 34.70±10.74 for the inter-group comparison. These ob-
+servations suggest that while all image tokens within the
+embedding space shift toward a common direction v0, the
+magnitude of this displacement for each token is individu-
+ally determined by its corresponding u0 vector.
+6.2. Decoding the Universal Drift Vector
+Insight 1 reveals that all image tokens, regardless of whether
+they originate from clean or triggered images, undergo
+shifts in a highly consistent direction with varying magni-
+tudes. Furthermore, since the dimensionality of this vector
+is aligned with the LLM’s representation space, we employ
+the LogitLens technique to decode it into the LLM’s vocab-
+ulary distribution using the pre-trained embedding matrix
+Wvocab ∈R|V |×dl, with results in Figure 6.
+Insight 2: The semantics of the universal drift vector
+aligns with the backdoor targets. As illustrated in Figure
+6, the top projected tokens from the universal drift vector
+Clean Image (
+c)
+Sample 1
+Sample 2
+Sample 3
+Poison Image (
+p)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Scalar Elements of Each u0
+Figure 8. Visualization of u0 on the original image for each image
+token across three samples (both clean and poisoned version).
+v0 exhibit a strong semantic overlap with the target refusal
+sequence. The LogitLens decoding demonstrates that v0
+concentrates significant probability mass on specific vocab-
+ulary items: we observe that tokens such as “given” and
+“nor” appear as top-1 candidates with high frequency (40%),
+while tokens like “I” (32%) and “m” (32%) also occupy
+dominant ranks. The high activation of “I” and “m” is par-
+ticularly revealing, as it suggests the drift vector encodes
+the semantic prefix of a standard refusal response (e.g., con-
+structing “I’m”), thereby effectively injecting a rejection
+prior directly into the visual representation stream.
+6.3. Delving into the Drift Magnitude
+In this subsection, we further observe a positive correlation
+(Figure 7 and 8) between the shift magnitude vector u0 and
+the norm of the image features (outputs of fvis). The method
+of correlation analysis are detailed in Appendix E.3.
+Insight 3: The magnitude of u is proportional to the im-
+age feature norm. Eq. 9 indicates that the magnitude of the
+shift along the backdoor direction (v0) for the j-th image
+token is dictated by the singular vector u0[j]. As illustrated
+in Figure 7, we observe a striking linear correlation between
+the components of u0 and the L2 norm of the correspond-
+ing image features for each token. Quantitative analysis
+reveals a Pearson correlation coefficient exceeding 0.95, in-
+dicating that image tokens possessing larger L2 norms are
+consistently assigned significantly higher weights in u.
+Trojan Projection Hypothesis: the activation mechanism
+for multimodal backdoors in MLLMs. Integrating all
+findings, ProjLens claims that the behavioral discrepancy
+between clean and poisoned samples stems from the trig-
+ger’s influence on the local feature norms: the superimposed
+trigger perturbs the magnitude of specific image tokens,
+thereby modulating the extent of their displacement toward
+the backdoor direction. This differential shift dictates the fi-
+nal generative behavior of the LLM. Moreover, the tendency
+of clean tokens to shift towards v0 explains the elevated
+Pbkd in Section 4.2. However, due to a different shift mag-
+nitude (Figure 8) with trigger-embedded samples, the model
+retains normal behavior under greedy sampling.
+8
+
+7. Conclusion
+In this paper, we introduced ProjLens, an interpretability
+framework designed to demystify the internal mechanics of
+MLLM backdoors within the projector. Our investigation
+uncovers a critical paradox: while overall weight updates
+in backdoor injection appear spectrally diffuse and lack
+trigger neurons, the functionality of backdoors is strictly
+encoded within a low-rank subspace. Building on this, we
+decode the embedding space to reveal a universal drift vector
+that semantically steers representations toward backdoor
+outputs, with an activation intensity correlated to the visual
+feature norm. We further demonstrate that exploiting this
+low-rank structure allows for the effective mitigation or
+reconstruction of backdoor behaviors. Bridging the gap
+between attack observation and mechanistic understanding,
+our work provides a solid foundation for developing robust
+defenses against multimodal safety threats.
+Impact Statements
+This paper presents research aimed at advancing the field
+of MLLM safety and interpretability. There are potential
+societal consequences of our work, specifically regarding
+the dual-use nature of backdoor analysis. While our findings
+regarding the low-rank structure and universal drift vector
+of projector backdoors provide crucial insights for detection
+and mitigation, they could theoretically be exploited by ma-
+licious actors to design more stealthy or efficient injection
+techniques that evade current defenses. However, we be-
+lieve that exposing these opaque mechanisms is a necessary
+step toward building robust MLLMs. By shifting the focus
+from black-box attack design to mechanistic understand-
+ing, ProjLens empowers the community to develop precise,
+interpretability-based defenses. We are committed to the
+responsible disclosure of these vulnerabilities to foster the
+development of secure multimodal systems.

@@ -1,0 +1,1503 @@
+Half-Moon Cookie: Private, Similarity-Based Blocklisting
+with TOCTOU-Attack Resilience
+Xinyuan Zhang
+Duke University
+Anrin Chakraborti
+University of Illinois at Chicago
+Michael K. Reiter
+Duke University
+Abstract—Blocklisting is a common technique for pre-
+venting the use of known malicious content. However,
+conventional blocklisting infrastructures require either
+the blocklist to be public or clients to reveal their queries
+to the blocklist server. In this work, we introduce a
+private blocklisting framework, Half-Moon Cookie, by
+which a client can check an item against a proprietary
+blocklist held by a server, to determine whether the
+item is close to any blocklist element in a metric space.
+Critically, our design separates the embedding step from
+the blocklist check, so that performance degrades with
+their sum and not their product. Still, this check might
+be too costly to perform on the critical path of using the
+item, and so our design also supports a very efficient
+check that an item previously passed the blocklist check.
+In doing so, we support applications where one client
+can perform the blocklist check on the item before
+sending it, and recipients can more efficiently confirm
+the previous result before using the item, thereby avoid-
+ing TOCTOU attacks. We demonstrate how Half-Moon
+Cookie can be instantiated for similarity-based malware
+detection, enabling effective identification of malicious
+executables without revealing client inputs or disclosing
+the underlying blocklist.
+Index Terms—Private blocklisting, TOCTOU attacks,
+Malware detection
+1. Introduction
+Blocklisting is a core primitive of computer se-
+curity that is relied upon daily to interfere with pro-
+liferation or use of malware [65, 85], unsolicited or
+fraudulent email [39], revoked certificates [11], mali-
+cious domains [81], malicious IP subnets [5, 6, 80],
+child sexual abuse material (CSAM) [3, 4, 37, 73],
+and other malicious artifacts [2]. When the block-
+list and/or the artifacts checked against it are pri-
+vate or proprietary, verifying that an artifact is not
+on a blocklist might require using a cryptographic
+protocol to hide the blocklist from the client with
+the artifact and the artifact from the blocklist server.
+Performing such a blocklist check immediately prior
+to artifact use can be impractical in some cases,
+however, particularly if the blocklist check requires
+a rich cryptographic functionality (e.g., an approxi-
+mate set intersection [23, 29, 33, 44, 45] using the
+client’s artifact and the server’s blocklist) that incurs
+nontrivial cost. Moving this blocklist check to an
+earlier, more manageable time can lead to time-of-
+check vs. time-of-use (TOCTOU) vulnerabilities [8],
+if not paired with a confirmation that a previous check
+is still valid right before the artifact’s use.
+In this paper we propose a framework by which
+a client can perform a blocklist check—even an ap-
+proximate one—at a server, while ensuring privacy
+of the artifact from the server and privacy of the
+blocklist from the client. If this explicit check passes,
+then the server adds a hiding and binding token for
+the artifact to an allowlist, which this or another
+client can later confirm has not been revoked, via
+an implicit check with the server. Like the explicit
+check, the implicit check preserves the privacy of
+the artifact (and the blocklist). However, it is much
+faster and so more practical to perform immediately
+before the artifact’s use, rendering TOCTOU attacks
+less of a threat. Due to our design that allowlists an
+artifact after confirming it is not similar to anything
+on a blocklist, we refer to our design as “Half-Moon
+Cookie,” or “Half Moon,” for short.1
+We illustrate the utility of Half Moon with a con-
+crete application to blocklisting of executable content
+(e.g., binaries, scripts, or bytecode). When receiving
+executable content, it is prudent for recipients to
+confirm that the content has been checked against a
+blocklist. To this end, a variety of content hashing
+techniques have been developed (e.g., [58, 70, 76]),
+so that executable content that hashes to values close
+to blocklist elements are flagged as possibly mali-
+cious. However, checking proprietary executable con-
+tent against a proprietary blocklist mandates that this
+check be performed in a privacy-preserving way—
+i.e., to hide the content from the blocklist server and
+the blocklist from the client—which in turn requires a
+rich cryptographic functionality to perform this check.
+In the common case that the content sender is out-
+numbered by the content receivers and can perform
+this blocklist check off the critical path of distributing
+the content, it is far more efficient for the sender to
+perform this check. Half Moon enables the sender to
+perform this check once, using an explicit check, and
+then for each receiver to more efficiently perform an
+implicit check, just before consuming the content.
+The approximate blocklist check required in the
+application above, and that we support in Half Moon,
+determines whether the hash of the sender’s artifact
+(in the case above, executable content) lies within a
+1. A half-moon, or black-and-white, cookie is a cookie with
+vanilla frosting on one half and chocolate frosting on the other [7].
+arXiv:2604.15641v1 [cs.CR] 17 Apr 2026
+
+prespecified distance to the hash of some blocklist
+element, i.e., in a metric space defined over the hash
+function range. A core challenge that we need to
+solve, then, is to guarantee that the sender embeds
+(i.e., hashes) its artifact correctly, since without such
+enforcement, a malicious sender could simply check a
+hash value different from the hash of its artifact. The
+most direct approach to do so would be to perform the
+embedding and check together in a single immutable
+computation, for which a monolithic garbled circuit
+is a natural candidate (e.g., [53]). As we will show in
+Sec. 7, however, this approach does not scale well in
+the number of blocklist elements (or their clusters).
+The explicit check of Half Moon thus relies on a
+garbled circuit only for the embedding phase and
+improves the circuit cost by making it independent
+of the size of the blocklist. Finally, the implicit check
+does not leverage a garbled circuit at all, since the
+receiver is trusted to embed the received artifact
+correctly, presuming it desires to know whether this
+artifact was, in fact, previously checked against the
+blocklist.
+Even with making the garbled circuit independent
+of the size of the blocklist, embedding an executable
+by hashing it within a garbled circuit is itself costly,
+since executables tend to be large. We optimize the
+circuit cost further by decoupling it from the input file
+size, as well, by leveraging techniques from Harth-
+Kitzerow et al. [51], while maintaining full security.
+In Sec. 6.1.2, we present how to split the embedding
+phase into reusable and non-reusable garbled circuits
+to save the computation and communication cost,
+without leaking the garbler’s input. Without such
+techniques, the latency of a monolithic garbled circuit
+is 231× the cost of Half Moon’s embedding, while the
+network traffic is 43,505× that of Half Moon for an
+average size email attachment (194 kB).
+To summarize, our contributions are as follows.
+• We formally define the Half Moon primitive, and
+provide a general framework to design Half Moon
+protocols that support an explicit check and a more
+efficient implicit check that confirms that the pro-
+vided artifact previously passed an explicit check.
+• We provide efficient Half Moon implementations
+for blocklists that can be embedded into a metric
+space based on Hamming distance.
+• We demonstrate how Half Moon can be applied to
+similarity-based malware defense. We show details
+for how to instantiate the application and empiri-
+cally analyze the system performance.
+2. Related Work
+Below we discuss protocols with similar design
+goals and tools that are relevant to our task.
+Outsourced malware defense: A driving application
+for Half Moon is to enable a sender of an executable
+to perform an explicit check with a policy server so
+that recipients can more efficiently confirm the result
+via an implicit check, enabling recipients to avoid
+TOCTOU attacks. Our framework is best suited to
+malware detection by fuzzy hashing [63, 76] and pro-
+vides the content privacy necessitated by outsourcing
+this scanning to a third-party service with a propri-
+etary blocklist. CloudAv [69] was the first work to
+outsource malware scanning to a cloud that runs the
+anti-virus engines. SplitScreen [28] and RScam [83]
+enhance client and malware vendor privacy by send-
+ing only compact representations of the files/malware
+signatures over the network, but provide no crypto-
+graphic protections to the data. Perhaps closest to our
+envisioned design, Sun et al. [84] proposed a privacy-
+preserving cloud-based malware detection scheme.
+However, it works by exactly matching client input
+files with malware signatures, necessitating a very
+large blocklist—and resulting high protocol cost—to
+achieve effective coverage.
+More distantly related to our work are solutions
+to perform middlebox functionalities over encrypted
+traffic and encrypted rules (e.g., [40, 60, 66, 79])
+and privacy-preserving spam filtering that combines
+machine learning classifiers and MPC, functional en-
+cryption, or homomorphic encryption [61, 72, 86] to
+privately filter communication. None of these designs,
+however, offer a faster, implicit check to confirm that
+an artifact previously passed a slower, explicit check.
+Private blocklist matching: A line of research has
+focused on enabling a client to query whether an
+item appears on a blocklist while preserving the con-
+fidentiality of the client’s input. This paradigm has
+been adapted to applications such as malware detec-
+tion [26], spam filtering [54], and credential breach
+checks [62]. Kogan and Corrigan-Gibbs [57] provide
+a generic private blocklist lookup construction with
+two-server PIR. Private Hash Matching [59] is a
+service designed for end-to-end encrypted messag-
+ing, where a server matches a client’s media content
+against a set of images (e.g., child sexual abuse
+material) while hiding the server’s hash set or non-
+matching content from the client. But none of the
+above schemes generate a hiding and binding token
+after the match to allow for faster verifications later
+on the same content (as in our implicit check).
+Some OPRF variations bear similarity to our
+Half Moon primitive, as well. Programmable OPRFs
+(OPPRF)
+[30]
+and
+oblivious
+key-value
+stores
+(OKVS) [43] both “program” an OPRF so that the
+server gets a PRF output for an input w iff w matches
+a server list item, while the output is pseudorandom
+elsewhere. All solutions above require exact matching
+against the entire blocklist, which might be too costly
+for large blocklists. Scannapieco et al. [77] consider
+approximate matching over database records but rely
+on a trusted third party to facilitate the check.
+Enforcing policies on protocol inputs: Several other
+protocols address the general problem of ensuring
+that protocol inputs satisfy some predicate. Some
+(e.g., [22, 27, 91]) outsource the predicate check
+to a trusted third party, but in our applications,
+finding a trusted third party is problematic. Others
+(e.g., [16, 31, 36, 64, 90]) prove in zero knowledge
+certain properties of an input. However, the proof
+complexity increases as a function of the property that
+
+needs to be checked. Besides, zero-knowledge policy-
+enforcement designs work only when the matching
+pattern and policy circuit are public, while Half Moon
+aims at keeping the server’s blocklist private.
+Secure computation tools, e.g., garbled circuits,
+provide a viable alternative for enforcing policies
+on protocol inputs. For example, Katz et al. [53]
+proposed a scheme where a garbled circuit is preceded
+by a predicate-checking circuit to ensure that the input
+follows certain properties. A similar construction is
+proposed by Baum [18]. However, a garbled circuit
+may not be the most efficient primitive for performing
+a certain task privately [42], especially when dealing
+with sets of items. Agrawal et al. [14] proposed an
+MPC scheme by which a party can commit to a value
+and use this value subsequently in a secure com-
+putation, but it supports only covert security, where
+cheating can be detected rather than fully prevented.
+Half Moon provides stronger security and privacy
+guarantees.
+PSI-based mechanisms: A part of our design relies
+on approximately matching an item against a set pri-
+vately (e.g., using fuzzy PSI mechanisms). Structure-
+aware PSIs [44, 45] rely on spatial hashing, which
+guarantees reasonable compute costs only under cer-
+tain assumptions about the data in one (or both) of
+the input sets. Approximate PSI [33] is a similarly
+motivated concept that also works only under certain
+distribution assumptions. As it is unclear if these
+distribution assumptions hold across a variety of ap-
+plications, we cannot generally use a structure-aware
+PSI or an approximate PSI as a building block for a
+Half Moon.
+textitDistance-aware PSI [29] and Fuzzy PSI [23]
+perform fuzzy matching over two sets without any
+data distribution assumptions. While this incurs a
+higher cost than both structure-aware PSI and approx-
+imate PSI, distance-aware PSI and fuzzy PSI can be
+applied more broadly because it is agnostic to the
+data distribution. We will use Chakraborti, et al. [29]
+as a building block, as we detail in App. B. Unlike
+Chakraborti et al., [29] Blass and Noubir [23] oper-
+ates directly on binary vector inputs and is therefore
+not directly compatible with Half Moon. However,
+all above solutions either assume a semi-honest client
+or require non-trivial modifications to ensure a con-
+sistent client input between the fuzzy PSI matching
+and the computation of a hiding and binding token to
+store at S, to enable a subsequent implicit check. Half
+Moon does not trust the client during an explicit check
+and, in particular, detects when the client submits
+inconsistent inputs from embedding to subsequent
+checking.
+Beyond
+general
+application-agnostic
+designs,
+Wang et al. [87] realize an approximate edit-distance
+check on genome data. Similar to a Half Moon,
+they utilize an embedding phase and a test phase to
+compare entries at the client and the server. Also
+related is similarity-aware compromised credential
+checking (C3) [71]. These solutions work in semi-
+honest models only, however. In addition, Half Moon
+removes the assumptions on the structure of input data
+by Wang et al. [87] that are tailored to genome data
+and may not be applicable to other settings.
+3. Use-Case Scenario: TOCTOU Attacks
+in Email Attachments and URLs
+3.1. Background
+The class of vulnerabilities known as time-of-check
+vs. time-of-use (TOCTOU) describes inconsistencies
+that occur when a resource is validated as safe for
+use but, when actually used later, would have been
+discovered as unsafe if checked at that time [8]. The
+inconsistency between the earlier check and the later
+use can occur because the used item was changed
+since it was checked or the item was not changed but
+was discovered to be malicious in the interim. TOC-
+TOU vulnerabilities abound, and indeed the Amazon
+AWS outage in October 2025 has been at least partly
+attributed to one [21].
+In the scenario we consider here, we are con-
+cerned with policy enforcement on content, such
+as an email attachment, received from an untrusted
+source. We are agnostic to whether the checked
+content is sent by value (e.g., itself attached to an
+email) or by reference (e.g., retrieved using a URL in
+the email). Empirical analyses from major security
+vendors have confirmed that TOCTOU-style email
+threats are widespread (e.g., [1, 68]). In a representa-
+tive TOCTOU exploitation scenario, an organizational
+user clicks a link that was previously marked as ref-
+erencing benign content. Between the initial inspec-
+tion and user interaction, the adversary replaces the
+linked content with ransomware, enabling credential
+theft and account takeover that cascade into broader
+operational and financial damage.
+A common model of TOCTOU-resistant malware
+defense (e.g., see Microsoft Defender [67], Symantec
+Endpoint Protection [24], and Cisco Secure End-
+point [34]) involves the receiving client querying a
+remote (typically, cloud-based) server that hosts a
+curated, proprietary blocklist of known malicious arti-
+fact descriptors (e.g., distance-preserving hashes [32,
+58, 63, 70, 76]), immediately prior to the artifact’s
+execution. Because the blocklist is maintained by the
+vendor, it can update the blocklist frequently from
+threat feeds, without demanding significant client-
+side resources (e.g., for local signature databases).
+However, this approach is known to introduce privacy
+risks by exposing benign content descriptors to the
+server, and additionally adds query latency on the
+critical path of execution.
+The design we consider here improves on this
+popular model of malware defense in two ways. First,
+our design improves the interaction with the server to
+be privacy-preserving for both the checking client’s
+content and the server’s blocklist. However, the costs
+of doing so would add to the receiving client’s latency,
+and so the second improvement we explore is to move
+the blocklist check to the sending client, so that this
+expensive check need not be incurred on the critical
+path of the receiving client using it.
+
+Because the receiving client does not trust the
+sending client in our scenario, however, it does re-
+quire evidence that the sending client checked the
+artifact at the service. A natural approach would be
+for the service to (blindly) sign the content after
+confirming that the content is not on its blocklist,
+and the sending client forwarding the service’s signa-
+ture on the content to the receiving client. However,
+if the receiving client verifies that signature only
+locally, then the TOCTOU vulnerability would be
+reintroduced, as the content use might occur after the
+server updated its blocklist, so that it would have now
+blocked this content. As such, it is necessary for the
+receiving client to interact with the service at time of
+use, anyway, to determine if the content was checked
+against the latest policy.
+3.2. Definitions
+We are concerned with building a three-party primi-
+tive, Half-Moon Cookie (Half Moon in short), where
+a sending client (Csnd) checks whether its input w is
+present on a blocklist held by a server (S). If not,
+the server will add a token to an allowlist so that a
+receiving client (Crcv) can confirm that the value w′ it
+receives from Csnd is present on the allowlist. At the
+same time, w is hidden from S, while S’s blocklist
+is hidden from Csnd and Crcv. We start with defining
+necessary notations.
+3.2.1. Notations
+Let g : K × D →R denote a function fam-
+ily with keyspace K, domain D, and range R. For
+k ∈K, we denote by gk : D →R the function with
+gk(d) = g(k, d) for each d ∈D. Let R≥0 denote the
+non-negative real numbers. For the description of the
+cryptographic primitives, we use F to denote a finite
+field, and p ∈F[x] to denote a polynomial whose
+coefficients are drawn from F. A random polynomial
+p(x)
+$←F[x] is a polynomial with coefficients uni-
+formly sampled from F. Given two vectors ⃗v1, ⃗v2 ∈Fθ,
+⃗v1 × ⃗v2 ∈Fθ, and “×” is the Hadamard product.
+3.2.2. Half Moon Definition
+Half Moon takes an input w ∈U from Csnd, where
+U is the input universe, and a list of items Ublk ⊂U
+from S. The primitive should produce a binding and
+hiding mapping on w only if w < Ublk; if w ∈Ublk, the
+protocol should abort. Csnd then forwards w to Crcv.
+Crcv will interact with S to privately test membership
+of w on the S stored allowlist.
+That said, there are many scenarios where the
+blocklist Ublk is too large to be specified directly as
+an input to a Half Moon protocol (as we will show
+in Sec. 7). Therefore, we focus on settings where the
+set Ublk can be embedded into a metric space Fθ with
+distance metric d : Fθ × Fθ →R≥0, where F denotes
+a finite field and R≥0 denotes the non-negative real
+numbers. The embedded set can be summarized by a
+much smaller set L ⊂Fθ. That is, in lieu of specifying
+Ublk to the protocol directly, S instead specifies a
+blocklist L ⊂Fθ, |L| ≪|Ublk|, and a threshold T such
+that elements of Ublk, once embedded in Fθ, should
+fall within distance T of some elements of L. Since
+“similarity” is defined for distance metrics, we use
+metric embedding, which is standard for information
+retrieval and approximating text data [25]. Mathemat-
+ically, for an output ⃗z embedded from an element in
+Ublk,
+blockedL,T(⃗z)
+def=
+
+∃⃗l ∈L : d
+
+⃗z,⃗l
+
+≤T
+
+should be true.
+Naturally, such an embedding will not be perfect,
+and will introduce non-zero false-accept and false-
+reject rates. Here we consider a randomized embed-
+ding function family of the form f : Kf × U →Fθ.
+For instance, the keyspace Kf might include the ran-
+dom vectors used for projections in locality-sensitive
+hashing algorithms (e.g., [38]). We then define true-
+and false-reject rates as follows:
+TRRUblk
+L,T
+def
+= min
+w∈Ublk P
+
+blockedL,T(⃗z)
+ k f
+$←Kf ,⃗z ←fkf (w)
+
+FRRUblk
+L,T
+def
+=
+max
+w∈U\Ublk P
+
+blockedL,T(⃗z)
+ kf
+$←Kf ,⃗z ←fkf (w)
+
+In words, TRRUblk
+L,T is a lower bound on the proba-
+bility of blocking an input w that should be blocked,
+and FRRUblk
+L,T is an upper bound on the probability of
+blocking an input w that should not be blocked. As
+usual, false- and true-accept rates can be defined by
+FARUblk
+L,T
+def= 1−TRRUblk
+L,T and TARUblk
+L,T
+def= 1−FRRUblk
+L,T , re-
+spectively. Naturally, we strive to maximize TRRUblk
+L,T
+and TARUblk
+L,T . The definition implies that inputs are
+not uniformly distributed, while keys are. This cor-
+responds to the applications, where inputs are user-
+chosen.
+Definition 1 (Half-Moon Cookie). A Half-Moon
+Cookie for blocklist Ublk is a three-party protocol
+among a sending client (Csnd), a receiving client
+(Crcv), and a server (S), consisting of two phases:
+explicit check and implicit check.
+• Explicit Check: Csnd inputs w ∈U and S inputs
+Ublk ⊂U, L ⊂Fθ, T ∈R≥0 (with both L and
+T computed from Ublk). This phase succeeds with
+probability at least TARUblk
+L,T if w < Ublk and with
+probability at most FARUblk
+L,T otherwise. If this phase
+succeeds, then Csnd outputs 1 and S outputs state
+ϕ. Otherwise, S aborts and Csnd outputs 0.
+• Implicit Check: A client C ∈{Csnd, Crcv} inputs
+w′ ∈U and the server S inputs ϕ. This phase
+succeeds if ϕ contains an output from a successful
+explicit check using w′. If so, C outputs 1. Other-
+wise, C outputs 0. S has no output.
+We will define the guarantees that we want to
+provide from these steps depending on the following
+threat models.
+3.2.3. Threat model
+The threat models we consider for our applica-
+tions in Sec. 6 are:
+T1 The server S and receiving client Crcv are hon-
+est, but Csnd is malicious, i.e., Csnd deviates
+from the protocol to circumvent the check. More
+specifically, a malicious Csnd should be prevented
+
+from causing S to store a token for a blocklisted
+input during explicit check, which is successfully
+verified during an honest implicit check initiated
+by Crcv. The malicious Csnd may also invoke an
+implicit check or collude with some Crcv to learn
+more information about the allowlist, including
+the secrets contributed by S in its computation.,
+tokens stored at S created by itself or by other
+users. We require that the allowlist token is bind-
+ing, meaning that Csnd cannot generate an alter-
+native input w′ that is consistent with an existing
+allowlist token. In addition, the protocol should
+not leak more information about Ublk to Csnd than
+the decision (w ∈Ublk or not) implies. We note
+that S needs to limit the number of explicit check
+attempts. Otherwise, Csnd can online guess the
+blocklist entries.
+T2 Csnd and Crcv are honest, but S is honest-but-
+curious. In this case, our concern is still leaking
+information about w to S from its interaction
+with Csnd and Crcv. That is, the allowlist token
+is hiding, and S’s ability to distinguish between
+different values of w is negligible.
+We do not consider a threat model in which S
+is malicious, simply because we do not find that
+reasonable in our applications, where S is contracted
+to, say, provide malware defense for Csnd and Crcv.
+In such cases, S is incentivized to perform policy
+checking correctly. In App. D, we discuss how to
+adapt Half Moon against a server maliciously trying
+to learn w. In addition, Crcv is considered honest
+since it is incentivized to perform the check correctly.
+We discuss more in App. D how Half Moon protects
+against colluding Csnd and Crcv.
+4. Preliminaries
+Oblivious Linear Evaluation (Fole): OLE is a two-
+party cryptographic primitive between a sender (e.g.,
+a client) and a receiver (e.g., a server). The receiver’s
+input is x ∈F; the sender’s inputs are u, v ∈F.
+The ideal function Fole returns to the receiver ux + v
+without revealing u and v. No information is revealed
+to the sender. In our protocols, we will use the mali-
+ciously secure OLE construction by Ghosh et al. [48].
+Noisy
+Polynomial
+Addition
+(Fnpa): Ghosh and
+Simkin [47] introduced a noisy polynomial addition
+functionality Fnpa that takes as input pairs of vectors
+⃗r1, ⃗w ∈Fθ from one party, say a client, and another
+pair of vectors ⃗r2, ⃗w′ ∈Fθ from another party, say
+a server, and computes a linear combination of these
+vectors. Specifically, the functionality returns to either
+one or both of the parties the vector ⃗r2 × ⃗w + ⃗r1 × ⃗w′,
+where “×” is the Hadamard product. The functionality
+does not reveal ⃗r1, ⃗w to the server and ⃗r2, ⃗w′ to the
+client (beyond what can be learned from the output).
+One-time pairwise unpredictable function: We will
+require a function that is one-time pairwise unpre-
+dictable. Intuitively, a keyed-function g : K ×D →R
+is one-time pairwise unpredictable if given the output
+at a specific point under a randomly chosen key, an
+adversary cannot guess the output at another distinct
+point. The function is one-time in the sense that each
+new invocation of the function requires a new random
+key selection to preserve unpredictable outputs.
+Definition 2. A keyed function g : K × D →R,
+|K| ≥|R|, is one-time pairwise unpredictable if under
+a random choice of a key k ∈K, and for any two
+distinct pairs of inputs w, w′ ∈D, and outputs x, y ∈R
+P(gk(w) = x) =
+1
+|R|
+(1)
+P(gk(w) = x | gk(w′) = y) = |R|
+|K|
+(2)
+where the probability is over the choice of the key.
+The first condition in the definition implies that
+under a random choice of the key the function acts
+like a random function. The second condition implies
+that given the evaluation at a specific point, the value
+at a different point can be predicted with probability
+at most |R|
+|K|. If |K| ≫|R|, then this probability is small
+and implies that the value is hard to predict.
+We now extend this notion to a one-time pairwise
+unpredictable permutation over vectors in a finite
+field Fθ We define the properties required from such
+a permutation below.
+Definition 3. Let F be a finite field and θ ≥1. A
+keyed-function g : Kθ × Fθ →Fθ is one-time pairwise
+unpredictable over Fθ if for any pair of input ⃗w, ⃗w′ ∈
+Fθ for which |⃗w∆⃗w′| ≥d , and outputs ⃗x,⃗y ∈Fθ,
+P gk(⃗w) = ⃗x =
+1
+|F|θ
+(3)
+P(gk(⃗w) = ⃗x | gk(⃗w′) = ⃗y) =
+ |F|
+|K|
+d
+(4)
+where the probability is over the choice of the key
+k ∈Kθ. Here |⃗w∆⃗w′| = d means that ⃗w and ⃗w′ differ
+in at least d components.
+Intuitively, this definition implies that if two vec-
+tors disagree on d components, then the evalua-
+tions at these components remain unpredictable. If
+there is a one-time pairwise unpredictable function
+g : K × F →F, then we can construct a one-time
+pairwise unpredictable permutation over the metric
+space Fθ by using θ independent instances of g, one
+for each dimension in Fθ.
+5. Half Moon Framework
+Half Moon is realized with a general crypto-
+graphic framework. In this section, we will describe
+the individual building blocks of this framework as
+ideal functionalities, and then show how to combine
+them. In Sec. 6, we will describe how to realize these
+ideal functionalities.
+Recall that Half Moon has two phases that share
+states, an explicit check and an implicit check. To
+accommodate both threat models T1 and T2, we
+will further split the explicit check functionality into
+two separate ideal functionalities. Specifically, the
+explicit check can be viewed as a two-step process: i)
+
+Parameters: An embedding function f : K f × U →
+Fθ; a non-programmable random oracle H : {0, 1}∗→
+Fθ; and a one-time pairwise unpredictable permutation
+family over the metric space P : KP
+θ × Fθ →Fθ.
+FEM: Embed-and-Map functionality
+Inputs:
+Csnd inputs w ∈U and ⃗m ∈Fθ. S inputs
+kf ∈Kf , ⃗s ∈Fθ, and ⃗
+k1P, ⃗
+k2P ∈KP
+θ .
+Output:
+FEM outputs ⃗p1 ←P ⃗
+k1P( fkf (w)) and ⃗p2 ←
+P ⃗
+k2P(⃗y) where ⃗y ←⃗s × H(w, fkf (w), kf , ⃗m) to Csnd; and
+S has no output.
+FTC: Test-and-Commit Functionality
+Inputs:
+Csnd inputs ⃗p1, ⃗p2 ∈Fθ. S inputs L ⊂Fθ,
+T ∈R≥0, and keys ⃗
+k1P, ⃗
+k2P ∈KP
+θ.
+Output: If ¬blockedL,T(P−1
+⃗
+k1P( ⃗p1)), then FTC outputs
+1 and nonce to Csnd and ⃗γ ←P−1
+⃗
+k1P( ⃗p1)+P−1
+⃗
+k2P( ⃗p2) to S.
+Otherwise, FTC outputs 0 to Csnd; S aborts and learns
+{⃗l ∈L : d
+
+P−1
+⃗
+k1P( ⃗p1),⃗l
+
+≤T}.2
+FIC: Implicit Check Functionality
+Inputs: Crcv inputs ⃗z1, ⃗z2 ∈Fθ. S inputs ⃗s,⃗γ ∈Fθ.
+Output: FIC outputs ⃗γ′ ←⃗z1 + ⃗s × ⃗z2 to S. If ⃗γ
+?= ⃗γ′,
+Crcv receives 1; otherwise, Crcv receives 0.
+Figure 1: Ideal Functionalities used in Half Moon
+Embed-and-Map FEM, that embeds Csnd’s input into
+the metric space Fθ, and ii) Test-and-Commit FTC,
+that performs the predicate check blockedL,T(·) on
+the embedded input against the embedded blocklist
+L provided by S. Lastly, during implicit check, Crcv
+and S participate in iii) Implicit check FIC, that allows
+fast verification on a previously checked input. We
+present the details for the three ideal functionalities,
+which are summarized in Fig. 1.
+5.1. Embed-and-Map
+Given Csnd’s input w and a random mask ⃗m, and
+S’s keys kf ,
+⃗
+k1P,
+⃗
+k2P, and a random mask ⃗s, this
+functionality first computes ⃗p1 ←P ⃗
+k1P( fk f (w)) and
+⃗p2 ←P ⃗
+k2P(⃗s × H(w, fk f (w), kf , ⃗m)) where f is an
+embedding function, P : KP
+θ × Fθ →Fθ is a one-
+time pairwise unpredictable permutation family, and
+H is a hash function modeled as a non-programmable
+random oracle. ⃗p1 and ⃗p2 are expected to be inputs
+to the next functionality (i.e., Test-and-Commit). ⃗p1
+will be used (after inversion) for testing against the
+blocklist for approximate matching, and ⃗p2 will be
+used for generating a hiding and binding token as an
+allowlist entry for the implicit check. We highlight
+that though we split the explicit check into two phases
+for concrete efficiency, we maintain the security by
+carefully “stitching” the two phases. ⃗p1 and ⃗p2 are
+non-invertible to Csnd without the keys ⃗
+k1P, ⃗
+k2P under
+the unpredictable permutation P. As we will see, if
+2. Note that the server can implicitly learn this information even
+if the functionality did not return it, as an abort would imply w is
+close to one of the server’s inputs.
+Csnd is malicious and uses ⃗p′
+1 , ⃗p1 and/or ⃗p′
+2 , ⃗p2, it
+will be unable to find (with overwhelming probabil-
+ity) a w′ , w and a ⃗m′ , ⃗m that matches an allowlist
+token that will be stored on S. Therefore, Csnd is
+“forced” to submit a consistent input to FTC that is
+generated from FEM. This addresses security against
+a malicious Csnd (threat model T1). S keeps ⃗
+k1P, ⃗
+k2P
+from FEM for the next functionality FTC.
+5.2. Test-and-Commit
+During Test-and-Commit, the functionality FTC first
+inverts ⃗p1 and checks whether P−1
+⃗
+k1P( ⃗p1) (which should
+be equal to fk f (w) if Csnd is honest) is blocklisted. If
+not, FTC inverts ⃗p2 and outputs an allowlist token ⃗γ ←
+P−1
+⃗
+k1P( ⃗p1) + P−1
+⃗
+k2P( ⃗p2) to S for updating the allowlist. If
+Csnd inputs the same ⃗p1 and ⃗p2 that it received from
+FEM to FTC, then ⃗γ = fk f (w) + ⃗s × H(w, fk f (w), kf , ⃗m).
+Subsequently, Csnd forwards w and ⃗m to Crcv
+to use in an implicit check, while S adds a new
+entry to the allowlist. For a successful check, S
+discards ⃗
+k1P, ⃗
+k2P stored from FEM, and adds a token
+⟨nonce, kf , ⃗s,⃗γ⟩to its allowlist. We will explain the
+use of nonce when describing FIC. Csnd only learns
+whether the explicit check succeeded in setting up an
+allowlist token, but does not learn the token itself. As
+we will prove, ⃗γ hides w due to the random oracle;
+this addresses the security requirements for a semi-
+honest S (threat model T2).
+5.3. Implicit Check
+To achieve TOCTOU resilience, parties Crcv, who
+receive Csnd’s input w and ⃗m, must ensure that the
+content w remains policy compliant with the blocklist
+at use time. However, re-executing an explicit check
+introduces non-trivial overhead since the cost must be
+at least linear to the size of L. In many applications
+(e.g., software distribution, email attachments, and
+CDN delivery), there will be more content receivers
+than the content sender and it is necessary for such
+receivers to repeat the check for the same input
+w. To mitigate this, S will retain an allowlist with
+⟨nonce, kf , ⃗s,⃗γ⟩from each successful explicit check.
+Then, Crcv can verify that a content w is not block-
+listed only if a previous explicit check succeeded for
+that input, achieving verification with a computation
+cost independent of the blocklist size.
+During implicit check, Crcv can be provided the
+embedding key kf by S in the clear, because each
+explicit check requires a new embedding key, and
+once Csnd has set up ⃗γ during the explicit check,
+the embedding key does not provide any additional
+information/advantage to a malicious Csnd in circum-
+venting the policy check. kf is not an input to the
+one-time unpredictable function, its exposure has no
+impact on that property. Crcv uses the forwarded input
+pair w, ⃗m from Csnd to re-compute token ⃗z1 ←fk f (w)
+and ⃗z2 ←H(w, fk f (w), kf , ⃗m) locally. Then S and Crcv
+interactively and privately evaluate ⃗γ′ ←⃗z1 + ⃗s × ⃗z2.
+Only S receives the output ⃗γ′ and no further informa-
+tion is given to either Crcv or S. S compares ⃗γ′ against
+the ⃗γ stored from a previous explicit check. Crcv learns
+
+whether the implicit check has succeeded, implying
+that ⃗γ′ has matched some ⃗γ from an allowlist token
+⟨nonce, kf , ⃗s,⃗γ⟩. As we will show, ⃗γ is computation-
+ally binding, and so it is infeasible for a malicious
+Csnd to find some pair of inputs w′, ⃗m′ that match an
+allowlist token generated from different inputs w, ⃗m
+during an explicit check. We acknowledge that this
+design inevitably reveals the correspondence between
+Csnd and Crcv to S. However, we emphasize that this
+disclosure stems from the underlying system archi-
+tecture rather than from a weakness of the protocol
+itself. In many widely deployed systems—particularly
+email infrastructures [12] and policy enforcement ser-
+vices [13]—the server must observe both the source
+and the destination of each request. Eliminating such
+metadata would require substantial complexity and
+performance overhead and are outside the scope of
+our system design.
+Allowlist: So far we have asserted that the implicit
+check outperforms the explicit check because the
+allowlist is much smaller than the blocklist; however,
+this assumption has not yet been formally justified. In
+the actual implementation, each explicit check adds
+one entry to the allowlist. S keeps an identifier for
+each allowlist entry because when Crcv initiates FIC,
+S will need to forward kf associated with the allowlist
+entry Crcv is trying to query. Hence, the implicit check
+is indexed by a nonce nonce and is implemented with
+a fast hashtable lookup. nonce is generated from the
+explicit check timestamp and is independent of the file
+content to avoid potential leakage over w. The storage
+overhead grows linearly with the number of explicit
+checks. We argue that this cost is inherent to our
+security model: each allowlist entry must incorporate
+a per-explicit-check server secret to prevent clients
+from probing existing entries, as well as a client secret
+to prevent the server from mounting offline attacks to
+recover w.
+As was discussed in Sec. 3, Half Moon enables
+resistance to TOCTOU attacks. Specifically, the al-
+lowlist is cleared whenever the blocklist is updated,
+at which point Crcv is redirected to the explicit check
+so that the updated policy can be applied. In practice,
+public blocklists are refreshed on timescales ranging
+from minutes [50, 82], to hours [74], to days [78].
+Private blocklists are typically even harder for an
+attacker to learn or adapt to, and therefore may require
+updates less frequently. Consequently, the amortized
+benefit of the implicit check, which avoids repeated
+explicit check, will generally outweigh the occasional
+cost incurred by blocklist updates.
+We note that TOCTOU vulnerabilities are primar-
+ily problematic when the inconsistency window is
+sufficiently large for an adversary to reliably exploit it.
+Therefore, we design Half Moon to reduce the time
+window in which a TOCTOU inconsistency can be
+exploited rather than eliminating the it entirely. First,
+even under optimal conditions, executing a query
+requires a non-zero amount of time, which inherently
+leaves a brief opportunity for a TOCTOU attack. By
+shrinking this window to the latency of a single query,
+Half Moon forces an attacker to act within a very
+Csnd
+S
+FEM
+w, m
+p1, p2
+kf, s, k1P, k2P
+(1)
+Csnd
+FTC
+p1, p2
+L, T, k1P, k2P
+(2)
+𝛄
+Csnd
+nonce, w, m
+(3)
+Crcv
+Crcv
+S
+FIC
+z1, z2
+s
+(4)
+𝛄 ’
+S
+L
+L
+≟
+…,
+[nonce, 
+kf, 
+s,
+𝛄 ],
+…
+nonce
+𝛄 ≟ 𝛄 ’
+nonce
+kf
+L
+…,
+[nonce, 
+kf, 
+s,
+𝛄 ],
+…
+Figure 2: Framework interaction
+narrow timeframe, substantially lowering the proba-
+bility of successful exploitation. Second, there exists
+an unavoidable delay for newly emerged threats to
+be reflected in S’s state, creating a potential zero-day
+exposure. We argue that this residual delay between
+server-side updates and client-side checks is inherent
+to any distributed system and does not represent a
+weakness specific to Half Moon.
+Putting it all together: We present the framework
+utilizing these functionalities in Fig. 3, i.e., assuming
+that FEM, FTC, and FIC are secure in the threat models
+in Sec. 3.2.3. In Fig. 2, we visualize the interactions
+among the ideal functionalities, Csnd, Crcv, and S. We
+present a formal proof of security of the framework
+in App. D, relative to the properties of P and H , and
+how to securely instantiate each ideal functionality in
+App. E. Below we provide a sketch of the proof.
+Theorem 5.1. Assuming that there are secure proto-
+col realizing FEM, FTC and FIC, the framework de-
+scribed in Fig. 3 securely realizes Half Moon against
+the adversaries described in Sec. 3.2.3.
+Proof (sketch): We prove that the Half Moon frame-
+work is secure against threat models T1 and T2.
+Protection against threat model T1: Consider an ad-
+versary that interacts with S. During explicit check,
+the adversary may try to produce a file input w that
+should be blocked, but is not detect
+
+[…middle truncated for length…]
+
+Rp ⃗v2(x)
+ −2 ·
+Rp(x)
+
+where p(x) = gcd(p⃗v1(x), p⃗v2(x)) is the greatest com-
+mon divisor of p⃗v1(x) and p⃗v2(x).
+Since the cardinality of symmetric difference be-
+tween two sets is a metric, SUR is also a metric.
+Computing Hamming distance from ∥·∥SUR: Given
+two bit vectors ⃗w ∈{0, 1}δ and ⃗w′ ∈{0, 1}δ,
+⃗w −⃗w′H ≤t ⇐⇒|S⃗w ∩S⃗w′| ≥(δ −t)
+⇐⇒1
+2 (2δ −|S⃗w △S⃗w′|) ≥(δ −t)
+(7)
+⇐⇒
+MX(⃗w) −MX(⃗w′)
+SUR ≤T
+(8)
+where T = 2t. The equivalences follow by definition
+of Hamming distance, symmetric difference (7), and
+SUR (8). In our context, the above relation means
+LSHk f (w) −LSHk f (w′)
+H ≤t
+⇐⇒
+ fk f (w) −fk f (w′)
+SUR ≤2t
+(9)
+∥·∥SUR computation from Fnpa: One advantage of
+using ∥·∥SUR is that we can compute the distance be-
+tween two vectors contributed by mutually untrusting
+parties without explicitly revealing the vectors to each
+other. The process is as follows. Let ⃗v1 = MX(⃗w)
+and ⃗v2 = MX(⃗w′) be two vectors contributed by C
+and S, respectively. They sample random polynomials
+r1(x)
+$←F[x] and r2(x)
+$←F[x] respectively, of degree
+δ. Then, they locally compute ⃗r1 ←⟨r1(x)⟩x∈X and
+⃗r2 ←⟨r2(x)⟩x∈X. Finally, using calls to Fnpa, they
+compute ⃗r2 × ⃗v1 + ⃗r1 × ⃗v2. Then,
+⃗v1 −(⃗r2 × ⃗v1 + ⃗r1 × ⃗v2)
+SUR
+=
+⃗v2 −(⃗r2 × ⃗v1 + ⃗r1 × ⃗v2)
+SUR
+=
+⃗v1 −⃗v2
+SUR
+(w.h.p.)
+(10)
+(10) is due to the fact that r1(x) and r2(x) are
+random polynomials, and so with overwhelming
+probability, they do not share common roots with
+
+p⃗v1(x) and p⃗v2(x) that interpolate ⃗v1 and ⃗v2, respec-
+tively. Thus, gcd(p⃗v1(x), c(x)) = gcd(p⃗v2(x), c(x)) =
+gcd(p⃗v1(x), p⃗v2(x))
+with
+high
+probability,
+where
+c(x) ←r2(x) · p⃗v1(x) + p⃗v1(x) · r1(x). We prove this
+in App. B.
+Crucially, the value of θ ∈(δ, 2δ + 1) can be set
+as a function of δ and T such that if
+⃗v −⃗v′SUR ≤T,
+then S learns ⃗v (and ⃗w), otherwise no information is
+revealed about ⃗w to the server [29]. Intuitively, the
+idea is that with less than θ ≤2δ + 1 points, it is
+not possible to uniquely define and interpolate the
+polynomial r2(x) · e⃗w(x) + r1(x) · e⃗w′(x) and thus ⃗r1, ⃗r2,
+unless e⃗w(x) and e⃗w′(x) share 2(δ −T) roots.
+Protocol: The protocol ΠTC realizing FTC is presented
+in App. C.2. Intuitively, the protocol is an adaptation
+of the fuzzy PSI protocol of Chakraborti et al. [29],
+and checks the Hamming distance between Csnd’s
+input and the embeddings in the blocklist by com-
+puting the ∥·∥SUR distance. Specifically, recall that
+one of the outputs of ΠEM is ⃗p1 = P⟨⃗κ1,⃗κ2⟩( fk f (w)) =
+⃗κ1 × fkf (w) + ⃗κ2. For each element l in S’s blocklist,
+the protocol computes ⃗r1 × fk f (w) + ⃗r2 × fk f (l) using
+a series of calls to Fnpa. Then, using (10) the pro-
+tocol computes
+ fkf (w) −fk f (l)
+SUR, which allows it
+to check
+LSHk f (w) −LSHk f (l)
+H > t due to (9). We
+set θ ∈(δ, 2δ + 1) using the parameters suggested in
+[29] such that if
+LSHk f (w) −LSHk f (l)
+H > t, then S
+learns no information about the Hamming distance.
+If the distance check is satisfied, the protocol
+proceeds to computing the authentication token ⃗γ ←
+P−1
+⃗
+k1P( ⃗p1) + P−1
+⃗
+k2P( ⃗p2). Observe that ⃗γ is a linear com-
+bination of two vectors in Fθ, and recall from Sec. 4
+that P (and so P−1) is a random linear combination
+of its input. Therefore, ⃗y is interactively computed
+by Csnd and S from ⃗p1 and ⃗p2 using calls to Fnpa,
+ensuring that S does not learn P−1
+⃗
+k1P( ⃗p1) or P−1
+⃗
+k2P( ⃗p2).
+Theorem 6.2. There is a secure protocol realizing
+FTC with O(nθ) communication and compute costs,
+assuming that there are secure protocols realizing
+Fnpa and Fole.
+6.3. Implicit Check
+After receiving the file w, the mask ⃗m and a nonce
+nonce, the client Crcv forwards nonce to S. nonce
+allows the server to identify the authentication token
+⃗γ for the file, the embedding key k f , and the mask
+⃗s. Crcv recomputes fk f (w) and H(w, fk f (w), kf , ⃗m) after
+obtaining k f from S. Then, Crcv and S invoke Fole,
+to compute ⃗γ, which is output to S (see Fig. 4b).
+Finally, Crcv learns whether ⃗γ was previously stored
+at S, which implies w was checked. The full protocol
+is described in App. C.3.
+Theorem 6.3. There is a protocol realizing FIC with
+O(θ) communication and compute costs, assuming
+that there is a secure protocol realizing Fole.
+Reusable
+Garbled Circuit
+ΠEM
+Csnd
+S
+w, ⃗m
+⃗p1 = P ⃗
+k1P( fkf (w))
+= ⃗κ1 × fkf (w) + ⃗κ2,
+⃗p2 = P ⃗
+k2P(⃗s × h∗)
+= ⃗κ1
+′ × (⃗s × h∗) + ⃗κ2
+′
+kf , ⃗
+k1P = ⟨⃗κ1, ⃗κ2⟩,
+⃗
+k2P = ⟨⃗κ1
+′, ⃗κ2
+′⟩, ⃗s
+ΠTC
+Fnpa
+⃗p1, ⃗r1
+⃗l1, ⃗
+k1P, ⃗r1
+′
+⃗r1
+′ × fk f (w) + ⃗r1 × ⃗l1
+Fnpa
+. . .
+⃗p1, ⃗rn
+⃗ln, ⃗
+k1P, ⃗rn
+′
+⃗rn
+′ × fk f (w) + ⃗rn × ⃗ln
+Fnpa
+Test: ∀i ∈[1, n]
+fk f (w) −⃗li
+ > 2t
+⃗p2, Pn
+i=1 ⃗ri
+nonce
+Pn
+i=1 ⃗ri
+′ × fkf (w) + ⃗ri × ⃗li,
+Pn
+i=1 ⃗ri
+′, ⃗
+k1P, ⃗
+k2P, ⃗s
+⃗γ = fkf (w) + ⃗s × h∗
+Store ⟨nonce, kf , ⃗s,⃗γ⟩
+Send ⃗m, w, nonce to Crcv
+(a) Explicit check
+Fole
+ΠIC
+Crcv
+S
+fk f (w), h∗
+⃗s,⃗γ
+fkf (w) + ⃗s × h∗
+(b) Implicit check
+Figure 4: High-level description of Half Moon instan-
+tiation (h∗←H(w, fk f (w), kf , ⃗m))
+7. Evaluation
+We implemented the Half Moon-based malware
+detection6 in C++11. We benchmarked these im-
+plementations on a Ubuntu 22.04 machine with 12
+cores and 32GB of RAM as the server, and multiple
+machines that are each equipped with 4 cores and
+16GB of RAM as the clients. We used the emp-
+toolkit [9] for OT and garbled circuit operations, and
+CRGC for reusable garbled circuits. We used the
+NTL [10] library for finite field arithmetic. The oper-
+ations were performed in a 128-bit prime-order field.
+We implemented Ghosh et al.’s OLE [48] and Ghosh
+et al.’s PSI [46] as building blocks for Half Moon.
+Our construction works for any metrics that can be
+embedded into Hamming distance; see App. C.
+7.1. Dataset
+As discussed in Sec. 3, our Half Moon-based malware
+detection can be applied to email attachments for
+ransomware checking. We used the Enron dataset [56]
+6. https://github.com/zxinyuan/Half-Moon-Cookie
+
+100
+101
+102
+103
+104
+0
+0.2
+0.4
+0.6
+0.8
+1
+File size (kB, log scale)
+CDF
+All attachments
+Executables
+Figure 5: Email attachment size distribution
+for collecting the general email attachment size distri-
+bution. In Fig. 5, we show the cumulative distribution
+function (CDF) calculated from 133,127 files in https:
+//trec-legal.umiacs.umd.edu/corpora/trec/legal10/, in-
+cluding files uncompressed from .zip archives. We
+ignored files with size less than 500 B. The average
+size of an attachment was 193.6 kB in the Enron
+dataset, while the median was 98.8 kB. We separated
+out the executables (files with extensions .exe, .dll,
+etc.), which had a mean size of 13.7 kB and a median
+of 3.8 kB. We conducted our experiments based on
+such statistics.
+For the malware blocklist, we used the Ember
+dataset [52], embedding the 16,356,790 malware in-
+stances to clusters of different radii.
+7.2. Explicit check
+We start in Sec. 7.2.1 by comparing our explicit check
+protocol when implemented using the common mal-
+ware hashes. Then, we turn to measuring throughput
+of our explicit check protocol in Sec. 7.2.2.
+7.2.1. Choosing a hash function
+Unlike cryptographic hashes, malware hashes
+(e.g., locality sensitive hashes, context triggered
+piecewise hashes) can be used as file identifiers
+that can be compared for estimating file similarity.
+TLSH [70], ssdeep [58], sdhash [76] are the most
+common options and are used by VirusTotal and
+VirusShare. We refer readers to the original works
+on fuzzy hashing for detailed evaluations of embed-
+ding accuracy and similarity detection performance.
+In general, the accuracy of these fuzzy hashes can
+be tuned by adjusting the threshold parameter that
+determines when two digests are considered similar.
+Half Moon makes black-box use of the hash function
+and the cost does not depend on the specific threshold
+value used to classify matches; the computational
+and communication costs of our scheme remain inde-
+pendent of this parameter choice. Thus, practitioners
+may select the threshold that best fits their accuracy-
+performance tradeoff without affecting the efficiency
+of Half Moon.
+We first illustrate in Table 1 the utility of our
+optimizations described in Sec. 6.1.2 that lever-
+age reusable garbled circuits (RGCs) to implement
+these hash functions in the Embed-and-Map proto-
+col (ΠEM). This table compares the communication
+volumes and response times of ΠEM, where response
+time is measured at Csnd, starting when it invokes
+ΠEM and finishing it when it completes that invocation
+with a lightly loaded S. For each hash function, the
+table compares cases when the hash function imple-
+mentation does not (✗) or does (✓) leverage the RGC
+optimization described in Sec. 6.1.2. (In the case it
+does not, regular garbled circuits are used, instead.)
+The size of w was 5 kB, which is about the median
+size of an email attachment executable.
+hash
+RGCs
+Comm.
+(MB)
+Response
+Time (s)
+TLSH
+✗
+6.8e4
+1.0e3
+✓
+6.0e1
+4.8e0
+ssdeep
+✗
+5.5e3
+2.0e2
+✓
+5.3e1
+5.4e0
+sdhash
+✗
+5.8e4
+9.7e2
+✓
+1.3e2
+2.4e1
+Table 1: Embed-and-map (ΠEM) costs with (✓) and
+without (✗) reusable garbled circuits (RGCs), with w
+of size 5 kB
+As shown in Table 1, for all three hash functions,
+our RGC optimization reduces communication vol-
+ume of ΠEM by over two orders of magnitude and
+response time by at least one order of magnitude.
+Note that the no-RGC costs shown in Table 1 serve
+as a very conservative lower bound for an imple-
+mentation of a full explicit check using a monolithic,
+conventional garbled circuit.
+Comparing across hash functions, TLSH provides
+the fastest response time and ssdeep provides the
+lowest communication volume. The response time
+for ΠEM using sdhash (implemented using RGCs) is
+about 4× that using ssdeep, and the response time
+using sdhash is 5× more than that using TLSH. Using
+ssdeep or TLSH results in similar communication
+volumes, though sdhash induces ∼2× more commu-
+nication.
+While ssdeep yields a comparably efficient imple-
+mentation of ΠEM, unfortunately it embeds the digest
+to edit distance, which is not directly compatible with
+our Half Moon design. As a result, to use ssdeep
+for an explicit check, its edit-distance embedding
+is further embedded into Hamming distance within
+ΠEM. We do so through edit-sensitive parsing [35],
+which embeds edit-distance to L1 distance and is then
+compatible with Chakraborti et al. [29]. This extra
+embedding step results in an additional 1.23 s in client
+response time and 4.46 MB in total communication in
+ΠEM. Moreover, the embedding vector size must be
+increased to compensate for the approximation intro-
+duced by the edit-sensitive parsing, in order to pre-
+serve the accuracy of ssdeep, which results in greater
+cost in the Test-and-Commit protocol implementation
+(ΠTC). This extra cost causes the total explicit check
+response time using ssdeep to exceed the response
+time using TLSH by a more substantial margin. This
+can be seen by comparing Table 2a and Table 2b,
+which show the response times as measured by Csnd
+for a full explicit check, for various sizes of w and
+L.
+
+|L|
+size of w (kB)
+1e2
+5e2
+1e3
+5e3
+1e4
+5e0
+14.2
+44.9
+82.7 391.1 781.1
+1e1
+19.2
+49.9
+87.7 396.5 786.2
+1e2 110.8 138.3 177.8 485.1 876.2
+2e2 207.8 240.2 282.5 586.5 978.3
+1e3 1012.8 1040.2 1078.3 1387.7 1773.4
+(a) TLSH
+|L|
+size of w (kB)
+1e2
+5e2
+1e3
+5e3
+1e4
+5e0
+44.7 169.0 319.4 1548.4 3112.9
+1e1
+61.8 186.9 336.7 1566.6 3129.8
+1e2 337.7 456.0 606.7 1839.3 3399.6
+2e2 631.8 756.5 904.7 2136.7 3709.7
+1e3 3033.2 3160.7 3319.0 4547.6 6100.7
+(b) ssdeep
+|L|
+size of w (kB)
+1e2
+5e2
+1e3
+5e3
+1e4
+5e0
+45.5
+77.3 114.2 421.7 812.7
+1e1 101.1 132.0 170.0 477.2 868.3
+1e2 658.1 683.7 714.9 1031.5 1420.2
+2e2 1253.7 1282.4 1324.5 1631.1 2026.3
+1e3 6056.7 6084.5 6121.2 6428.2 6819.4
+(c) sdhash
+Table 2: Explicit check response time (s) when in-
+stantiated with different fuzzy hashes
+We also tested using sdhash, which transforms
+w to a Bloom filter whose size scales linearly with
+w. This expansion significantly increases the commu-
+nication and computation required during FTC, ulti-
+mately slowing overall performance. As such, TLSH
+outperforms both ssdeep and sdhash in the the overall
+explicit check for all parameter settings we tested
+(Table 2a vs. Table 2b vs. Table 2c). Therefore, we
+pick TLSH for the rest of our Half Moon protocol
+benchmarking below.
+7.2.2. Explicit check throughput
+To measure the throughput of the explicit check in
+our Half Moon design, we conducted tests wherein we
+loaded the server S with increasingly many concur-
+rent client requests until it saturated. Fig. 6 shows the
+results of these tests. The workload on the server is
+shown on the x-axis, representing the number of client
+requests issued concurrently to the server. The y-axis
+reports the response time per client request, averaged
+over all clients’ invocations. The black solid line in
+both plots show the Csnd response time with input
+size of 10 kB and |L| = 100. Response time remains
+low and grows slowly with few concurrent client
+requests, with a single-client request completing in
+19.11 s. However, as the concurrency level increases,
+response time reaches a noticeable inflection point
+around 250 simultaneous requests. At this load, the
+average response time spikes, suggesting that the
+server reached a saturation threshold beyond which
+queuing and resource contention dominate system
+performance. The red solid line represents the same
+functionality in a monolithic garbled circuit. It takes
+247 s for a single client to finish the task, while
+the performance significantly degrades at around 5
+0
+200
+400
+0
+500
+1,000
+clients
+avg. response time (s)
+(a) w is 10 kB. |L| = 1e2
+(—); 1e3 (– –); or 1e4 (· ·).
+0
+200
+400
+0
+500
+1,000
+clients
+avg. response time (s)
+(b) |L| = 1e2. w is 1e1 (—);
+1e2 (– –); or 2e2 (· ·) kB.
+Figure 6: Explicit check throughput. Red line (—) is
+the same parameter sizes as the black line (—) but
+with the explicit check functionality implemented in
+a monolithic garbled circuit.
+clients.
+In Fig. 6a, we show results of Half Moon when
+varying the size of the blocklist, |L|. We observe
+that the overall throughput degrades more quickly
+as the number of entries increases, because a larger
+blocklist directly increases the communication cost
+between Csnd and S, leading to greater network over-
+head and earlier saturation. As a result, the turning
+point, where latency begins to rise sharply, occurs
+at lower concurrency levels when the L is large.
+When |L| = 1,000, the saturation threshold is at
+around 80 clients, while it is at around 20 clients
+with |L| = 10,000. In Fig. 6b, we vary the Csnd
+input size. In contrast, the impact on throughput is
+substantially smaller. Due to the reusable garbled cir-
+cuit technique described in Sec. 6.1.2, the server-side
+workload remains independent of the input size, and
+only the client-side local circuit computation scales
+with the input length. Therefore, while latency does
+increase gradually with larger inputs, the shape of the
+throughput curve remains largely consistent, and the
+turning point does not shift significantly.
+7.3. Implicit check
+As discussed in Sec. 2, the design of Half Moon
+is closely related to the functionality provided by
+an asymmetric fuzzy PSI. In particular, a fuzzy PSI
+enables one party to learn only the existence of ap-
+proximate matches between its set and another party’s
+input under a given distance metric.
+We compare implicit check to a one-shot fuzzy
+PSI instantiation for two important reasons. First,
+implicit check amortizes the cost of private match-
+ing by avoiding recomputing proximity against the
+blocklist for every subsequent check where the same
+client input must be validated multiple times. Second,
+implicit check provides resilience against TOCTOU
+attacks. In a naive fuzzy PSI-based approach, the
+proximity check and the subsequent use of the result
+are decoupled; unless it is performed at every use.
+Therefore, we use asymmetric fuzzy PSI as a natural
+baseline, as it captures the same level of functionality
+and security of implicit check.
+We compare to Chakraborti et al. [29] and Blass
+
+and Noubir [23] since they are also Hamming-
+distance-based designs and support sets of asymmet-
+ric sizes. The TLSH embedding vector is of length 35
+bytes, so Chakraborti et al. [29] outperformed Blass
+and Noubir [23] as its cost is independent of the vec-
+tor length. We also report the result from Rindal and
+Schoppmann [75], the state-of-the-art semi-honest ex-
+act PSI, which compares against Ublk instead of the
+embeddings L.
+As ΠIC requires only a few Fole executions for
+reconstructing the token and then performs an exact
+match over the token, it significantly outperforms
+either a fuzzy PSI or an exact PSI by at least two
+orders of magnitude in response time and three orders
+of magnitude in communication volume. Note also
+that the cost of ΠIC does not depend on the blocklist
+size.
+Comm.
+(MB)
+Response
+Time (s)
+Implicit check (ΠIC)
+7.2e−3
+1.9e−1
+Chakraborti et al. [29]
+3.4e1
+1.6e2
+Blass and Noubir [23]
+2.0e3
+2.6e3
+Rindal and Schoppmann [75]
+6.3e2
+6.1e1
+Table 3: Implicit check cost comparison on w of size
+100 kB
+8. Conclusion
+This paper presents Half-Moon Cookie, which
+enables a client to determine if its item approximately
+matches any item of a server’s blocklist, without
+requiring the client to disclose its item to the server or
+the server to disclose its blocklist to the client. If the
+client’s item passes this check, the server is provided
+a hiding and binding token to that item to store on its
+allowlist until the blocklist is updated, so that future
+clients can more efficiently confirm that the item
+they received was checked against the latest blocklist.
+We apply Half Moon to malware defense, wherein
+a sending client performs the (relatively expensive)
+blocklist check before sending an executable, permit-
+ting receiving clients to perform only the (relatively
+inexpensive) allowlist check before using the exe-
+cutable, enabling them to efficiently avoid TOCTOU
+attacks. Through judicious protocol construction, Half
+Moon scales efficiently in the sizes of both the item
+to be checked and the blocklist.

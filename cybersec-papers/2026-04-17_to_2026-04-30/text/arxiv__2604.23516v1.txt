@@ -1,0 +1,1237 @@
+Time-Delayed Publicly Verifiable Quantum Computation for
+Classical Verifiers
+Ameer Mohammed∗
+ameer.mohammed@ku.edu.kw
+Kuwait University
+Kuwait City, Kuwait
+Aydin Abadi∗
+aydin.abadi@ncl.ac.uk
+Newcastle University
+Newcastle upon Tyne, United
+Kingdom
+Jaffer Mahdi∗
+jaffer.mahdi@ku.edu.kw
+Kuwait Oil Company
+Kuwait City, Kuwait
+Abstract
+Publicly verifiable delegation is a well-known problem involving a
+user who wishes to outsource a resource-intensive computational
+task to a more powerful but potentially untrusted server such that
+any other party is able to efficiently check the veracity of the com-
+putation’s result. This problem has been extensively studied in the
+classical domain where the user and server are both non-quantum
+machines. However, the problem becomes more challenging when
+the classical user wants to delegate a quantum circuit to a single
+prover with quantum-computing capabilities. Previous solutions
+have resorted to using impractical or non-standard cryptographic
+solutions (e.g. indistinguishability obfuscation) to achieve this re-
+quirement. In this work, we relax the requirement to have time-
+delayed publicly verifiable proofs, where the verification key is
+made known to the public only when the computation (and its
+proof) are guaranteed to have been completed. We propose a prac-
+tical non-interactive scheme leveraging commitment schemes and
+time-lock puzzles, which can be efficiently realized through well-
+established and standard post-quantum assumptions. The main
+idea of our technique lies in using time-lock puzzles to compile a
+2-round privately verifiable scheme into a non-interactive publicly
+verifiable scheme with timestamped proofs, outsourcing not only
+the quantum computation but the puzzle solving as well. Security
+is proven in the quantum random oracle model with a common
+reference string (CRS).
+CCS Concepts
+• Security and privacy →Cryptography; Security services.
+Keywords
+Verifiable Computation, Publicly Verifiable, Time-lock Puzzles, Post-
+Quantum Security
+ACM Reference Format:
+Ameer Mohammed, Aydin Abadi, and Jaffer Mahdi. 2026. Time-Delayed
+Publicly Verifiable Quantum Computation for Classical Verifiers. In Pro-
+ceedings of Conference on Computer and Communications Security (CCS ’26).
+ACM, New York, NY, USA, 15 pages. https://doi.org/XXXXXXX.XXXXXXX
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ACM ISBN 978-1-4503-XXXX-X/18/06
+https://doi.org/XXXXXXX.XXXXXXX
+1
+Introduction
+An important problem when outsourcing a client’s computation
+to a more capable server is ensuring that the result that is com-
+puted and returned by the server is correct and efficiently verifiable
+by the client. In particular, the verification complexity should be
+much lower than that required to run the actual computation. This
+problem has been well studied when the server and client are both
+non-quantum machines, and, in fact, can be realized through the use
+of succinct arguments for NP [61, 74]. With quantum computing
+on the horizon and likely to be offered initially as a pay-per-use ser-
+vice by major companies, it is vital to prepare for a scenario where
+users with classical computers want to delegate complex computa-
+tions to powerful quantum servers and efficiently verify the results
+produced by the servers– a task now known in the literature as
+Classical Verification of Quantum Computation (CVQC).
+In the breakthrough work of Mahadev [67], it was demonstrated
+that such a scheme does indeed exist assuming the post-quantum
+hardness of Learning With Errors (LWE). This was further extended
+[28, 11] to add succinctness, in which the verifier’s time complexity
+is poly(log𝑇) where𝑇is the time to execute the delegated quantum
+computation. In addition, while the original protocol consisted of
+4 rounds of communication, this was reduced to 2 rounds or less
+(1 round with setup) while still preserving negligible soundness
+through parallel repetition [28, 7, 11].
+More relevant to this work, some applications demand public
+verifiability, an additional property allowing anyone (not just the
+delegator) to verify the result of the computation.
+The usual desired setting of publicly verifiable non-interactive
+verifiable computation involves a prover who wishes to publish
+a single-message proof convincing any verifier that 𝐶(𝑥) = 𝑦for
+some program or circuit 𝐶over input 𝑥. To avoid triviality in the
+fully classical setting, the proof needs to be relatively “short” such
+that verification is faster than re-executing 𝐶(𝑥) and checking the
+result, otherwise the verifier has no need to delegate and can instead
+perform the computation itself. The proof size requirement, while
+preferred, is not highly prioritized when the prover is quantum,
+as 𝐶is not necessarily efficiently computable by the verifier. The
+standard go-to approach to solve this problem is by using succinct
+non-interactive arguments (SNARGs) for NP (or even P), which can
+be realized from LWE [29]. However, our delegated computation is
+quantum, and thus one needs a SNARG for BQP for this approach to
+work. The work of Bartusek and Malavolta [13] provides one means
+to achieve this goal, and, in fact, they obtain SNARGs for QMA,
+the quantum analogue of NP, (and hence BQP) which would imply
+publicly verifiable CVQC. Their results rely on quantum null-iO,
+which is derived from non-standard cryptographic primitives, e.g.,
+arXiv:2604.23516v1 [cs.CR] 26 Apr 2026
+
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Ameer Mohammed, Aydin Abadi, and Jaffer Mahdi
+VBB obfuscation. In contrast, our goal is to prioritize practicality
+over theoretical feasibility, and therefore, we wish to avoid such
+strong assumptions.
+Ideally, we would like to base the scheme on falsifiable assump-
+tions [79, 39], which are those that can be tested in a security
+game against an efficient challenger. Examples include one-way
+functions, trapdoor permutations, DDH, and LWE. Notably, indis-
+tinguishability obfuscation is not falsifiable [52]. Roughly speaking,
+such assumptions are often preferred, as they can be efficiently
+proven/refuted and therefore instill more confidence when used
+as building blocks for more advanced schemes. The very recent
+related work of Bartusek et al. [10] comes close to achieving this
+by showing a publicly verifiable CVQC that is based on LWE but
+they do so under the classical oracle model [12], which idealizes the
+notion of obfuscation for classical circuits and can be heuristically
+instantiated with iO.
+1.1
+Our Result
+We seek to make progress toward addressing the following question:
+Does a publicly verifiable delegation protocol for quantum
+computation with a classical verifier exist under falsifiable
+assumptions in the random oracle model?
+We answer the question affirmatively with a minor adjustment to
+the standard publicly verifiable computation setting. Unlike stan-
+dard publicly verifiable computation, where the verification key is
+available from the outset, our scheme delays the release of this ca-
+pability. Specifically, public verifiability is enabled only after a time
+delay Δ, where Δ > 𝑂(𝑇), and only for proofs generated before
+time Δ. Until that point in time, the scheme operates in a privately
+verifiable mode.
+Theorem 1.1 (informal). Under the post-quantum LWE assump-
+tion, there exists a non-interactive time-delayed publicly verifiable
+CVQC protocol for problems in BQP with computational soundness
+in the common reference string (CRS) and quantum random oracle
+model (QROM).
+A scheme in the common reference string (CRS) model, as op-
+posed to the plain model, would allow all parties to have access to a
+string that was honestly generated by some trusted setup algorithm.
+We note that the CRS is not uniformly random but is deliberately
+structured, so we cannot simply replace the need for a CRS with
+an output of the random oracle.
+Our technique of employing time-lock puzzles to render a CVQC
+protocol publicly verifiable is also of independent interest. To the
+best of our knowledge, this is the first instance in which time-
+lock puzzles are used to transform a designated-verifier verifiable
+quantum computation scheme into a publicly verifiable one.
+We expect that this technique can be generalized to compile
+any privately verifiable computation scheme into a time-delayed,
+publicly verifiable one, even in the classical (non-quantum) setting.
+However, since standard publicly verifiable delegation schemes
+based on falsifiable assumptions already exist in the classical set-
+ting [56, 41], this generalization is more impactful and meaningful
+in the classical-verifier quantum-prover setting. We expect that the
+time-delayed publicly verifiable scheme offers greater efficiency in
+scenarios where lightweight alternatives to SNARGs are preferred.
+We implemented an instantiation of our scheme for two com-
+putational tasks on AWS Braket, which is a cloud-based quantum
+simulation platform. We tested our scheme on random quantum
+circuits and Harrow–Hassidim–Lloyd (HHL) circuits [46, 93], and
+estimated their concrete running time. The latter was selected as
+one potential candidate circuit that a client may delegate to take
+advantage of the quantum speedup and solve linear systems ex-
+ponentially faster than classical algorithms. In assessing concrete
+running times for a 16×16 HHL instance, we found that circuit com-
+putation by the quantum prover took 90 seconds (which is also the
+time it should take at least to solve the corresponding puzzle) while
+puzzle generation on the classical client side required only 0.05 ms.
+1.2
+Motivation and Applications
+Quantum computers promise significant speedups over classical
+machines for a wide range of tasks. However, due to their high cost
+and limited availability, they are expected to be initially accessed via
+cloud-based, pay-per-use services. In such a model, clients (often
+classical and resource-limited) need to outsource their quantum
+computations to powerful remote quantum servers. This delegation
+model introduces the critical challenge of trust:
+How can a classical client be sure that the result provided by a
+remote quantum server is correct?
+Verifiable delegation schemes aim to solve this by enabling the
+client to efficiently verify the correctness of the quantum result
+without redoing the computation themselves. In many real-world
+scenarios, it is not enough for only the original client to verify
+the result of a delegated quantum computation; instead, the result
+should be publicly verifiable. For instance, public verifiability be-
+comes essential when (a) the client is offline or resource-constrained,
+or (b) dispute resolution is needed and third parties (e.g., courts,
+auditors, or regulatory bodies) must confirm correctness. In partic-
+ular, in commercial settings such as quantum cloud services, public
+verifiability strengthens accountability and helps prevent spuri-
+ous disputes: customers and auditors can independently validate
+reported outputs, and providers are protected against false accusa-
+tions of misbehavior. More broadly, these deployment requirements
+(offline or resource-constrained clients, dispute resolution, and ex-
+ternal auditability) motivate publicly verifiable CVQC. At the same
+time, achieving public verifiability is nontrivial because existing
+CVQC protocols are typically designated-verifier and rely on secret
+verification keys; Section 1.3 discusses why naive “publish-the-key”
+strategies fail. Publicly verifiable CVQC is therefore particularly
+relevant in high-stakes domains where outputs affect consequential
+decisions and post-hoc auditability is required, for example:
+• Drug Discovery: Quantum algorithms like Quantum Approxi-
+mate Optimization Algorithm and Variational Quantum Eigen-
+solver can simulate complex molecular interactions and predict
+protein folding patterns more efficiently than classical meth-
+ods. This not only accelerates the drug discovery process but
+also deepens our understanding of protein misfolding diseases,
+including Alzheimer’s and Parkinson’s [35, 57].
+• Genomics and Personalized Medicine: Quantum computing has
+the potential to transform genomics and personalized medicine
+by facilitating the analysis of complex genetic interactions on a
+scale beyond the reach of classical computers [30, 83].
+
+Time-Delayed Publicly Verifiable Quantum Computation for Classical Verifiers
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+• Portfolio Optimization and Risk Modeling: Quantum algorithms
+can solve complex optimization problems inherent in portfolio
+management, enabling better asset allocation and risk assess-
+ment [92]. For instance, the Harrow-Hassidim-Lloyd algorithm
+can be employed for such purposes [45].
+• Quantum-Enhanced Classification: Quantum machine learning
+models such as Quantum Support Vector Machines and Varia-
+tional Quantum Classifiers can substantially improve data clas-
+sification [48]. These models have shown promise in fields like
+fraud detection and medical diagnosis by offering potential com-
+putational advantages over classical classifiers [51, 71].
+1.3
+Naive Approaches
+One might wonder why the client cannot use a privately verifiable
+scheme and publish the secret key in the clear alongside the circuit
+to enable third-party verification. Publishing the key undermines
+security: once it becomes public, a malicious prover can forge proofs
+that pass verification. Even if the client privately shares the key with
+a select set of verifiers, verification remains non-public, because
+only those parties can check the result. Worse yet, if any verifier
+leaks the secret to the quantum server, the server could generate
+convincing but invalid proofs, completely breaking soundness.
+Alternatively, if the client were allowed to send a second mes-
+sage, it could keep the secret verification key private until the server
+returns the result and proof, and then publish the key so that any-
+one can verify. In our setting, this “publish-later” strategy is not
+available: it requires either (i) continued client availability to issue
+a second release message, or (ii) a trusted escrow that stores the
+key and releases it at the appropriate time. We assume neither, the
+client may go offline immediately after its first-round message, and
+we do not rely on any trusted party for timed key release. Conse-
+quently, delayed public verification must embed the key material in
+the client’s initial message in a way that prevents recovery before
+the prescribed time and lets any party later recover the same key
+fixed at setup and check its consistency with the public parameters.
+1.4
+Technical Overview
+Before presenting the high-level technical ideas behind our ap-
+proach, we first highlight the core challenges by examining several
+strawman solutions which may at first glance appear viable but
+ultimately fail to address our goals.
+1.4.1
+Initial Attempts. As previously mentioned, SNARGs for BQP
+are the best candidate for solving this problem. However, their
+construction currently relies on very strong assumptions [13]. One
+might consider adopting an approach similar to [28] (in the CRS
+model) where a fully homomorphic encryption (FHE) of the private
+verification key is sent by the client to third parties where they
+will, in turn, run a (publicly executable) FHE evaluation of the
+verification procedure over the ciphertext to output an encrypted
+result of the verification. However, the third-party verifier will not
+be able to decrypt the prover’s homomorphically evaluated result,
+as they do not possess the FHE secret key.
+To avoid dealing with encrypted results, a somewhat related
+attempt is to use functional or even attribute-based encryption
+(ABE) as proposed in [80] where a delegated Boolean circuit 𝐶is
+represented as a functional secret key 𝑠𝑘𝐶, the input 𝑥to the circuit
+is represented as an attribute on a ciphertext 𝑐𝑥of a randomly
+encrypted message, and computing the result consists of decrypting
+𝑐𝑥using 𝑠𝑘𝐶to get 𝐶(𝑥). That said, because 𝐶is a quantum circuit,
+we need ABE for circuits 𝐶in BQP, which again is only known
+to be achievable from iO [13]. Alternatively, we can try to let the
+functional secret key be 𝑠𝑘𝑉𝑣𝑘(.) where 𝑉is the classical verifier
+circuit with the private verification key hardcoded. For this, we need
+some form of public-key function-private ABE, which is known to
+be restricted to a limited class of functions, e.g., point functions or
+inner products [24].
+To circumvent the apparent lack of sufficiently expressive prim-
+itives from standard assumptions, we elected to relax the public
+verifiability requirement to be active only after the computation
+and its proof are released. This intuition leads us towards using
+time-based cryptography as a means to delay verifiability for the
+benefit of basing our scheme on sturdier assumptions.
+1.4.2
+Our Approach. At a high level, the core idea behind our
+protocol is to transform an efficient, privately verifiable CVQC
+scheme into a publicly verifiable one by encapsulating the private
+verification key within a time-lock puzzle, a cryptographic time
+capsule. The verification key is released only after the delegated
+computation is completed. The steps are illustrated in Figure 1,
+which we describe in more detail here.
+The privately verifiable protocol that we start with relies on the
+measurement protocol of Mahadev [67] which generates a secret
+trapdoor (of a trapdoor injective claw-free function, TCF) for use
+during the verification. We require the client, during the setup, to
+encode the secret trapdoor used for the verification in a time-lock
+puzzle and publish it as part of the public parameters of the scheme.
+The client publishes the public parameters along with the puz-
+zle. The server performs the delegated computation and publishes
+the result along with a proof asserting the computation has been
+performed correctly. Later, the server finds the solution to the puz-
+zle and publishes the solution too. The puzzle’s difficulty is set
+such that the server cannot find its solution before performing the
+computation and generating the proof. Thus, if 𝐶(𝑥) takes time
+𝑇to complete and prove, we set the puzzle to be solved in time
+Δ > Ω(𝑇). Given the computation result, proof, and the trapdoor,
+any verifier can check the solution’s validity. Since the server has
+already computed the result and published it, the knowledge of the
+trapdoor that it finds later will not help it to cheat and create a
+proof for a false statement.
+Furthermore, the server cannot wait until after solving the puzzle
+and then publish a forged proof, because the proof must carry a
+verifiable timestamp 𝜏, and verification rejects unless 𝜏is smaller
+than the deadline. The verifiers do not need to monitor the server;
+they only check the timestamp embedded in the proof against the
+public deadline.
+However, we still need to make sure the verifiers are given the
+original trapdoor, otherwise the server might be able to provide an
+alternative trapdoor for an invalid computation result but still con-
+vince the verifiers to accept the proof. To satisfy this requirement,
+we use the following efficient technique, introduced in [3]. When
+the client generates the time-lock puzzle for the trapdoor, it gener-
+ates a commitment to this trapdoor and publishes the commitment
+
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Ameer Mohammed, Aydin Abadi, and Jaffer Mahdi
+Figure 1: A simplified diagram illustrating the high-level
+structure of the post-quantum PV-CVQC protocol using time-
+lock puzzles and commitments.
+as part of the public parameters. During the generation of the time-
+lock puzzle, the client concatenates the plaintext trapdoor with the
+fixed-length random value used for the commitment and generates
+the puzzle for this plaintext, i.e., the concatenation. In this setting,
+when the server solves the puzzle, it parses the solution into two
+parts: the trapdoor and the randomness (which are the opening of
+the commitment) and publishes them. Using the opening, a veri-
+fier initially checks whether they match the public commitment
+and if the verification passes, then the verifier uses the trapdoor
+to check the correctness of the computation’s result. To ensure
+that the time-lock puzzle cannot be solved by the quantum prover
+faster than intended, it must be based on a post-quantum hardness
+assumption. Since TCF was shown to be realized under the LWE
+or Ring-LWE assumptions [22, 23], which is secure against poly-
+time quantum adversaries, we can rely on the same assumptions to
+realize a time-lock puzzle primitive as recently shown in [62, 5].
+To summarize, informally, the protocol steps are as follows:
+(1) The client, who wants to delegate a circuit 𝐶on input 𝑥,
+generates the public 𝑝𝑘and private 𝑠𝑘parameters of the
+underlying privately verifiable CVQC scheme.
+(2) It publishes a time-lock puzzle 𝑜and a commitment 𝑑of the
+private trapdoor alongside the circuit to be delegated.
+(3) The server runs the CVQC prover’s algorithm on the dele-
+gated computation𝐶(𝑥). It publishes the computation output
+along with the associated proof of correctness. Concurrently,
+the server may start solving the puzzle 𝑜.
+(4) Once the puzzle solution, representing the now-public trap-
+door, is recovered, the server publishes it to all verifiers.
+(5) The verifier, now having access to the CVQC trapdoor ver-
+ification key, can check the validity of the puzzle solution
+against the commitment𝑑, and if it passes, initiates the CVQC
+verification algorithm to either accept or reject the proof.
+We elaborate on each of these steps and the implementation of each
+algorithm more formally in Section 4.
+2
+Related Work
+This section covers previous work in verifiable quantum computa-
+tion and public delegation as well as techniques from timed cryp-
+tography that are adjacent to our work. Although there have been
+several works addressing the verifiable quantum computation prob-
+lem, we will focus mainly on the setting of a single classical verifier
+and single quantum prover, the most notable of which are listed in
+Table 1.
+2.1
+Verification of Quantum Computation
+Approaches used for quantum computation verification can be
+categorised according to the model of computation that parties are
+assumed to possess within a particular setting and whether certain
+computational assumptions are made. If the verifier is imbued with
+some lightweight quantum capabilities (e.g., measurement), then
+various solutions exist in this setting [14, 38, 77, 76, 88, 58]. There
+are also methods in which the verifier is kept classical, but the
+protocol requires two or more entangled provers [55, 42, 32]. While
+these protocols can be shown to have information-theoretic security,
+having multiple entangled and non-communicating provers is often
+practically prohibitive.
+Borrowing from ideas in computational security, a recent promis-
+ing line of work, initiated by Mahadev [67], deviates from the above
+approaches by making additional computational assumptions to
+obtain verifiable delegation in a setting where the verifier is an effi-
+cient classical machine interacting with a single (computationally
+bounded) prover. This was the first such interactive protocol in this
+setting, verifying the result of a quantum computation using four
+rounds of communication. This protocol was proven to be sound
+under the learning with errors (LWE) assumption [85], which is
+assumed to be intractable for polynomial-time quantum machines.
+Subsequent works [28, 7] reduced the number of rounds to 2 (or
+one round with setup) in the quantum random oracle model, and
+in fact, we use these as a basis for our protocol.
+Gheorghiu and Vidick [40] propose a composable protocol that
+allows a verifier to delegate to a prover the preparation of certain
+single-qubit quantum states. The composability feature of the pro-
+tocol allows it to be securely combined with other protocols. The
+protocol, in a preprocessing phase, requires several rounds of com-
+munication that depend on the circuit size. It also relies on LWE.
+Chung et al. [31] propose a generic compiler that transforms any
+CVQC protocol to a blind one while preserving the original proto-
+col’s round complexity. It relies on quantum fully homomorphic
+encryption schemes and quantum-secure LWE.
+Delegation protocols can also have the property of blindness
+where the prover is guaranteed to learn nothing about the circuit
+being delegated (apart from its size). However, impossibility results
+have been established for information-theoretically secure blind
+delegation of quantum computation to classical verifiers [1].
+All of the aforementioned protocols are in the designated verifier
+model where the verifier needs to possess some secret information
+for verification; if the prover gains access to this secret then it can
+convince a verifier about an invalid proof. As a result, they are not
+publicly verifiable.
+
+Time-Delayed Publicly Verifiable Quantum Computation for Classical Verifiers
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Protocol
+Round
+Complexity
+Succinct
+Blind
+Publicly
+Verifiable
+Assumptions
+Model
+Mahadev [67]
+4
+No
+No
+No
+LWE
+Plain
+Gheorghiu and Vidick [40]
+𝑂(|𝐶|)
+No
+Yes
+No
+LWE
+Plain
+Chia et al. [28]
+2
+Yes
+No
+No
+LWE + iO
+QROM+CRS
+Alagic et al. [7]
+1 (w/setup)
+No
+No
+No
+LWE
+QROM
+Zhang [94]
+𝑂(𝜆)
+Yes (𝑂(|𝐶|))
+No
+No
+LWE
+QROM
+Bartusek and Malavolta [13]
+1
+Yes
+No
+Yes
+LWE + iO
+QROM + CRS
+Metger et al. [73] and Gunn et al. [44]
+𝑂(1)
+Yes
+No
+No
+LWE
+Plain
+Bartusek et al. [12, 10]
+1
+Yes
+Yes
+Yes
+LWE
+Classical Oracle Model
+This work
+1 (w/setup)
+No
+No
+Yes
+SIS/LWE variants
+QROM + CRS
+Table 1: The existing CVQC schemes in the single verifier, single prover setting and their properties. Succinctness refers to the
+property that verification time is poly(𝜆, log𝑑(𝐶)) where 𝜆is the security parameter and 𝑑(𝐶) is the depth of the delegated circuit
+𝐶. Blindness refers to keeping the computation hidden from the prover. All computational assumptions are post-quantum.
+2.2
+Publicly Verifiable Delegation
+Publicly verifiable delegation has long been studied for the setting
+where the verifier and prover are both classical machines. This is
+reflected in the long line of work that proposes various schemes
+under standard [56] and non-standard or idealized (e.g., Random
+Oracle Model) assumptions [16, 15]. Commonly used methods for
+achieving publicly verifiable proof systems involve the application
+of the Fiat-Shamir heuristic [36] to convert a public-coin interactive
+proof system (e.g. sigma protocols) into a non-interactive one [63,
+27, 25] or rely on trusted setup assumptions [43, 17, 81] such as
+common reference strings (CRS). Such techniques generally give
+rise to non-interactive zero-knowledge proofs (NIZKs) and succinct
+non-interactive arguments of knowledge (SNARKs) with the public
+verifiability property.
+In the quantum setting, several constructions of NIZKs for QMA
+have been proposed under different settings and/or assumptions.
+The works of [33, 78] construct NIZK for QMA with quantum
+pre-processing in the designated-verifier model where the proof is
+classically verifiable but the verifier needs to generate a quantum
+message as its first message. In addition, several constructions were
+proposed under the malicious designated verifier (MDV) model [87,
+9] where the trusted setup generates a reusable common random
+string but any verifier, given the CRS, needs to generate its own
+classical public-secret key pair where the secret key is used for its
+own private (designated) verification. All of the above protocols
+require some form of secret parameters for verification and are
+therefore not publicly verifiable.
+Previous work on publicly verifiable quantum computation re-
+lied on the verifier having some form of quantum capability [49,
+65]. In the CVQC setting, a recent line of work [13, 12, 10] focuses
+on achieving public verifiability based on (post-quantum) indistin-
+guishability obfuscation (iO) for classical circuits or under the clas-
+sical oracle model, which idealizes obfuscation for classical circuits.
+Our work aims to eliminate the (strong) iO requirement. While
+follow-ups to this work [73, 44] did achieve succinct arguments
+for QMAby forgoing iO and relying only on (post-quantum) LWE
+only, their schemes are interactive with constant round complexity,
+while we wish to keep the communication non-interactive.
+2.3
+Time-Based Cryptography
+2.3.1
+Time-Lock Puzzle. Timothy May [72] initially put forth the
+idea of sending information to the future. A basic property of a
+time-lock scheme is that generating a puzzle takes less time than
+solving it. The scheme that Timothy May proposed used a trusted
+agent that releases a secret on time for a puzzle to be solved. Since
+relying on a trusted agent can be a strong assumption, Rivest et al.
+[86] proposed an RSA-based TLP. This scheme does not require a
+trusted agent, relies on sequential squaring, and is secure against
+a receiver who may have many computational resources that run
+in parallel with the goal of finding the solution faster. Since the
+introduction of the RSA-based TLP, different variants of it have
+been proposed, including post-quantum TLPs [62, 5] and homo-
+morphic TLPs, e.g., in [70]. Malavolta and Thyagarajan et al. [70]
+proposed the notion of homomorphic TLPs, which allows an arbi-
+trary function to run over puzzles of different clients before they
+are solved. The schemes use the RSA-based TLP and fully homo-
+morphic encryption. Furthermore, to achieve efficiency, partially
+homomorphic TLPs have also been proposed, including those that
+support homomorphic linear combinations of puzzles [70, 66].
+2.3.2
+Verifiable Delay Function (VDF). A VDF enables a prover to
+provide a publicly verifiable proof stating that it has performed
+a pre-determined number of sequential computations [18, 90, 19,
+82]. VDF was first formalized by Boneh et al [18]. They proposed
+several VDF constructions based on SNARKs along with either
+incrementally verifiable computation or injective polynomials, or
+based on time-lock puzzles, where the SNARKs-based approaches
+require a trusted setup. Later, Wesolowski [90] and Pietrzak [82]
+concurrently improved the previous VDFs from different perspec-
+tives and proposed schemes based on sequential squaring. They
+also support efficient verification. Most VDFs have been built upon
+TLPs. Nevertheless, the converse is not necessarily the case because
+VDFs are not suitable to encapsulate an arbitrary private message
+since they take a public message as input, whereas TLPs have been
+designed to conceal a private input message.
+2.3.3
+Timed Commitment. A timed commitment is a commitment
+scheme that includes an optional forced opening phase, enabling the
+receiver to recover the committed value without the committer’s
+cooperation—provided the receiver invests sufficient computational
+effort and time [21, 4, 59]. This property is particularly useful in
+
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Ameer Mohammed, Aydin Abadi, and Jaffer Mahdi
+scenarios where the sender refuses to voluntarily open the commit-
+ment. In our solution, a timed commitment can be employed as a
+black-box component to unify the time-lock puzzle and commit-
+ment schemes, albeit at the expense of efficiency. This is because, in
+our scheme, the client is assumed to be honest and therefore does
+not need to prove (e.g., via zero-knowledge proofs or related tech-
+niques) that the puzzles have been generated correctly, an assurance
+that is typically required in timed commitment schemes. Therefore,
+we adopt an efficient technique proposed in [3], which combines a
+time-lock puzzle with a commitment scheme, enabling the server to
+efficiently prove that it has recovered the correct solution originally
+embedded by the client within the puzzle.
+2.3.4
+Timed Signatures and Proofs. Researchers have proposed
+the timed version of digital signatures [2]. They formally defined
+such a notion in the universally composable (UC) framework [26]
+and proposed a protocol to realize this concept by mainly relying
+on a blockchain and standard digital signature scheme. Arun et
+al. [8] proposed the notion of short-lived zero-knowledge proofs
+and signatures, which consider the case that after a certain time
+period the proofs or signatures will be invalid/forgeable. The main
+idea behind the aforementioned notion is to allow any party to
+forge any proof by executing a large sequential computation; the
+proposed schemes primarily rely on VDFs. This differs from our
+setting where instead of eventual deniability, we are concerned
+with eventual public verifiability. To enable a smart contract to
+efficiently verify a proof in a “proofs of data retrievability” system,
+researchers combined a message authentication code (MAC) with an
+RSA-based TLP. The MAC verification key is embedded in the TLP
+and provided to the smart contract after the proof is registered [3].
+3
+Preliminaries
+In this section, we present the background and necessary material
+for the models, primitives, and protocols used to build our scheme.
+3.1
+Notation
+We say that a function 𝑓: N →[0, 1] is negligible if, for any poly-
+nomial 𝑝(.) and sufficiently large 𝑛∈N, we have 𝑓(𝑛) < 1/𝑝(𝑛).
+We denote F (𝑋,𝑌) to be the set of all functions with domain 𝑋
+and range 𝑌. Given two interactive algorithms 𝑃and 𝑉, we denote
+𝑦
+$←−⟨𝑃(𝑤),𝑉(𝑧)⟩(𝑥) as the random variable representing the inter-
+action between 𝑃(with private input 𝑤) and 𝑉(with private input
+𝑧) on common input 𝑥where 𝑦is 𝑉’s local output.
+We say that a classical algorithm 𝐴(𝑥) is efficient or probabilis-
+tic polynomial time (PPT) if it runs in time poly(|𝑥|). Similarly, a
+quantum algorithm 𝑄(|𝑥⟩) is said to be a quantum polynomial time
+(QPT) machine if it runs in time poly(|𝑥|) where |𝑥⟩is a state in
+some Hilbert space H. For any given circuit 𝐶, we denote |𝐶| to
+be the size of the circuit and 𝑑𝑒𝑝𝑡ℎ(𝐶) to be its depth. We denote
+BQP to be the set of languages decidable by a QPT machine and
+QMA to be the set of all languages 𝐿where 𝐿∈QMA if, for every
+𝑥∈𝐿, there exists a polynomial-sized quantum state (a witness)
+that makes a QPT machine accept 𝑥with high probability (and
+rejects otherwise). For any two distributions 𝑋and 𝑌, we denote
+𝑋c≈𝑌whenever 𝑋and 𝑌are computationally indistinguishable
+and 𝑋s≈𝑌to mean that 𝑋and 𝑌are statistically close. Through-
+out our work, we refer to the Quantum Random Oracle Model [20]
+(QROM) as an idealized model that allows adversaries to have black-
+box access to a quantum analogue of the classical random oracle
+that can input/output quantum states.
+3.2
+Time-Lock Puzzles
+In this section, we restate the definition of a time-lock puzzle
+(TLP) [86].
+Definition 3.1. A TLP scheme consists of three algorithms: TLP =
+(TLP.Setup, TLP.GenPuzzle, TLP.Solve) defined as follows:
+• TLP.Setup(1𝜆, Δ) →(𝑡𝑝𝑘,𝑡𝑠𝑘). A probabilistic algorithm that
+takes as input a security parameter, 1𝜆, and time parameter
+Δ that specifies how long a message must remain hidden in
+seconds. It outputs a pair (𝑡𝑝𝑘,𝑡𝑠𝑘) that contains the scheme’s
+public and private parameters, respectively.
+• TLP.GenPuzzle(𝑚,𝑡𝑝𝑘,𝑡𝑠𝑘) →𝑜. A probabilistic algorithm that
+takes as input a solution 𝑚and (𝑡𝑝𝑘,𝑡𝑠𝑘). It outputs a puzzle 𝑜.
+• TLP.Solve(𝑡𝑝𝑘,𝑜) →𝑠. A deterministic algorithm that takes as
+input 𝑡𝑝𝑘and 𝑜. It outputs a solution 𝑠.
+The following properties must also be satisfied:
+• Completeness. For any message 𝑚it always holds that:
+TLP.Solve(𝑡𝑝𝑘, TLP.GenPuzzle(𝑚,𝑡𝑝𝑘,𝑡𝑠𝑘)) = 𝑚
+• Efficiency. The run-time of TLP.Solve(𝑝𝑘,𝑜) is upper-bounded
+by 𝑝𝑜𝑙𝑦(Δ, 𝜆).
+In certain schemes, such as [5], the secret key 𝑡𝑠𝑘may not be
+needed. The security of a TLP requires that the puzzle’s solution
+remains confidential against all adversaries running in parallel
+within the time period, Δ. It also requires that an adversary cannot
+extract a solution in time 𝛿(Δ) < Δ, using a polynomial number
+of processors 𝑝𝑜𝑙𝑦′(Δ) processors that run in parallel and after a
+large amount of pre-computation.
+Definition 3.2. A TLP is secure if for all 𝜆and Δ, all quantum
+polynomial time (QPT) adversaries 𝐴:= (𝐴1,𝐴2) where 𝐴1 runs
+in total time 𝑂(𝑝𝑜𝑙𝑦(Δ, 𝜆)) and 𝐴2 runs in parallel time 𝛿(Δ) <
+Δ using at most 𝑝(Δ) = poly(Δ) parallel processors, there is a
+negligible function negl(𝜆), such that:
+Pr
+
+(𝑡𝑝𝑘,𝑡𝑠𝑘) ←TLP.Setup(1𝜆, Δ)
+(𝑚0,𝑚1, state) ←𝐴1(1𝜆,𝑡𝑝𝑘, Δ)
+𝑏
+$←{0, 1}
+𝑜←TLP.GenPuzzle(𝑚𝑏,𝑡𝑝𝑘,𝑡𝑠𝑘)
+𝑏←𝐴2(𝑡𝑝𝑘,𝑜, state)
+
+≤1
+2 + negl(𝜆)
+In the literature of TLP, the security definition includes two
+adversaries 𝐴1 and 𝐴2 because they have different run-time con-
+straints. In this work, we use the same approach.
+3.2.1
+Post Quantum Secure TLPs. Lai and Malavolta [62] proposed
+a candidate post-quantum secure sequential function relying on
+a lattice-based hash function [69]. Using the proposed sequential
+squaring, it is possible to easily construct a TLP. However, this TLP
+will require the puzzle generator to take as many steps as the puzzle
+solver. Very recently, Shweta et al. [5] proposed a TLP based on
+
+Time-Delayed Publicly Verifiable Quantum Computation for Classical Verifiers
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+lattices that can be instantiated using the SIS-sequential function of
+[62] (with judicious parameter settings). In this scheme, the puzzle
+generator can create puzzles more quickly than the solver can solve
+them. Our scheme can leverage any post-quantum secure TLP in a
+black-box manner.
+Lemma 3.3 ([5]). Assuming the quantum hardness of circular
+small-secret LWE [50], there exists a time-lock puzzle that is secure
+against polynomial-time quantum adversaries.
+3.3
+Commitment Scheme
+There are two parties involved in a commitment scheme, a sender
+and a receiver. The commitment scheme has two phases, commit
+and open. In the commit phase, the sender commits to a message 𝑚
+as Com(𝑚,𝑟) = 𝑐𝑜𝑚, that involves a secret value,𝑟. In the open phase,
+the sender sends the opening ˆ𝑚:= (𝑚,𝑟) to the receiver which
+verifies its correctness: Ver(𝑐𝑜𝑚, ˆ𝑚)
+?= 1 and accepts if the output
+is 1. A commitment scheme must satisfy (a) hiding, it is infeasible
+for an adversary (i.e., the receiver) to learn any information about
+the committed message 𝑚, until the commitment 𝑐𝑜𝑚is opened,
+and (b) binding, it is infeasible for an adversary (i.e., the sender)
+to open a commitment 𝑐𝑜𝑚to different values ˆ𝑚′ := (𝑚′,𝑟′) than
+that was used in the commit phase, i.e., in
+
+[…middle truncated for length…]
+
+ess properties of Definition 4. Com-
+pleteness follows from the underlying 2-round CVQC protocol, the
+time-lock puzzle, and the commitment scheme. Specifically, for any
+𝐶∈C𝜆, 𝑥∈{0, 1}𝑛and 𝑇= 𝑇(𝜆) and any honestly generated
+𝑐𝑟𝑠= (𝑡𝑝𝑘, 𝑝𝑘,𝑜,𝑑, Δ):
+VC.Verify(𝑐𝑟𝑠,𝐶,𝑥, 𝜋,𝑦) = 𝑉𝑜𝑢𝑡(𝑝𝑘,𝑠𝑘, 𝜋) = 1
+where 𝜋←𝑃(𝑝𝑘, (𝐶,𝑥)), 𝑑←Com(𝑠𝑘,𝑟), and 𝑦= (𝑠𝑘,𝑟) ←
+TLP.Solve(𝑡𝑝𝑘,𝑜).
+Regarding the efficiency requirement, it is clear that VC.Setup
+will run in time poly(𝜆, |𝐶|, |𝑥|,𝑇) due to the size of 𝑝𝑘. Furthermore,
+VC.Prove runs in time poly(𝜆, |𝐶|, |𝑥|,𝑇) as it will need to compute
+the circuit and the proof, and VC.Reveal runs in time poly(𝜆,𝑇)
+due to TLP.Solve, which will solve the puzzle in time Δ = poly(𝑇).
+Remark 4.4 (Instance-Independent Variant). In our construc-
+tion, the CRS is circuit-dependent since the underlying 2-round CVQC
+requires this circuit to generate the verification key. Alternatively,
+Alagic et al. [7] show a variant of a 2-round privately verifiable CVQC
+
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Ameer Mohammed, Aydin Abadi, and Jaffer Mahdi
+that is instance-independent at the cost of increasing the number of
+parallel executions by a constant. This allows us to make VC.Setup
+generate a CRS that is independent of the circuit-input pair (𝐶,𝑥).
+4.2
+Proof of Security
+We prove that the protocol has Δ−soundness regarding Defini-
+tion 4.2.
+Proof. We show through a sequence of hybrids that the security
+of our scheme can be reduced to the soundness of the underlying 2-
+round CVQC, the security of the TLP, and the commitment scheme.
+• 𝐻0: This is the original experiment as stated in Definition 4.1
+where the adversary’s role as a malicious prover is to find a
+convincing false proof that passes verification.
+• 𝐻1: This is the same as 𝐻0 except that Step 5 of the Verify
+phase is replaced with the following:
+Output 𝑉𝑜𝑢𝑡(𝑝𝑘,𝑠𝑘, 𝜋)
+In other words, the verification procedure of the underlying
+CVQC will use the original 𝑠𝑘instead of 𝑠𝑘′.
+• 𝐻2: This is the same as 𝐻1 except that, in Step 5 of the Setup
+phase, the puzzle is generated using a random string pair
+𝑠𝑘∗
+$←−{0, 1}𝑛, where 𝑛= |𝑠𝑘| + |𝑟|, instead of (𝑠𝑘,𝑟). That is,
+the puzzle is generated as follows:
+𝑜∗←TLP.GenPuzzle(𝑡𝑝𝑘,𝑡𝑠𝑘,𝑠𝑘∗)
+• 𝐻3: The is the same as 𝐻2 except that, in Step 4 of the Setup
+phase, the challenger commits to the same random string
+𝑠𝑘
+$←−{0, 1}𝑛used in the puzzle, instead of 𝑠𝑘. That is, the
+commitment is generated as follows:
+𝑑∗←Commit(𝑠𝑘∗)
+Let Adv𝑉𝐶
+𝐻𝑖(𝐴) = | Pr
+𝐻𝑖[Exp𝑉𝐶
+𝐴[𝜆,𝑇] = 1] denote the adversary’s
+success probability in the soundness game of Definition 4.1. The
+following sequence of claims will show that Adv𝑉𝐶
+𝐻0 (𝐴) ≤negl(𝜆).
+Claim 4.5. If the commitment scheme is computationally binding
+against poly-time quantum adversaries, then:
+|Adv𝑉𝐶
+𝐻0 (𝐴) −Adv𝑉𝐶
+𝐻1 (𝐴)| ≤negl(𝜆)
+Proof. Let 𝐴be a QPT algorithm that succeeds in distinguish-
+ing between 𝐻0 and 𝐻1 with non-negligible advantage. Then there
+exists an efficient attacker 𝐵that acts as the challenger for 𝐴and
+breaks the binding property of the commitment scheme (as stated in
+Definition B.1) as follows. The attacker 𝐵would simulate the origi-
+nal game for 𝐴exactly up until Step 5 of the Verify phase. Here, 𝐻0
+and 𝐻1 will differ only if 𝑠𝑘′ ≠𝑠𝑘but Ver(𝑑, (𝑠𝑘′,𝑟′)) = 1, which
+would imply breaking the binding property of the commitment
+scheme. Thus, as long as the commitment scheme is computation-
+ally binding the adversary’s advantage of distinguishing between
+𝐻0 and 𝐻1 is negligible.
+■
+Claim 4.6. Assuming that the TLP is secure against poly-time
+quantum adversaries, it holds then |Adv𝑉𝐶
+𝐻1 (𝐴)−Adv𝑉𝐶
+𝐻2 (𝐴)| ≤negl(𝜆).
+Proof. Let 𝐴be a QPT adversary that succeeds in distinguishing
+between 𝐻1 and 𝐻2 with non-negligible advantage. We show that
+there exists an efficient attacker 𝐵= (𝐵1, 𝐵2) that acts as the chal-
+lenger for 𝐴and breaks the security of the underlying TLP scheme
+according to Definition 3.2 as follows. The attacker 𝐵1 starts by
+running each step of VC.Setup(1𝜆, (𝐶,𝑥)), except in Step 2 it will
+first receive 𝑡𝑝𝑘from the TLP challenger, and in Step 5 it will ask for
+the challenge puzzle by submitting (𝑚0,𝑚1) as its chosen messages
+where𝑚0 = (𝑠𝑘,𝑟) contains the secret key from Step 3 and𝑚1 = 𝑠𝑘∗
+is some uniformly random string of size |𝑠𝑘| + |𝑟|. Once it receives
+back the challenge puzzle 𝑜𝑏←TLP.GenPuzzle(𝑚𝑏,𝑡𝑝𝑘,𝑡𝑠𝑘), it
+runs 𝐴on 𝑐𝑟𝑠𝑏= (𝑡𝑝𝑘, 𝑝𝑘,𝑜𝑏,𝑑), which generates a proof 𝜋.
+Similarly, 𝐵2 will execute 𝐴(𝑐𝑟𝑠𝑏,𝐶,𝑥). We note, since the run-
+ning time of 𝐴is 𝛿(Δ) < Δ, 𝐵2 will also have the same running time.
+Furthermore, if the TLP challenger chooses to generate a puzzle for
+𝑚0 = (𝑠𝑘,𝑟) then 𝑐𝑟𝑠𝑏will have a puzzle of 𝑠𝑘and the view of 𝐴
+will be that in 𝐻1. On the other hand, if the TLP challenger chose
+to generate a puzzle for 𝑚1 = 𝑠𝑘∗then the 𝑐𝑟𝑠𝑏will have a puzzle
+of 𝑠𝑘∗and the view of 𝐴will be that in 𝐻2. The rest of the game
+remains unchanged between the two hybrids. Since 𝐵simulates
+𝐴’s challenge almost perfectly (with some negligible loss when
+𝑠𝑘∗= (𝑠𝑘,𝑟)), the advantage of 𝐵is equal to that of 𝐴. Thus, as long
+as the TLP is secure, the adversary’s advantage of distinguishing
+between 𝐻1 and 𝐻2 is negligible.
+■
+Claim 4.7. Assuming that the commitment scheme is statistically
+hiding against quantum adversaries, it holds that 𝐻2
+s≈𝐻3.
+Proof. Let 𝐴be a QPT adversary that can distinguish between
+𝐻2 and 𝐻3 with a non-negligible advantage. Then we can construct
+an adversary 𝐵that acts as the challenger for 𝐴and uses it to
+break the hiding property of the underlying commitment scheme.
+The attacker 𝐵starts by running each step in the Setup exactly
+as in 𝐻2 except now in Step 4 it will first submit (𝑚0,𝑚1) to the
+challenger in the hiding game of the commitment scheme where
+𝑚0 = (𝑠𝑘,𝑟) and 𝑚1 = 𝑠𝑘∗for some random 𝑠𝑘∗
+$←−{0, 1}|𝑠𝑘|+|𝑟|.
+Once it gets back the challenge commitment 𝑑𝑏←Com(𝑚𝑏), it
+runs 𝐴on 𝑐𝑟𝑠𝑏= (𝑡𝑝𝑘, 𝑝𝑘,𝑜∗,𝑑𝑏, Δ) and (𝐶,𝑥). The rest of the steps
+remain the same. If the challenger chose to create a commitment for
+𝑚0 = (𝑠𝑘,𝑟) then the view of 𝐴will be that in 𝐻2. If a commitment
+of 𝑚1 = 𝑠𝑘∗was generated instead then the view of 𝐴will be that
+in 𝐻3. Since 𝐵simulates 𝐴’s challenge almost perfectly (with some
+negligible loss when 𝑠𝑘∗= (𝑠𝑘,𝑟)), the advantage of 𝐵in breaking
+the commitment scheme is equal to that of 𝐴.
+■
+Claim 4.8. If the 2-round privately verifiable CVQC scheme is
+computationally sound against all malicious QPT provers, Com is com-
+putationally binding/hiding, and the TLP is secure, then the advantage
+of 𝐴in 𝐻3 is negligible.
+Proof. Let 𝐴be a QPT adversary that can break soundness in
+𝐻3. We then show how to construct an adversary 𝐵that will act
+as 𝐴’s challenger and use it to break the soundness of the under-
+lying privately verifiable CVQC scheme. 𝐵starts by requesting 𝑝𝑘
+from its challenger (𝑠𝑘will be kept secret from 𝐵), creates a ran-
+dom puzzle 𝑜∗and commitment 𝑑∗of a random string, then sends
+𝑐𝑟𝑠= (𝑡𝑝𝑘, 𝑝𝑘,𝑜∗,𝑑∗, Δ) to 𝐴. Once 𝐴sends its proof 𝜋𝜏and decom-
+mitment 𝑦, 𝐵will run 𝑏1 ←VC.Verify(𝑐𝑟𝑠,𝐶,𝑥, 𝜋𝜏,𝑦) and, after
+it reveals (𝑠𝑘∗,𝑟), also runs 𝑏2 ←VC.Verify(𝑐𝑟𝑠,𝐶,𝑥, 𝜋𝜏, (𝑠𝑘∗,𝑟)).
+Since 𝐵exactly simulates the view of 𝐴in this game, we have that
+
+Time-Delayed Publicly Verifiable Quantum Computation for Classical Verifiers
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Pr[B wins] = Adv𝑉𝐶
+𝐻3 (𝐴) ≤Pr[𝑏1 ∨𝑏2|𝐶(𝑥) = 0 ∨𝑦≠𝑠𝑘∗] ≤
+Pr[𝑏1|𝐶(𝑥) = 0 ∨𝑦≠𝑠𝑘∗] + Pr[𝑏2|𝐶(𝑥) = 0 ∨𝑦≠𝑠𝑘∗].
+We note that if 𝑏1 = 1 while 𝐶(𝑥) = 0 and 𝑦≠𝑠𝑘∗then this
+implies that 𝐴found 𝑠𝑘′ ≠𝑠𝑘∗which passes Ver(𝑑∗,𝑠𝑘′) or directly
+found 𝑠𝑘∗from the commitment 𝑑∗or puzzle 𝑜∗(before time Δ).
+However, by the security of the underlying primitives, this only
+happens with negligible probability. Thus Pr[𝑏1 = 1|𝐶(𝑥) = 0 ∨𝑦≠
+𝑠𝑘∗] ≤negl(𝜆). Observe also that, during the second verification
+phase (post key release), if 𝑏2 = 1 then it must be that 𝑦= 𝑠𝑘∗yet
+since 𝐶(𝑥) = 0 this implies that 𝜋𝜏has passed as a valid forged
+proof against the real secret key 𝑠𝑘, violating the soundness of the
+underlying CVQC protocol.
+■
+Putting it all together to prove Theorem 4.3, we get that 𝐻0
+c≈
+𝐻1
+c≈𝐻2
+s≈𝐻3, Adv𝐻3
+𝐴≤negl(𝜆). Hence, the advantage of adversary
+𝐴winning in 𝐻0 is negligible.
+□
+5
+Experimental Results
+In this section, we demonstrate the feasibility of our approach by
+simulating the protocol between a classical client who wishes to
+delegate quantum circuits of various sizes to a quantum server. Our
+implementation is a proof of concept with small security parameters,
+focusing primarily on measuring the time complexity of the parts
+of the protocol that dominate running time. In particular, we im-
+plemented the algorithms of the TLP (TLP.Setup, TLP.GenPuzzle,
+TLP.Solve), and the actual quantum circuit computation executed
+by the prover, and which happens to be part of the VC.Prove subrou-
+tine. Other parts of the protocol such commitments and VC.Verify
+were not simulated as they are relatively less time-consuming. The
+verifier’s Feynman-Kitaev construction of the Hamiltonian [37] is
+assumed to be part of the preprocessing phase before the protocol
+starts so we do not consider it in our simulation.
+Our implementation includes a variant of the TLP puzzle pro-
+posed in [5], which is based on reusable garbling circuit techniques.
+While the original scheme uses lattice-based succinct randomized
+encodings for their reusable garbling mechanism, we instead build
+upon the implementation of [47] which exhibits weaker security
+guarantees but is more practical. Additionally, relying on the fact
+that random oracles are unconditionally sequential [68], we instan-
+tiate our sequential function using SHA-256.
+The simulations were performed on a t3.medium AWS instance
+with 2 vCPUs (3.1 GHz each), 4GB of memory, and access to an SV1
+universal state vector simulator to execute quantum circuits (as the
+prover) on a cloud-based quantum simulation platform, specifically,
+AWS Braket. We use the Qiskit SDK [54] to define, build, transpile,
+and run the quantum circuits on the SV1 simulator. Each instance
+of the simulation is averaged over at least 20 different executions
+of the quantum circuit. The source code is available at [75].
+5.1
+Random Quantum Circuits
+Table 2 shows the results of our experiments when tested against
+randomly generated quantum circuits of 5, 10, and 15 qubits, with
+a depth ranging between 10 and 300 gates. Random circuits were
+sampled using Qiskit’s random_circuit function which generates
+circuits over a random distribution on the standard gates (e.g., Pauli,
+phase, swap, Hadamard, and controlled gates). For each qubit-depth
+setting, we simulated 20 different random quantum circuits and
+measured the time it takes for the prover to execute these circuits
+𝑇. The client can use this to determine the required setting of Δ
+for any circuit of depth 𝐷such that the time to solve the puzzle is
+much greater than 𝑇. In all cases, we observed that, for the verifier,
+generating a puzzle is almost constant, whereas the bulk of the
+time was spent in the setup phase and is attributed to the reusable
+garbling mechanism (which is dependent on the circuit depth).
+Across all settings, the prover’s circuit execution time𝑇increases
+with both depth and number of qubits (e.g. from 1.84 ms for 5 qubits
+at depth 10, up to 228.81 ms for 15 qubits at depth 300) which directly
+guides the client’s choice of the time-delay parameter for releas-
+ing the verification parameters. In particular, the puzzle-solving
+TLP.Solve time is tuned to remain larger than the observed compu-
+tation time. On the client side, puzzle generation TLP.GenPuzzle
+stays constant and negligible (≈0.05–0.07 ms). The dominant over-
+head appears in the puzzle setup cost TLP.Setup; however, this cost
+amortizes cleanly across multiple puzzle generations, as reflected
+by the amortized TLP.Setup column.
+5.2
+Enhanced Hybrid HHL
+We also evaluated the protocol over a variant of the Harrow–Hassidim
+–Lloyd (HHL) circuits [46, 93], specifically enhanced hybrid HHL,
+which are known to take advantage of quantum speedup when
+solving large (sparse) linear systems and have been found to be par-
+ticularly effective in finance applications including mean-variance
+portfolio optimization and risk assessment [84]. They are thus ap-
+propriate candidates for testing as classical algorithms would want
+to delegate these circuits to quantum-capable, yet potentially un-
+trustworthy servers. We used the enhanced hybrid HHL algorithm
+(which has both classical and quantum computations) as opposed to
+the vanilla one since the former is more efficient in practice given
+the current quantum hardware capabilities.
+Figure 4 shows the results for different sizes of circuits that cor-
+respond to different instances of the matrices which represent the
+system of linear equations. The depth can be used to estimate the
+time it takes to solve the circuit and thus determine the appropri-
+ate time Δ for which the puzzle should be solved. The parameter
+𝜇specifies the number of iterations of the sequential function to
+achieve this Δ. We observe from Figure 4(a) that the circuit depth
+grows approximately linearly with the size of the problem instance
+𝑁. Figure 4(b) indicates that the measured execution time increases
+substantially with matrix (instance) size 𝑁, reaching on the order
+of minutes for the largest tested instances. These results allow the
+client to scale the sequential work factor 𝜇of the time-lock puzzle
+so that puzzle solving completes (in Δ time) only after the prover
+finishes the HHL computation and produces the timestamped proof.
+Lastly, we see from Figure 4(c) that the average fidelity (which
+roughly represents the correctness of the quantum circuit upon
+measurement) of HHL degrades almost linearly with 𝑁. This is
+expected, as deeper circuits are prone to decoherence due to noise.
+While quantum error correction can be used to mitigate this is-
+sue, the depth (and hence the running time 𝑇) would significantly
+increase and the client should take into account this increase by
+setting 𝜇appropriately and get the desired Δ > 𝑇.
+
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+Ameer Mohammed, Aydin Abadi, and Jaffer Mahdi
+Quantum Circuit
+Time-Lock Puzzle (TLP)
+# Qubits
+Depth
+T (ms)
+TLP.Solve (ms)
+TLP.GenPuzzle (ms)
+TLP.Setup (ms)
+Amortized TLP.Setup (ms)
+𝜇
+5
+10
+1.84
+13.63
+0.05
+1445.57
+72.28
+1
+20
+2.31
+13.63
+0.05
+1445.57
+72.28
+1
+50
+4.56
+13.63
+0.05
+1445.57
+72.28
+1
+100
+8.13
+13.63
+0.05
+1445.57
+72.28
+1
+200
+16.84
+32.97
+0.05
+6577.50
+328.88
+3
+300
+22.84
+45.83
+0.06
+10513.51
+525.68
+4
+10
+10
+3.14
+13.63
+0.05
+1445.57
+72.28
+1
+20
+5.34
+13.63
+0.05
+1445.57
+72.28
+1
+50
+11.78
+24.24
+0.06
+3672.94
+183.65
+2
+100
+20.47
+32.97
+0.05
+6577.50
+328.88
+3
+200
+41.06
+85.37
+0.05
+25915.06
+1295.75
+7
+300
+58.01
+117.25
+0.05
+48829.51
+2441.48
+10
+15
+10
+10.52
+24.24
+0.06
+3672.94
+183.65
+2
+20
+19.39
+32.97
+0.05
+6577.50
+328.88
+3
+50
+49.51
+103.16
+0.05
+40500.14
+2025.01
+9
+100
+98.38
+196.48
+0.07
+120891.41
+6044.57
+17
+200
+168.56
+339.30
+0.05
+52020.00
+2601.00
+30
+300
+228.81
+462.57
+0.05
+97161.80
+4858.09
+41
+Table 2: The execution time (averaged over 20 trials) 𝑇of running a random quantum circuit for different numbers of qubits
+and circuit depths and the corresponding time elapsed for the time-lock puzzle setup (TLP.Setup, total and amortized over the
+20 different puzzle generations), generation (TLP.GenPuzzle), and solving (TLP.Solve = Δ). The parameter 𝜇corresponds to the
+number of executions of the sequential function to achieve the corresponding Δ time for any given circuit execution time 𝑇.
+2
+4
+8
+16
+0
+2,000
+4,000
+6,000
+8,000
+10,000
+12,000
+14,000
+Matrix Size (𝑁)
+Circuit Depth
+(a) Circuit Depth
+2
+4
+8
+16
+0
+10
+20
+30
+40
+50
+60
+70
+80
+90
+100
+110
+120
+130
+𝜇= 1, 350
+𝜇= 2, 700
+𝜇= 4, 500
+𝜇= 10, 800
+Matrix Size (𝑁)
+Time (seconds)
+(b) Execution Time
+2
+4
+8
+16
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+Matrix Size (𝑁)
+Fidelity
+(c) Fidelity
+Figure 4: (a) Circuit depth scaling with matrix size, showing a linear relationship between the two. (b) The average running time
+of the HHL circuit for different matrix dimensions 𝑁and the corresponding 𝜇for the time-lock puzzle that ensures it is solved
+only after the HHL circuit is complete. (c) The average fidelity (how well it adheres to the true solution) for each matrix size (𝑁)
+6
+Conclusion and Future Work
+This work proposes a verifiable computation scheme for quantum
+circuits which can be publicly verified by any third party after a
+set amount of time has elapsed. We demonstrate how a privately
+and classically verifiable quantum computation can be transformed
+into a publicly verifiable one by mainly relying on the recently
+introduced post-quantum time-lock puzzle [5]. Unlike previous
+work (that relied on iO), our scheme can be solely based on the LWE
+assumption, which is falsifiable and thus arguably more dependable
+than ones that are not falsifiable.
+It remains open to find an approach that achieves (non-time-
+based) public verifiability in the plain model and under standard
+assumptions. It would also be useful to have a publicly verifiable
+scheme that is applicable in the more common setting where the
+verification key is made available as soon as the circuit is delegated.
+Furthermore, the CRS in our scheme is not reusable (it can only be
+
+Time-Delayed Publicly Verifiable Quantum Computation for Classical Verifiers
+CCS ’26, November 15–19, 2026, The Hague, The Netherlands
+used to prove a single statement), regardless of whether the setup
+is instance-dependent or not. This is due to the fact that security
+(verifiability) is only guaranteed as long as the time-lock puzzle,
+which hides the secret verification key, is not solved. Therefore, it
+is an interesting open question to upgrade this scheme into one
+with a universal CRS that can be used to prove the correctness of
+multiple computations at once without increasing its size. Lastly,
+while verifiable computation schemes are generally concerned with
+malicious provers, extending security against malicious verifiers,
+who may attempt to falsely accuse the prover of providing an
+incorrect proof, is a promising future direction.

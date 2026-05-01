@@ -1,0 +1,954 @@
+A Survey on the Security of Long-Term Memory in LLM
+Agents: Toward Mnemonic Sovereignty
+ZEHAO LIN, MemTensor, China
+CHUNYU LI, MemTensor, China
+KAI CHEN, MemTensor, China
+Research on the security of large language model (LLM) systems is shifting from “will the model leak training
+data” to a more consequential question: “can an agent with persistent, long-term memory be continuously
+shaped, cross-session poisoned, accessed without authorization, and propagated across shared organizational
+state?” Recent surveys have increasingly covered memory architectures, agent memory mechanisms, and—in
+some cases—security risks of agent memory. Fewer works, however, center the epistemic and governance
+properties of persistent, writable memory as the primary reason that memory constitutes an independent
+security problem.
+This survey addresses that narrower gap. Drawing on cognitive neuroscience and the philosophy of
+memory, we characterize agent memory as malleable, rewritable, and socially propagating, and develop
+a memory-lifecycle analysis framework organized around six phases—Write, Store, Retrieve, Execute,
+Share, and Forget/Rollback—cross-tabulated against four security objectives: integrity, confidentiality,
+availability, and governance. Using this framework, we organize the literature on memory poisoning, extraction,
+retrieval corruption, control-flow hijacking, cross-agent propagation, rollback, and governance, and situate
+representative architectures as determinants of which lifecycle phases are explicitly governable.
+Three findings stand out. First, the literature concentrates heavily on write-time and retrieve-time integrity
+attacks; confidentiality, availability, the store/forget phases, and benign-persistence failures (non-adversarial
+memory errors from compression, drift, or hallucination) remain sparsely studied. Second, no published
+memory architecture covers all nine governance primitives we identify; write-gate validation and post-
+deletion verification are shared blind spots across every system examined. Third, a secondary research track—
+using LLMs themselves as tools for memory security (automated red-teaming, defender-side verification,
+counterfactual stress-testing)—remains sparse yet is essential: defenses that have not been stress-tested by
+adaptive LLM-driven red-teaming cannot claim the rigor that mature security fields demand.
+We unify these observations under the concept of mnemonic sovereignty—a system’s verifiable, recoverable
+governance over what may be written, who may read, when updates are authorized, and which states may be
+forgotten—and argue that future secure agents will be differentiated not only by recall capacity, but by the
+quality of their memory governance.
+CCS Concepts: • Security and privacy →Systems security; • Computing methodologies →Artificial
+intelligence.
+Additional Key Words and Phrases: LLM agents, long-term memory, memory security, prompt injection, RAG
+poisoning, mnemonic sovereignty, memory governance
+1
+Introduction
+LLM security research initially revolved around two objects: parametric knowledge encoded in
+model weights and prompt manipulation within single-turn or multi-turn dialogues. However, as
+agents evolve from stateless chatbots into autonomous systems equipped with persistent, long-term
+memory, the center of gravity of security concerns is migrating. Attackers no longer merely seek
+to influence the current response; they aim to alter how the system remembers, retrieves, plans, and
+acts in the future.
+Authors’ Contact Information: Zehao Lin, MemTensor, Shanghai, China, linzh@memtensor.cn; Chunyu Li, MemTensor,
+Shanghai, China, licy@memtensor.cn; Kai Chen, MemTensor, Shanghai, China, chenk@memtensor.cn.
+arXiv:2604.16548v1 [cs.CR] 17 Apr 2026
+
+2
+Zehao Lin, Chunyu Li, and Kai Chen
+This shift implies that memory security is neither a subsidiary branch of prompt injection nor a
+synonym for RAG security. It constitutes an independent class of system security problems because
+long-term memory introduces at least three novel properties.
+Persistence. Once malicious content sediments into long-term memory, it may be repeatedly
+recalled across dozens or hundreds of subsequent tasks that match its retrieval key. Unlike a single-
+shot prompt injection whose effect ends with the current context window, a poisoned memory
+entry can persist across an indefinite number of future sessions [Dong et al. 2025; Zou et al. 2026].
+Statefulness. The relevant question is no longer “is the current input harmful?” but “what mem-
+ory state is the system currently in?” An agent that has accumulated a cluster of subtly biased
+episodic memories may exhibit behavioral drift long before any single memory entry triggers a
+conventional safety classifier; empirical demonstrations of this effect appear in query-only mem-
+ory injection [Dong et al. 2025] and environment-injected trajectory poisoning [Zou et al. 2026],
+and the concept has also been characterized by preprint work on progressive long-term-memory
+corruption [Bhatnagar 2025].
+Propagation. In multi-agent and shared-state systems, contamination can spread through internal
+channels—inter-agent messages, shared memory stores, tool arguments—producing cascading
+effects that cross session, role, and user boundaries [Gu et al. 2024; Men et al. 2025]. Recent
+benchmarking further shows that privacy leakage in multi-agent LLM systems is concentrated in
+these same internal channels rather than in final user-facing outputs [El Yagoubi et al. 2026].
+An adversary is not always required. A fourth property, weaker in tone but likely broader in
+real-world prevalence, is that persistent memory can fail without any adversary at all: silent cross-
+user contamination of shared stores, over-application of profile facts to contexts where they no
+longer hold, and memory-induced sycophancy all arise from ordinary operation of a memory-
+augmented agent system [Guo et al. 2026; Pulipaka et al. 2026; Yoon et al. 2026]. We therefore
+treat memory security as a superset of memory safety: the adversarial and benign-persistence axes
+share a lifecycle and share mitigations, but differ in the kind of evidence each requires. Section 12.2
+develops the benign-persistence axis in detail; throughout the survey, we flag risks that do not
+require an attacker to materialize.
+If traditional prompt injection resembles a transient hijacking of a single execution flow, then
+attacks on long-term memory are closer to persistent contamination of system state. A recent joint
+evaluation by major AI laboratories [Nasr et al. 2025] (Tier-2 joint industry study) bypasses the
+12 recent prompt-injection and jailbreak defenses they examine—spanning prompting, training,
+filtering, and secret-knowledge designs—with attack success rates above 90% for most, reversing
+the near-zero numbers those defenses originally reported. While this result does not itself establish
+that every published prompt-injection defense is brittle, it offers some of the clearest evidence to
+date that static evaluations systematically overstate robustness, and it does not automatically entail
+that memory-specific defenses are equally brittle—the attack surfaces differ in important ways.
+It does, however, underscore that any defense claim in the memory domain must be evaluated
+under strong adaptive threat models, including cross-session and persistent-state scenarios that
+conventional prompt-injection benchmarks do not cover.
+Accordingly, a survey that truly addresses agent security must go beyond asking “can the model
+be misled?” and confront a harder question: will the system save what it was misled into believing as
+its own past, and will it act on that false past again and again?
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+3
+1.1
+Reframing Memory
+This survey does not treat memory as an add-on cache. Instead, we conceptualize it as an artificial
+mnemonic system: a system endowed with the capacities of writing, extracting, compressing,
+recombining, sharing, and forgetting. Such a system influences subject continuity, behavioral
+habits, and accountability attribution; it is simultaneously a source of capability and a novel attack
+surface.
+Drawing on cognitive neuroscience and the philosophy of memory, we observe that human
+memory is not a faithful archive but a reconstructive [Schacter and Addis 2007; Schacter et al. 1998],
+reconsolidatable [Nader et al. 2000], externalizable [Clark and Chalmers 1998; Wegner 1987], and
+socially contagious [Roediger III et al. 2001] mechanism. These properties reappear, often in amplified
+form, across LLM agent memory modules: profile memory, episodic memory, retrieval-augmented
+external memory, and shared organizational memory. The consequence is that attacks on memory
+need not be brute-force overwrites; they can operate through inducement, source confusion, read-time
+rewriting, and social propagation—gradually altering how the system understands its own past. We
+do not claim biological equivalence between human memory and LLM agent memory; rather, we use
+human memory research as an analytical lens for identifying security-relevant properties of persistent,
+writable memory. To clarify the scope of this lens, we distinguish two uses of cognitive terminology
+throughout. Structural analogies map a cognitive mechanism onto an architectural component and
+generate testable design requirements: source monitoring →provenance tracking, consolidation
+→compression pipeline, selective forgetting →verified deletion. Metaphorical analogies serve as
+pedagogical devices: terms such as “reconsolidation window,” “engram,” or “memory contagion”
+name intuitive parallels but do not imply mechanistic correspondence. The former carry the
+argument; the latter provide vocabulary.
+1.2
+Research Questions and Contributions
+The central question of this survey can be stated concisely:
+When an LLM agent acquires writable, retrievable, cross-session persistent long-term
+memory, what qualitative change occurs in the security landscape?
+To answer this question, we pursue three tasks:
+(i) Theoretical grounding. We draw on human memory research to explain why memory is in-
+herently a security problem, introducing the concepts of provenance failure, read-time rewrit-
+ing, shared-memory contagion, and poisoned confidence calibration as cross-disciplinary
+bridges (Section 2).
+(ii) Analytical framework. We propose a memory-lifecycle framework that examines security
+risks along six phases—Write, Store, Retrieve, Execute, Share, and Forget/Rollback—and
+across four security objectives: integrity, confidentiality, availability, and governance (Sec-
+tion 3).
+(iii) Systematic review. We survey the attack surface, defense mechanisms, system architec-
+tures, and research gaps of long-term-memory agents, covering representative works from
+2023 to 2026 (Sections 4–12).
+The survey culminates in a normative concept: mnemonic sovereignty—a system’s verifiable,
+recoverable governance over what may be written, who may read, when updates are authorized,
+which states must remain auditable, and which states may be forgotten. We argue that the next
+generation of secure agent competition will not occur solely over recall capability but over the
+quality of memory governance. The survey also identifies a secondary but critical research track:
+LLM-as-tool for memory security—using large models as automated red-teamers, memory auditors,
+
+4
+Zehao Lin, Chunyu Li, and Kai Chen
+and forgetting verifiers. This track is currently sparse; we develop it as a distinct agenda item
+(Section 12.3, Area 2).
+1.3
+Scope
+We focus on runtime memory: states that an agent continuously writes, updates, retrieves, and
+reuses after deployment. Such states may reside in vector databases, relational databases, graph
+databases, log systems, and shared blackboards; they may also manifest as user profiles, historical
+demonstrations, trajectory summaries, reflective lessons, and cross-agent organizational memory.
+More specifically, we divide the objects of study into four categories. A caveat is in order: these
+four categories intentionally mix three underlying dimensions—memory function (profile, episodic),
+memory substrate (retrieval store), and sharing scope (organizational). The same entry can occupy
+multiple categories (e.g., a shared organizational memory may be episodic in content and vector-
+indexed in substrate). We retain the four-way split here for intuitive exposition; Section 3 introduces
+a multi-axis taxonomy that disentangles these dimensions.
+1. Profile memory: user preferences, identity, permissions, and long-term personalization
+information.
+2. Episodic / trajectory memory: interaction histories, success cases, failure lessons, and
+process reflections.
+3. External retrieval memory: retrieval-augmented generation (RAG) datastores [Lewis
+et al. 2020], vector indices, and graph-augmented retrieval structures (e.g., GraphRAG).
+4. Shared organizational memory: multi-agent shared states, cross-session collaboration
+blackboards, and cross-tenant knowledge fragments.
+Two related but non-central topics are parametric memory (training-data extraction, PII leakage,
+and membership inference—risks concerning knowledge stored in model weights rather than
+runtime-writable memory) and single-session indirect prompt injection / jailbreaking [Greshake
+et al. 2023; Liu et al. 2024] (attacks that affect only the current session without entering long-term
+memory). Both serve as neighboring context rather than the main subject: the memory attacks
+surveyed here can be read as what happens when the indirect-prompt-injection attack surface is
+extended with persistence, statefulness, and propagation, properties that fall outside the traditional
+IPI threat model [Greshake et al. 2023].
+We note that RAG corpus poisoning occupies a special intermediate position: RAG datastores
+are functionally equivalent to external memory, and the poisoning literature provides essential
+threat models and defense baselines. We therefore review RAG security as the closest approximate
+threat model for memory security, while emphasizing that long-term memory systems additionally
+encompass user-specific history, self-generated experiential lessons, reflective summaries, shared
+organizational memory, and version-rollback semantics—dimensions that RAG alone does not
+cover.
+Why long context does not subsume long-term memory. A natural reader question, as frontier
+context windows expand from hundreds of thousands to millions of tokens, is whether the entire
+memory-security problem dissolves into a context-window-management problem. We argue that
+it does not. A longer context window addresses within-session recall, but leaves untouched the
+properties that make long-term memory an independent security object: cross-session persistence
+(a million-token context is discarded at session boundary; a memory entry is not), cross-principal
+shareability (a context window is per-session and per-principal; shared memory stores are not),
+and compression lineage (automatic summarisation and reflection operate over stored memory, not
+over one-shot context). A larger context window can reduce pressure on write-time compression by
+permitting more raw text to be rehearsed without distillation, but it does not remove the need for
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+5
+any of provenance tagging, principal-scoped retrieval, rollbackable state, or verified forgetting—
+those arise whenever content outlives a single session or crosses a principal boundary. We therefore
+read long-context and long-term-memory as complementary infrastructures: the former mitigates
+some of the Store-phase pressure that motivates summarisation (Section 5), but leaves the full
+lifecycle intact.
+1.4
+Relation to Existing Surveys
+Several recent surveys have mapped the landscape of LLM agent memory, and a subset touch on
+security risks. Zhang et al. [2024a] systematize memory mechanisms of LLM-based agents along
+the axes of representation, source, and operation, but treat security largely as a forward-looking
+open challenge rather than the organizing axis. Subsequent surveys on write–manage–read loops
+for autonomous agents [Du 2026] and on the correspondence between human and AI memory [Wu
+et al. 2025a] similarly focus on architecture and capability taxonomies. Cross-disciplinary surveys
+such as Liang et al. [2025a] have begun to include dedicated sections on “Security of Agent
+Memory,” offering a first mapping of attacks, defenses, and benchmarks at the module level. He et al.
+[2024] survey the emerged security and privacy of LLM agents more broadly across the Engine,
+Instruction, Interface, Knowledge, and Memory planes; their Memory plane overlaps our scope
+but is organized by defensive artefact rather than by lifecycle phase and security objective. On
+the retrieval-augmentation side, Mu et al. [2026] systematize end-to-end RAG security (threats,
+defenses, benchmarks), and Bodea et al. [2026] provide a Systematization of Knowledge on privacy
+risks and mitigations in RAG at IEEE SaTML 2026. These two surveys share our concern with
+runtime-visible data flows but confine themselves to the RAG pipeline; neither treats the full
+write–store–retrieve–execute–share–forget lifecycle of agent memory.
+The present survey differs in three ways. First, we take the epistemic and governance properties
+of persistent, writable memory—not the memory module itself—as the primary object of security
+analysis, grounding these properties in cognitive neuroscience and the philosophy of memory
+(Section 2). Second, we organize the literature along a six-phase memory lifecycle, cross-tabulated
+with four security objectives (Section 3), which exposes under-studied phases (notably Store,
+Share, and Forget/Rollback) that a module-level view tends to collapse. Third, we develop a
+normative framework of mnemonic sovereignty that unifies integrity, confidentiality, availability,
+and governance objectives, enabling us to surface research gaps that are not visible when each
+objective is treated in isolation. Table 1 makes the differentiation explicit. The period from late
+2025 through early 2026 has seen a rapid proliferation of agent-memory surveys—notably Hu et al.
+[2025] (47 authors, forms/functions/dynamics taxonomy), Luo et al. [2026] (ICLR 2026 Workshop
+MemAgents, storage–reflection–experience evolution), and Tang et al. [2026] (Information Fusion,
+broad agent-security scope)—yet none of them organizes around security as the primary axis.
+This concurrent activity underscores the timeliness of a security-centered perspective rather than
+diminishing its necessity.
+1.5
+Survey Methodology and Evidence Stratification
+Search strategy. We searched ACM Digital Library, IEEE Xplore, the ACL Anthology, USENIX
+proceedings, OpenReview, and arXiv for the period January 2023 through April 2026, and sup-
+plemented these with OWASP documents, vendor security advisories, and CVE records. Core
+keyword groups included memory poisoning, memory injection, long-term / episodic / agent memory,
+RAG poisoning / corruption, memory extraction / privacy leakage, shared / multi-agent memory, and
+memory governance / forgetting / unlearning. We followed forward and backward citations from the
+seed papers identified in each category.
+
+6
+Zehao Lin, Chunyu Li, and Kai Chen
+Table 1. Differentiation from recent adjacent surveys. “Lifecycle” = does the survey organize its analysis along
+write–store–retrieve–execute–share–forget? “Governance / Forget” = does it treat deletion, rollback, and
+audit as first-class topics? “Benign risk” = does it include non-adversarial persistence failures? “Normative
+frame” = does it propose an organizing concept that unifies the security axes?
+Survey
+Primary object
+Life-cycle
+Gov./Forget
+Benign risk
+Norm. frame
+Zhang et al. [2024a]
+Memory mechanisms of
+LLM agents
+✗
+✗
+✗
+✗
+Du [2026]
+Write–manage–read loops
+for autonomous agents
+●
+✗
+✗
+✗
+Wu et al. [2025a]
+Human-to-AI memory
+correspondence
+✗
+✗
+✗
+✗
+Liang et al. [2025a]
+Cognitive-to-AI security
+mapping, module view
+✗
+●
+✗
+✗
+He et al. [2024]
+Security of LLM agents
+across five planes
+✗
+●
+✗
+✗
+Mu et al. [2026]
+RAG-pipeline security
+(threats, defenses,
+benchmarks)
+●
+✗
+✗
+✗
+Bodea et al. [2026]
+RAG-pipeline privacy
+(SaTML SoK)
+●
+●
+✗
+✗
+Hu et al. [2025]
+Forms/functions/dynamics
+of agent memory (47
+authors)
+✗
+✗
+✗
+✗
+Tang et al. [2026]
+Security of LLM-based
+agents (attacks, defenses,
+apps)
+●
+●
+✗
+✗
+Luo et al. [2026]
+Storage–reflection–
+experience evolution of
+agent memory
+●
+✗
+✗
+✗
+This survey
+Epistemic & governance
+properties of persistent,
+writable memory
+✓
+✓
+✓
+✓
+Inclusion and exclusion criteria. We include works that target or defend runtime-writable, persis-
+tent memory (profile, episodic, retrieval, or shared organizational memory). We treat parametric
+memorization (training-data extraction, membership inference, PII in weights) as a neighboring
+problem and cite it only where it illuminates runtime-memory risk. Single-session jailbreaking and
+classic prompt injection are handled similarly: included where they provide threat-model context,
+excluded when they are not specific to persistent memory.
+Corpus summary. Our final corpus comprises roughly 70 primary works directly on LLM agent or
+RAG memory security, distributed by evidence tier as approximately Tier-1 peer-reviewed (∼30%),
+Tier-2 preprint (∼55%), and Tier-3 industry or grey literature (∼15%). By lifecycle phase, Write and
+Retrieve dominate (jointly ∼55% of works), with Store and Forget/Rollback markedly under-
+represented (∼5% each). When the same system appears in both a preprint and a peer-reviewed
+version, we cite the peer-reviewed version and flag the preprint in a note; when a benchmark
+and an attack share a codebase, we discuss them together rather than as separate entries. These
+proportions confirm a common intuition: the field is still sparse, fragmented, and not yet unified
+into a lifecycle-wide framework. Figure 1 renders the same distribution as a heatmap over the
+lifecycle-by-objective grid; the density concentrates in the Integrity column and thins almost to
+zero in the Availability column and in the Store/Forget cells of the Governance column.
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+7
+Fig. 1. Distribution of the survey’s primary-work corpus across the six lifecycle phases and the four cross-
+cutting security objectives. Cell intensity is the approximate number of primary works whose principal
+contribution lands at that intersection; counts are drawn from the sectional organization of main.tex and
+err on the conservative side. Two structural patterns are visible: attack literature concentrates in Integrity
+(especially at Write and Retrieve), while Availability—and most Governance cells at Store and Forget—remain
+markedly under-studied. This asymmetry motivates the lifecycle-first organization adopted in Sections 3–12.
+The near-emptiness of the Availability column deserves a brief elaboration, since it reflects a
+genuine gap rather than a classification artifact. At least three memory-specific availability threats
+are architecturally plausible but empirically unstudied: (i) adversarial write flooding—an attacker
+or a malfunctioning agent generates high-volume writes to exhaust storage or indexing capacity;
+(ii) retrieval-latency poisoning—crafted entries distort the embedding distribution so that nearest-
+neighbour search becomes systematically slower or returns degraded results; and (iii) reflection-loop
+denial—inputs designed to trigger unbounded summarization or reflection cycles, consuming
+compute budgets without producing useful memory. None of these has been demonstrated in
+a peer-reviewed study; we flag them here as concrete directions for future work rather than as
+established findings.
+Evidence stratification. As of April 2026, research on LLM memory security draws on a heteroge-
+neous evidence base. To avoid conflating results of different maturity levels, this survey adopts a
+three-tier stratification:
+• Tier 1 — Peer-reviewed publications. Papers accepted at venues with full peer review
+(e.g., ACL, NeurIPS, USENIX Security, ICLR, ICML, EMNLP, The Web Conference). These
+supply the primary evidence for our analytical claims.
+• Tier 2 — Preprints and manuscripts under review. Works available on arXiv or Open-
+Review that have not yet completed peer review. Given the rapid pace of this field, many
+influential contributions (e.g., on environment-injected poisoning or memory control-flow
+attacks) exist only as preprints at the time of writing. We cite them to capture frontier
+trends but flag their provisional status where consequential.
+• Tier 3 — Industry disclosures, standards, and grey literature. Vendor vulnerability re-
+ports (e.g., CVEs against ChatGPT memory), community frameworks (e.g., OWASP Agentic
+
+8
+Zehao Lin, Chunyu Li, and Kai Chen
+AI Top 10), and technical blog posts from security teams. These are valuable for establishing
+real-world attack surfaces and engineering attention, but we do not use them alone to
+support strong causal or generalizable conclusions.
+Throughout the survey, we indicate the evidence tier when a claim rests primarily on Tier 2 or
+Tier 3 sources. Where a finding is supported only by a single preprint, we use hedged language
+(e.g., “preliminary results suggest” or “initial evidence indicates”) rather than categorical assertions.
+1.6
+Paper Organization
+The remainder of this paper is organized as follows. Section 2 establishes the theoretical foun-
+dation by bridging human memory research to LLM memory security. Section 3 presents the
+memory-lifecycle analysis framework and introduces the lifecycle-by-objective matrix that orga-
+nizes subsequent chapters. The next six sections proceed along the lifecycle: Section 4 (Write:
+poisoning and injection), Section 5 (Store: compression-amplified toxins, retention, audit), Sec-
+tion 6 (Retrieve/Execute: retrieval corruption and control-flow hijacking), Section 7 (Share:
+cross-principal propagation), Section 8 (cross-phase confidentiality: extraction and internal-channel
+leakage), and Section 9 (Forget/Rollback: unlearning, rollback, and forensics). Section 10 reviews
+defenses organized by the lifecycle phase at which each intervenes. Section 11 discusses memory
+system architectures as determinants of which lifecycle phases are explicitly governable. Section 12
+identifies open research problems across the lifecycle-by-objective matrix and proposes a research
+agenda toward mnemonic sovereignty. Section 13 concludes.
+Competing interests disclosure. The authors are affiliated with MemTensor, the organization that
+develops MemOS [Li et al. 2025b]. The architectural comparison in Table 12 evaluates every system—
+MemOS included—against the same nine primitives using exclusively published descriptions, with
+a transparent evaluation protocol defined in the table caption. The arguments for metadata-bearing
+governance are framed as properties of a design pattern (structured per-entry metadata), not
+as properties unique to MemOS; any architecture with comparable expressiveness (e.g., PROV-
+conformant serialization, ClawVM’s harness-level metadata) would receive the same assessment.
+We encourage independent replication of the Table 12 assessment and welcome corrections from
+the community.
+2
+Why Memory Is Inherently a Security Problem: From Human Memory to Artificial
+Memory
+Before cataloguing attacks and defenses, we must address a prior question: why should memory,
+of all system components, receive a dedicated security treatment? The answer, we argue, lies not
+in engineering contingencies but in the nature of memory itself as a cognitive mechanism. This
+section draws on cognitive neuroscience, memory psychology, and the philosophy of mind to build
+a bridge between human memory and LLM agent memory. The bridge is not decorative analogy; it
+rewrites the problem definition of LLM memory security.
+2.1
+Memory Is Not an Archive but a Reconstruction
+From the perspective of cognitive neuroscience, memory is not a filing cabinet that preserves the
+past in its original form. New experiences are typically encoded through hippocampal-dependent
+networks via rapid binding, and subsequently consolidated—especially during offline periods such
+as sleep—through repeated reactivation between hippocampal and neocortical networks [Squire
+et al. 2015]. Crucially, modern memory research no longer treats memory as a stable copy. Instead,
+it views memory as a dynamic representation that is updated, rewritten, and reconsolidated, drifting
+with changes in schema, context, and goals [Zaki and Cai 2025].
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+9
+The classical constructive-memory perspective further emphasizes that memory errors are not
+incidental bugs but by-products of the very mechanisms that endow memory with its adaptive
+power [Schacter 1999; Schacter et al. 2012, 1998]. The same constructive processes that allow
+humans to flexibly recall the past, simulate possible futures, and engage in counterfactual reasoning
+also produce distortions, confabulations, and false memories. Memory’s malleability is the price of
+intelligence’s malleability.
+This observation yields an insight of direct relevance to security: in human memory, malleabil-
+ity is intrinsic to adaptive function. An analogous tension emerges in LLM agents: the very
+flexibility that enables useful long-term adaptation can also create systemic security vulnerabilities.
+Profile memory, episodic memory, trajectory summaries, lesson memory, and RAG datastores
+should therefore not be understood merely as “more context” but as mechanisms through which
+the system continuously reconstructs its relationship with its own past experiences.
+2.2
+The Attack Surface of Human Memory: Misinformation, Suggestion, Social
+Contagion, and Reconsolidation
+If we re-examine human memory through the lens of security, the most instructive findings are not
+science-fiction fantasies of memory erasure but subtler, empirically grounded mechanisms.
+2.2.1
+Misinformation and Source-Monitoring Failure. A large body of false-memory research,
+beginning with Loftus [Loftus 2005], demonstrates that post-event misinformation can alter a
+witness’s recall of event details. The source-monitoring framework of Johnson, Hashtroudi, and
+Lindsay [Johnson et al. 1993] refines this picture: what is often called “memory tampering” does
+not necessarily mean the original trace is overwritten. Rather, the subject confuses the source of
+the memory at retrieval—was this something I witnessed, something I imagined, or something I
+was told?
+This mechanism offers a close systems-level analogy to the provenance failure problem in LLM
+memory systems. In many documented attacks, the real failure is not that the retrieval mechanism
+is broken but that the system misattributes externally injected content as its own experience [Dong
+et al. 2025; Tian et al. 2026].
+2.2.2
+Suggestion, Hypnosis, and Confidence Inflation. Modern research does not support treating
+hypnosis as a reliable truth-extraction device. Classic experimental and forensic studies indicate
+that hypnotic and highly suggestive interviews do not reliably improve recall accuracy; what they
+do increase is the subject’s subjective confidence in potentially inaccurate memories [Leo et al. 2025;
+Sheehan and Tilden 1983; Steblay 1994].
+The security implication is profound: the danger lies not only in the insertion of a single erroneous
+entry but in the error being promoted to high weight through summarization, reflection, or lesson-
+memory mechanisms. In LLM agents, a poisoned experience that is subsequently compressed
+into lesson memory may, by analogy, exhibit a similar poisoned confidence calibration: the
+system can come to treat a false strategy as increasingly authoritative without any ground-truth
+verification. A-MemGuard [Wei et al. 2025] does not study confidence inflation directly, but it does
+provide empirical evidence for the closely related phenomenon that poisoned records can appear
+benign in isolation and then participate in self-reinforcing error cycles.
+2.2.3
+Social Contagion. Memory is not an entirely private, hermetically sealed object. It is shaped
+through dialogue, collaboration, and co-witnessing. Roediger, Meade, and Bergman [Roediger III
+et al. 2001] demonstrated that one person’s erroneous report can enter another person’s subsequent
+personal recall—a phenomenon they termed social contagion of memory.
+
+10
+Zehao Lin, Chunyu Li, and Kai Chen
+Recent human–AI interaction studies show that this mechanism is already being amplified by
+generative systems. Huang et al. [2024] found that social robots are as effective as humans at
+implanting false memories in human subjects; Chan et al. [2024] demonstrated that LLM-powered
+chatbots induce over three times more immediate false memories than control conditions in
+simulated witness interviews; Pataranutaporn et al. [2025a] showed that subtle injection of false
+information within everyday LLM chatbot conversations increases false-memory formation even
+in non-adversarial settings; and Pataranutaporn et al. [2025b] showed that AI-edited images and
+videos implant false memories at up to twice the rate of unedited stimuli.
+A methodological caveat is warranted. The false-memory literature should not be read as evidence
+that arbitrary autobiographical memories can be trivially implanted at scale; recent debates have
+shown that the ease of rich false-memory implantation is more contested than some popular
+accounts suggest.1 What remains robust across paradigms is the susceptibility of memory to source
+confusion, post-event misinformation, social contagion, and confidence inflation—precisely the
+mechanisms most relevant to LLM memory security.
+These findings carry a dual implication for this survey. First, within multi-agent and multi-
+user systems, shared-memory contamination functions as social contagion: one compromised
+agent’s erroneous output can propagate through shared memory stores, internal messages, and
+tool parameters to infect other agents [Gu et al. 2024; Men et al. 2025]. Second, LLMs are not
+only subjects of memory-security threats; they are also becoming instruments that attack human
+memory—a bidirectional risk that underscores the urgency of the problem.
+2.2.4
+The Reconsolidation Window. Nader et al. [2000] demonstrated that a consolidated memory,
+once reactivated, enters a transient labile state and must be reconsolidated to persist. During this
+reconsolidation window, the memory is susceptible to modification [Schiller et al. 2010]. The
+security implication, appropriately qualified, is that in architectures that summarize, reflect
+on, compress, or distill recalled content, retrieval can become a point of downstream
+rewriting: the act of reading memory feeds into a pipeline that alters what is subsequently stored.
+In LLM agents, this pattern is structurally instantiated by the summarize, reflect, compress,
+and distill operations that many memory architectures perform [Packer et al. 2023; Xu et al.
+2025]. In such systems, an ostensibly routine “recall” step can silently transform downstream
+long-term memory content, making read-time rewriting a first-class security concern rather than
+a peripheral edge case.
+Taken together, these four mechanisms show that bringing human memory into a security
+survey is not an exercise in metaphor. It is a way of stating a general principle: attacks on
+memory typically operate not through hard overwrite but through inducement, source
+confusion, rewriting upon recall, and social propagation—gradually changing how a
+system understands its own past.
+2.3
+The Philosophical Status of Memory: Identity, Testimony, and Interpretive Authority
+Memory deserves a place in the security framework not merely because it is error-prone but because
+it is deeply coupled with subjectivity and social order.
+Memory and identity. The philosophical tradition has long linked memory with personal iden-
+tity [Michaelian and Sutton 2017; Olson 2023]. Even if we reject a strong Lockean position that
+equates personal identity with memory continuity, memory continuity nonetheless provides the
+most intuitive evidence that “this system is still the same system.” In the LLM agent context, a
+1We follow the more conservative reading: human memory is not arbitrarily programmable, but it is systematically inducible,
+biasable, and socially propagable—properties that suffice for the security analogy we draw.
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+11
+user’s willingness to continuously trust an agent as “the same assistant” depends heavily on the
+continuity, self-consistency, and traceability of that agent’s memory [Copenhaver 2021].
+Memory and testimony. Mahr and Csibra [Mahr and Csibra 2018, 2020] argue that the commu-
+nicative function of episodic memory is fundamentally tied to testimony: the capacity to bear
+witness to what happened. Many social facts—promises, obligations, responsibilities, permissions,
+historical interpretations—do not persist like physical objects on the surface of the world; they
+must be sustained through witnessing, remembering, and testifying. Memory security therefore
+protects not only content accuracy but also who is entitled to testify about the past.
+This point is especially critical for multi-agent and organizational systems. Shared memory stores,
+audit logs, profile continuity records, and history summaries are sensitive not only because they can
+leak private information but because they shape the attribution of responsibility and the legitimacy
+of actions. What is under attack is not a single embedding vector but the system’s interpretive
+authority over its own past, identity, and accountability narrative.
+2.4
+From Mental Integrity to Mnemonic Sovereignty
+The ethics and law of neurotechnology have produced a highly instructive concept: mental in-
+tegrity [Lavazza 2018; Ligthart 2025]. It holds that a subject should be free from unauthorized
+significant mental interventions and should retain control over others’ access to, dissemination of,
+and alteration of their mental contents and brain data.
+The term mnemonic sovereignty has also been used in memory studies and memory politics to
+describe a community’s authority over the interpretation of its own past. We adapt this notion—
+rather than coining it anew—to the domain of LLM memory systems, where it refers to a system’s
+verifiable, recoverable governance over its own memory state. Mnemonic sovereignty in this sense
+does not mean “never forgetting” or “never erring.” It means that the system possesses control over
+the boundaries of its own memory: what may be written, what may be updated, who may read,
+which states must be retained to support auditing, an
+
+[…middle truncated for length…]
+
+ substrate in isolation; no peer-reviewed protocol
+integrates them.
+Defenses must plan for post-breach operation. A defense taxonomy that stops at prevention is
+incomplete. Section 10 therefore organizes defenses not only by the lifecycle phase at which they
+intervene but also by whether they address pre-breach prevention, in-breach containment, or
+post-breach recovery—an axis that has been under-weighted in prior memory security surveys.
+10
+Defenses: Detection, Provenance, Recovery, and Policy
+We now turn from attack surfaces to defenses. A recurring pitfall in earlier defense surveys is to
+organize the literature by detection technique (classifier, clustering, activation probe, perplexity
+filter). Such a taxonomy is convenient but systematically obscures the more important question: at
+which lifecycle phase does each defense intervene, and what happens if it is circumvented at that phase?
+In this section, we organize the literature by intervention point (the phase at which the defense acts)
+and breach stage (whether the defense aims at pre-breach prevention, in-breach containment, or
+post-breach recovery). Table 10 summarizes the resulting map; the subsequent subsections elaborate.
+An important methodological disclaimer up front: the joint finding of Nasr et al. [2025]—that the
+
+40
+Zehao Lin, Chunyu Li, and Kai Chen
+Table 10. Defenses organized by lifecycle intervention point and breach stage. Pre = prevent before harm;
+In = contain harm during operation; Post = recover after detection. (p) = Tier-2 preprint evidence; (v) = Tier-3
+vendor/industry evidence.
+Phase
+Stage
+Representative defenses and mechanism
+Write
+Pre
+Pre-consolidation validation; provenance tagging; write authorization; human-verified
+freeze [Nguyen et al. 2025] (p).
+Store
+Pre
+Metadata-bearing memory units (MemCube) as precondition for rollback and audit [Li et al.
+2025b]; compression under audit thresholds.
+Retrieve
+Pre/In
+Trust-aware retrieval [Zhou et al. 2025]; activation-based poison detection [Tan et al.
+2025a]; certifiable aggregation under retrieval corruption [Xiang et al. 2026];
+consensus-based validation across related memories [Wei et al. 2025]; semantic- and
+conflict-aware filtering [Si et al. 2025] (p).
+Execute
+In
+Capability- and information-flow-based separation of data and control planes [Costa et al.
+2025; Debenedetti et al. 2025; Palumbo et al. 2026] (p); contextualized privacy defense at
+execution time [Wen et al. 2026] (p).
+Share
+In
+Principal-scoped shared memory with dynamic access policy [Rezazadeh et al. 2025];
+information-flow governance in multi-agent pipelines [Li et al. 2025a] (p).
+Forget
+Post
+Forensic traceback on retrieval corpora [Zhang et al. 2025c]; community reference for
+runtime memory protection [OWASP Foundation 2026a].
+12 recent prompt-injection and jailbreak defenses they evaluate are bypassed with >90% attack
+success by sufficiently adaptive attackers, despite having reported near-zero static-attack success
+rates—establishes, at minimum, that static robustness evaluations systematically overstate the
+security of defenses in this family, and the same methodological caution applies by analogy to
+memory defenses that have so far been evaluated only against non-adaptive baselines. The UK
+National Cyber Security Centre [UK National Cyber Security Centre 2025] has taken a similar
+position at the policy level, arguing that prompt injection lacks the principled fix available for
+SQL injection and that defenders should therefore optimize for blast-radius reduction (isolation,
+human oversight, reversibility) rather than expect a silver bullet. We therefore flag, for each defense,
+what it can accomplish and what it cannot yet demonstrably accomplish under adaptive evaluation,
+and we treat defenses that bound the consequences of an unavoidable compromise as at least as
+important as those that aim to prevent it.
+10.1
+Write-Time Defenses: Pre-Consolidation Validation
+The foundational claim of Section 4 was that memory writes should be treated as privileged
+state transitions requiring validation. This position is now being realized in two complementary
+directions.
+First, human-verified freezing. VerificAgent [Nguyen et al. 2025] (Tier-2) treats persistent memory
+verification as a scalable-oversight problem: an LLM agent drafts candidate memory entries, these
+are routed through a human-verifiable audit, and only entries that pass are committed to a “frozen
+safety contract.” The paper reports that the generate-then-freeze pipeline blocks a substantial
+fraction of injection attempts under the Red-Team Memory Injection (RTMI) testbed it introduces;
+the precise numbers should be read as initial evidence pending peer review. The conceptual
+contribution is that write-time validation is not merely a filter but a contract: the set of memories
+the system is committed to holding as authoritative is bounded by what the human or policy
+authority has explicitly accepted.
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+41
+Second, provenance-bearing writes. The MemCube abstraction [Li et al. 2025b] attaches source,
+version, sensitivity, and temporal metadata to each memory unit at write time. Provenance alone
+is not a filter, but it is a precondition for many downstream defenses: metadata-gated retrieval,
+scope-aware sharing, and cross-substrate deletion all require that the entry carry traceable lineage
+from its creation.
+A concrete engineering instantiation of pre-consolidation validation decomposes the write
+gate into four components: (i) role-attribution gating—strict code-level enforcement that only
+content whose source role is user may be committed as a fact about the user, preventing the
+system from internalizing its own outputs as user experience; (ii) instruction-content filtering—
+scanning incoming text for control-flow patterns (tool calls, system-prompt overrides) before
+storage, so that data is committed as inert fact rather than as executable instruction; (iii) value
+assessment—a lightweight scorer that rejects entries with no cross-session utility (corrections,
+transient preferences, session-local formatting requests); and (iv) consistency checking—retrieval of
+semantically related existing entries to detect logical conflicts before the new entry is committed,
+with explicit user disambiguation when a contradiction is found. None of these components is
+individually novel; the combination constitutes a minimal write-gate stack whose absence explains
+many of the injection successes documented in Section 4.
+What these defenses cannot yet claim. Neither VerificAgent nor MemCube-based designs have
+been evaluated against adaptive write-time attackers who tailor their injection pattern to the
+specific validation policy in force. The analogy to Nasr et al. [2025]’s finding on prompt-injection
+defenses suggests caution: pre-consolidation validation should be evaluated under adaptive pressure
+before strong generalization claims are made.
+10.2
+Store-Time Defenses: Versioning, Provenance, and Compression Auditing
+Store-time defense is the most under-developed part of the landscape (Section 5). What we can
+document here are architectural preconditions more than fielded defenses.
+Versioning and snapshots. Content-addressable snapshots and write-log auditing are necessary
+preconditions for rollback (Section 9.2). MemOS’s MemCube schema is compatible with such
+versioning; to our knowledge, however, the cross-substrate rollback protocol has not yet been
+exercised end-to-end in a published evaluation. We see the W3C PROV data model [Moreau et al.
+2013] as the appropriate standardization point for this metadata: it already defines inter-operable
+structures for entities, activities, and agents, so MemCube-style schemas can adopt PROV as a
+serialization layer without re-inventing one.
+Compression under audit thresholds. The compression-amplification problem (Section 5.3) has no
+published targeted defense we are aware of. A-MemGuard [Wei et al. 2025] partially addresses it at
+retrieval time by detecting conflicts across related memories; the dual write-time intervention—
+auditing each compression/reflection step before the derived entry is admitted to a high-tier lesson
+memory—is a natural direction that, at present, is a design implication rather than an evaluated
+defense.
+10.3
+Retrieve-Time Defenses: From Filtering to Consensus
+The retrieve phase currently hosts the densest cluster of defenses. We group them along the intuition
+they encode.
+Certifiable robustness. RobustRAG [Xiang et al. 2026] provides provable robustness against
+retrieval corruption via isolate-then-aggregate: retrieved passages are partitioned into disjoint
+groups, responses are generated independently, and securely aggregated. PoisonedRAG’s success
+
+42
+Zehao Lin, Chunyu Li, and Kai Chen
+drops from over 90% to roughly 10% under RobustRAG, with documented degradation on long-form
+generation. The certifiable property is significant—it is one of the few formally grounded defenses
+in the memory landscape.
+Clustering and trust-aware retrieval. TrustRAG [Zhou et al. 2025] applies K-means clustering over
+retrieved documents to separate benign from malicious clusters, then performs LLM self-assessment
+with cosine and ROUGE metrics. Recent follow-up work [Si et al. 2025] (Tier-2) extends this to
+semantic- and conflict-aware filtering by jointly considering content similarity and inter-passage
+contradictions.
+Activation-based detection. RevPRAG [Tan et al. 2025a] exploits distinct activation patterns the
+LLM exhibits when generating correct versus poisoned responses, reporting high true-positive
+rates at low false-positive rates on benchmarks; the approach requires white-box access to internal
+states.
+Consensus-based validation. A-MemGuard [Wei et al. 2025] (Tier-2) is, by our reading, the most
+memory-native retrieval-phase defense published to date. Rather than classifying a single retrieved
+entry in isolation, it retrieves a set of semantically related memories, generates independent
+reasoning paths from each, and treats inter-path disagreement as an anomaly signal. Detected
+attacks are distilled into a “lesson memory” used to harden future decisions. Two observations in
+the paper bear directly on the broader landscape: (i) even strong LLM detectors miss a substantial
+fraction of poisoned entries in isolation, because the poisoned content does not become suspicious
+until it is placed in conflict with other memories; and (ii) memory attacks can cause self-reinforcing
+error loops that raise the attack surface for later incidents.
+Realism of existing evaluations. A Tier-2 study on memory poisoning attack and defense [Sunil
+et al. 2026] reports that when pre-existing legitimate memories are present in the store, the effec-
+tiveness of strong attacks such as MINJA drops substantially compared with idealized experimental
+conditions, and proposes composite trust scoring, memory sanitization, and trust-aware retrieval
+as practical countermeasures. The implication is not that prior reports are wrong—they are correct
+within their threat models—but that evaluation realism matters: attack success rates measured in
+empty-memory conditions should be interpreted as upper bounds rather than as expected deployed
+performance.
+10.4
+Execute-Time Defenses: Information-Flow Control
+If retrieve-time defenses ask what is admitted to the context window, execute-time defenses ask what
+the model is allowed to do with it.
+CaMeL [Debenedetti et al. 2025] is representative: it explicitly extracts control and data flows
+from trusted queries and enforces that untrusted data cannot influence the program flow. The
+paper reports that CaMeL solves 77% of tasks with provable security on the AgentDojo bench-
+mark, a substantial number given the strength of the guarantee. FIDES [Costa et al. 2025] and
+PCAS [Palumbo et al. 2026] (Tier-2) extend the information-flow-control direction with richer label
+systems and Datalog-derived policy enforcement. Three further proposals harden execute-time
+defenses from different angles. Progent [Shi et al. 2025] (Tier-2) introduces a domain-specific lan-
+guage for fine-grained per-tool-call privilege policies and, with hand-authored policies, reportedly
+drives the attack success rate on Agent Security Bench to near zero; the open question is how
+much of that result depends on policy authorship effort. IsolateGPT [Wu et al. 2025b] proposes a
+hub-and-spoke execution-isolation architecture that confines each third-party application’s access
+to user data and tools to an enclave, preventing cross-context leakage at modest (<30%) overhead.
+Type-directed privilege separation [Jacob et al. 2025] (Tier-2) decomposes an agent into a quarantined
+
+A Survey on the Security of Long-Term Memory in LLM Agents: Toward Mnemonic Sovereignty
+43
+data-handling component and a privileged control component, restricting the data the privileged
+component may consume to closed-form types (booleans, enums, small structs); the authors argue
+this eliminates prompt-injection-style control-flow hijacking in a type-theoretic sense. Together,
+these are representative of a shift from post-hoc filtering to architectural execute-time defense,
+consistent with the blast-radius framing of UK National Cyber Security Centre [2025].
+Complementing IFC, contextualized privacy defense [Wen et al. 2026] (Tier-2) injects step-specific
+privacy guidance at execution time via an instructor model, reportedly obtaining better privacy–
+helpfulness trade-offs than static guardrails. This is particularly useful because many execute-time
+failures are context-sensitive: what counts as a privacy violation in a healthcare tool call differs
+from what counts in a public-information lookup.
+The principal limitation of this family, at present, is coverage: IFC tools have been evaluated
+primarily on static tool suites and on relatively constrained threat models. Their behavior under
+memory-driven control-flow attacks such as MCFA [Xu et al. 2026] is an open empirical question.
+10.5
+Share-Time Defenses: Principal-Scoped Policy
+The share phase—where contagion and leakage occur—requires defenses that reason about princi-
+pals, not just content. Collaborative Memory [Rezazadeh et al. 2025] formalizes this by encoding
+access policies as a time-evolving bipartite graph over principals, agents, and resources; it is the
+most developed published framework we are aware of for multi-user, multi-agent memory. Recent
+preprint work on agent access control [Li et al. 2025a] advocates moving from binary allow/deny per-
+missions to dynamic information-flow governance, consistent with the arguments from Section 7.1
+and the CaMeL/FIDES direction. A complementary direction is unsupervised anomaly detection
+on multi-agent interaction graphs. Miao et al. [2025] (BlindGuard, Tier-2) train a hierarchical
+agent-level encoder using only normal trajectories and flag deviations at the node, neighbourhood,
+and graph levels; because it does not require labelled attacks, BlindGuard generalizes to the kind of
+previously unseen multi-agent contagion patterns documented in Section 7.2.
+From the benign side, the unintentional cross-user contamination (UCC) study [Yang et al. 2026]
+(Tier-2) makes clear that share-phase defenses must contend with non-adversarial failure modes:
+even in the absence of any attacker, 57–71% of benign interactions yielded cross-user contamination
+in the reported experiments, and text sanitization alone was inadequate for executable artifacts.
+This motivates pairing principal-scoped policy with scope-correctness invariants that are enforceable
+even on legitimate writes.
+10.6
+Post-Breach Defenses: Forensics and Recovery
+Post-breach defense is the thinnest layer in the current landscape, but also the one whose absence
+most directly undermines governance. RAGForensics [Zhang et al. 2025c] (WWW 2025) demon-
+strates that systematic post-hoc traceback is feasible on static RAG corpora: given a detected attack,
+the system iteratively retrieves text subsets and uses crafted prompts to localize the poisoned entries
+responsible. Its limitation is that agent memory is not a static corpus; extending RAGForensics-style
+traceback across the Write, Store, and Retrieve phases of an evolving memory store is, to our
+knowledge, an open engineering and research problem.
+Industry-side, the OWASP Agent Memory Guard project [OWASP Foundation 2026a] (Tier-3)
+provides an initial reference implementation covering hashing-based integrity baselines, policy
+enforcement, and snapshot/rollback primitives. It should be read as a community signal that these
+primitives are expected of production systems, rather than as an evaluated research artifact; but
+the existence of a community reference is itself evidence that the industry now treats post-breach
+recovery for memory as a first-class concern.
+
+44
+Zehao Lin, Chunyu Li, and Kai Chen
+Table 11. Benchmark coverage along three axes: (1) memory substrate (RAG corpus vs. agent-state memory),
+(2) lifecycle phase coverage (W = Write, S = Store, R = Retrieve, E = Execute, Sh = Share, F = Forget), and (3)
+orientation (security vs. capability). ✓= explicit coverage; ●= partial; ✗= not covered. No single benchmark
+joins the full security axis with the full lifecycle, and no benchmark directly evaluates Forget/ rollback under
+adversarial conditions.
+Benchmark
+Substrate
+W
+S
+R
+E
+Sh
+F
+Sec.
+Cap.
+ASB
+Agent memory
+●
+✗
+✓
+✓
+✗
+✗
+✓
+✗
+AgentDojo
+Tool-calling agent
+●
+✗
+●
+✓
+✗
+✗
+✓
+✗
+RSB
+RAG corpus
+✓
+✗
+✓
+✗
+✗
+✗
+✓
+✗
+InjecAgent
+Tool-calling agent
+●
+✗
+✗
+✓
+✗
+✗
+✓
+✗
+CIMemories
+Profile memory
+✗
+●
+●
+✗
+✗
+✗
+✓
+✗
+LongMemEval
+Episodic memory
+✗
+●
+✓
+✗
+✗
+✗
+✗
+✓
+LoCoMo
+Episodic memory
+✗
+●
+✓
+✗
+✗
+✗
+✗
+✓
+MemBench
+Agent memory
+●
+●
+✓
+✓
+✗
+✗
+✗
+✓
+MemoryAgentBench
+Agent memory
+●
+●
+✓
+✓
+✗
+✗
+✗
+✓
+MemoryCD
+Episodic memory
+✗
+●
+✓
+✗
+✗
+✗
+✗
+✓
+Minerva
+Multi-agent
+memory
+✗
+✗
+●
+●
+✓
+✗
+●
+✓
+BenchPreS
+Profile memory
+●
+●
+✓
+●
+✗
+✗
+●
+✓
+PS-Bench
+Profile memory
+●
+●
+✓
+●
+✗
+✗
+●
+✓
+PersistBench
+Profile memory
+●
+●
+✓
+●
+✗
+✗
+●
+✓

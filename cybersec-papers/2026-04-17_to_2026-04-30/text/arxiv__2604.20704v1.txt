@@ -1,0 +1,1132 @@
+AUTO-ART: Structured Literature Synthesis and Automated
+Adversarial Robustness Testing across Evaluation Protocols,
+Multi-Attack Threat Models, and LLM-Driven Breaking
+Abhijit Talluri
+Independent Researcher
+talluri.abhijit@gmail.com
+Abstract
+Adversarial robustness evaluation underpins every claim of
+trustworthy ML deployment, yet the field suffers from frag-
+mented protocols, undetected gradient masking, single-norm
+tunnel vision, and premature generalization from stylized
+benchmarks to production code. We make two contributions.
+(1) Structured synthesis. We analyze nine peer-reviewed
+corpus sources (ICML, NeurIPS, ICLR, UAI; 2020–2026)
+through seven complementary protocols—citation-chain trac-
+ing, gap scanning, methodology auditing, cross-paper syn-
+thesis, assumption stress-testing, knowledge mapping, and
+lay-accessible distillation—producing the first end-to-end
+structured analysis of what the adversarial evaluation com-
+munity agrees on, disagrees about, and cannot yet resolve.
+(2) AUTO-ART framework. We introduce AUTO-ART [1],
+an open-source framework that directly operationalizes ev-
+ery identified gap: 50+ attacks across seven categories, 28
+defence modules, the Robustness Diagnostic Index (RDI;
+∼30× faster screening), First-Order Stationarity Condition
+(FOSC) gradient-masking detection, multi-norm evaluation
+(ℓ1/ℓ2/ℓ∞/semantic/spatial) with worst-case reporting, adap-
+tive memory-guided attack selection, and compliance map-
+ping to NIST AI RMF, OWASP LLM Top 10, and the EU
+AI Act. Empirical validation on the CIFAR-10 RobustBench
+leaderboard demonstrates that AUTO-ART’s pre-screening
+gate correctly identifies gradient masking in 92% of flagged
+configurations, that RDI rankings agree with full AutoAt-
+tack within Kendall τ ≥0.81, and that multi-norm evaluation
+exposes a 23.5 pp gap between average and worst-case ro-
+bustness on state-of-the-art models. Three novel technical
+directions—worst-case multi-norm adversarial training curric-
+ula, architecture-conditional RDI calibration for Vision Trans-
+formers and LLMs, and ecologically valid agent red-teaming
+benchmarks—are proposed with concrete feasibility assess-
+ments and ablation designs. To the best of our knowledge, no
+prior work combines structured meta-scientific analysis with
+an executable evaluation framework bridging literature gaps
+directly into engineering.
+Keywords: adversarial robustness, evaluation protocols, gradi-
+ent masking, multi-attack benchmarks, diffusion purification,
+LLM red teaming, automated adversarial testing, NIST AI
+RMF, OWASP.
+1
+Introduction
+Machine-learning models deployed in safety-critical per-
+ception [2, 3], language understanding [4], and decision-
+making [5] are expected to resist adversarially chosen input
+perturbations. A decade of work on adversarial training [3, 6]
+and certified defences [7] has produced steady progress on
+standard benchmarks. Yet a recurring pattern undermines
+confidence in these numbers: defences are proposed with opti-
+mistic robustness claims that collapse under stronger attacks,
+richer threat models, or correct gradient accounting [8–11].
+The cycle repeats because the failures are not merely technical
+but structural—rooted in evaluation practice itself:
+(i) Reliance on single ℓp norms when real adversaries com-
+bine spatial, semantic, and compression perturbations [5];
+(ii) Gradient masking inflating attack-based estimates across
+both deterministic [11] and stochastic [10] pipelines;
+(iii) Under-sampling of randomized-defence draws [10];
+(iv) Premature transfer from stylized CTF tasks to production
+code [4].
+We address these failures through two complementary contri-
+butions.
+Contribution 1: Structured literature synthesis. We analyse
+a curated corpus of nine verified sources (Table 1) using seven
+protocols drawn from systematic review methodology. Unlike
+narrative surveys that summarise papers sequentially, our syn-
+thesis traces intellectual lineages (who originated, challenged,
+and refined each concept), identifies testable assumptions the
+literature relies on but never validates, and maps the knowl-
+edge topology of the field. To the best of our knowledge, this
+is the first application of structured meta-scientific analysis—
+combining citation-chain tracing, gap scanning, methodology
+auditing, assumption stress-testing, and knowledge mapping
+in a single manuscript—to adversarial ML evaluation.
+Contribution 2: AUTO-ART framework. We introduce
+AUTO-ART (Automated Adversarial Robustness Testing) [1],
+an open-source Python framework that directly operationalises
+every gap identified in the synthesis (Section 11). Key capa-
+bilities:
+• 50+ attacks across evasion (37+), poisoning (10+), extrac-
+tion (3), inference (8+), audio (2), NLP/text, LLM, and
+agentic categories;
+• 28 defence modules including TRADES [6], AWP, OAAT,
+arXiv:2604.20704v1 [cs.CR] 22 Apr 2026
+
+certified training, guardrails, and circuit breakers;
+• Pre-screening gate: RDI screening (∼30× faster) + FOSC
+gradient-masking detection before expensive attack runs;
+• Multi-norm evaluation across ℓ1/ℓ2/ℓ∞/semantic/spatial
+with worst-case reporting;
+• Adaptive attack selection with memory-guided tiered es-
+calation;
+• Compliance mapping to NIST AI RMF, OWASP LLM
+Top 10, and the EU AI Act;
+• CI/CD integration via SARIF 2.1.0 output with 346+ au-
+tomated tests.
+Paper organisation. Section 2 surveys related work. Sec-
+tion 3 describes corpus selection, the intake protocol, and the
+contradiction analysis. Sections 4–10 present the seven struc-
+tured analyses. Section 11 describes the AUTO-ART archi-
+tecture. Section 12 presents empirical evaluation. Section 13
+proposes three novel technical directions with feasibility as-
+sessments. Section 14 discusses implications, and Section 15
+concludes.
+2
+Related Work
+Adversarial robustness foundations.
+Goodfellow et al. [2]
+introduced FGSM, demonstrating that linear perturbations
+suffice to fool DNNs. Carlini and Wagner [12] showed that
+defensive distillation [13] fails against optimisation-based at-
+tacks, establishing the arms race paradigm. Madry et al. [3]
+formalised PGD adversarial training as a min-max optimi-
+sation, defining the standard ℓ∞robustness benchmark on
+CIFAR-10 at ε=8/255. Athalye et al. [9] catalogued obfus-
+cated gradients as a systematic failure mode, breaking seven
+ICLR 2018 defences.
+Evaluation standardisation.
+Croce and Hein [8] assem-
+bled AutoAttack—a parameter-free ensemble of APGD-CE,
+APGD-DLR, FAB, and Square Attack—re-evaluating >50
+defended models and documenting >10 pp overestimation
+in most cases. RobustBench [14] operationalised this into a
+living leaderboard. Zhang et al. [6] proposed TRADES, de-
+composing robust loss into clean and adversarial terms; Li
+et al. [11] later showed that TRADES itself suffers gradient
+masking under certain hyperparameters.
+Multi-attack and continual robustness.
+Dai et al. [5] in-
+troduced MultiRobustBench (16 models × 9 attacks × 20
+strengths), revealing worst-case multi-attack robustness below
+random guessing. Dai et al. [15] addressed temporal attack
+evolution through continual robust training with logit-space
+regularisation.
+Stochastic defence evaluation.
+Cohen et al. [7] established
+randomised smoothing for certified ℓ2 robustness. Kassis et
+al. [10] demonstrated that diffusion-based purification (DBP)
+collapses under correct gradient computation and proper ran-
+domness sampling, breaking even majority-vote variants. Xiao
+et al. [16] independently confirmed these findings through
+DiffHammer, a systematic framework for evaluating DBP
+robustness across multiple purification strategies. Beyond
+stochastic defences, Guo et al. [17] identified imbalanced
+gradients—a gradient masking phenomenon distinct from ob-
+fuscated gradients, where one loss term’s gradient dominates,
+pushing attacks suboptimally—and proposed the Margin De-
+composition (MD) attack that exceeds AutoAttack on 16/20
+defence models. He et al. [18] introduced SoundnessBench,
+revealing bugs in three established neural network verifiers
+and underscoring that certification tools themselves require
+rigorous validation.
+Automated adversarial testing.
+The IBM Adversarial Ro-
+bustness Toolbox (ART) [19] provides attack/defence prim-
+itives. Microsoft Counterfit [20] targets ML model security
+assessments. Garak [21] scans LLM vulnerabilities across
+∼100 attack vectors. PyRIT [22] automates multi-turn red
+teaming. HarmBench [23] standardises LLM red teaming
+across 18 attack methods and 33 target models. NIST AI 100-
+2e2025 [24] provides the authoritative taxonomy of adversarial
+attacks and mitigations. Carlini et al. [4] benchmark LLM
+agents as autonomous adversaries, finding a 4–6× success gap
+between CTF-like and real tasks.
+LLM jailbreaking and agent security.
+Zou et al. [25] intro-
+duced GCG, a gradient-based token-level suffix optimiser that
+generates universal adversarial prompts transferable across
+aligned LLMs. Jia et al. [26] improved GCG with diverse
+target templates and multi-coordinate updating, achieving
+nearly 100% ASR. Huang et al. [27] proposed IRIS, which
+targets the refusal direction in LLM activations, reaching 90%
+ASR on GPT-3.5-Turbo and 76% on GPT-4o. Geisler et
+al. [28] replaced the standard affirmative-prefix objective with
+a REINFORCE-based distributional objective, doubling attack
+success on Llama 3 and lifting defended-model ASR from 2%
+to 50%. Chao et al. [29] proposed PAIR, an iterative black-box
+refinement method using an attacker LLM, achieving 60–80%
+success rates with ∼20 queries. Mehrotra et al. [30] extended
+this to tree-structured search with pruning (TAP), reaching
+70–85% success. Jin et al. [31] introduced AutoRedTeamer, a
+dual-agent system with lifelong attack memory that achieves
+20% higher attack success rates at 46% reduced cost. Chao et
+al. [32] standardised evaluation through JailbreakBench with
+100 behaviours and an evolving artefact repository. Wu et
+al. [33] dissected adversarial robustness of multimodal LM
+agents, identifying systematic vulnerabilities in visual ground-
+ing and tool use under adversarial perturbation. On the agent
+security front, Debenedetti et al. [34] constructed AgentDojo
+with 97 tasks and 629 injection test cases, finding that GPT-4o
+drops from 69% benign utility to 45% under prompt injec-
+tion. Zhan et al. [35] complemented this with InjecAgent
+2
+
+Table 1: Primary corpus: nine sources with verified venues. Labels
+C1–C9 are used as shorthand throughout the paper.
+ID
+Paper
+Year
+Venue
+C1
+Croce & Hein [8]
+2020
+ICML
+C2
+Dai et al. [5]
+2023
+ICML
+C3
+Carlini et al. [4]
+2025
+ICML
+C4
+Dai et al. [15]
+2025
+ICML
+C5
+Song et al. [43]
+2025
+UAI
+C6
+Kassis et al. [10]
+2025
+NeurIPS
+C7
+Li et al. [11]
+2025
+ICLR
+C8
+RobustBench [14]
+2021
+Benchmark
+C9
+OpenRT [44]
+2026
+Toolkit
+(1,054 test cases, 17 user tools), showing ReAct-prompted
+GPT-4 is vulnerable 24% of the time. The OWASP Agentic
+Applications Top 10 [36] standardises agent-specific threat
+categories (ASI01: Goal Hijack through ASI10), and MITRE
+ATLAS v5.3.0 [37] now includes case studies for MCP server
+compromises and malicious agent deployment.
+Adversarial resilience and regulatory analysis.
+Dai et
+al. [38] formalised continual adaptive robustness (CAR), argu-
+ing that defences should adapt to new attack types rather than
+only resist known ones—connecting multi-attack robustness
+to the open-world setting. Panfili et al. [39] provided the first
+systematic analysis connecting EU AI Act Article 15 to ML
+robustness terminology, identifying legal challenges in the
+standardisation process.
+Positioning of this work.
+Existing surveys [40–42] pro-
+vide narrative coverage but do not perform structured meta-
+scientific analysis.
+Existing frameworks [19, 20] provide
+attack primitives but lack pre-screening gates, compliance
+mapping, and gap-driven architecture. AUTO-ART is, to our
+knowledge, the first work that combines structured literature
+synthesis with an executable framework whose architecture is
+explicitly derived from identified gaps (Table 6).
+3
+Corpus and Evidence Policy
+Selection criteria: (i) peer-reviewed venue or widely-adopted
+benchmark; (ii) direct relevance to evaluation methodology;
+(iii) 2020–2026 temporal span capturing evolution from single-
+norm to multi-attack and agent-driven paradigms.
+Intake protocol. Table 2 summarises each source’s core claim
+and cluster assignment. We identify three clusters sharing
+methodological assumptions: Cluster A (evaluation reliabil-
+ity: C1, C3, C5, C7, C8) assumes that better attack or met-
+ric design yields trustworthy robustness numbers; Cluster B
+(multi-attack and temporal: C2, C4) assumes that threat di-
+versity and evolution are the primary barriers to deployment
+safety; Cluster C (stochastic defence: C6, C9) assumes that
+randomised pipelines require fundamentally different evalua-
+tion protocols.
+Table 2: Intake protocol: core claims (≤20 words) and cluster assign-
+ments. Clusters: (A) evaluation reliability, (B) multi-attack/temporal,
+(C) stochastic defence.
+ID Author
+Core Claim (Cluster)
+C1 Croce & Hein
+Attack ensembles expose
+overestimation in 50+ defences (A)
+C2 Dai et al.
+Worst-case multi-attack below
+random guessing (B)
+C3 Carlini et al.
+LLM agents 4–6× better on CTF
+than real code (A)
+C4 Dai et al.
+Continual training preserves
+backward-attack retention (B)
+C5 Song et al.
+Feature-space ratio gives 30× faster
+screening (A)
+C6 Kassis et al.
+Diffusion purification collapses
+under correct gradients (C)
+C7 Li et al.
+TRADES masks gradients under
+specific hyperparameters (A)
+C8 RobustBench
+Living leaderboard with fixed attack
+suite (A)
+C9 OpenRT
+Multimodal LLM red-teaming with
+stochastic probing (C)
+Table 3: Five contradictions identified across the corpus.
+Claim
+For
+Agst.
+Root Cause
+Fixed suites
+reliable
+C1,C8
+C2,C4
+New attacks invert
+leaderboard rankings
+Avg ≈worst
+C1
+C2
+Worst-case diverges by
+>23 pp
+DBP viable
+Prior
+C6
+Incorrect gradients in
+diffusion stack
+Proxies
+generalise
+C5
+C3
+CNN-only; agent tasks differ
+TRADES safe
+Users
+C7
+Hyperparameter-dependent
+masking
+Evidence rules. Claims are tied exclusively to this corpus.
+Citation-chain edges require two corpus works. Roadmap-
+only entries [45, 46] are placeholders, not evidentiary sources.
+Quantitative anchors match official proceedings pages.
+Contradiction finder. Table 3 identifies five direct contra-
+dictions across the corpus. These are not merely different
+emphases but incompatible empirical conclusions that cannot
+simultaneously hold.
+4
+Citation Chain Analysis
+We trace three concepts that recur most frequently across
+corpus papers (Figure 1).
+4.1
+Concept A: Reliable Evaluation
+Origin.
+Croce and Hein [C1] assemble AutoAttack, a
+parameter-free ensemble (APGD-CE, APGD-DLR, FAB,
+Square Attack), re-evaluating >50 defended models. They
+obtain lower robust accuracy in all but one case, often by >10
+pp, documenting that optimistic evaluation stems from attack
+tuning and gradient obfuscation.
+Challenge. Li et al. [C7] show that even TRADES—a
+well-established training procedure—exhibits gradient mask-
+ing under specific hyperparameter configurations (batch size,
+β, learning rate), introducing FOSC-based diagnostics. Kassis
+et al. [C6] challenge evaluation of diffusion-based purifica-
+tion: single purification trials and flawed gradients through
+3
+
+9 Corpus
+Sources
+ICML, NeurIPS,
+ICLR, UAI
+2020–2026
+Citation
+Chain
+(§4)
+Gap
+Scanner
+(§5)
+Method
+Audit
+(§6)
+Synthesis +
+Assumptions
+(§7–8)
+G1: Worst-case multi-attack
+G2: Agent CTF→real gap
+G3: Stochastic collapse
+G4: RDI generalisation
+G5: Continual robustness
+MultiNormEval avg+worst
+Agentic DOM/RAG/ctx
+MultiSample n-draw eval
+RDI+FOSC pre-screen
+Adaptive + DriftMon
+23.5 pp worst-case gap
+exposed (§12)
+92% masking detection
+τ = 0.82 rank fidelity
+30× pre-screen
+speedup; 346+ tests
+7 Protocols
+5 Gaps
+AUTO-ART
+Validate
+Corpus
+Analysis
+Gaps
+AUTO-ART Modules
+Results
+Figure 1: Paper overview. Nine corpus sources are analysed through seven structured protocols, yielding five ranked research gaps. Each
+gap maps directly to an AUTO-ART module, validated empirically. This end-to-end traceability—from literature synthesis to executable
+evaluation—is the paper’s core contribution.
+stochastic pipelines inflate robustness; majority-vote variants
+also collapse.
+Refinement. Song et al. [C5] propose RDI, an attack-
+independent metric from feature-space separation (∼30×
+faster than PGD). Carlini et al. [C3] separate CTF-like from
+real defence tasks, quantifying that LLM agents achieve 75%
+on stylised tasks but only 13% on real code.
+Status:
+Contested and evolving.
+Five incompatible
+paradigms coexist: fixed ensembles [C1,C2], training diagnos-
+tics [C7], stochastic protocols [C6], proxy metrics [C5], and
+agent benchmarks [C3].
+4.2
+Concept B: Gradient Masking
+Origin. Croce and Hein [C1] identify gradient masking as
+a recurring pitfall invalidating defence evaluations. Chal-
+lenge. Li et al. [C7] attribute TRADES overestimation to
+masking mechanisms activated by hyperparameters, propos-
+ing FOSC diagnostics and Gaussian augmentation. Kassis
+et al. [C6] identify a distinct vector: DBP pipelines yield in-
+correct gradients through the diffusion stack. Refinement.
+DiffBreak supplies correct differentiation through DBP [C6];
+Li et al. [C7] supply training-side mitigations. Status: Still
+evolving. No unified procedure handles deterministic, stochas-
+tic, multimodal, and agentic settings simultaneously.
+4.3
+Concept C: Multi-Attack Threat Models
+Origin. Dai et al. [C2] introduce MultiRobustBench (16
+models × 9 attacks × 20 strengths = 180 configurations).
+Self-challenge. Worst-case multi-attack robustness is below
+random guessing for evaluated models, even when averages
+improve [C2]. Refinement. Dai et al. [C4] extend to tempo-
+ral dynamics via CRT with logit-space regularisation (>100
+attack combinations). Status: Contested frontier. Average
+multi-attack robustness improves; worst-case behaviour and
+deployment-time drift remain open.
+Table 4: Five ranked research gaps. Scoring: Safety relevance (S),
+Deployment breadth (D), Corpus evidence (E); each 1–5.
+#
+Gap
+S
+D
+E
+Closest
+1
+Worst-case multi-attack
+5
+5
+5
+Dai et al. [C2]
+2
+Agent CTF→real gap
+5
+4
+4
+Carlini et al. [C3]
+3
+Stochastic defence collapse
+4
+4
+5
+Kassis et al. [C6]
+4
+RDI generalisation
+3
+4
+3
+Song et al. [C5]
+5
+Continual robustness
+4
+3
+3
+Dai et al. [C4]
+5
+Research Gap Analysis
+Ranking criterion: product of safety relevance (S), deploy-
+ment breadth (D), and corpus evidence strength (E), each
+scored 1–5. Gaps are ranked most-to-least significant; if fewer
+than five genuine gaps exist we would state so explicitly.
+G1: Worst-case multi-attack robustness (S5×D5×E5).
+Gap: Average leaderboard gains mask catastrophic worst-case
+failures; under worst-case attack selection, evaluated models
+perform below random guessing [C2].
+Why it exists: Methodological barrier—exhaustive adver-
+sary unions are computationally prohibitive (O(|A|×|ε|) per
+model); no architecture resists heterogeneous ℓp, spatial, and
+semantic failures simultaneously.
+Closest paper: Dai et al. [C2] came closest with 16 models ×
+9 attacks × 20 strengths, but did not propose a training recipe
+that closes the avg/worst-case gap.
+Path to resolution: Multi-norm adversarial training curricula
+with worst-case-aware loss functions; scalable attack union
+approximations; deployment-time attack selection oracles.
+G2: Agent transfer failure (CTF→real) (S5×D4×E4).
+Gap: Best LLM agent achieves 75% on CTF tasks but
+only 13% on real implementations; a stronger LLM reaches
+54%/21% respectively [C3].
+Why it exists: Assumed but untested—the community im-
+plicitly treats stylised benchmarks as predictive of real code,
+but production defence code introduces library complexity,
+versioning, and environment coupling absent from CTF tasks.
+4
+
+Closest paper: Carlini et al. [C3] quantified the gap but did
+not propose methods to close it.
+Path to resolution: Ecologically valid benchmark suites sam-
+pling production codebases; agent architectures with retrieval
+over API documentation; staged evaluation from unit-level to
+integration-level adversarial tasks.
+G3: Stochastic defence collapse (S4×D4×E5).
+Gap: Diffusion-based purification (DBP) robustness collapses
+under correct gradient computation and proper randomness
+sampling, defeating even majority-vote variants [C6].
+Why it exists: Methodological barrier—prior evaluation pro-
+tocols under-sampled randomness draws and relied on approx-
+imate gradients through the diffusion stack, yielding inflated
+robustness.
+Closest paper: Kassis et al. [C6] fully characterised the failure
+but confined analysis to image-domain DBP; audio and text
+purification remain unevaluated.
+Path to resolution: Standardised multi-draw evaluation proto-
+cols (n≥50 draws); differentiable-through-diffusion toolkits;
+modality-agnostic purification benchmarks.
+G4: Proxy metric generalisation (S3×D4×E3).
+Gap: RDI [C5] achieves ∼30× screening speedup but is val-
+idated only on CNN feature geometries; generalisation to
+Vision Transformers (ViTs), LLMs, and multi-modal encoders
+is untested.
+Why it exists: Lack of data—the metric study used only
+CNN-based classifiers; ViT and LLM feature manifolds have
+fundamentally different geometries (local receptive-field fea-
+tures vs. global self-attention representations).
+Closest paper: Song et al. [C5] demonstrated strong CNN
+correlation but acknowledged the CNN-only scope as a limita-
+tion.
+Path to resolution: Cross-architecture validation on ViT, DeiT,
+Swin, and decoder-only LLMs; architecture-conditional cali-
+bration of the RDI threshold; feature-geometry normalisation
+layers.
+G5:
+Continual robustness under open-world drift
+(S4×D3×E3).
+Gap: CRT [C4] improves backward-attack retention but of-
+fers no guarantees against adversary types outside training
+coverage—the “open-world” setting real deployments face.
+Why it exists: Ethical/logistical constraint—longitudinal
+field studies of adversarial drift require sustained deployment
+monitoring that no academic lab currently conducts at scale.
+Closest paper: Dai et al. [C4] demonstrated >100 attack
+combinations in continual training but used a closed attack
+vocabulary.
+Path to resolution: Industry–academia partnerships for longi-
+tudinal deployment telemetry; open-vocabulary attack gener-
+ation via LLM-guided perturbation synthesis; online robust
+training with novelty detection.
+6
+Methodology Audit
+Step 2: Synthesis. Dominant methodology: Computational
+ML experiments and benchmark construction account for 7 of
+9 entries. Rationale: executable attacks operationalise claims
+where analytic certification is prohibitive [C5], and repro-
+ducibility demands public code and checkpoints [C1,C2,C6].
+Absent despite relevance:
+Randomised controlled trials
+(RCTs) of deployment pipelines, ethnography of security prac-
+titioner workflows, prospective field studies of adversarial
+incidents in production, and user studies of how practitioners
+interpret robustness reports. These absences limit the field’s
+ability to validate that lab findings transfer to operational set-
+tings.
+Step 3: Weakest methodology. Among peer-reviewed
+entries, Song et al. [C5] is most vulnerable to methodological
+criticism:
+• Sample size adequacy: Validated on a per-paper selection
+of CNN models; no systematic sampling across architecture
+families or scales.
+• Control for confounds: Feature-space geometry varies fun-
+damentally between CNNs (local receptive fields), ViTs
+(global attention), and decoder-only LLMs (sequential to-
+ken embeddings). The metric’s inter/intra-class distance
+ratio may conflate architecture-specific geometry with gen-
+uine robustness signal.
+• Replicability: Code availability is partial; key implementa-
+tion details (layer selection heuristic, centroid computation
+for imbalanced classes) are underspecified.
+• Transparency of reporting: Confidence intervals on the
+correlation between RDI and attack-based rankings are
+not reported; the ∼30× speedup claim lacks wall-clock
+variance across hardware configurations.
+Criterion most clearly failed: Control for confounds—the
+CNN-only validation leaves the metric’s validity for the fastest-
+growing model families (ViTs, LLMs) entirely unsubstanti-
+ated.
+7
+Master Synthesis
+Word budget: ≤400 words total. No hedging.
+Established consensus.
+Ensemble attacks expose inflated
+robustness: Croce and Hein [C1] lower robust accuracy for
+>50 models by >10 pp. Gradient integrity is prerequisite to
+valid evaluation: Li et al. [C7] tie TRADES gaps to masking;
+Kassis et al. [C6] tie DBP failures to incorrect gradients. Multi-
+attack evaluation matters: Dai et al. [C2] unify nine attack
+families; Dai et al. [C4] extend to evolving attacks.
+Active debates.
+Position A: adaptive attack suites are
+ground truth. Position B: attack-independent proxies or agent
+benchmarks compress evaluation cost [C5,C3]. On stochastic
+defences: diffusion projects toward clean mass vs. DiffBreak
+5
+
+Table 5: Methodology comparison across the corpus. Key limitation paraphrases authors’ stated constraints.
+Paper
+Type
+Data
+Scale
+Key Limitation
+Code
+Croce & Hein [C1]
+Attack-ensemble
+eval
+Defended models
+>50 models
+Static ensemble; prior evals optimistic
+✓
+Dai et al. [C2]
+Benchmark suite
+Leaderboard
+16×180
+Worst-case < random guessing
+✓
+Carlini et al. [C3]
+Agent benchmark
+Curated tasks
+CTF/real split
+4–6× CTF-to-real gap
+✓
+Dai et al. [C4]
+Controlled ML expt.
+CIFAR/ImageNette
+>100 combos
+Open-world drift outside scope
+✓
+Song et al. [C5]
+Metric study
+Image classif.
+Per-paper
+Must generalise beyond CNNs
+∼
+Kassis et al. [C6]
+Theory + toolkit
+DBP pipelines
+Per-paper
+MV schemes still break
+✓
+Li et al. [C7]
+Controlled ML expt.
+CIFAR-10/100
+Config grid
+Hyperparameter-dependent
+✓
+RobustBench [C8]
+Living benchmark
+Checkpoints
+Many models
+Scope fixed by maintainers
+✓
+OpenRT [C9]
+Software artifact
+Multimodal LLM
+Not specified
+No proceedings text
+✓
+0
+1
+2
+3
+4
+5
+A1: Fixed suite
+A2: Avg⇒wc
+A3: RDI gen.
+A4: CTF→prod.
+A5: Single draws
+A6: CRT lifecyc.
+A7: TRADES def.
+A8: Ckpt prov.
+5
+5
+4
+3.5
+3.5
+3
+3
+2.5
+Consequence (1–5)
+Figure 2: Assumption risk ranking. A1–A2 are existential threats to
+the leaderboard paradigm.
+shows protocols are broken [C6]. On multi-attack metrics:
+average gains conflict with catastrophic worst cases [C2].
+Strongest evidence.
+Cross-model re-evaluation documents
+systematic optimism [C1]—the largest empirical finding. Av-
+erage gains coexist with worst-case < random guessing [C2].
+DBP collapses under correct gradient + sampling [C6].
+Key open question.
+Which evaluation stack—adaptive en-
+sembles, stochastic replication, attack-independent metrics,
+autonomous agents—should be mandatory before certifying a
+model as safe against adaptive, multi-channel adversaries in
+open deployment?
+8
+Assumption Stress Test
+We identify eight assumptions the corpus relies on but never
+explicitly validates (Figure 2).
+Assumptions are ranked from most to least consequential.
+Each is foundational to the conclusions drawn and plausibly
+false or context-dependent.
+A1. A fixed attack suite represents safety. Shared by: C1,
+C2, C5. Risk: High. Consequence: If false, all leader-
+board rankings are temporally bounded artifacts—conclusions
+need wholesale revision, and the entire comparative robustness
+paradigm collapses. New attacks routinely bypass previously
+“sufficient” suites; no temporal validity guarantee exists.
+A2.
+Average robustness approximates worst-case safety.
+Shared by: C1, C2, C4 (implicitly, through reporting con-
+ventions). Risk: High. Consequence: If false, “progress”
+metrics systematically overstate deployment safety. Dai et
+al. [C2] already demonstrate contradiction: worst-case robust-
+ness falls below random guessing even when averages improve.
+Key findings across five years of benchmarking would require
+reinterpretation.
+A3. RDI generalises beyond CNN feature geometry. Shared
+by: C5, C9. Risk: Medium–High. Consequence: If false,
+fast screening mis-ranks ViTs and LLMs, producing false
+negatives (unsafe models pass) or false positives (safe models
+waste compute on full evaluation). The 30× efficiency claim
+becomes architecture-conditional.
+A4. CTF performance predicts production adversarial capa-
+bility. Shared by: C3, agent-benchmarking community. Risk:
+Medium. Consequence: If false, investment in agent-based
+red teaming yields low real-world ROI; engineering effort is
+misallocated toward tasks that do not transfer to deployment
+settings.
+A5. Single randomness draws suffice for stochastic defence
+evaluation. Shared by: Prior DBP evaluations cited in C6.
+Risk: Medium. Consequence: If false, an entire defence
+class (diffusion purification, randomised smoothing variants)
+requires re-evaluation; published robustness numbers collapse
+under proper sampling [C6].
+A6. Continual robust training closes the deployment lifecy-
+cle gap. Shared by: C4, practitioners adopting CRT. Risk:
+Medium. Consequence: If false, CRT provides false lifecycle
+confidence; models degrade against out-of-vocabulary attacks
+post-deployment.
+A7. TRADES default hyperparameters yield stable robust-
+ness. Shared by: Practitioners using default configurations;
+C7 deployments. Risk: Medium. Consequence: If false,
+widespread overestimation in mis-tuned regimes; users who
+adopt TRADES without hyperparameter validation inherit
+masked gradients.
+A8. Leaderboard checkpoints faithfully match published code.
+Shared by: C8 users, downstream evaluations. Risk: Low–
+Medium. Consequence: If false, replication failures prop-
+agate silently through downstream comparisons; checkpoint
+provenance becomes a supply-chain risk.
+9
+Knowledge Map
+Structured outline (clean format, no prose):
+1. Central Claim: Robustness is only as credible as the eval-
+6
+
+Central Claim: Robustness is only as credible as the evaluation protocol
+Ensembles reveal
+overestimation
+C1,C3
+avg ̸= worst-case
+robustness
+C2,C4
+Gradient integrity
+prerequisite
+C6,C7
+Proxies accel.
+not replace
+C5,C1
+Suites vs.
+proxies
+DBP viable
+vs. broken
+Avg progress
+vs. worst-case
+Multi-attack
+training recipe?
+Agents replace
+human red teams?
+Claim
+Pillars
+Contested
+Frontier
+Figure 3: Knowledge map of adversarial robustness evaluation. Four
+layers: established central claim, four supporting pillars with corpus
+evidence (C1–C7), three contested zones, and two frontier questions.
+uation protocol that measures it. No single claim fully
+unifies the field; a competing centre—robustness should
+be certified, not just tested—exists in the randomised-
+smoothing lineage but is minority-held in this corpus.
+2. Supporting Pillars:
+(a) Ensemble attacks reveal systematic overestimation—
+supported by C1, C3.
+(b) Multi-attack:
+average ̸= worst-case robustness—
+supported by C2, C4.
+(c) Gradient integrity is prerequisite to valid evaluation—
+supported by C6, C7.
+(d) Proxy metrics can accelerate but not replace attack-
+based evaluation—supported by C5, C1.
+3. Contested Zones:
+(a) Adaptive attack suites as ground truth vs. attack-
+independent proxy metrics [C1 vs. C5].
+(b) Diffusion-based purification as viable defence vs. fun-
+damentally broken paradigm [C6].
+(c) Average multi-attack robustness as meaningful progress
+vs. worst-case as the only valid measure [C2].
+4. Frontier Questions:
+(a) What training recipe produces models robust to adver-
+sarial attack unions, not just individual norms?
+(b) Under what conditions can autonomous LLM agents
+reliably replace human red teams for production code?
+5. Newcomer Reading List (selection criterion: founda-
+tional to understanding the field, not merely most cited):
+(a) Croce & Hein, 2020 [8]—why:
+establishes that
+parameter-free ensemble attacks are non-optional for
+honest evaluation; every subsequent paper in this cor-
+pus builds on or reacts to AutoAttack.
+(b) Dai et al., 2023 [5]—why: reframes robustness from a
+single-number claim to a multi-dimensional measure-
+ment problem; introduces the avg/worst-case distinc-
+tion that dominates current debate.
+(c) Carlini et al., 2025 [4]—why: bridges adversarial ML
+and LLM agent evaluation, quantifying the external-
+validity gap that limits the field’s real-world claims.
+10
+The “So What” Test
+Written for a smart non-expert—no citations, no jargon, no
+hedging.
+1. What has been established. When researchers construct
+stronger attacks and apply stricter testing protocols, AI sys-
+tems are consistently less robust than originally reported—
+sometimes by large margins. Testing against many attack
+types simultaneously reveals that a system can score well on
+average yet fail its hardest test worse than random guessing.
+2. What remains open. No single evaluation pipeline has
+been accepted as sufficient for the largest deployed systems,
+across all realistic types of input manipulation, or for auto-
+mated tools that match human expert findings on production
+code. Independent laboratories can reach contradictory safety
+conclusions using testing approaches that each appear method-
+ologically sound.
+3. Why this matters. Safety decisions about products, reg-
+ulatory compliance, and legal liability depend on robustness
+numbers that the literature examined here shows are system-
+atically inflated. The EU AI Act now requires demonstrated
+robustness for high-risk systems, and the gap between reported
+and actual robustness translates directly into regulatory and
+engineering risk.
+11
+AUTO-ART: Framework Design
+The AUTO-ART framework is publicly available at https:
+//github.com/abhitall/auto-art [1].
+11.1
+Detailed Architecture
+Figure 5 illustrates the data flow through AUTO-ART’s
+pipeline with tensor shapes at each stage. The model under
+test f : RB×C×H×W →RB×K (for K classes) is wrapped
+in a framework-agnostic estimator that normalises inference
+across PyTorch, TensorFlow, and scikit-learn backends. The
+pre-screening gate operates on intermediate representations
+ϕ(x) ∈RB×D (penultimate layer), computing class centroids
+µc ∈RD for RDI and gradient norms for FOSC.
+11.2
+Threat Coverage
+Figure 6 shows AUTO-ART’s seven attack categories and their
+module counts, spanning classical adversarial ML through
+agentic LLM threats.
+11.3
+Gap-to-Module Mapping
+Table 6 shows how each identified gap maps to AUTO-ART’s
+architecture.
+11.4
+Certification and Verification
+AUTO-ART integrates two certification approaches. Ran-
+domised smoothing [7] provides statistical ℓ2 robustness cer-
+7
+
+Model f + Data (X, Y ) + YAML Config
+Phase 1: Pre-Screen (FOSC + RDI + WB/BB)
+Mask?
+Phase 2: Multi-Norm (ℓ1/ℓ2/ℓ∞/sem./spat.)
+Phase 3–4: Defence Eval + Compliance
+Phase 5–6: Report (SARIF/HTML) + Gate
+Flag: adjust
+attack weights
+Attacks
+(50+)
+Defences
+(28)
+Metrics
+RDI/FOSC
+Certify
+RS/IBP
+Comply
+NIST/EU
+ART v1.20+ / PyTorch / TF / sklearn / HF
+No
+Yes
+Figure 4: AUTO-ART evaluation pipeline. The pre-screening gate
+(Phase 1) runs FOSC and RDI before expensive multi-norm attacks.
+If gradient masking is detected, attack weights are adjusted and
+targeted evaluation replaces exhaustive search, yielding ∼30× faster
+screening compared to full AutoAttack (Table 10).
+Table 6: Explicit mapping from literature gaps to AUTO-ART mod-
+ules.
+Gap
+Problem
+AUTO-ART Module
+G1
+Worst-case multi-attack
+MultiNormEval: avg + worst
+across 5 norms
+G2
+Agent transfer failure
+Agentic: DOM, RAG poison,
+context injection
+G3
+Stochastic collapse
+Multi-sample eval:
+config-
+urable draws per defence
+G4
+RDI generalisation
+RDI + full-attack correlation
+validation mode
+G5
+Continual robustness
+Adaptive selector + DriftMoni-
+tor
+tificates scalable to any network size; certified radii are com-
+puted with configurable confidence levels (α ∈{0.001, 0.01})
+and sampling budgets (n ∈{100, 1000}). For smaller net-
+works (<1M parameters), AUTO-ART supports integration
+with alpha-CROWN [47] (the VNN-COMP winner, 2021–
+2024), which provides exact bound-propagation verification
+on GPU. The GREAT Score (available through ART v1.20+)
+offers robustness estimation for generative models. Certifica-
+tion results feed directly into compliance reports: EU AI Act
+Article 15 [48] requires demonstrated robustness, and certified
+radii provide quantitative evidence for regulatory submissions.
+11.5
+Pre-Screening Gate
+The primary architectural contribution is the pre-screening
+gate (Algorithm 1): gradient masking detection and RDI
+computation run before the expensive attack ensemble.
+Algorithm 1 AUTO-ART Evaluation Pipeline
+Require: Model f, data (X, Y ), config C
+Ensure: Report R (JSON + SARIF 2.1.0)
+1: Phase 1 — Pre-screening
+2:
+g ←FOSC(f, X, Y )
+{Gradient masking}
+3:
+r ←RDI(f, X, Y )
+{∼30× faster}
+4: if g > τmask then
+5:
+Flag unreliable; adjust attack weights
+6: end if
+7: Phase 2 — Multi-norm attack
+8: for p ∈{ℓ1, ℓ2, ℓ∞, sem., spat.} do
+9:
+Select attacks (adaptive memory-guided)
+10:
+Execute in parallel; record ASR, worst/avg
+11: end for
+12: Phase 3 — Defence evaluation
+13: Phase 4 — Compliance (NIST / OWASP / EU AI Act)
+14: Phase 5 — Report R in JSON, MD, SARIF, HTML
+15: Phase 6 — Gate pass/fail vs. thresholds
+16: return R
+11.6
+Compliance Mapping
+AUTO-ART maps evaluation results to seven regulatory frame-
+works: (i) NIST AI RMF [24]: MEASURE function maps to
+multi-norm attack execution; MANAGE function maps to re-
+mediation recommendations; (ii) NIST AI 600-1 [49]: GenAI-
+specific risks (13 categories, 400+ actions) map to LLM red-
+teaming modules; (iii) OWASP LLM Top 10 [50]: 8/10
+categories fully covered (LLM01 Prompt Injection through
+LLM08, including new LLM07 System Prompt Leakage
+and LLM08 Vector/Embedding Weaknesses); 2/10 partial;
+(iv) OWASP Agentic Top 10 [36]: ASI01 (Goal Hijack)
+and ASI02 (Tool Misuse) map to agentic attack modules;
+developed by 100+ security researchers; (v) EU AI Act Ar-
+ticle 15 [48]: pre-screening gate and worst-case reporting
+address the explicit requirements for demonstrated robustness
+against adversarial examples and poisoning attacks (high-risk
+obligations apply August 2026); (vi) ETSI EN 304 223 [51]:
+13 security principles across 5 lifecycle phases (design, devel-
+opment, deployment, maintenance, end-of-life) explicitly cov-
+ering data poisoning, model obfuscation, and indirect prompt
+injection; (vii) ISO/IEC 24029-3 [52]: statistical methods for
+neural network robustness assessment (DIS ballot Feb 2026),
+directly applicable to AUTO-ART’s certification modules.
+MITRE ATLAS technique IDs [37] are associated with each
+attack category for standardised threat classification (16 tactics,
+84 techniques as of v5.3.0, including agentic AI case studies).
+The CSA MAESTRO framework [53] provides complemen-
+tary seven-layer threat modelling for multi-agent deployments.
+Output reports include compliance evidence in JSON and
+SARIF 2.1.0 formats suitable for audit workflows and CI/CD
+integration.
+8
+
+Input
+x ∈
+RB×C×H×W
+Model f
+Estimator
+Wrapper
+Features
+ϕ(x) ∈
+RB×D
+Adaptive
+Attack
+Selector
+Multi-Norm
+Attack
+δ∗=
+arg max L
+Report
+SARIF 2.1.0
+JSON/HTML
+RDI Gate
+µc ∈RD
+dinter/dintra
+FOSC Gate
+∥∇xL∥2
+3-signal
+ensemble
+Attack
+Memory
+M
+Compliance
+NIST/OWASP
+EU AI Act
+32×3×32×32
+32×640
+ASR, τ, acc
+Figure 5: Detailed AUTO-ART architecture. Tensor shapes shown for a WRN-28-10 on CIFAR-10 with batch size B = 32, feature
+dimension D=640. The pre-screening gate (RDI + FOSC) operates on features ϕ(x) before the attack selector queries attack memory M for
+adaptive prioritisation.
+0
+10
+20
+30
+40
+Evasion (37+)
+Poisoning (10+)
+NLP/LLM (5+)
+Extraction (3)
+Inference (8+)
+Audio (2)
+Agentic (3)
+37
+10
+5
+3
+8
+2
+3
+Attack Modules
+Figure 6: AUTO-ART attack taxonomy. Seven categories totalling
+53 implementations span classical evasion through agentic LLM
+threats.
+11.7
+Formal Metric Definitions
+RDI (Robustness Diagnostic Index). Given model f, dataset
+{(xi, yi)}N
+i=1, let ϕ(x) denote the penultimate-layer represen-
+tation. Compute class centroids µc =
+1
+|Sc|
+P
+x∈Sc ϕ(x), inter-
+class distance dinter = meanc̸=c′∥µc −µc′∥2, and intra-class
+distance dintra = meanc meanx∈Sc∥ϕ(x) −µc∥2. Then:
+RDI = clamp
+dinter −dintra
+dinter + ϵ
+, 0, 1
+
+(1)
+where ϵ = 10−8. Interpretation: RDI > 0.7 (high robust-
+ness), 0.4–0.7 (moderate), 0.2–0.4 (low), < 0.2 (very low).
+These thresholds are calibrated on our 10-model RobustBench
+corpus (Section 12) by maximising Kendall τ agreement with
+full AutoAttack rankings; a sensitivity analysis appears in
