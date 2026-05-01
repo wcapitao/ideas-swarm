@@ -1,525 +1,0 @@
-If Only My CGM Could Speak: A Privacy-Preserving Agent for Question
-Answering over Continuous Glucose Data
-Yanjun Cui1, Ali Emami2, Temiloluwa Prioleau2*, Nikhil Singh1*
-1Dartmouth College
-2Emory University
-yanjun.cui.gr@dartmouth.edu, ali.emami@emory.edu,
-temiloluwa.prioleau@emory.edu, nikhil.u.singh@dartmouth.edu
-Abstract
-Continuous glucose monitors (CGMs) used
-in diabetes care collect rich personal health
-data that could improve day-to-day self-
-management. However, current patient plat-
-forms only offer static summaries which do
-not support inquisitive user queries. Large lan-
-guage models (LLMs) could enable free-form
-inquiries about continuous glucose data, but
-deploying them over sensitive health records
-raises privacy and accuracy concerns. In this
-paper, we present CGM-Agent, a privacy-
-preserving framework for question answering
-over personal glucose data. In our design, the
-LLM serves purely as a reasoning engine that
-selects analytical functions. All computation
-occurs locally, and personal health data never
-leaves the user’s device. For evaluation, we
-construct a benchmark of 4,180 questions com-
-bining parameterized question templates with
-real user queries and ground truth derived from
-deterministic program execution. Evaluating 6
-leading LLMs, we find that top models achieve
-94% value accuracy on synthetic queries and
-88% on ambiguous real-world queries. Errors
-stem primarily from intent and temporal ambi-
-guity rather than computational failures. Addi-
-tionally, lightweight models achieve competi-
-tive performance in our agent design, suggest-
-ing opportunities for low-cost deployment. We
-release our code and benchmark to support fu-
-ture work on trustworthy health agents.1
-1
-Introduction
-Modern health sensors generate dense longitudi-
-nal records that, in principle, support fine-grained
-understanding of personal physiology and behav-
-ior. In diabetes care, continuous glucose monitors
-(CGMs) collect data for close monitoring of glu-
-cose patterns roughly every five minutes (American
-*Co-corresponding authors.
-1Code available at:
-https://github.com/yanjunCC/
-cgm-agent-release
-Diabetes Association, 2025a; Dexcom, 2025; Ab-
-bott Diabetes Care, 2025). Over months of CGM
-use, these devices accumulate detailed records of
-glucose fluctuations, encoding behavioral and phys-
-iological signals that could inform lifestyle deci-
-sions, medication adjustments, and clinical con-
-versations. However, current user-interaction plat-
-forms like Dexcom Clarity and LibreView offer
-only static, pre-defined summaries (Dexcom, Inc.,
-2025; Abbott Diabetes Care, 2024), thereby lim-
-iting the ability for a user to explore and learn
-hidden insights from their own data. For example,
-when a user has targeted questions like,“How does
-my glucose control on weekdays compare to week-
-ends?”, they have to download their data and man-
-ually compute the needed metrics to find answers
-to their questions. The gap between the richness
-of CGM data and rigidity of existing interfaces
-leaves users without personalized, on-demand in-
-sights they need to maximally benefit from their
-personal health data.
-LLMs offer a promising solution for a conver-
-sational interface through which users can ask tar-
-geted questions in plain language. However, de-
-ploying LLMs over sensitive health data raises
-serious concerns. Cloud-based models would re-
-quire transmitting personal health data to external
-servers which introduces significant safety and pri-
-vacy risks. Moreover, LLMs are prone to numerical
-errors when processing time-series data, making
-them less reliable for direct use (Healey and Ko-
-hane, 2024; Healey et al., 2025).
-In this paper, we present CGM-Agent, a modu-
-lar framework that enables free-form question an-
-swering (QA) on personal glucose data while en-
-suring that personal health data never leaves the
-user’s device (Figure 1). Our key approach is to
-decouple reasoning from computation so that the
-LLM serves only as a reasoning engine that inter-
-prets user intent and selects appropriate analytical
-functions, while all data processing occurs in a lo-
-arXiv:2604.17133v1 [cs.AI] 18 Apr 2026
-
-
-
-
- 
-
-
-
-
-
- 
-
-
-
-Unanswerability Justification
-
-
-
- 
-
-
-
- 
-✅­
-❌
-
-
-How long after my 
-last meal did glucose 
-levels rise?
-Does splitting insulin 
-boluses help me…?
-While I don’t have access to 
-your food logs…I can 
-certainly show you when 
-your glucose levels rose most 
-signiﬁcantly …Between 10:27 
-PM and 10:42 PM, your 
-glucose jumped by 51 mg/dL
-I don’t have access to 
-your insulin logs…
-|
-Chat
-
-
-
-
-
-
-
-
-
-
-Figure 1: Overview of CGM-Agent. The pipeline consists of three layers: (1) the Input Processor resolves
-ambiguous queries, (2) the Analytical Agent generates tool calls executed in a local sandbox, and (3) the Response
-Generator synthesizes a natural language answer. Raw CGM data (shown in the bottom sandbox) never crosses the
-privacy boundary; only function calls and aggregated metrics are exchanged with the LLM.
-cal execution sandbox. In our implementation, the
-LLM receives only aggregated CGM metrics, never
-raw time-series, eliminating the need to transmit
-sensitive personal health data to the cloud.
-Our main contributions are:
-A Grounded QA Benchmark.
-We construct
-a dataset of 4,180 questions spanning both syn-
-thetic templates grounded in clinical guidelines
-(Battelino et al., 2019; American Diabetes Asso-
-ciation, 2025b) and real user queries sourced via
-interviews with CGM users. All ground-truth an-
-swers are derived from deterministic execution of
-a custom-designed Python toolkit developed in this
-work, ensuring reproducibility (§3).
-A Privacy-Preserving Agent Architecture.
-We
-propose a three-layer pipeline that separates LLM
-reasoning from data access. Confining raw CGM
-data to a local sandbox and exposing only function
-calls to the model supports accurate, personalized
-responses without compromising user privacy (§4).
-Empirical Analysis of Tool-Augmented LLMs.
-We benchmark 6 leading proprietary and open-
-weight models through a layer-wise evaluation.
-Our results show that lightweight models achieve
-competitive accuracy on well-structured queries,
-while real-world, often ambiguous user questions
-expose significant challenges in intent disambigua-
-tion and temporal grounding (§5).
-2
-Related Work
-Tool-Augmented LLM Reasoning.
-Large lan-
-guage models are prone to errors in mathematical
-reasoning and factual recall, motivating work on
-tool augmentation (Schick et al., 2023; Yao et al.,
-2022). Toolformer (Schick et al., 2023) showed
-that LLMs can learn to invoke external APIs via
-self-supervised learning; ReAct (Yao et al., 2022)
-established interleaving reasoning traces with ex-
-ecutable actions for multi-step problem solving.
-These frameworks have been extended to domain-
-specific settings: SciAgent (Ma et al., 2024) and
-ToolHop (Ye et al., 2025) advance tool-augmented
-reasoning and evaluation in scientific domains,
-while MMedAgent (Li et al., 2024a) and MeNTi
-(Zhu et al., 2025) adapt tool calling to clinical de-
-cision support. However, these systems typically
-operate over structured databases or static docu-
-ments rather than personal longitudinal data, and
-do not address the privacy constraints inherent in
-patient-facing applications.
-LLMs for Diabetes Management.
-Prior work
-has applied LLMs to diabetes education, coach-
-ing, and forecasting, yet evaluations have exposed
-critical limitations (Abbasian et al., 2024; Mitchell
-et al., 2025; Mamun et al., 2025; Li et al., 2025).
-For example, Healey and Kohane (2024); Healey
-et al. (2025) showed that GPT-4 frequently mis-
-applies diabetes-specific calculations and fails at
-CGM pattern recognition.
-DM-Bench (Cardei
-et al., 2025) benchmarks LLMs on patient-facing
-diabetes decision-making tasks across 15,000 in-
-dividuals with multimodal behavioral logs. Fur-
-thermore, commercial systems such as ChatCGM
-(ChatCGM, 2024) and Diabetes Cockpit (Cockpit,
-2025), which reflect growing market demand, of-
-fer LLM-powered glucose interfaces but remain
-closed-source with undisclosed evaluation proce-
-dures. Our work complements these efforts by
-providing an open benchmark with deterministic,
-
-reproducible ground truth, and a privacy-preserving
-architecture that keeps raw CGM data local.
-Privacy in Personal Health AI.
-Cloud-based
-LLMs require transmitting sensitive records to ex-
-ternal servers, raising concerns about data secu-
-rity and regulatory compliance (Winslow et al.,
-2025). CGM data carries significant privacy risks,
-thus many existing platforms operate under reg-
-ulatory gaps that leave patients with little to no
-control over how their data is collected, stored, or
-shared (Downey et al., 2025; Randine et al., 2025).
-Some commercial systems mitigate this by send-
-ing only statistical summaries to the LLM, how-
-ever this approach limits the richness of analysis
-and is proprietary in most cases (Cockpit, 2025).
-Prior work on privacy-preserving LLM inference
-formalizes the Honest-but-Curious (HbC) threat
-model for cloud providers (Li et al., 2024b): the
-provider executes instructions faithfully but may
-log and exploit transmitted data. Locally deployed
-LLMs have been proposed as one response to this
-threat in healthcare (Wiest et al., 2024; Montagna
-et al., 2025), but typically at the cost of model ca-
-pability. In contrast, our work proposes an open,
-modular architecture in which raw CGM data never
-leaves the local device; the LLM receives only ag-
-gregated metrics, whose low temporal resolution
-provides protection against re-identification (U.S.
-Department of Health and Human Services, 2012;
-El Emam et al., 2011).
-3
-Dataset
-We construct a QA benchmark for CGM data com-
-prising 4,180 queries. The dataset combines syn-
-thetic templates grounded in clinical guidelines
-with real user questions collected through for-
-mative interviews with current CGM users. All
-ground-truth answers are derived from determinis-
-tic execution of a validated Python toolkit, ensuring
-mathematical precision and reproducibility.
-3.1
-CGM Data Source
-For an empirical evaluation, we curate CGM
-records from 19 individuals drawn from two pub-
-lic datasets, covering both Type 1 Diabetes (T1D)
-and Type 2 Diabetes (T2D). We prioritized sub-
-jects with the longest recording duration, thereby
-selecting 11 T1D subjects from AZT1D (Khame-
-sian et al., 2025) (CGM duration: 45–49 days, 5-
-minute sampling interval), and 8 T2D subjects from
-ShanghaiT2DM (Zhao et al., 2023) (CGM duration:
-Characteristic
-AZT1D
-ShanghaiT2DM
-Diabetes Type
-T1D
-T2D
-Subjects
-11
-8
-Sampling Interval
-5 min
-15 min
-Duration (days)
-45–49
-24–179
-Missing Days
-0
-0–153
-Missing Samples (%)
-1.2–2.4
-4.0–86.2
-TIR Range (%)
-63.2–92.7
-41.5–98.7
-Table 1: CGM dataset used in this study (N = 19).
-24–179 days, 15-minute sampling interval). The
-mapping between anonymous subject identifiers
-and original dataset identifiers is provided in Ap-
-pendix J.
-This combination provides a realistic testbed as
-AZT1D offers high-frequency, continuous record-
-ings ideal for verifying the functional correctness,
-while ShanghaiT2DM introduces challenges of
-sparser sampling and significant missing data seg-
-ments (up to 153 missing days for some subjects).
-Together, the combined dataset reflects the hetero-
-geneity of real-world CGM use, spanning a wide
-range of Time in Range (TIR, 70–180 mg/dL) val-
-ues (41.5–98.7%) and missing data rates (Table 1).
-3.2
-Analytical Toolkit
-To ensure clinically meaningful and reproducible
-evaluation, we developed a Python toolkit that
-serves two purposes: (1) generating ground-truth
-answers for benchmark queries, and (2) providing
-executable functions for the agent at inference time.
-We organize the toolkit into two tiers.
-Standard Glycemic Metrics.
-Informed by the
-international consensus recommendation report for
-CGM data interpretation (Battelino et al., 2019)
-and the ADA Standards of Care (American Di-
-abetes Association, 2025b), this tier implements
-standard CGM metrics such as mean glucose, Time
-in Range (TIR, 70–180 mg/dL), Time Below Range
-(TBR, <70 mg/dL), and Time Above Range (TAR,
->180 mg/dL), while enabling statistical aggrega-
-tion and comparative analysis across user-defined
-date ranges. For each specified time window, the
-system calculates these metrics alongside the CGM
-weartime during the associated date range. Follow-
-ing recommended guidelines, results are flagged
-when CGM weartime falls below 70% (Battelino
-et al., 2019), enabling the agent to recognize when
-a query cannot be reliably answered due to insuffi-
-cient glucose data.
-
-User-Driven Analytics.
-Based on findings from
-our formative CGM user interviews (described
-below), we extended the toolkit to address user-
-expressed needs beyond standard metrics. This tier
-includes: (1) glucose excursion detection, identify-
-ing rapid glucose rises or falls exceeding a thresh-
-old rate (e.g., >2 mg/dL/min), and (2) trend visu-
-alization, generating plots of glucose trajectories
-over specified periods. Full function signatures are
-provided in Appendix A.
-3.3
-Question Collection
-We constructed questions through two complemen-
-tary approaches: synthetic generation from tem-
-plates and collection from real users.
-Synthetic Questions.
-We developed a question
-generation factory to systematically create diverse
-analytical queries: single-metric queries (“What
-was my TIR on [Date A]]?”), and temporal com-
-parisons (“Compare my average glucose between
-[Time Period A] and [Time Period B]”). By pro-
-grammatically instantiating templates with random-
-ized time windows (e.g., single dates, duration,
-intraday) and injecting both valid CGM metrics
-and out-of-scope features (e.g., insulin, sleep), this
-engine produced 2,470 synthetic QA pairs using
-CGM data from 19 subjects as described in Section
-3.1; thereby ensuring robust test coverage.
-Real User Questions.
-To capture authentic in-
-formation needs, we conducted semi-structured in-
-terviews with three individuals who have diabetes
-and actively use CGM devices (IRB-approved, Ap-
-pendix I). Participants were asked to pose questions
-they would want to ask about their own glucose
-data, yielding 30 seed questions. While modest
-in scale, this formative study identified important
-gaps between clinical metrics and patient prior-
-ities.
-Users expressed strong interest in under-
-standing glucose fluctuations and trends, not just
-aggregate statistics. For example, questions like
-“What are my typical 24-hour glucose patterns?”
-require trend analysis rather than single-value met-
-rics. These findings directly informed our Tier 2
-toolkit extensions.
-After de-identification and normalization of seed
-questions, we instantiated those questions through
-varying dates, time windows, and thresholds using
-CGM data from all 19 subjects described in Section
-3.1 to generate 1,710 user-derived questions.
-Handling Unanswerable and Underspecified
-Questions.
-Real user questions often reference
-external context unavailable in CGM data alone
-(e.g., meals, exercise, insulin doses). We catego-
-rize these into two types:
-• Unanswerable: Questions requiring modali-
-ties outside CGM scope are labeled as unan-
-swerable (e.g., “Does splitting boluses reduce
-my insulin intake?”) . In this case, the agent
-should recognize and refuse these gracefully.
-• Proxy Questions: Questions referencing un-
-observed behaviors that can be approximated
-via time windows (windows which could, for
-example, be obtained from the user via a dia-
-log). For example, “How does exercise affect
-my TIR?” cannot be answered without activity
-logs, but can be instantiated as “Compare TIR
-between 5–7 PM and other times today” if the
-user typically exercises in that window. We
-manually mapped such questions to proxy in-
-stantiations, acknowledging that the agent pro-
-vides approximate analyses that may prompt
-user reflection rather than definitive answers.
-The final benchmark dataset includes 513 unan-
-swerable questions and 399 proxy questions to sup-
-port evaluation of the agent’s robustness to realistic
-edge cases. Detailed user questions and instantia-
-tion mappings are provided in Appendix F. Table 2
-summarizes the final dataset composition.
-Source
-Category
-Count
-Synthetic
-Template-generated
-2,470
-User-derived
-Directly answerable
-798
-Proxy (instantiated)
-399
-Unanswerable
-513
-Total
-4,180
-Table 2: Composition of the CGM-QA benchmark.
-Proxy questions are user queries referencing unobserved
-behaviors, mapped to answerable approximations.
-3.4
-Ground Truth Construction
-A distinguishing feature of our benchmark is that
-ground truth is defined as the output of determinis-
-tic program execution, not human annotation. For
-each question, we specify the corresponding ref-
-erence procedure of function call(s) and their as-
-sociated parameters. The ground-truth answer is
-the numerical result of executing these functions
-on the subject’s CGM data.
-This design ensures: (1) mathematical preci-
-
-sion—answers are computed, not estimated; (2) re-
-producibility—any system can verify answers by
-re-running the toolkit; and (3) scalability—similar
-new questions can be added with minimal manual
-annotation effort. This methodology establishes a
-rigorous standard for evaluating tool use in health-
-care, where numerical accuracy is paramount.
-4
-Agent Architecture
-Figure 1 illustrates the overall architecture of CGM-
-Agent. In this section, we describe each component
-in detail. We begin by stating our core design prin-
-ciples, then walk through the three layers of the
-pipeline: Input Processor, Analytical Agent, and
-Response Generator.
-4.1
-Design Principles
-Our architecture is guided by two principles:
-Separation of Reasoning and Computation.
-The LLM serves purely as a reasoning engine: it
-interprets user intent, resolves ambiguities, selects
-appropriate analytical functions, and synthesizes
-natural language responses. All numerical compu-
-tation over CGM data occurs in a local execution
-sandbox. To maximally preserve user privacy, the
-LLM never receives raw glucose readings in its
-context window, it only aggregates the results from
-function calls.
-Modularity for Evaluation.
-Each layer per-
-forms a distinct function. This separation enables
-targeted evaluation: we can measure whether the
-Input Processor correctly resolves temporal refer-
-ences, whether the Analytical Agent selects appro-
-priate tools, and whether the Response Generator
-produces accurate and readable output. Thus, er-
-rors can be localized to specific components.
-4.2
-Pipeline Overview
-Given a user query q, the pipeline proceeds as fol-
-lows. The Input Processor P validates feasibil-
-ity, resolves temporal references, and maps vague
-terms to precise system features, producing a re-
-fined query q′. The Analytical Agent T decom-
-poses q′ into function calls and executes them lo-
-cally with user’s private CGM data D, producing
-numerical results R. The Response Generator G
-synthesizes a natural language response y:
-q
-P
-−−→q′
-T
-−−−−−→
-Tools(D)
-R
-G(q,q′,R)
-−−−−−−→y
-(1)
-If the Input Processor determines that q is unan-
-swerable (e.g., requires insulin logs), it generates
-an explanation e and the pipeline bypasses the An-
-alytical Agent:
-q
-P
-−−→e
-G(q,e)
-−−−−→y
-(2)
